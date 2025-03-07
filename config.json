@@ -13,5 +13,11 @@
     "useradd",
     "usermod",
     "groupadd"
+  ],
+  "allowedDirectories": [
+    "~",
+    "~/Documents",
+    "~/Projects",
+    "."
   ]
 }
