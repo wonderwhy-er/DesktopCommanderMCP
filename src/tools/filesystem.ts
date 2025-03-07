@@ -1,12 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
-
-// Store allowed directories
-const allowedDirectories: string[] = [
-    process.cwd(), // Current working directory
-    os.homedir()   // User's home directory
-];
+import { getAllowedDirectories } from "../config.js";
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
@@ -22,6 +17,9 @@ function expandHome(filepath: string): string {
 
 // Security utilities
 export async function validatePath(requestedPath: string): Promise<string> {
+    // Get the allowed directories from config
+    const allowedDirectories = getAllowedDirectories();
+    
     const expandedPath = expandHome(requestedPath);
     const absolute = path.isAbsolute(expandedPath)
         ? path.resolve(expandedPath)
@@ -150,5 +148,5 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
 }
 
 export function listAllowedDirectories(): string[] {
-    return allowedDirectories;
+    return getAllowedDirectories();
 }
