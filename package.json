@@ -1,15 +1,20 @@
 {
-  "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.1.19",
-  "description": "MCP server for terminal operations and file editing",
+  "name": "@jasondsmith72/desktop-commander",
+  "version": "0.1.21",
+  "description": "MCP server for terminal operations and file editing with configurable allowed directories",
   "license": "MIT",
   "author": "Eduards Ruzga",
-  "homepage": "https://github.com/wonderwhy-er/ClaudeComputerCommander",
-  "bugs": "https://github.com/wonderwhy-er/ClaudeComputerCommander/issues",
+  "contributors": [
+    "Jason Smith"
+  ],
+  "homepage": "https://github.com/jasondsmith72/ClaudeComputerCommander",
+  "bugs": "https://github.com/jasondsmith72/ClaudeComputerCommander/issues",
   "type": "module",
   "bin": {
     "desktop-commander": "dist/index.js",
-    "setup": "dist/setup-claude-server.js"
+    "setup": "dist/setup-claude-server.js",
+    "setup-custom": "dist/setup-claude-custom.js",
+    "setup-windows": "dist/setup-claude-windows.js"
   },
   "files": [
     "dist"
@@ -19,10 +24,12 @@
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js dist/ && shx chmod +x dist/*.js",
+    "build": "tsc && shx cp setup-claude-server.js dist/ && shx cp setup-claude-custom.js dist/ && shx cp setup-claude-windows.js dist/ && shx chmod +x dist/*.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "setup": "npm install && npm run build && node setup-claude-server.js",
+    "setup:custom": "npm install && npm run build && node setup-claude-custom.js",
+    "setup:windows": "npm install && npm run build && node setup-claude-windows.js",
     "prepare": "npm run build",
     "test": "node test/test.js",
     "test:watch": "nodemon test/test.js",
@@ -50,7 +57,8 @@
     "text-manipulation",
     "code-modification",
     "surgical-edits",
-    "file-operations"
+    "file-operations",
+    "configurable-access"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.0.1",
