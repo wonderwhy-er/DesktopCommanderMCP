@@ -28,6 +28,7 @@ This is a fork of [wonderwhy-er/ClaudeComputerCommander](https://github.com/wond
   - Multiple file support
   - Pattern-based replacements
 - **NEW: Configurable allowed directories** - Specify which directories Claude can access
+- **NEW: Uninstall script** - Easy removal of the tool from Claude Desktop
 
 ## Installation
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
@@ -41,25 +42,27 @@ git clone https://github.com/jasondsmith72/ClaudeComputerCommander.git
 cd ClaudeComputerCommander
 ```
 
-2. Checkout the appropriate branch:
-```bash
-git checkout configurable-paths  # For the version with configurable allowed paths
-```
-
-3. Install dependencies and build:
+2. Install dependencies and build:
 ```bash
 npm install
 npm run build
 ```
 
-4. Run the custom setup:
+3. Run the appropriate setup script based on your needs:
 ```bash
-node setup-claude-custom.js
+# For Windows with automatic configuration:
+npm run setup:windows
+
+# For guided manual setup (works on any platform):
+npm run setup:custom
+
+# For standard setup (requires write access to Claude config):
+npm run setup
 ```
 
-5. Follow the on-screen instructions to update your Claude config file manually.
+4. Follow any on-screen instructions provided by the setup script.
 
-6. Restart Claude if it's running.
+5. Restart Claude if it's running.
 
 ### Option 2: Add to claude_desktop_config manually
 Add this entry to your claude_desktop_config.json (on Windows, found at %APPDATA%\Claude\claude_desktop_config.json):
@@ -77,6 +80,43 @@ Add this entry to your claude_desktop_config.json (on Windows, found at %APPDATA
 }
 ```
 Restart Claude if running.
+
+## Uninstallation
+
+To uninstall ClaudeComputerCommander, you have two options:
+
+### Option 1: Using the uninstall script (Recommended)
+
+If you have the repository locally:
+```bash
+cd ClaudeComputerCommander
+npm run uninstall
+```
+
+If you've installed it globally:
+```bash
+npx @jasondsmith72/desktop-commander uninstall
+```
+
+This will:
+1. Create a backup of your Claude configuration file
+2. Remove all references to desktopCommander from the configuration
+3. Log the changes made for reference
+
+### Option 2: Manual uninstallation
+
+1. Open your Claude Desktop configuration file:
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+2. Remove the `desktopCommander` entry from the `mcpServers` section.
+
+3. Restart Claude Desktop.
+
+4. If you installed the package globally, uninstall it:
+   ```bash
+   npm uninstall -g @jasondsmith72/desktop-commander
+   ```
 
 ## Configuration
 
