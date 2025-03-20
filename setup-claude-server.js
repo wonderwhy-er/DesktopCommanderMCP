@@ -7,11 +7,24 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Determine OS and set appropriate config path and command
-const isWindows = platform() === 'win32';
-const claudeConfigPath = isWindows
-    ? join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json')
-    : join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+// Determine OS and set appropriate config path
+const os = platform();
+let claudeConfigPath;
+
+switch (os) {
+    case 'win32':
+        claudeConfigPath = join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json');
+        break;
+    case 'darwin':
+        claudeConfigPath = join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+        break;
+    case 'linux':
+        claudeConfigPath = join(homedir(), '.config', 'Claude', 'claude_desktop_config.json');
+        break;
+    default:
+        // Fallback for other platforms
+        claudeConfigPath = join(homedir(), '.claude_desktop_config.json');
+}
 
 // Setup logging
 const LOG_FILE = join(__dirname, 'setup.log');
@@ -49,9 +62,9 @@ if (!existsSync(claudeConfigPath)) {
         import('fs').then(fs => fs.mkdirSync(configDir, { recursive: true }));
     }
     
-    // Create default config
+    // Create default config with shell based on platform
     const defaultConfig = {
-        "serverConfig": isWindows
+        "serverConfig": os === 'win32'
             ? {
                 "command": "cmd.exe",
                 "args": ["/c"]
@@ -73,7 +86,7 @@ try {
 
     // Prepare the new server config based on OS
     // Determine if running through npx or locally
-    const isNpx =  import.meta.url.endsWith('dist/setup-claude-server.js');
+    const isNpx = import.meta.url.endsWith('dist/setup-claude-server.js');
 
     const serverConfig = isNpx ? {
         "command": "npx",
