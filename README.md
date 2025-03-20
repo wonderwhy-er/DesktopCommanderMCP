@@ -48,7 +48,12 @@ npx @wonderwhy-er/desktop-commander setup
 Restart Claude if running
 
 ### Option 3: Add to claude_desktop_config by hand
-Add this entry to your claude_desktop_config.json (on Mac, found at ~/Library/Application\ Support/Claude/claude_desktop_config.json):
+Add this entry to your claude_desktop_config.json:
+
+- On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+- On Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- On Linux: `~/.config/Claude/claude_desktop_config.json`
+
 ```json
 {
   "mcpServers": {
