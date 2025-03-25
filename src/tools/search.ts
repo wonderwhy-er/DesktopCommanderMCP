@@ -11,6 +11,37 @@ export interface SearchResult {
   match: string;
 }
 
+// Function to calculate Levenshtein distance
+function levenshtein(a: string, b: string): number {
+  const matrix = Array.from({ length: a.length + 1 }, () =>
+    Array(b.length + 1).fill(0)
+  );
+
+  for (let i = 0; i <= a.length; i++) {
+    matrix[i][0] = i;
+  }
+
+  for (let j = 0; j <= b.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + 1
+        );
+      }
+    }
+  }
+
+  return matrix[a.length][b.length];
+}
+
 // Function to search file contents using ripgrep
 export async function searchCode(options: {
   rootPath: string,        // Directory to search in
@@ -20,6 +51,7 @@ export async function searchCode(options: {
   maxResults?: number,     // Limit number of results
   includeHidden?: boolean, // Whether to include hidden files
   contextLines?: number,   // Number of context lines before and after matches
+  fuzzy?: boolean,         // Enable fuzzy search
 }): Promise<SearchResult[]> {
   const { 
     rootPath, 
@@ -28,7 +60,8 @@ export async function searchCode(options: {
     ignoreCase = true, 
     maxResults = 1000, 
     includeHidden = false,
-    contextLines = 0
+    contextLines = 0,
+    fuzzy = false
   } = options;
   
   // Validate path for security
@@ -107,7 +140,17 @@ export async function searchCode(options: {
             console.error('Error parsing ripgrep output:', e);
           }
         }
-        resolve(results);
+
+        if (fuzzy) {
+          // Apply fuzzy search logic
+          const fuzzyResults = results.filter(result => {
+            const distance = levenshtein(pattern, result.match);
+            return distance <= Math.max(2, Math.floor(pattern.length / 4));
+          });
+          resolve(fuzzyResults);
+        } else {
+          resolve(results);
+        }
       } else {
         reject(new Error(`ripgrep process exited with code ${code}`));
       }
@@ -124,6 +167,7 @@ export async function searchCodeFallback(options: {
   maxResults?: number,
   excludeDirs?: string[],
   contextLines?: number,
+  fuzzy?: boolean,
 }): Promise<SearchResult[]> {
   const { 
     rootPath, 
@@ -132,7 +176,8 @@ export async function searchCodeFallback(options: {
     ignoreCase = true, 
     maxResults = 1000,
     excludeDirs = ['node_modules', '.git'],
-    contextLines = 0
+    contextLines = 0,
+    fuzzy = false
   } = options;
   
   const validPath = await validatePath(rootPath);
@@ -204,7 +249,17 @@ export async function searchCodeFallback(options: {
   }
   
   await searchDir(validPath);
-  return results;
+
+  if (fuzzy) {
+    // Apply fuzzy search logic
+    const fuzzyResults = results.filter(result => {
+      const distance = levenshtein(pattern, result.match);
+      return distance <= Math.max(2, Math.floor(pattern.length / 4));
+    });
+    return fuzzyResults;
+  } else {
+    return results;
+  }
 }
 
 // Main function that tries ripgrep first, falls back to native implementation
@@ -216,6 +271,7 @@ export async function searchTextInFiles(options: {
   maxResults?: number,
   includeHidden?: boolean,
   contextLines?: number,
+  fuzzy?: boolean,
 }): Promise<SearchResult[]> {
   try {
     return await searchCode(options);

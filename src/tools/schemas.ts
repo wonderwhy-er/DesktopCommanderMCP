@@ -73,6 +73,7 @@ export const SearchCodeArgsSchema = z.object({
   maxResults: z.number().optional(),
   includeHidden: z.boolean().optional(),
   contextLines: z.number().optional(),
+  fuzzy: z.boolean().optional(), // Pce82
 });
 
 // Edit tools schemas
