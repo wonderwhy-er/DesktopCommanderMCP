@@ -21,7 +21,7 @@
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js dist/ && shx chmod +x dist/*.js",
+    "build": "tsc && shx cp setup-claude-server.js dist/",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "setup": "npm install && npm run build && node setup-claude-server.js",

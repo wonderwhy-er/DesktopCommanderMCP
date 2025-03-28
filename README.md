@@ -100,6 +100,27 @@ The setup command will:
 
 ## Usage
 
+The server now exposes a single primary tool named `desktop_commander`. You specify the desired operation using the `subtool` parameter within the tool arguments.
+
+### Configuration Parameters
+
+You can configure the server's behavior using command-line arguments when launching it (or via the `args` array in `claude_desktop_config.json`):
+
+*   `--mode=[granular|grouped|unified]` (Default: `granular`)
+    *   `granular`: Lists each available subtool operation as a separate conceptual tool to the AI (though they all call `desktop_commander`).
+    *   `grouped`: Lists tools grouped by category (Read, Write, Execute).
+    *   `unified`: Lists only a single `desktop_commander` tool.
+    *   **Note:** This only affects how tools are presented to the AI in the `ListTools` response. The actual callable tool is always `desktop_commander`.
+*   `--permission=[readOnly|readWrite|execute|all|none]` (Default: `all`)
+    *   `readOnly`: Allows only read operations (e.g., `read_file`, `list_directory`).
+    *   `readWrite`: Allows read and write operations (e.g., `write_file`, `edit_block`).
+    *   `execute`: Allows read and execute operations (e.g., `execute_command`).
+    *   `all`: Allows all operations.
+    *   `none`: Disallows all operations.
+    *   **Note:** This controls which `subtool` values are actually permitted during `CallTool`.
+
+### Available Subtools for `desktop_commander`
+
 The server provides these tool categories:
 
 ### Terminal Tools
@@ -113,7 +134,7 @@ The server provides these tool categories:
 
 ### Filesystem Tools
 - `read_file`/`write_file`: File operations
-- `create_directory`/`list_directory`: Directory management  
+- `create_directory`/`list_directory`: Directory management
 - `move_file`: Move/rename files
 - `search_files`: Pattern-based file search
 - `get_file_info`: File metadata
@@ -123,11 +144,7 @@ The server provides these tool categories:
 - `edit_block`: Apply surgical text replacements (best for changes <20% of file size)
 - `write_file`: Complete file rewrites (best for large changes >20% or when edit_block fails)
 
-Search/Replace Block Format:
-```
-filepath.ext
-<<<<<<< SEARCH
-existing code to replace
+new code to insert
 =======
 new code to insert
 >>>>>>> REPLACE
