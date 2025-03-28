@@ -257,9 +257,9 @@ export class DesktopCommanderServer extends Server {
     switch (this.currentMode) {
       case 'granular':
         tools = allowedSubtools.map(subtool => ({
-          name: "desktop_commander", // ALWAYS use the unified tool name
-          description: `Desktop Commander: ${ALL_SUBTOOLS_METADATA[subtool].description} (Subtool: ${subtool})`,
-          inputSchema: unifiedSchemaJson,
+          name: subtool, // Use the actual subtool name in granular mode
+          description: `${ALL_SUBTOOLS_METADATA[subtool].description}`,
+          inputSchema: zodToJsonSchema(ALL_SUBTOOLS_METADATA[subtool].schema),
         }));
         break;
 
@@ -274,9 +274,11 @@ export class DesktopCommanderServer extends Server {
 
         Object.entries(grouped).forEach(([category, subtoolsInCategory]) => {
           if (subtoolsInCategory.length > 0) {
+            // Use the lowercase category name as the tool name
+            const toolName = category.toLowerCase();
             tools.push({
-              name: "desktop_commander",
-              description: `Desktop Commander: Perform ${category} operations. Available subtools: ${subtoolsInCategory.join(', ')}`,
+              name: toolName,
+              description: `Perform ${category} operations. Available subtools: ${subtoolsInCategory.join(', ')}`,
               inputSchema: unifiedSchemaJson,
             });
           }
@@ -286,8 +288,8 @@ export class DesktopCommanderServer extends Server {
       case 'unified':
         if (allowedSubtools.length > 0) {
           tools.push({
-            name: "desktop_commander",
-            description: `Desktop Commander: Unified tool for terminal, filesystem, and process operations. Use 'subtool' parameter. Available: ${allowedSubtools.join(', ')}`,
+            name: "act",
+            description: `Unified tool for terminal, filesystem, and process operations. Use 'subtool' parameter. Available: ${allowedSubtools.join(', ')}`,
             inputSchema: unifiedSchemaJson,
           });
         }
@@ -299,10 +301,15 @@ export class DesktopCommanderServer extends Server {
 
   // --- Handler for CallTool ---
   private handleCallTool = async (request: CallToolRequest) => {
-    // Ensure the called tool is 'desktop_commander'
-    if (request.params.name !== "desktop_commander") {
+    // Check if the tool name is valid (desktop_commander, act, a known subtool, or a category name)
+    const isValidTool = request.params.name === "desktop_commander" ||
+                         request.params.name === "act" ||
+                         Object.keys(ALL_SUBTOOLS_METADATA).includes(request.params.name) ||
+                         ["read", "write", "execute"].includes(request.params.name);
+
+    if (!isValidTool) {
       return {
-        content: [{ type: "text", text: `Error: Unknown tool name '${request.params.name}'. Only 'desktop_commander' is supported.` }],
+        content: [{ type: "text", text: `Error: Unknown tool name '${request.params.name}'.` }],
         isError: true,
       };
     }
@@ -316,17 +323,66 @@ export class DesktopCommanderServer extends Server {
     }
 
     try {
-      // Parse arguments using the unified schema
-      const parsedArgs = DesktopCommanderArgsSchema.safeParse(request.params.arguments);
+      let subtool: string;
+      let parsedArgs: any;
 
-      if (!parsedArgs.success) {
-        return {
-          content: [{ type: "text", text: `Error: Invalid arguments: ${parsedArgs.error.message}` }],
-          isError: true,
-        };
+      // Handle different tool name formats
+      if (request.params.name === "desktop_commander" ||
+          request.params.name === "act" ||
+          ["read", "write", "execute"].includes(request.params.name)) {
+        // Using the unified tool or category-based tool, extract subtool from arguments
+        const parsedUnified = DesktopCommanderArgsSchema.safeParse(request.params.arguments);
+        if (!parsedUnified.success) {
+          return {
+            content: [{ type: "text", text: `Error: Invalid arguments: ${parsedUnified.error.message}` }],
+            isError: true,
+          };
+        }
+        subtool = parsedUnified.data.subtool;
+
+        // For category-based tools, verify that the subtool belongs to the correct category
+        if (["read", "write", "execute"].includes(request.params.name)) {
+          const expectedCategory = request.params.name.charAt(0).toUpperCase() + request.params.name.slice(1);
+          const actualCategory = ToolCategories[subtool];
+
+          if (actualCategory !== expectedCategory) {
+            return {
+              content: [{
+                type: "text",
+                text: `Error: Subtool '${subtool}' cannot be used with the '${request.params.name}' tool. It belongs to the '${actualCategory}' category.`
+              }],
+              isError: true,
+            };
+          }
+        }
+
+        parsedArgs = { success: true, data: parsedUnified.data };
+      } else {
+        // Using a granular tool, the name is the subtool
+        subtool = request.params.name;
+        // Parse with the specific schema for this subtool
+        if (ALL_SUBTOOLS_METADATA[subtool]) {
+          parsedArgs = ALL_SUBTOOLS_METADATA[subtool].schema.safeParse(request.params.arguments);
+
+          if (!parsedArgs.success) {
+            return {
+              content: [{ type: "text", text: `Error: Invalid arguments: ${parsedArgs.error.message}` }],
+              isError: true,
+            };
+          }
+
+          // For granular tools, we need to add the subtool back into the parsed data
+          parsedArgs.data = {
+            ...parsedArgs.data,
+            subtool: subtool
+          };
+        } else {
+          return {
+            content: [{ type: "text", text: `Error: Unknown subtool '${subtool}'` }],
+            isError: true,
+          };
+        }
       }
-
-      const { subtool } = parsedArgs.data;
 
       // --- Permission Check ---
       if (!isSubtoolAllowed(subtool, this.currentPermission)) {
