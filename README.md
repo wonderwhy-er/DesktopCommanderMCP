@@ -27,7 +27,7 @@ Short version. Two key things. Terminal commands and diff based file editing.
 - [Contributing](#contributing)
 - [License](#license)
 
-This is server that allows Claude desktop app to execute long-running terminal commands on your computer and manage processes through Model Context Protocol (MCP) + Built on top of [MCP Filesystem Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to provide additional search and replace file editing capabilities .
+This is server that allows Claude desktop app to execute long-running terminal commands on your computer and manage processes through Model Context Protocol (MCP) + Built on top of [MCP Filesystem Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to provide additional search and replace file editing capabilities.
 
 ## Features
 
@@ -75,7 +75,10 @@ Add this entry to your claude_desktop_config.json (on Mac, found at ~/Library/Ap
       "command": "npx",
       "args": [
         "-y",
-        "@wonderwhy-er/desktop-commander"
+        "@wonderwhy-er/desktop-commander",
+        "--auth=all,-unblock_command",
+        "--block=git push,sudo,dd",
+        "--mode=granular"
       ]
     }
   }
@@ -104,93 +107,35 @@ The server now exposes a single primary tool named `desktop_commander`. You spec
 
 ### Configuration Parameters
 
-You can configure the server's behavior using command-line arguments when launching it (or via the `args` array in `claude_desktop_config.json`):
+You can configure the server's behavior using command-line arguments when launching it (or via the `args` array in `claude_desktop_config.json`). The primary arguments are:
 
 *   `--mode=[granular|grouped|unified]` (Default: `granular`)
-    *   `granular`: Lists each available subtool operation as a separate conceptual tool to the AI (though they all call `desktop_commander`).
-    *   `grouped`: Lists tools grouped by category (Read, Write, Execute).
-    *   `unified`: Lists only a single unified tool called `command`.
-    *   **Note:** This only affects how tools are presented to the AI in the `ListTools` response. The actual callable tool is always `desktop_commander`.
-*   `--permission=[permission_string]` (Default: `all`)
-    *   A comma-separated list of allowed permissions. Examples:
-    *   `read,write`: Allows all read and write operations
-    *   `read,write,execute_command`: Allows read, write, and only the execute_command tool
-    *   `all,-kill_process`: Allows everything except the kill_process tool
-    *   `read_file,list_directory`: Only allows these specific tools
+    *   Controls how tools are presented to the AI (granular, grouped by category, or one unified tool).
+    *   `granular`: Lists each subtool as a separate tool name (e.g., `read_file`, `execute_command`).
+    *   `grouped`: Lists tools grouped by category (`read`, `write`, `execute`).
+    *   `unified`: Lists only a single unified tool named `command`.
+    *   **Note:** This only affects the `ListTools` response. The underlying tool called is always `desktop_commander` (or the specific subtool name in granular mode).
 
-    The following categories are available:
-    *   `read`: Allows all read operations (e.g., `read_file`, `list_directory`, `search_code`)
-    *   `write`: Allows all write operations (e.g., `write_file`, `edit_block`)
-    *   `execute`: Allows all execute operations (e.g., `execute_command`, `kill_process`)
-    *   `all`: Allows all operations
-    *   `none`: Disallows all operations
+*   `--auth=[permission_string]` (Default: `all`)
+    *   Controls which operations (subtools) are allowed. This is the **only** argument for managing permissions.
+    *   The `permission_string` is a comma-separated list which can include:
+        *   **Categories**: `read`, `write`, `execute` (allow all tools in that category).
+        *   **Specific tool names**: `read_file`, `execute_command`, etc. (allow only that tool).
+        *   **Special values**: `all` (allow everything), `none` (allow nothing).
+        *   **Negations**: `-tool_name` or `-category` (e.g., `all,-kill_process` allows everything *except* `kill_process`). Negations only work when `all` is also present.
+    *   **Examples:**
+        *   `--auth=read` (Allow only read operations)
+        *   `--auth=read,write` (Allow read and write, but no execute)
+        *   `--auth=all,-kill_process,-unblock_command` (Allow all except killing processes and unblocking commands)
+        *   `--auth=read_file,list_directory,search_code` (Allow only these specific read tools)
+        *   `--auth=read,write,execute_command` (Allow read, write, and only the `execute_command` tool from the execute category)
 
-
-
-    **Note:** This controls which `subtool` values are actually permitted during `CallTool`.
-=======
-
-### Granular Permission System
-
-The permission system is now much more flexible, allowing you to specify exactly which tools or categories of tools are allowed. The permission string is a comma-separated list that can include:
-
-- **Tool categories**: `read`, `write`, `execute`
-- **Specific tool names**: `read_file`, `execute_command`, etc.
-- **Special values**: `all`, `none`
-- **Negations**: `-tool` or `-category` (when used with `all`)
-
-#### Permission Examples
-
-```shell
-# Allow only read operations
---permission=read
-
-# Allow read and write, but no execute
---permission=read,write
-
-# Allow everything except kill_process
---permission=all,-kill_process
-
-# Only allow specific tools
---permission=read_file,list_directory,search_code
-
-# Allow read, write, and only execute_command (but not other execute operations)
---permission=read,write,execute_command
-```
-
-#### Tool Categories
-
-Tools are grouped into the following categories:
-
-**Read Operations (`read`):**
-- `get_file_info`: Get file metadata
-- `list_allowed_directories`: List allowed directories
-- `list_blocked_commands`: List blocked commands
-- `list_directory`: List directory contents
-- `list_processes`: List running processes
-- `list_sessions`: List terminal sessions
-- `read_file`: Read file contents
-- `read_multiple_files`: Read multiple files
-- `read_output`: Read terminal output
-- `search_code`: Search for code patterns
-- `search_files`: Search for files
-
-**Write Operations (`write`):**
-- `block_command`: Block a command
-- `create_directory`: Create a directory
-- `edit_block`: Edit file content
-- `move_file`: Move/rename files
-- `unblock_command`: Unblock a command
-- `write_file`: Write file content
-
-**Execute Operations (`execute`):**
-- `execute_command`: Run a terminal command
-- `force_terminate`: Terminate a terminal session
-- `kill_process`: Kill a running process
-=======
+*   `--block=[command_list]` (Default: none)
+    *   A comma-separated list of specific shell commands (like `sudo`, `rm`, `mount`) to prevent execution via the `execute_command` subtool.
+    *   Example: `--block="git push,sudo,dd"`
+    *   These are combined with commands listed in `config.json`. Use `list_blocked_commands` to see the current list.
 
 ### Available Subtools for `desktop_commander`
-=======
 
 The server provides these tool categories:
 
@@ -209,13 +154,17 @@ The server provides these tool categories:
 - `move_file`: Move/rename files
 - `search_files`: Pattern-based file search
 - `get_file_info`: File metadata
-- `code_search`: Recursive ripgrep based text and code search
+- `search_code`: Recursive ripgrep based text and code search
 
 ### Edit Tools
 - `edit_block`: Apply surgical text replacements (best for changes <20% of file size)
 - `write_file`: Complete file rewrites (best for large changes >20% or when edit_block fails)
 
-new code to insert
+The format for `edit_block` is:
+```
+filepath.ext
+<<<<<<< SEARCH
+existing code to replace
 =======
 new code to insert
 >>>>>>> REPLACE
