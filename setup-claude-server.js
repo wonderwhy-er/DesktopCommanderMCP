@@ -38,40 +38,6 @@ function logToFile(message, isError = false) {
     }
 }
 
-// Parse command-line arguments for mode and permission
-function parseSetupArgs() {
-    let mode = null; // No default - we'll only add explicitly specified options
-    let permission = null; // No default - we'll only add explicitly specified options
-    const additionalArgs = [];
-
-    for (const arg of process.argv.slice(2)) {
-        // Skip the 'setup' argument itself
-        if (arg === 'setup') {
-            continue;
-        }
-
-        if (arg.startsWith('--mode=')) {
-            const value = arg.split('=')[1];
-            if (['granular', 'grouped', 'unified'].includes(value)) {
-                mode = value;
-                additionalArgs.push(arg);
-            } else {
-                logToFile(`Warning: Invalid --mode value '${value}'. Ignoring.`, true);
-            }
-        } else if (arg.startsWith('--permission=')) {
-            const value = arg.split('=')[1];
-            if (['execute', 'all', 'none'].includes(value)) {
-                permission = value;
-                additionalArgs.push(arg);
-            } else {
-                logToFile(`Warning: Invalid --permission value '${value}'. Ignoring.`, true);
-            }
-        }
-    }
-
-    return { mode, permission, additionalArgs };
-}
-
 // Check if config file exists and create default if not
 if (!existsSync(claudeConfigPath)) {
     logToFile(`Claude config file not found at: ${claudeConfigPath}`);
@@ -101,34 +67,35 @@ if (!existsSync(claudeConfigPath)) {
 }
 
 try {
-    // Parse setup arguments to extract mode and permission
-    const { mode, permission, additionalArgs } = parseSetupArgs();
-
     // Read existing config
     const configData = readFileSync(claudeConfigPath, 'utf8');
     const config = JSON.parse(configData);
 
     // Prepare the new server config based on OS
     // Determine if running through npx or locally
-    const isNpx = import.meta.url.endsWith('dist/setup-claude-server.js');
+    const isNpx =  import.meta.url.endsWith('dist/setup-claude-server.js');
 
-    // Get the base args array and then add any mode/permission args
-    const baseArgs = isNpx
-        ? ["@wonderwhy-er/desktop-commander"]
-        : [join(__dirname, 'dist', 'index.js')];
-
-    // Include any additional args (--mode, --permission) if specified
-    const serverArgs = [...baseArgs, ...additionalArgs];
+    // Prepare the additional arguments for both configurations
+    const additionalArgs = [];
+    additionalArgs.push("--auth=all");
+    additionalArgs.push("--block=format,mount,umount,mkfs,fdisk,dd,sudo,su,passwd,adduser,useradd,usermod,groupadd");
+    additionalArgs.push("--mode=granular");
 
     const serverConfig = isNpx ? {
         "command": "npx",
-        "args": serverArgs
+        "args": [
+            "@wonderwhy-er/desktop-commander",
+            ...additionalArgs
+        ]
     } : {
         "command": "node",
-        "args": serverArgs
+        "args": [
+            join(__dirname, 'dist', 'index.js'),
+            ...additionalArgs
+        ]
     };
 
-    // Initialize mcpServers if it doesn't exist
+    // Add or update the terminal server config
     if (!config.mcpServers) {
         config.mcpServers = {};
     }
@@ -147,12 +114,6 @@ try {
 
     logToFile('Successfully added MCP server to Claude configuration!');
     logToFile(`Configuration location: ${claudeConfigPath}`);
-
-    // Log configuration details if provided
-    if (mode || permission) {
-        logToFile(`Server configured with ${mode ? `mode=${mode}` : ''}${mode && permission ? ' and ' : ''}${permission ? `permission=${permission}` : ''}`);
-    }
-
     logToFile('\nTo use the server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander" in Claude\'s MCP server list');
 
 } catch (error) {
