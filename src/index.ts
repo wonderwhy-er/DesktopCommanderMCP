@@ -31,11 +31,10 @@ function parseArgs(): { mode: Mode, permission: Permission } {
 
       // Validate the permission string
       if (value) {
-        // For backward compatibility, check if it's a legacy preset
-        const legacyPresets: PermissionPreset[] = ['read', 'write', 'execute', 'all', 'none'];
+        // Check if it's a preset
+        const presets: PermissionPreset[] = ['read', 'write', 'execute', 'all', 'none'];
 
-        if (legacyPresets.includes(value as PermissionPreset) ||
-            value === 'readOnly' || value === 'readWrite') {
+        if (presets.includes(value as PermissionPreset)) {
           permission = value;
         } else {
           // Otherwise validate as a comma-separated list
@@ -45,7 +44,7 @@ function parseArgs(): { mode: Mode, permission: Permission } {
           const allToolNames = Object.keys(ToolCategories).map(name => name.toLowerCase());
 
           // Simple validation - each part should be a valid permission part
-          const validParts = [...legacyPresets, '-read', '-write', '-execute'];
+          const validParts = [...presets, '-read', '-write', '-execute'];
           const allPartsValid = parts.every(part => {
             // Check if it's a standard permission or negation
             if (validParts.includes(part) ||

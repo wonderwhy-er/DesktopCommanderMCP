@@ -60,7 +60,7 @@ function parseSetupArgs() {
             }
         } else if (arg.startsWith('--permission=')) {
             const value = arg.split('=')[1];
-            if (['readOnly', 'readWrite', 'execute', 'all', 'none'].includes(value)) {
+            if (['execute', 'all', 'none'].includes(value)) {
                 permission = value;
                 additionalArgs.push(arg);
             } else {

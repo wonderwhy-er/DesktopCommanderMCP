@@ -129,9 +129,7 @@ function isSubtoolAllowed(subtool: string, permissionStr: Permission): boolean {
     return true;
   }
 
-  // Handle legacy permission values
-  if (permissionStr === 'readOnly' || permissionStr === 'readonly') return category === 'Read';
-  if (permissionStr === 'readWrite' || permissionStr === 'readwrite') return category === 'Read' || category === 'Write';
+  // Handle specific permission values
   if (permissionStr === 'execute') return category === 'Read' || category === 'Execute';
 
   // Handle individual category permissions
@@ -299,11 +297,16 @@ export class DesktopCommanderServer extends Server {
 
     switch (this.currentMode) {
       case 'granular':
-        tools = allowedSubtools.map(subtool => ({
-          name: subtool, // Use the actual subtool name in granular mode
-          description: `${ALL_SUBTOOLS_METADATA[subtool].description}`,
-          inputSchema: zodToJsonSchema(ALL_SUBTOOLS_METADATA[subtool].schema),
-        }));
+        tools = allowedSubtools.map(subtool => {
+          // Get the tool category for additional context
+          const category = ToolCategories[subtool] || '';
+
+          return {
+            name: subtool, // Use the actual subtool name in granular mode
+            description: `${ALL_SUBTOOLS_METADATA[subtool].description} (${category} Operation)`,
+            inputSchema: zodToJsonSchema(ALL_SUBTOOLS_METADATA[subtool].schema),
+          };
+        });
         break;
 
       case 'grouped':
@@ -319,9 +322,14 @@ export class DesktopCommanderServer extends Server {
           if (subtoolsInCategory.length > 0) {
             // Use the lowercase category name as the tool name
             const toolName = category.toLowerCase();
+            // Create detailed descriptions for each subtool in this category
+            const subtoolDetails = subtoolsInCategory.map(subtool =>
+              `• ${subtool}: ${ALL_SUBTOOLS_METADATA[subtool].description}`
+            ).join('\n');
+
             tools.push({
               name: toolName,
-              description: `Perform ${category} operations. Available subtools: ${subtoolsInCategory.join(', ')}`,
+              description: `Perform ${category} operations with specialized tools. Provides access to ${category.toLowerCase()}-related functionality with appropriate permissions and safety controls.\n\nAvailable subtools:\n${subtoolDetails}`,
               inputSchema: unifiedSchemaJson,
             });
           }
@@ -330,9 +338,14 @@ export class DesktopCommanderServer extends Server {
 
       case 'unified':
         if (allowedSubtools.length > 0) {
+          // Create a detailed description with all subtools and their descriptions
+          const subtoolDescriptions = allowedSubtools.map(subtool =>
+            `• ${subtool}: ${ALL_SUBTOOLS_METADATA[subtool].description}`
+          ).join('\n');
+
           tools.push({
-            name: "act",
-            description: `Unified tool for terminal, filesystem, and process operations. Use 'subtool' parameter. Available: ${allowedSubtools.join(', ')}`,
+            name: "command",
+            description: `Comprehensive tool for terminal, filesystem, and process management. Provides access to file operations, command execution, process control, and code search through a unified interface. Use 'subtool' parameter to specify the operation.\n\nAvailable subtools:\n${subtoolDescriptions}`,
             inputSchema: unifiedSchemaJson,
           });
         }
@@ -344,9 +357,9 @@ export class DesktopCommanderServer extends Server {
 
   // --- Handler for CallTool ---
   private handleCallTool = async (request: CallToolRequest) => {
-    // Check if the tool name is valid (desktop_commander, act, a known subtool, or a category name)
+    // Check if the tool name is valid (desktop_commander, command, a known subtool, or a category name)
     const isValidTool = request.params.name === "desktop_commander" ||
-                         request.params.name === "act" ||
+                         request.params.name === "command" ||
                          Object.keys(ALL_SUBTOOLS_METADATA).includes(request.params.name) ||
                          ["read", "write", "execute"].includes(request.params.name);
 
@@ -371,7 +384,7 @@ export class DesktopCommanderServer extends Server {
 
       // Handle different tool name formats
       if (request.params.name === "desktop_commander" ||
-          request.params.name === "act" ||
+          request.params.name === "command" ||
           ["read", "write", "execute"].includes(request.params.name)) {
         // Using the unified tool or category-based tool, extract subtool from arguments
         const parsedUnified = DesktopCommanderArgsSchema.safeParse(request.params.arguments);

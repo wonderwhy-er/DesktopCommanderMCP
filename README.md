@@ -109,7 +109,7 @@ You can configure the server's behavior using command-line arguments when launch
 *   `--mode=[granular|grouped|unified]` (Default: `granular`)
     *   `granular`: Lists each available subtool operation as a separate conceptual tool to the AI (though they all call `desktop_commander`).
     *   `grouped`: Lists tools grouped by category (Read, Write, Execute).
-    *   `unified`: Lists only a single `desktop_commander` tool.
+    *   `unified`: Lists only a single unified tool called `command`.
     *   **Note:** This only affects how tools are presented to the AI in the `ListTools` response. The actual callable tool is always `desktop_commander`.
 *   `--permission=[permission_string]` (Default: `all`)
     *   A comma-separated list of allowed permissions. Examples:
@@ -125,9 +125,7 @@ You can configure the server's behavior using command-line arguments when launch
     *   `all`: Allows all operations
     *   `none`: Disallows all operations
 
-    For backward compatibility, these legacy options are supported:
-    *   `readOnly`: Same as `read`
-    *   `readWrite`: Same as `read,write`
+
 
     **Note:** This controls which `subtool` values are actually permitted during `CallTool`.
 =======
