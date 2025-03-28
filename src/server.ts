@@ -66,10 +66,11 @@ import { VERSION } from './version.js';
 
 // Define types for Mode and Permission
 export type Mode = 'granular' | 'grouped' | 'unified';
-export type Permission = 'readOnly' | 'readWrite' | 'execute' | 'all' | 'none';
+export type Permission = string; // Changed to string to support comma-separated lists
+export type PermissionPreset = 'read' | 'write' | 'execute' | 'all' | 'none';
 
 // Define tool categories
-const ToolCategories: Record<string, 'Read' | 'Write' | 'Execute'> = {
+export const ToolCategories: Record<string, 'Read' | 'Write' | 'Execute'> = {
   get_file_info: 'Read',
   list_allowed_directories: 'Read',
   list_blocked_commands: 'Read',
@@ -93,16 +94,58 @@ const ToolCategories: Record<string, 'Read' | 'Write' | 'Execute'> = {
 };
 
 // Helper function to check permissions
-function isSubtoolAllowed(subtool: string, permission: Permission): boolean {
-  if (permission === 'none') return false;
-  if (permission === 'all') return true;
+function isSubtoolAllowed(subtool: string, permissionStr: Permission): boolean {
+  // Parse the comma-separated permission string
+  const permissions = permissionStr.split(',').map(p => p.trim().toLowerCase());
 
+  // Quick checks for special cases
+  if (permissions.includes('none')) return false;
+  if (permissions.includes('all') && !permissions.some(p => p.startsWith('-'))) return true;
+
+  // If the subtool is directly mentioned, it's allowed
+  if (permissions.includes(subtool.toLowerCase())) return true;
+
+  // Get the category of the subtool
   const category = ToolCategories[subtool];
   if (!category) return false; // Unknown subtool
 
-  if (permission === 'readOnly') return category === 'Read';
-  if (permission === 'readWrite') return category === 'Read' || category === 'Write';
-  if (permission === 'execute') return category === 'Read' || category === 'Execute';
+  // Check if the category is allowed
+  const categoryLower = category.toLowerCase();
+  if (permissions.includes(categoryLower)) return true;
+
+  // Handle negation with 'all,-category' format
+  if (permissions.includes('all')) {
+    // Get all negations (items starting with -)
+    const negations = permissions
+      .filter(p => p.startsWith('-'))
+      .map(p => p.substring(1).toLowerCase());
+
+    // If the category or subtool is negated, it's not allowed
+    if (negations.includes(categoryLower) || negations.includes(subtool.toLowerCase())) {
+      return false;
+    }
+
+    // Otherwise it's allowed by the 'all' permission
+    return true;
+  }
+
+  // Handle legacy permission values
+  if (permissionStr === 'readOnly' || permissionStr === 'readonly') return category === 'Read';
+  if (permissionStr === 'readWrite' || permissionStr === 'readwrite') return category === 'Read' || category === 'Write';
+  if (permissionStr === 'execute') return category === 'Read' || category === 'Execute';
+
+  // Handle individual category permissions
+  const hasRead = permissions.includes('read');
+  const hasWrite = permissions.includes('write');
+  const hasExecute = permissions.includes('execute');
+
+  if (hasRead && hasWrite) {
+    return category === 'Read' || category === 'Write';
+  }
+
+  if (hasRead) return category === 'Read';
+  if (hasWrite) return category === 'Write';
+  if (hasExecute) return category === 'Execute';
 
   return false;
 }
@@ -314,10 +357,10 @@ export class DesktopCommanderServer extends Server {
       };
     }
 
-    // Check global 'none' permission first
-    if (this.currentPermission === 'none') {
+    // Check if 'none' permission is set
+    if (this.currentPermission === 'none' || this.currentPermission.split(',').includes('none')) {
       return {
-        content: [{ type: "text", text: `Error: Permission denied. No tools are allowed with current permission level 'none'.` }],
+        content: [{ type: "text", text: `Error: Permission denied. No tools are allowed with current permission setting '${this.currentPermission}'.` }],
         isError: true,
       };
     }
@@ -387,7 +430,7 @@ export class DesktopCommanderServer extends Server {
       // --- Permission Check ---
       if (!isSubtoolAllowed(subtool, this.currentPermission)) {
         return {
-          content: [{ type: "text", text: `Error: Permission denied for subtool '${subtool}' with current permission level '${this.currentPermission}'.` }],
+          content: [{ type: "text", text: `Error: Permission denied for subtool '${subtool}' with current permission setting '${this.currentPermission}'.` }],
           isError: true,
         };
       }

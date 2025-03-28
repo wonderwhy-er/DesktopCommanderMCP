@@ -111,15 +111,88 @@ You can configure the server's behavior using command-line arguments when launch
     *   `grouped`: Lists tools grouped by category (Read, Write, Execute).
     *   `unified`: Lists only a single `desktop_commander` tool.
     *   **Note:** This only affects how tools are presented to the AI in the `ListTools` response. The actual callable tool is always `desktop_commander`.
-*   `--permission=[readOnly|readWrite|execute|all|none]` (Default: `all`)
-    *   `readOnly`: Allows only read operations (e.g., `read_file`, `list_directory`).
-    *   `readWrite`: Allows read and write operations (e.g., `write_file`, `edit_block`).
-    *   `execute`: Allows read and execute operations (e.g., `execute_command`).
-    *   `all`: Allows all operations.
-    *   `none`: Disallows all operations.
-    *   **Note:** This controls which `subtool` values are actually permitted during `CallTool`.
+*   `--permission=[permission_string]` (Default: `all`)
+    *   A comma-separated list of allowed permissions. Examples:
+    *   `read,write`: Allows all read and write operations
+    *   `read,write,execute_command`: Allows read, write, and only the execute_command tool
+    *   `all,-kill_process`: Allows everything except the kill_process tool
+    *   `read_file,list_directory`: Only allows these specific tools
+
+    The following categories are available:
+    *   `read`: Allows all read operations (e.g., `read_file`, `list_directory`, `search_code`)
+    *   `write`: Allows all write operations (e.g., `write_file`, `edit_block`)
+    *   `execute`: Allows all execute operations (e.g., `execute_command`, `kill_process`)
+    *   `all`: Allows all operations
+    *   `none`: Disallows all operations
+
+    For backward compatibility, these legacy options are supported:
+    *   `readOnly`: Same as `read`
+    *   `readWrite`: Same as `read,write`
+
+    **Note:** This controls which `subtool` values are actually permitted during `CallTool`.
+=======
+
+### Granular Permission System
+
+The permission system is now much more flexible, allowing you to specify exactly which tools or categories of tools are allowed. The permission string is a comma-separated list that can include:
+
+- **Tool categories**: `read`, `write`, `execute`
+- **Specific tool names**: `read_file`, `execute_command`, etc.
+- **Special values**: `all`, `none`
+- **Negations**: `-tool` or `-category` (when used with `all`)
+
+#### Permission Examples
+
+```shell
+# Allow only read operations
+--permission=read
+
+# Allow read and write, but no execute
+--permission=read,write
+
+# Allow everything except kill_process
+--permission=all,-kill_process
+
+# Only allow specific tools
+--permission=read_file,list_directory,search_code
+
+# Allow read, write, and only execute_command (but not other execute operations)
+--permission=read,write,execute_command
+```
+
+#### Tool Categories
+
+Tools are grouped into the following categories:
+
+**Read Operations (`read`):**
+- `get_file_info`: Get file metadata
+- `list_allowed_directories`: List allowed directories
+- `list_blocked_commands`: List blocked commands
+- `list_directory`: List directory contents
+- `list_processes`: List running processes
+- `list_sessions`: List terminal sessions
+- `read_file`: Read file contents
+- `read_multiple_files`: Read multiple files
+- `read_output`: Read terminal output
+- `search_code`: Search for code patterns
+- `search_files`: Search for files
+
+**Write Operations (`write`):**
+- `block_command`: Block a command
+- `create_directory`: Create a directory
+- `edit_block`: Edit file content
+- `move_file`: Move/rename files
+- `unblock_command`: Unblock a command
+- `write_file`: Write file content
+
+**Execute Operations (`execute`):**
+- `execute_command`: Run a terminal command
+- `force_terminate`: Terminate a terminal session
+- `kill_process`: Kill a running process
+=======
 
 ### Available Subtools for `desktop_commander`
+=======
 
 The server provides these tool categories:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { server, DesktopCommanderServer, type Mode, type Permission } from './server.js';
+import { server, DesktopCommanderServer, type Mode, type Permission, type PermissionPreset, ToolCategories } from './server.js';
 import { commandManager } from './command-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -26,11 +26,50 @@ function parseArgs(): { mode: Mode, permission: Permission } {
         console.error(`Warning: Invalid --mode value '${value}'. Using default '${mode}'.`);
       }
     } else if (arg.startsWith('--permission=')) {
+      // Extract the value after --permission=
       const value = arg.split('=')[1];
-      if (['readOnly', 'readWrite', 'execute', 'all', 'none'].includes(value)) {
-        permission = value as Permission;
+
+      // Validate the permission string
+      if (value) {
+        // For backward compatibility, check if it's a legacy preset
+        const legacyPresets: PermissionPreset[] = ['read', 'write', 'execute', 'all', 'none'];
+
+        if (legacyPresets.includes(value as PermissionPreset) ||
+            value === 'readOnly' || value === 'readWrite') {
+          permission = value;
+        } else {
+          // Otherwise validate as a comma-separated list
+          const parts = value.split(',').map(p => p.trim().toLowerCase());
+
+          // Get a list of all tool names (lowercase)
+          const allToolNames = Object.keys(ToolCategories).map(name => name.toLowerCase());
+
+          // Simple validation - each part should be a valid permission part
+          const validParts = [...legacyPresets, '-read', '-write', '-execute'];
+          const allPartsValid = parts.every(part => {
+            // Check if it's a standard permission or negation
+            if (validParts.includes(part) ||
+                (part.startsWith('-') && validParts.includes(part.substring(1)))) {
+              return true;
+            }
+
+            // Check if it's a specific tool name or negation of a tool
+            if (allToolNames.includes(part) ||
+                (part.startsWith('-') && allToolNames.includes(part.substring(1)))) {
+              return true;
+            }
+
+            return false;
+          });
+
+          if (allPartsValid) {
+            permission = value;
+          } else {
+            console.error(`Warning: Invalid --permission value '${value}'. Using default '${permission}'.`);
+          }
+        }
       } else {
-        console.error(`Warning: Invalid --permission value '${value}'. Using default '${permission}'.`);
+        console.error(`Warning: Empty --permission value. Using default '${permission}'.`);
       }
     }
   }
