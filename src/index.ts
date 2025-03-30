@@ -6,6 +6,29 @@ import { commandManager } from './command-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { platform } from 'os';
+import { Mode } from './server.js';
+
+// Parse command line arguments
+function parseArgs(): { mode: Mode } {
+  const mode: Mode = 'granular'; // Default mode
+
+  // Process arguments
+  for (let i = 2; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg.startsWith('--mode=')) {
+      const modeValue = arg.split('=')[1].toLowerCase();
+
+      // Accept all three modes
+      if (['granular', 'grouped', 'unified'].includes(modeValue)) {
+        return { mode: modeValue as Mode };
+      } else {
+        console.error(`Warning: Invalid mode '${modeValue}'. Using default mode 'granular'.`);
+      }
+    }
+  }
+
+  return { mode };
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -47,15 +70,23 @@ async function runSetup() {
 
 async function runServer() {
   try {
-    const transport = new FilteredStdioServerTransport();
-
-    console.log("start")
     // Check if first argument is "setup"
     if (process.argv[2] === 'setup') {
       await runSetup();
       return;
     }
-    
+
+    // Parse CLI args and configure server
+    const { mode } = parseArgs();
+
+    // Store the mode on the server instance for the ListTools handler to access
+    (server as any).currentMode = mode;
+    console.error(`DesktopCommander MCP Mode set to: ${mode}`);
+
+    const transport = new FilteredStdioServerTransport();
+
+    console.log("start")
+
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);

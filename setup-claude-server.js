@@ -72,7 +72,7 @@ async function execAsync(command) {
 }
 
 async function restartClaude() {
-	try {
+    try {
         const platform = process.platform
         switch (platform) {
             case "win32":
@@ -153,11 +153,16 @@ export default async function setup() {
 
         // Fix Windows path handling for npx execution
         let serverConfig;
+        // Prepare the additional arguments for both configurations
+        const additionalArgs = [];
+        additionalArgs.push("--mode=granular"); // Set default mode
+
         if (isNpx) {
             serverConfig = {
                 "command": isWindows ? "npx.cmd" : "npx",
                 "args": [
-                    "@wonderwhy-er/desktop-commander"
+                    "@wonderwhy-er/desktop-commander",
+                    ...additionalArgs
                 ]
             };
         } else {
@@ -166,7 +171,8 @@ export default async function setup() {
             serverConfig = {
                 "command": "node",
                 "args": [
-                    indexPath.replace(/\\/g, '\\\\') // Double escape backslashes for JSON
+                    indexPath.replace(/\\/g, '\\\\'), // Double escape backslashes for JSON
+                    ...additionalArgs
                 ]
             };
         }
