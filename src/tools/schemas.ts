@@ -80,8 +80,8 @@ export const EditBlockArgsSchema = z.object({
   blockContent: z.string(),
 });
 
-// Define the unified DesktopCommanderArgs schema
-// This will be used for grouped and unified modes
+// Define the YOLO DesktopCommanderArgs schema
+// This will be used for grouped and YOLO modes
 export const DesktopCommanderArgsSchema = z.object({
   // Required subtool field to specify which operation to perform
   subtool: z.enum([
@@ -112,5 +112,5 @@ export const DesktopCommanderArgsSchema = z.object({
   blockContent: z.string().optional()
 });
 
-// Define the type for the unified schema
+// Define the type for the YOLO schema
 export type DesktopCommanderArgs = z.infer<typeof DesktopCommanderArgsSchema>;

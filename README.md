@@ -81,7 +81,7 @@ Add this entry to your claude_desktop_config.json:
       "args": [
         "-y",
         "@wonderwhy-er/desktop-commander",
-        "--mode=granular"  // Available modes: granular, grouped, unified
+        "--mode=granular"  // Available modes: granular, grouped, YOLO
       ]
     }
   }
@@ -108,11 +108,11 @@ The setup command will:
 
 Configure the server using command-line arguments (in the `args` array of `claude_desktop_config.json`).
 
-*   `--mode=[granular|grouped|unified]` (Default: `granular`)
+*   `--mode=[granular|grouped|YOLO]` (Default: `granular`)
     Controls how tools are presented to Claude and **how often you need to grant permissions**:
     *   **`granular`**: Each capability (e.g., `read_file`, `execute_command`) is a separate tool. You'll authorize each tool individually upon its first use in a chat.
     *   **`grouped`**: Tools are combined into categories (`file_read`, `file_write`, `terminal`, `change_blocked_commands`). Claude specifies the exact action using a `subtool` argument. You authorize each *category* once, reducing permission prompts compared to `granular`.
-    *   **`unified`**: Consolidates all tools except `change_blocked_commands` a single `command` tool with many `subtool`s usually requiring only one authorization per chat.
+    *   **`YOLO`**: Consolidates all tools except `change_blocked_commands` a unified `command` tool with many `subtool`s usually requiring only one authorization per chat.
     *   *Note:* This setting affects how often you click "Allow". The underlying server functionality remains the same.
 
 ## Usage
@@ -181,7 +181,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
-- **30-03-2025 Re-enabled Unified Mode** - Implemented secure unified mode that keeps sensitive operations separate
+- **30-03-2025 Added modes such as YOLO and groped which makes it so you don't have to authorize Claude to perform an action as often.
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
 - **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/17)) - Enhanced code exploration with context-aware results
 

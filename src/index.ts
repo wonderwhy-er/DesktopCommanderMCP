@@ -18,9 +18,16 @@ function parseArgs(): { mode: Mode } {
     if (arg.startsWith('--mode=')) {
       const modeValue = arg.split('=')[1].toLowerCase();
 
-      // Accept all three modes
-      if (['granular', 'grouped', 'unified'].includes(modeValue)) {
-        return { mode: modeValue as Mode };
+      // Accept all three modes (case insensitive)
+      if (['granular', 'grouped', 'yolo'].includes(modeValue)) {
+        // Map the lowercase input to the correct Mode type
+        let mappedMode: Mode;
+        if (modeValue === 'granular') mappedMode = 'granular';
+        else if (modeValue === 'grouped') mappedMode = 'grouped';
+        else if (modeValue === 'yolo') mappedMode = 'YOLO';
+        else mappedMode = 'granular'; // Fallback (should never happen)
+        
+        return { mode: mappedMode };
       } else {
         console.error(`Warning: Invalid mode '${modeValue}'. Using default mode 'granular'.`);
       }

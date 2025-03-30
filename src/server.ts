@@ -11,8 +11,10 @@ import { commandManager } from './command-manager.js';
 import { z } from "zod";
 import { DesktopCommanderArgsSchema } from './tools/schemas.js';
 
-// Define types for Mode
-export type Mode = 'granular' | 'grouped' | 'unified';
+// Define types for Mode (internally we use consistent casing)
+export type Mode = 'granular' | 'grouped' | 'YOLO';
+
+// We'll normalize any user input to match these values
 
 // Define a const enum for tool categories
 const enum ToolCategory {
@@ -255,11 +257,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   // Access the mode stored on the server instance
   const mode: Mode = (server as any).currentMode || 'granular'; // Default to granular
   let tools: ToolDefinition[] = [];
-  const unifiedSchemaJson = zodToJsonSchema(DesktopCommanderArgsSchema);
+  const yoloSchemaJson = zodToJsonSchema(DesktopCommanderArgsSchema);
   const allowedSubtools = Object.keys(ALL_TOOLS_METADATA); // No auth filtering yet
 
-  switch (mode) {
-    case 'granular':
+  // Ensure case-insensitive mode comparison by normalizing to uppercase
+  const normalizedMode = typeof mode === 'string' ? mode.toUpperCase() : mode;
+  
+  switch (normalizedMode) {
+    case 'GRANULAR':
       tools = allowedSubtools.map(subtool => ({
         name: subtool, // Use specific tool name
         description: ALL_TOOLS_METADATA[subtool].description,
@@ -267,7 +272,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       }));
       break;
 
-    case 'grouped':
+    case 'GROUPED':
       // Group tools by category
       const groupMap: Record<string, string[]> = {
         [ToolCategory.FileRead]: [],
@@ -295,38 +300,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           tools.push({
             name: category,
             description: `Perform ${category.replace('_', ' ')} operations. Use 'subtool' parameter to specify operation.\nAvailable subtools:\n${subtoolDetails}`,
-            inputSchema: unifiedSchemaJson, // Use the unified schema
+            inputSchema: yoloSchemaJson, // Use the YOLO schema
           });
         }
       });
       break;
 
-    case 'unified':
-      // This is the modified unified mode implementation - using the simpler negative check approach with enum
-      const unifiedSubtools: string[] = [];
+    case 'YOLO':
+      // This is the modified YOLO mode implementation - using the simpler negative check approach with enum
+      const yoloSubtools: string[] = [];
       const blockedCommandSubtools: string[] = [];
       
-      // Separate subtools into unified and blocked command categories
+      // Separate subtools into YOLO and blocked command categories
       allowedSubtools.forEach(subtool => {
-        // Simple negative check - everything except change_blocked_commands goes into unified command
+        // Simple negative check - everything except change_blocked_commands goes into YOLO command
         if (ToolCategories[subtool] !== ToolCategory.ChangeBlockedCommands) {
-          unifiedSubtools.push(subtool);
+          yoloSubtools.push(subtool);
         } else {
           blockedCommandSubtools.push(subtool);
         }
       });
 
-      // Add unified command tool if there are subtools for it
-      if (unifiedSubtools.length > 0) {
-        // Build a description listing all available unified subtools
-        const subtoolDescriptions = unifiedSubtools
+      // Add YOLO command tool if there are subtools for it
+      if (yoloSubtools.length > 0) {
+        // Build a description listing all available YOLO subtools
+        const subtoolDescriptions = yoloSubtools
           .map((subtool) => `• ${subtool}: ${ALL_TOOLS_METADATA[subtool].description}`)
           .join('\n');
 
         tools.push({
-          name: "command", // Main unified tool name
-          description: `Unified desktop command tool for filesystem and terminal operations. Use 'subtool' parameter to specify operation.\nAvailable subtools:\n${subtoolDescriptions}`,
-          inputSchema: unifiedSchemaJson, // Use the unified schema
+          name: "yolo", // Main YOLO tool name
+          description: `Unified desktop command for file and terminal operations. Use 'subtool' parameter to specify operation.\nAvailable subtools:\n${subtoolDescriptions}`,
+          inputSchema: yoloSchemaJson, // Use the YOLO schema
         });
       }
 
@@ -339,7 +344,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools.push({
           name: ToolCategory.ChangeBlockedCommands, // Separate security-sensitive tool
           description: `Perform change blocked_commands operations. Use 'subtool' parameter to specify operation.\nAvailable subtools:\n${blockedCmdDescriptions}`,
-          inputSchema: unifiedSchemaJson, // Use the unified schema
+          inputSchema: yoloSchemaJson, // Use the YOLO schema
         });
       }
       break;
@@ -359,15 +364,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         toolNameCalled === ToolCategory.FileWrite ||
         toolNameCalled === ToolCategory.Terminal ||
         toolNameCalled === ToolCategory.ChangeBlockedCommands ||
-        toolNameCalled === "command"
+        toolNameCalled === "yolo"
         ) {
-      // Grouped or Unified Mode Call
-      const parsedUnified = DesktopCommanderArgsSchema.safeParse(args);
-      if (!parsedUnified.success) {
-        throw new Error(`Invalid arguments for ${toolNameCalled}: ${parsedUnified.error.message}`);
+      // Grouped or YOLO Mode Call
+      const parsedYolo = DesktopCommanderArgsSchema.safeParse(args);
+      if (!parsedYolo.success) {
+        throw new Error(`Invalid arguments for ${toolNameCalled}: ${parsedYolo.error.message}`);
       }
-      subtool = parsedUnified.data.subtool;
-      finalArgs = parsedUnified.data; // Use the data from the unified parse
+      subtool = parsedYolo.data.subtool;
+      finalArgs = parsedYolo.data; // Use the data from the YOLO parse
 
       // Validate subtool belongs to correct category if grouped mode
       if ([ToolCategory.FileRead, ToolCategory.FileWrite, ToolCategory.Terminal, ToolCategory.ChangeBlockedCommands].includes(toolNameCalled as any)) {
@@ -381,9 +386,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
       }
       
-      // For unified "command" tool, validate the subtool is not in the change_blocked_commands category
-      if (toolNameCalled === "command" && ToolCategories[subtool] === ToolCategory.ChangeBlockedCommands) {
-        throw new Error(`Subtool '${subtool}' cannot be used with the 'command' tool. Security-sensitive operations must be called directly.`);
+      // For YOLO "yolo" tool, validate the subtool is not in the change_blocked_commands category
+      if (toolNameCalled === "yolo" && ToolCategories[subtool] === ToolCategory.ChangeBlockedCommands) {
+        throw new Error(`Subtool '${subtool}' cannot be used with the 'yolo' tool. Security-sensitive operations must be called directly.`);
       }
       
       // For change_blocked_commands tool, ensure the subtool belongs to that category

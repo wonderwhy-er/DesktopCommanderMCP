@@ -22,7 +22,7 @@ This document provides answers to the most commonly asked questions about Claude
   - [How do I install Claude Desktop Commander?](#how-do-i-install-claude-desktop-commander)
   - [How do I update to the latest version?](#how-do-i-update-to-the-latest-version)
   - [Which operating systems does it support?](#which-operating-systems-does-it-support)
-  - [What's the difference between granular, grouped, and unified modes?](#whats-the-difference-between-granular-grouped-and-unified-modes)
+  - [What's the difference between granular, grouped, and YOLO modes?](#whats-the-difference-between-granular-grouped-and-YOLO-modes)
 
 - [Features & Capabilities](#features--capabilities)
   - [What can I do with Claude Desktop Commander?](#what-can-i-do-with-claude-desktop-commander)
@@ -50,7 +50,7 @@ This document provides answers to the most commonly asked questions about Claude
   - [What's the recommended workflow for coding?](#whats-the-recommended-workflow-for-coding)
   - [How can I manage changes to avoid losing work?](#how-can-i-manage-changes-to-avoid-losing-work)
   - [Should I still use a code editor?](#should-i-still-use-a-code-editor)
-  - [Which mode should I use: granular, grouped, or unified?](#which-mode-should-i-use-granular-grouped-or-unified)
+  - [Which mode should I use: granular, grouped, or YOLO?](#which-mode-should-i-use-granular-grouped-or-YOLO)
 
 - [Comparison with Other Tools](#comparison-with-other-tools)
   - [How does this compare to VSCode extensions like Cline?](#how-does-this-compare-to-vscode-extensions-like-cline)
@@ -135,7 +135,7 @@ Add the MCP server to your claude_desktop_config.json (on Mac, found at ~/Librar
       "args": [
         "-y",
         "@wonderwhy-er/desktop-commander",
-        "--mode=granular"  // Set to "granular", "grouped", or "unified"
+        "--mode=granular"  // Set to "granular", "grouped", or "YOLO"
       ]
     }
   }
@@ -166,7 +166,7 @@ Claude Desktop Commander works with:
 
 Work is in progress to improve WSL (Windows Subsystem for Linux) integration and add SSH support for remote servers.
 
-### What's the difference between granular, grouped, and unified modes?
+### What's the difference between granular, grouped, and YOLO modes?
 
 Claude Desktop Commander offers three different modes for how tools are presented to Claude:
 
@@ -180,7 +180,7 @@ Claude Desktop Commander offers three different modes for how tools are presente
 - Claude specifies which operation to perform via a `subtool` parameter
 - Provides a more organized structure while maintaining control
 
-**Unified Mode:**
+**YOLO Mode:**
 - Consolidates all filesystem and terminal operations into a single `command` tool
 - Security-sensitive operations (`change_blocked_commands`) remain separate for safety
 - Simplifies Claude's tool selection process
@@ -391,7 +391,7 @@ Typical workflow:
 
 Some users report reviewing code only after Claude has made it work, focusing on understanding and quality rather than writing from scratch.
 
-### Which mode should I use: granular, grouped, or unified?
+### Which mode should I use: granular, grouped, or YOLO?
 
 Each mode has its own benefits depending on your workflow and preferences:
 
@@ -405,15 +405,15 @@ Each mode has its own benefits depending on your workflow and preferences:
 - You're comfortable with the different categories of operations
 - You find the number of individual tools overwhelming
 
-**Choose Unified Mode if:**
+**Choose YOLO Mode if:**
 - You trust your operating system to keep Claude in line
 - You don't want to have to give Claude execute rights after it spends three minutes reading files
 - You want Claude to have a simplified interface for choosing tools
-- You're comfortable with YOLO mode
+- You only live once
 
-An important consideration is that you'll need to re-authorize Claude's MCP permissions whenever you switch modes. In granular mode, you'll need to authorize each individual command separately. In grouped mode, you'll authorize file_read and file_write commands as separate groups. In unified mode, you'll authorize all operations except changing blocked commands with a single permission. From a user experience perspective, this affects how frequently you need to approve permissions during your workflow.
+An important consideration is that you'll need to re-authorize Claude's MCP permissions whenever you switch modes. In granular mode, you'll need to authorize each individual command separately. In grouped mode, you'll authorize file_read and file_write commands as separate groups. In YOLO mode, you'll authorize all operations except changing blocked commands with a single permission. From a user experience perspective, this affects how frequently you need to approve permissions during your workflow.
 
-Many users start with granular mode to understand the available tools, then switch to unified mode for day-to-day use once they're comfortable with the system.
+Many users start with granular mode to understand the available tools, then switch to YOLO mode for day-to-day use once they're comfortable with the system.
 
 ## Comparison with Other Tools
 
