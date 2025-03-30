@@ -313,11 +313,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       
       // Separate subtools into YOLO and blocked command categories
       allowedSubtools.forEach(subtool => {
-        // Simple negative check - everything except change_blocked_commands goes into YOLO command
-        if (ToolCategories[subtool] !== ToolCategory.ChangeBlockedCommands) {
-          yoloSubtools.push(subtool);
-        } else {
+        // All commands go to YOLO except block_command and unblock_command
+        if (subtool === "block_command" || subtool === "unblock_command") {
           blockedCommandSubtools.push(subtool);
+        } else {
+          yoloSubtools.push(subtool);
         }
       });
 
@@ -381,18 +381,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         if (!actualCategory) {
           throw new Error(`Subtool '${subtool}' specified for group '${toolNameCalled}' is unknown or uncategorized.`);
         }
-        if (actualCategory !== expectedCategory) {
+        
+        // Special case for list_blocked_commands to work with both Terminal and ChangeBlockedCommands
+        if (subtool === "list_blocked_commands" &&
+            (expectedCategory === ToolCategory.Terminal || expectedCategory === ToolCategory.ChangeBlockedCommands)) {
+          // Allow this operation
+        } else if (actualCategory !== expectedCategory) {
           throw new Error(`Subtool '${subtool}' cannot be used with the '${toolNameCalled}' group. It belongs to the '${actualCategory}' group.`);
         }
       }
       
-      // For YOLO "yolo" tool, validate the subtool is not in the change_blocked_commands category
-      if (toolNameCalled === "yolo" && ToolCategories[subtool] === ToolCategory.ChangeBlockedCommands) {
-        throw new Error(`Subtool '${subtool}' cannot be used with the 'yolo' tool. Security-sensitive operations must be called directly.`);
+      // For YOLO "yolo" tool, validate the subtool is neither block_command nor unblock_command
+      if (toolNameCalled === "yolo" && (subtool === "block_command" || subtool === "unblock_command")) {
+        throw new Error(`Subtool '${subtool}' cannot be used with the 'yolo' tool. This must be used with the 'change_blocked_commands' tool.`);
       }
       
-      // For change_blocked_commands tool, ensure the subtool belongs to that category
-      if (toolNameCalled === ToolCategory.ChangeBlockedCommands && ToolCategories[subtool] !== ToolCategory.ChangeBlockedCommands) {
+      // For change_blocked_commands tool, ensure the subtool is either block_command, unblock_command, or silently allow list_blocked_commands
+      if (toolNameCalled === ToolCategory.ChangeBlockedCommands &&
+          subtool !== "block_command" &&
+          subtool !== "unblock_command" &&
+          subtool !== "list_blocked_commands") {
         throw new Error(`Subtool '${subtool}' cannot be used with the 'change_blocked_commands' tool.`);
       }
     } else if (ALL_TOOLS_METADATA[toolNameCalled]) {
@@ -439,14 +447,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         if (finalArgs.command === undefined) throw new Error("Missing 'command' for block_command");
         const blockResult = await commandManager.blockCommand(finalArgs.command);
         return {
-          content: [{ type: "text", text: blockResult }],
+          content: [{ type: "text", text: blockResult ? "Command blocked successfully" : "Command was already blocked" }],
         };
       }
       case "unblock_command": {
         if (finalArgs.command === undefined) throw new Error("Missing 'command' for unblock_command");
         const unblockResult = await commandManager.unblockCommand(finalArgs.command);
         return {
-          content: [{ type: "text", text: unblockResult }],
+          content: [{ type: "text", text: unblockResult ? "Command unblocked successfully" : "Command was not blocked" }],
         };
       }
       case "list_blocked_commands": {
