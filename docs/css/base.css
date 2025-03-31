@@ -5,7 +5,11 @@
     --light-color: #f8f8f8;
     --text-color: #444;
     --light-text: #f8f8f8;
+    --accent-color: #5865F2;
+    --accent-rgb: 88, 101, 242;
     --section-padding: 80px 0;
+    --border-radius: 12px;
+    --box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
 }
 
 * {
