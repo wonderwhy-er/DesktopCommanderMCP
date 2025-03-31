@@ -24,7 +24,7 @@ class CommandManager {
       // Handle error if needed
     }
   }
-§
+
   getBaseCommand(command: string) {
     return command.split(' ')[0].toLowerCase().trim();
   }
