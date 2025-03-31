@@ -122,7 +122,7 @@ The server provides these tool categories:
 - `move_file`: Move/rename files
 - `search_files`: Pattern-based file search
 - `get_file_info`: File metadata
-- `code_search`: Recursive ripgrep based text and code search
+- `search_code`: Recursive ripgrep based text and code search
 
 ### Edit Tools
 - `edit_block`: Apply surgical text replacements (best for changes <20% of file size)
@@ -132,9 +132,9 @@ Search/Replace Block Format:
 ```
 filepath.ext
 <<<<<<< SEARCH
-existing code to replace
+content to find
 =======
-new code to insert
+new content
 >>>>>>> REPLACE
 ```
 

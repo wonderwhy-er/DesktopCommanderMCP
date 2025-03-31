@@ -148,7 +148,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "read_file",
         description:
           "Read the complete contents of a file from the file system. " +
-          "Handles various text encodings and provides detailed error messages " +
+          "Reads UTF-8 text and provides detailed error messages " +
           "if the file cannot be read. Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema),
       },
@@ -194,7 +194,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "search_files",
         description:
-          "Recursively search for files and directories matching a pattern. " +
+          "Finds files by name using a case-insensitive substring matching. " +
           "Searches through all subdirectories from the starting path. " +
           "Only searches within allowed directories.",
         inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
@@ -230,8 +230,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "edit_block",
         description:
             "Apply surgical text replacements to files. Best for small changes (<20% of file size). " +
-            "Multiple blocks can be used for separate changes. Will verify changes after application. " +
-            "Format: filepath, then <<<<<<< SEARCH, content to find, =======, new content, >>>>>>> REPLACE.",
+            "Call repeatedly to change multiple blocks. Will verify changes after application. " +
+            "Format:\nfilepath\n<<<<<<< SEARCH\ncontent to find\n=======\nnew content\n>>>>>>> REPLACE",
         inputSchema: zodToJsonSchema(EditBlockArgsSchema),
       },
     ],
