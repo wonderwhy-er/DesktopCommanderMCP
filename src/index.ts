@@ -68,7 +68,7 @@ async function runServer() {
         return; // Don't exit on JSON parsing errors
       }
 
-      capture('mcp_run_server_uncaught_exception', {
+      capture('run_server_uncaught_exception', {
         error: errorMessage
       });
 
@@ -86,10 +86,10 @@ async function runServer() {
         return; // Don't exit on JSON parsing errors
       }
 
-      capture('mcp_run_server_unhandled_rejection', {
+      capture('run_server_unhandled_rejection', {
         error: errorMessage
       });
-      
+
       process.stderr.write(`[desktop-commander] Unhandled rejection: ${errorMessage}\n`);
       process.exit(1);
     });
@@ -108,7 +108,7 @@ async function runServer() {
       message: `Failed to start server: ${errorMessage}`
     }) + '\n');
 
-    capture('mcp_run_server_failed_start_error', {
+    capture('run_server_failed_start_error', {
       error: errorMessage
     });
     process.exit(1);
@@ -124,7 +124,7 @@ runServer().catch(async (error) => {
   }) + '\n');
 
 
-  capture('mcp_run_server_fatal_error', {
+  capture('run_server_fatal_error', {
     error: errorMessage
   });
   process.exit(1);
