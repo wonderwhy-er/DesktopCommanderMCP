@@ -515,31 +515,52 @@ npm run setup</pre>
     </section>
 
     <!-- Testimonials Section -->
-    <section class="faq" id="testimonials">
+    <section class="testimonials-section" id="testimonials">
         <div class="container">
             <div class="section-title">
                 <h2>User Testimonials</h2>
                 <p>See what developers are saying about Desktop Commander MCP</p>
             </div>
 
-            <div style="max-width: 800px; margin: 40px auto;">
-                <div style="background: white; border-radius: 10px; padding: 10px; margin-bottom: 30px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);">
-                    <img src="cases/case1.png" style="width: 100%;">
+            <div class="testimonial-carousel">
+                <div class="carousel-container">
+                    <div class="carousel-slides">
+                        <div class="carousel-slide active" data-slide="0">
+                            <img src="cases/case1.png" alt="User testimonial about Desktop Commander MCP">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="1">
+                            <img src="cases/case2.png" alt="User feedback about Desktop Commander MCP">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="2">
+                            <img src="cases/case3.png" alt="Developer testimonial for Desktop Commander MCP">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="3">
+                            <img src="cases/case4.png" alt="User review of Desktop Commander MCP">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="4">
+                            <img src="cases/case5.png" alt="Developer feedback on Desktop Commander MCP">
+                        </div>
+                    </div>
+                    
+                    <button class="carousel-arrow carousel-arrow-left" id="prevSlide">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    </button>
+                    
+                    <button class="carousel-arrow carousel-arrow-right" id="nextSlide">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
                 </div>
-
-                <div style="background: white; border-radius: 10px; padding: 10px; margin-bottom: 30px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);">
-                    <img src="cases/case2.png" style="width: 100%;">
-                </div>
-                <div style="background: white; border-radius: 10px; padding: 10px; margin-bottom: 30px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);">
-                    <img src="cases/case3.png" style="width: 100%;">
-                </div>
-
-                <div style="background: white; border-radius: 10px; padding: 10px; margin-bottom: 30px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);">
-                    <img src="cases/case4.png" style="width: 100%;">
-                </div>
-
-                <div style="background: white; border-radius: 10px; padding: 10px; margin-bottom: 30px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);">
-                    <img src="cases/case5.png" style="width: 100%;">
+                
+                <div class="carousel-indicators">
+                    <button class="indicator active" data-slide="0"></button>
+                    <button class="indicator" data-slide="1"></button>
+                    <button class="indicator" data-slide="2"></button>
+                    <button class="indicator" data-slide="3"></button>
+                    <button class="indicator" data-slide="4"></button>
                 </div>
             </div>
         </div>
