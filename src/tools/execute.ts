@@ -1,12 +1,18 @@
 import { terminalManager } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { ExecuteCommandArgsSchema, ReadOutputArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
+import {capture} from "../utils.js";
 
 export async function executeCommand(args: unknown) {
   const parsed = ExecuteCommandArgsSchema.safeParse(args);
   if (!parsed.success) {
+    capture('server_execute_command_failed');
     throw new Error(`Invalid arguments for execute_command: ${parsed.error}`);
   }
+
+  capture('server_execute_command', {
+    command: commandManager.getBaseCommand(parsed.data.command)
+  });
 
   if (!commandManager.validateCommand(parsed.data.command)) {
     throw new Error(`Command not allowed: ${parsed.data.command}`);
