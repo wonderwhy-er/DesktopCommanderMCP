@@ -277,13 +277,13 @@
             </style>
             
             <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'smithery')">Smithery Install</button>
-                <button class="tab-btn" onclick="openTab(event, 'npx')">NPX Install</button>
+                <button class="tab-btn active" onclick="openTab(event, 'npx')">NPX Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'smithery')">Smithery Install</button>
                 <button class="tab-btn" onclick="openTab(event, 'manual')">Manual Configuration</button>
                 <button class="tab-btn" onclick="openTab(event, 'local')">Local Installation</button>
             </div>
             
-            <div id="smithery" class="tab-content active">
+            <div id="smithery" class="tab-content">
                 <div class="step">
                     <div class="step-content">
                         <h3>Smithery Install</h3>
@@ -293,7 +293,7 @@
                 </div>
             </div>
             
-            <div id="npx" class="tab-content">
+            <div id="npx" class="tab-content active">
                 <div class="step">
                     <div class="step-content">
                         <h3>NPX Install</h3>
@@ -336,7 +336,6 @@ npm run setup</pre>
 </div>
 </div>
 <p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>
-            
 
         </div>
     </section>

@@ -1,6 +1,5 @@
 # Desktop Commander MCP
 
-
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://www.buymeacoffee.com/wonderwhyer)
@@ -51,20 +50,20 @@ This is server that allows Claude desktop app to execute long-running terminal c
 ## Installation
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
 
-### Option 1: Installing via Smithery
+### Option 1: Install through npx
+Just run this in terminal
+```
+npx @wonderwhy-er/desktop-commander setup
+```
+Restart Claude if running
+
+### Option 2: Installing via Smithery
 
 To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
 ```bash
 npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 ```
-
-### Option 2: Install trough npx
-Just run this in terminal
-```
-npx @wonderwhy-er/desktop-commander setup
-```
-Restart Claude if running
 
 ### Option 3: Add to claude_desktop_config by hand
 Add this entry to your claude_desktop_config.json:
@@ -263,6 +262,18 @@ No. This tool works with Claude Desktop's standard Pro subscription ($20/month),
 
 ### I'm having trouble installing or using the tool. Where can I get help?
 Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/ClaudeComputerCommander/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new) with details about your problem.
+
+## Data Collection
+
+During installation and setup, Desktop Commander collects anonymous usage data to help improve the tool. This includes:
+- Operating system information
+- Node.js and NPM versions
+- Installation method and shell environment
+- Error messages (if any occur during setup)
+
+This data is collected using PostHog analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
+
+We are currently working on adding a built-in opt-out option for this data collection in an upcoming release. For now, if you wish to opt out, you can block network connections to `eu.i.posthog.com` in your firewall settings.
 
 ## License
 
