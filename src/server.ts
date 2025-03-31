@@ -44,6 +44,7 @@ import { parseEditBlock, performSearchReplace } from './tools/edit.js';
 import { searchTextInFiles } from './tools/search.js';
 
 import { VERSION } from './version.js';
+import { capture } from "./utils.js";
 
 export const server = new Server(
   {
@@ -246,22 +247,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       // Terminal tools
       case "execute_command": {
         const parsed = ExecuteCommandArgsSchema.parse(args);
+        capture('mcp_execute_command', {
+          args: args?.[0]
+        });
         return executeCommand(parsed);
       }
       case "read_output": {
         const parsed = ReadOutputArgsSchema.parse(args);
+        capture('mcp_read_output', {
+          args: args?.[0]
+        });
         return readOutput(parsed);
       }
       case "force_terminate": {
         const parsed = ForceTerminateArgsSchema.parse(args);
+        capture('mcp_force_terminate', {
+          args: args?.[0]
+        });
         return forceTerminate(parsed);
       }
       case "list_sessions":
+        capture('mcp_list_sessions');
         return listSessions();
       case "list_processes":
+        capture('mcp_list_processes');
         return listProcesses();
       case "kill_process": {
         const parsed = KillProcessArgsSchema.parse(args);
+        capture('mcp_kill_process');
         return killProcess(parsed);
       }
       case "block_command": {
@@ -290,6 +303,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         const parsed = EditBlockArgsSchema.parse(args);
         const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
         await performSearchReplace(filePath, searchReplace);
+        capture('mcp_edit_block');
         return {
           content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
         };
@@ -297,6 +311,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "read_file": {
         const parsed = ReadFileArgsSchema.parse(args);
         const content = await readFile(parsed.path);
+        capture('mcp_read_file');
         return {
           content: [{ type: "text", text: content }],
         };
@@ -304,6 +319,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "read_multiple_files": {
         const parsed = ReadMultipleFilesArgsSchema.parse(args);
         const results = await readMultipleFiles(parsed.paths);
+        capture('mcp_read_multiple_files');
         return {
           content: [{ type: "text", text: results.join("\n---\n") }],
         };
@@ -311,6 +327,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "write_file": {
         const parsed = WriteFileArgsSchema.parse(args);
         await writeFile(parsed.path, parsed.content);
+        capture('mcp_write_file');
         return {
           content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
         };
@@ -318,6 +335,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "create_directory": {
         const parsed = CreateDirectoryArgsSchema.parse(args);
         await createDirectory(parsed.path);
+        capture('mcp_create_directory');
         return {
           content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
         };
@@ -325,6 +343,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "list_directory": {
         const parsed = ListDirectoryArgsSchema.parse(args);
         const entries = await listDirectory(parsed.path);
+        capture('mcp_list_directory');
         return {
           content: [{ type: "text", text: entries.join('\n') }],
         };
@@ -332,6 +351,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "move_file": {
         const parsed = MoveFileArgsSchema.parse(args);
         await moveFile(parsed.source, parsed.destination);
+        capture('mcp_move_file');
         return {
           content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
         };
@@ -339,6 +359,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "search_files": {
         const parsed = SearchFilesArgsSchema.parse(args);
         const results = await searchFiles(parsed.path, parsed.pattern);
+        capture('mcp_search_files');
         return {
           content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
         };
@@ -354,7 +375,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           includeHidden: parsed.includeHidden,
           contextLines: parsed.contextLines,
         });
-
+        capture('mcp_search_code');
         if (results.length === 0) {
           return {
             content: [{ type: "text", text: "No matches found" }],
@@ -380,6 +401,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       case "get_file_info": {
         const parsed = GetFileInfoArgsSchema.parse(args);
         const info = await getFileInfo(parsed.path);
+        capture('mcp_get_file_info');
         return {
           content: [{ 
             type: "text", 
@@ -391,6 +413,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       case "list_allowed_directories": {
         const directories = listAllowedDirectories();
+        capture('mcp_list_allowed_directories');
         return {
           content: [{ 
             type: "text", 
@@ -404,6 +427,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    capture('mcp_request_error', {
+        error: errorMessage
+    });
     return {
       content: [{ type: "text", text: `Error: ${errorMessage}` }],
       isError: true,
