@@ -4,6 +4,28 @@ import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { exec } from "node:child_process";
+import { PostHog } from 'posthog-node';
+import machineId from 'node-machine-id';
+
+const client = new PostHog(
+    'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
+    { 
+        host: 'https://eu.i.posthog.com',
+        flushAt: 1, // send all every time
+        flushInterval: 0 //send always
+    }
+)
+// Get a unique user ID
+const uniqueUserId = machineId.machineIdSync();
+
+client.capture({
+    distinctId: uniqueUserId,
+    event: 'npx_setup_start',
+    properties: {
+        platform: platform(),
+        timestamp: new Date().toISOString()
+    }
+});
 
 // Fix for Windows ESM path resolution
 const __filename = fileURLToPath(import.meta.url);
@@ -74,27 +96,28 @@ async function execAsync(command) {
 async function restartClaude() {
 	try {
         const platform = process.platform
-        switch (platform) {
-            case "win32":
-                // ignore errors on windows when claude is not running.
-                // just silently kill the process
-                try  {
+        // ignore errors on windows when claude is not running.
+        // just silently kill the process
+        try  {
+            switch (platform) {
+                case "win32":
+
                     await execAsync(
                         `taskkill /F /IM "Claude.exe"`,
                     )
-                } catch {}
-                break;
-            case "darwin":
-                await execAsync(
-                    `killall "Claude"`,
-                )
-                break;
-            case "linux":
-                await execAsync(
-                    `pkill -f "claude"`,
-                )
-                break;
-        }
+                    break;
+                case "darwin":
+                    await execAsync(
+                        `killall "Claude"`,
+                    )
+                    break;
+                case "linux":
+                    await execAsync(
+                        `pkill -f "claude"`,
+                    )
+                    break;
+            }
+        } catch {}
 		await new Promise((resolve) => setTimeout(resolve, 3000))
 
 		if (platform === "win32") {
@@ -108,6 +131,15 @@ async function restartClaude() {
 
 		logToFile(`Claude has been restarted.`)
 	} catch (error) {
+        client.capture({
+            distinctId: uniqueUserId,
+            event: 'npx_setup_restart_claude_error',
+            properties: {
+                platform: platform(),
+                timestamp: new Date().toISOString(),
+                error: error.message
+            }
+        });
 		logToFile(`Failed to restart Claude: ${error}`, true)
 	}
 }
@@ -116,6 +148,16 @@ async function restartClaude() {
 if (!existsSync(claudeConfigPath)) {
     logToFile(`Claude config file not found at: ${claudeConfigPath}`);
     logToFile('Creating default config file...');
+    
+    // Track new installation
+    client.capture({
+        distinctId: uniqueUserId,
+        event: 'npx_setup_create_default_config',
+        properties: {
+            platform: platform(),
+            timestamp: new Date().toISOString()
+        }
+    });
     
     // Create the directory if it doesn't exist
     const configDir = dirname(claudeConfigPath);
@@ -187,14 +229,41 @@ export default async function setup() {
 
         // Write the updated config back
         writeFileSync(claudeConfigPath, JSON.stringify(config, null, 2), 'utf8');
-
+        client.capture({
+            distinctId: uniqueUserId,
+            event: 'npx_setup_update_config',
+            properties: {
+                platform: platform(),
+                timestamp: new Date().toISOString()
+            }
+        });
         logToFile('Successfully added MCP server to Claude configuration!');
         logToFile(`Configuration location: ${claudeConfigPath}`);
         logToFile('\nTo use the server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander" in Claude\'s MCP server list');
 
         await restartClaude();
+        
+        client.capture({
+            distinctId: uniqueUserId,
+            event: 'npx_setup_complete',
+            properties: {
+                platform: platform(),
+                timestamp: new Date().toISOString()
+            }
+        });
+        await client.shutdown() 
     } catch (error) {
+        client.capture({
+            distinctId: uniqueUserId,
+            event: 'npx_setup_final_error',
+            properties: {
+                platform: platform(),
+                timestamp: new Date().toISOString(),
+                error: error.message
+            }
+        });
         logToFile(`Error updating Claude configuration: ${error}`, true);
+        await client.shutdown() 
         process.exit(1);
     }
 }
