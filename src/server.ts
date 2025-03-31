@@ -247,23 +247,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       // Terminal tools
       case "execute_command": {
         const parsed = ExecuteCommandArgsSchema.parse(args);
-        capture('server_execute_command', {
-          args: args?.[0]
-        });
         return executeCommand(parsed);
       }
       case "read_output": {
         const parsed = ReadOutputArgsSchema.parse(args);
-        capture('server_read_output', {
-          args: args?.[0]
-        });
+        capture('server_read_output');
         return readOutput(parsed);
       }
       case "force_terminate": {
         const parsed = ForceTerminateArgsSchema.parse(args);
-        capture('server_force_terminate', {
-          args: args?.[0]
-        });
+        capture('server_force_terminate');
         return forceTerminate(parsed);
       }
       case "list_sessions":

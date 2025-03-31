@@ -24,9 +24,13 @@ class CommandManager {
       // Handle error if needed
     }
   }
+§
+  getBaseCommand(command: string) {
+    return command.split(' ')[0].toLowerCase().trim();
+  }
 
   validateCommand(command: string): boolean {
-    const baseCommand = command.split(' ')[0].toLowerCase().trim();
+    const baseCommand = this.getBaseCommand(command);
     return !this.blockedCommands.has(baseCommand);
   }
 
