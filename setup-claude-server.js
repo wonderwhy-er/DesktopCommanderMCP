@@ -6,6 +6,7 @@ import { dirname } from 'path';
 import { exec } from "node:child_process";
 import { PostHog } from 'posthog-node';
 import machineId from 'node-machine-id';
+import { version as nodeVersion } from 'process';
 
 const client = new PostHog(
     'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
@@ -18,14 +19,113 @@ const client = new PostHog(
 // Get a unique user ID
 const uniqueUserId = machineId.machineIdSync();
 
-client.capture({
+// Function to get npm version
+async function getNpmVersion() {
+  try {
+    return new Promise((resolve, reject) => {
+      exec('npm --version', (error, stdout, stderr) => {
+        if (error) {
+          resolve('unknown');
+          return;
+        }
+        resolve(stdout.trim());
+      });
+    });
+  } catch (error) {
+    return 'unknown';
+  }
+}
+
+// Function to detect shell environment
+function detectShell() {
+  // Check for Windows shells
+  if (process.platform === 'win32') {
+    if (process.env.TERM_PROGRAM === 'vscode') return 'vscode-terminal';
+    if (process.env.WT_SESSION) return 'windows-terminal';
+    if (process.env.SHELL?.includes('bash')) return 'git-bash';
+    if (process.env.TERM?.includes('xterm')) return 'xterm-on-windows';
+    if (process.env.ComSpec?.toLowerCase().includes('powershell')) return 'powershell';
+    if (process.env.PROMPT) return 'cmd';
+    
+    // WSL detection
+    if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) {
+      return `wsl-${process.env.WSL_DISTRO_NAME || 'unknown'}`;
+    }
+
+    return 'windows-unknown';
+  }
+  
+  // Unix-based shells
+  if (process.env.SHELL) {
+    const shellPath = process.env.SHELL.toLowerCase();
+    if (shellPath.includes('bash')) return 'bash';
+    if (shellPath.includes('zsh')) return 'zsh';
+    if (shellPath.includes('fish')) return 'fish';
+    if (shellPath.includes('ksh')) return 'ksh';
+    if (shellPath.includes('csh')) return 'csh';
+    if (shellPath.includes('dash')) return 'dash';
+    return `other-unix-${shellPath.split('/').pop()}`;
+  }
+  
+  // Terminal emulators and IDE terminals
+  if (process.env.TERM_PROGRAM) {
+    return process.env.TERM_PROGRAM.toLowerCase();
+  }
+  
+  return 'unknown-shell';
+}
+
+// Function to determine execution context
+function getExecutionContext() {
+  // Check if running from npx
+  const isNpx = process.env.npm_lifecycle_event === 'npx' || 
+                process.env.npm_execpath?.includes('npx') ||
+                process.env._?.includes('npx') ||
+                import.meta.url.includes('node_modules');
+  
+  // Check if installed globally
+  const isGlobal = process.env.npm_config_global === 'true' ||
+                   process.argv[1]?.includes('node_modules/.bin');
+  
+  // Check if it's run from a script in package.json
+  const isNpmScript = !!process.env.npm_lifecycle_script;
+  
+  return {
+    runMethod: isNpx ? 'npx' : (isGlobal ? 'global' : (isNpmScript ? 'npm_script' : 'direct')),
+    isCI: !!process.env.CI || !!process.env.GITHUB_ACTIONS || !!process.env.TRAVIS || !!process.env.CIRCLECI,
+    shell: detectShell()
+  };
+}
+
+// Helper function to get standard environment properties for tracking
+let npmVersionCache = null;
+async function getTrackingProperties(additionalProps = {}) {
+  if (npmVersionCache === null) {
+    npmVersionCache = await getNpmVersion();
+  }
+  
+  const context = getExecutionContext();
+  
+  return {
+    platform: platform(),
+    nodeVersion: nodeVersion,
+    npmVersion: npmVersionCache,
+    executionContext: context.runMethod,
+    isCI: context.isCI,
+    shell: context.shell,
+    timestamp: new Date().toISOString(),
+    ...additionalProps
+  };
+}
+
+// Initial tracking
+(async () => {
+  client.capture({
     distinctId: uniqueUserId,
     event: 'npx_setup_start',
-    properties: {
-        platform: platform(),
-        timestamp: new Date().toISOString()
-    }
-});
+    properties: await getTrackingProperties()
+  });
+})();
 
 // Fix for Windows ESM path resolution
 const __filename = fileURLToPath(import.meta.url);
@@ -134,11 +234,7 @@ async function restartClaude() {
         client.capture({
             distinctId: uniqueUserId,
             event: 'npx_setup_restart_claude_error',
-            properties: {
-                platform: platform(),
-                timestamp: new Date().toISOString(),
-                error: error.message
-            }
+            properties: await getTrackingProperties({ error: error.message })
         });
 		logToFile(`Failed to restart Claude: ${error}`, true)
 	}
@@ -153,10 +249,7 @@ if (!existsSync(claudeConfigPath)) {
     client.capture({
         distinctId: uniqueUserId,
         event: 'npx_setup_create_default_config',
-        properties: {
-            platform: platform(),
-            timestamp: new Date().toISOString()
-        }
+        properties: await getTrackingProperties()
     });
     
     // Create the directory if it doesn't exist
@@ -232,10 +325,7 @@ export default async function setup() {
         client.capture({
             distinctId: uniqueUserId,
             event: 'npx_setup_update_config',
-            properties: {
-                platform: platform(),
-                timestamp: new Date().toISOString()
-            }
+            properties: await getTrackingProperties()
         });
         logToFile('Successfully added MCP server to Claude configuration!');
         logToFile(`Configuration location: ${claudeConfigPath}`);
@@ -246,21 +336,14 @@ export default async function setup() {
         client.capture({
             distinctId: uniqueUserId,
             event: 'npx_setup_complete',
-            properties: {
-                platform: platform(),
-                timestamp: new Date().toISOString()
-            }
+            properties: await getTrackingProperties()
         });
         await client.shutdown() 
     } catch (error) {
         client.capture({
             distinctId: uniqueUserId,
             event: 'npx_setup_final_error',
-            properties: {
-                platform: platform(),
-                timestamp: new Date().toISOString(),
-                error: error.message
-            }
+            properties: await getTrackingProperties({ error: error.message })
         });
         logToFile(`Error updating Claude configuration: ${error}`, true);
         await client.shutdown() 
