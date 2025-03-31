@@ -250,13 +250,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         return executeCommand(parsed);
       }
       case "read_output": {
-        const parsed = ReadOutputArgsSchema.parse(args);
         capture('server_read_output');
+        const parsed = ReadOutputArgsSchema.parse(args);
         return readOutput(parsed);
       }
       case "force_terminate": {
-        const parsed = ForceTerminateArgsSchema.parse(args);
         capture('server_force_terminate');
+        const parsed = ForceTerminateArgsSchema.parse(args);
         return forceTerminate(parsed);
       }
       case "list_sessions":
@@ -266,11 +266,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         capture('server_list_processes');
         return listProcesses();
       case "kill_process": {
-        const parsed = KillProcessArgsSchema.parse(args);
         capture('server_kill_process');
+        const parsed = KillProcessArgsSchema.parse(args);
         return killProcess(parsed);
       }
       case "block_command": {
+        capture('server_block_command');
         const parsed = BlockCommandArgsSchema.parse(args);
         const blockResult = await commandManager.blockCommand(parsed.command);
         return {
@@ -278,6 +279,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
       case "unblock_command": {
+        capture('server_unblock_command');
         const parsed = UnblockCommandArgsSchema.parse(args);
         const unblockResult = await commandManager.unblockCommand(parsed.command);
         return {
@@ -285,6 +287,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
       case "list_blocked_commands": {
+        capture('server_list_blocked_commands');
         const blockedCommands = await commandManager.listBlockedCommands();
         return {
           content: [{ type: "text", text: blockedCommands.join('\n') }],
@@ -293,71 +296,72 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       
       // Filesystem tools
       case "edit_block": {
+        capture('server_edit_block');
         const parsed = EditBlockArgsSchema.parse(args);
         const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
         await performSearchReplace(filePath, searchReplace);
-        capture('server_edit_block');
         return {
           content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
         };
       }
       case "read_file": {
+        capture('server_read_file');
         const parsed = ReadFileArgsSchema.parse(args);
         const content = await readFile(parsed.path);
-        capture('server_read_file');
         return {
           content: [{ type: "text", text: content }],
         };
       }
       case "read_multiple_files": {
+        capture('server_read_multiple_files');
         const parsed = ReadMultipleFilesArgsSchema.parse(args);
         const results = await readMultipleFiles(parsed.paths);
-        capture('server_read_multiple_files');
         return {
           content: [{ type: "text", text: results.join("\n---\n") }],
         };
       }
       case "write_file": {
+        capture('server_write_file');
         const parsed = WriteFileArgsSchema.parse(args);
         await writeFile(parsed.path, parsed.content);
-        capture('server_write_file');
         return {
           content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
         };
       }
       case "create_directory": {
+        capture('server_create_directory');
         const parsed = CreateDirectoryArgsSchema.parse(args);
         await createDirectory(parsed.path);
-        capture('server_create_directory');
         return {
           content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
         };
       }
       case "list_directory": {
+        capture('server_list_directory');
         const parsed = ListDirectoryArgsSchema.parse(args);
         const entries = await listDirectory(parsed.path);
-        capture('server_list_directory');
         return {
           content: [{ type: "text", text: entries.join('\n') }],
         };
       }
       case "move_file": {
+        capture('server_move_file');
         const parsed = MoveFileArgsSchema.parse(args);
         await moveFile(parsed.source, parsed.destination);
-        capture('server_move_file');
         return {
           content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
         };
       }
       case "search_files": {
+        capture('server_search_files');
         const parsed = SearchFilesArgsSchema.parse(args);
         const results = await searchFiles(parsed.path, parsed.pattern);
-        capture('server_search_files');
         return {
           content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
         };
       }
       case "search_code": {
+        capture('server_search_code');
         const parsed = SearchCodeArgsSchema.parse(args);
         const results = await searchTextInFiles({
           rootPath: parsed.path,
@@ -368,7 +372,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           includeHidden: parsed.includeHidden,
           contextLines: parsed.contextLines,
         });
-        capture('server_search_code');
         if (results.length === 0) {
           return {
             content: [{ type: "text", text: "No matches found" }],
@@ -392,9 +395,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
       case "get_file_info": {
+        capture('server_get_file_info');
         const parsed = GetFileInfoArgsSchema.parse(args);
         const info = await getFileInfo(parsed.path);
-        capture('server_get_file_info');
         return {
           content: [{ 
             type: "text", 
@@ -416,6 +419,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
 
       default:
+        capture('server_unknow_tool', {
+            name
+        });
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
