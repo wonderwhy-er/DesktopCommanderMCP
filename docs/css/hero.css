@@ -37,6 +37,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    overflow: hidden;
     gap: 30px;
     width: 100%;
 }
@@ -106,10 +107,14 @@
     display: flex;
     gap: 10px;
     margin-bottom: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    max-width: 100%;
 }
 
 .badges img {
     height: 20px;
+    max-width: 100%;
 }
 
 .hero-btns {
