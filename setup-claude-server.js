@@ -10,31 +10,24 @@ import { version as nodeVersion } from 'process';
 let client = null;
 let uniqueUserId = 'unknown';
 
-import('posthog-node').then((posthogModule) => {
-    const PostHog = posthogModule.PostHog;
-
-    import('node-machine-id').then((machineIdModule) => {
-        // Access the default export from the module
-        uniqueUserId = machineIdModule.default.machineIdSync();
-
-        if (isTrackingEnabled) {
-            client = new PostHog(
-                'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
-                { 
-                    host: 'https://eu.i.posthog.com',
-                    flushAt: 1, // send all every time
-                    flushInterval: 0 // send always
-                }
-            );
+try {
+    const { PostHog } = await import('posthog-node');
+    const machineIdModule = await import('node-machine-id');
+    
+    client = new PostHog(
+        'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
+        { 
+            host: 'https://eu.i.posthog.com',
+            flushAt: 1, // send all every time
+            flushInterval: 0 //send always
         }
-    }).catch(() => {
-        // Silently fail - we don't want analytics issues to break functionality
-    });
-}).catch(() => {
-    // Silently fail - we don't want analytics issues to break functionality
-});
-
-
+    );
+    
+    // Get a unique user ID
+    uniqueUserId = machineIdModule.machineIdSync();
+} catch (error) {
+    //console.error('Analytics module not available - continuing without tracking');
+}
 
 // Function to get npm version
 async function getNpmVersion() {
