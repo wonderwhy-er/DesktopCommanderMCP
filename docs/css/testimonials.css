@@ -72,6 +72,9 @@
     display: block;
     border-radius: 8px;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+    transform: scale(3); /* Make testimonial images 3x larger */
+    transform-origin: center;
+    margin: 100px 0; /* Add vertical margin to accommodate larger size */
 }
 
 /* Carousel Navigation */

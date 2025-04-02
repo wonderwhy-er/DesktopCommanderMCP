@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>Desktop Commander MCP - Terminal Commands and File Editing for Claude</title>
     
     <!-- SEO Meta Tags -->
@@ -74,8 +74,38 @@
             }
         }
     </script>
-        <!-- CSS Files -->
+        <!-- Preload critical CSS and images -->
+    <link rel="preload" href="css/main.css" as="style">
+    <link rel="preload" href="optimized_images/header.webp" as="image">
+    <link rel="preload" href="optimized_images/logo.webp" as="image">
+
+    <!-- Critical CSS -->
     <link rel="stylesheet" href="css/main.css">
+
+    <!-- Inline critical CSS for initial render -->
+    <style>
+        /* Basic styles for initial render */
+        :root {
+            --text-color-high-contrast: #f8f9fa;
+            --section-text-color: #121212;
+        }
+        body { margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .container { width: 92%; max-width: 1200px; margin: 0 auto; padding: 0 15px; }
+        .header-container { display: flex; align-items: center; justify-content: space-between; padding: 15px 0; }
+        .hero-header-image { max-width: 100%; height: auto; }
+        /* Improve contrast for section text */
+        .section-title p, .feature-card p, .how-it-works p,
+        .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 500; }
+        /* Improve contrast for buttons and links */
+        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 600; }
+        /* Additional contrast improvements */
+        .feature-card h3, .community-card h3, .accordion-header span { color: #121212; }
+        .accordion-body p, .accordion-body li { color: #121212; }
+        .discord-community-container p { color: #121212; font-weight: 500; }
+        .footer-column p { color: #e6e6e6; font-weight: 500; }
+        .download-card h3 { color: #ffffff; font-weight: 600; }
+        .download-card p { color: #f8f9fa; font-weight: 500; }
+    </style>
     <script>
         !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
         posthog.init('phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063', {
@@ -89,7 +119,7 @@
     <header>
         <div class="container header-container">
             <a href="#" class="logo">
-                <img src="logo.png" alt="Logo" width="40" height="40" /> &nbsp;
+                <img src="optimized_images/logo.webp" alt="Logo" width="40" height="40" /> &nbsp;
                 DesktopCommander
             </a>
             
@@ -116,7 +146,7 @@
             <div class="hero-wrapper">
                 <div class="hero-content">
                     <h1>Search, update, manage files and run terminal commands with AI</h1>
-                    <p>Execute terminal commands and edit files with Claude AI. Terminal commands and diff based file editing for Claude Desktop app.</p>
+                    <p style="color: #f0f0f0; font-weight: 500;">Execute terminal commands and edit files with Claude AI. Terminal commands and diff based file editing for Claude Desktop app.</p>
                     <div class="badges">
                         <div class="badge-row">
                             <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank">
@@ -149,7 +179,7 @@
                 </div>
                 <div class="hero-image-container">
                     <div class="image-glow-wrapper">
-                        <img src="header.png" alt="Desktop Commander Interface" class="hero-header-image">
+                        <img src="optimized_images/header.webp" alt="Desktop Commander Interface" class="hero-header-image">
                     </div>
                 </div>
             </div>
@@ -161,7 +191,7 @@
         <div class="container">
             <div class="section-title">
                 <h2>Features</h2>
-                <p>Desktop Commander MCP provides powerful tools for terminal and file operations</p>
+                <p style="color: #121212; font-weight: 500;">Desktop Commander MCP provides powerful tools for terminal and file operations</p>
             </div>
             
             <div class="features-grid">
@@ -248,8 +278,8 @@
         <div class="container">
             <div class="section-title">
                 <h2>Installation</h2>
-                <p>Getting started with Desktop Commander MCP is quick and easy</p>
-                <p>There are multiple options how to install DesktopCommanderMCP</p>
+                <p style="color: #121212; font-weight: 500;">Getting started with Desktop Commander MCP is quick and easy</p>
+                <p style="color: #121212; font-weight: 500;">There are multiple options how to install DesktopCommanderMCP</p>
             </div>
             
             <style>
@@ -262,13 +292,16 @@
                 
                 .tab-btn {
                     padding: 12px 24px;
+                    margin: 0 4px;
                     background: transparent;
                     border: none;
                     cursor: pointer;
                     font-weight: 600;
-                    color: #777;
+                    color: #121212;
                     position: relative;
                     transition: all 0.3s ease;
+                    min-width: 44px;
+                    min-height: 44px;
                 }
                 
                 .tab-btn:hover {
@@ -300,10 +333,10 @@
             </style>
             
             <div class="tabs">
-                <button class="tab-btn active" onclick="openTab(event, 'npx')">NPX Install</button>
-                <button class="tab-btn" onclick="openTab(event, 'smithery')">Smithery Install</button>
-                <button class="tab-btn" onclick="openTab(event, 'manual')">Manual Configuration</button>
-                <button class="tab-btn" onclick="openTab(event, 'local')">Local Installation</button>
+                <button class="tab-btn active" onclick="openTab(event, 'npx')" style="color: #0056b3;">NPX Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 500;">Smithery Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 500;">Manual Configuration</button>
+                <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 500;">Local Installation</button>
             </div>
             
             <div id="smithery" class="tab-content">
@@ -376,7 +409,7 @@ npm run setup</pre>
                 <h2>Usage Examples</h2>
                 <p>Desktop Commander MCP provides powerful terminal commands and file operations for Claude AI</p>
             </div>
-            
+
             
             <div class="download-options">
                 <div class="download-card">
@@ -495,7 +528,7 @@ npm run setup</pre>
         <div class="container">
             <div class="section-title">
                 <h2>Join Our Community</h2>
-                <p>Connect with other users and contributors to share ideas, get help, and contribute to the project.</p>
+                <p style="color: #121212; font-weight: 500;">Connect with other users and contributors to share ideas, get help, and contribute to the project.</p>
             </div>
             
             <div class="community-links">
@@ -541,41 +574,41 @@ npm run setup</pre>
                 <div class="carousel-container">
                     <div class="carousel-slides">
                         <div class="carousel-slide active" data-slide="0">
-                            <img src="cases/case1.png" alt="User testimonial about Desktop Commander MCP">
+                            <img src="optimized_images/case1-large.webp" alt="User testimonial about Desktop Commander MCP" loading="lazy" width="1200" height="975">
                         </div>
                         
                         <div class="carousel-slide" data-slide="1">
-                            <img src="cases/case2.png" alt="User feedback about Desktop Commander MCP">
+                            <img src="optimized_images/case2-large.webp" alt="User feedback about Desktop Commander MCP" loading="lazy" width="1200" height="161">
                         </div>
                         
                         <div class="carousel-slide" data-slide="2">
-                            <img src="cases/case3.png" alt="Developer testimonial for Desktop Commander MCP">
+                            <img src="optimized_images/case3-large.webp" alt="Developer testimonial for Desktop Commander MCP" loading="lazy" width="1200" height="366">
                         </div>
                         
                         <div class="carousel-slide" data-slide="3">
-                            <img src="cases/case4.png" alt="User review of Desktop Commander MCP">
+                            <img src="optimized_images/case4-large.webp" alt="User review of Desktop Commander MCP" loading="lazy" width="1200" height="362">
                         </div>
                         
                         <div class="carousel-slide" data-slide="4">
-                            <img src="cases/case5.png" alt="Developer feedback on Desktop Commander MCP">
+                            <img src="optimized_images/case5-large.webp" alt="Developer feedback on Desktop Commander MCP" loading="lazy" width="1200" height="220">
                         </div>
                     </div>
                     
-                    <button class="carousel-arrow carousel-arrow-left" id="prevSlide">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <button class="carousel-arrow carousel-arrow-left" id="prevSlide" aria-label="Previous testimonial">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     </button>
                     
-                    <button class="carousel-arrow carousel-arrow-right" id="nextSlide">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    <button class="carousel-arrow carousel-arrow-right" id="nextSlide" aria-label="Next testimonial">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
                     </button>
                 </div>
                 
                 <div class="carousel-indicators">
-                    <button class="indicator active" data-slide="0"></button>
-                    <button class="indicator" data-slide="1"></button>
-                    <button class="indicator" data-slide="2"></button>
-                    <button class="indicator" data-slide="3"></button>
-                    <button class="indicator" data-slide="4"></button>
+                    <button class="indicator active" data-slide="0" aria-label="Go to slide 1" aria-current="true"></button>
+                    <button class="indicator" data-slide="1" aria-label="Go to slide 2"></button>
+                    <button class="indicator" data-slide="2" aria-label="Go to slide 3"></button>
+                    <button class="indicator" data-slide="3" aria-label="Go to slide 4"></button>
+                    <button class="indicator" data-slide="4" aria-label="Go to slide 5"></button>
                 </div>
             </div>
         </div>
@@ -586,7 +619,7 @@ npm run setup</pre>
         <div class="container">
             <div class="section-title">
                 <h2>Frequently Asked Questions</h2>
-                <p>Find answers to common questions about Desktop Commander MCP</p>
+                <p style="color: #121212; font-weight: 500;">Find answers to common questions about Desktop Commander MCP</p>
             </div>
             
             <!-- Add structured data to improve SEO -->
@@ -769,8 +802,8 @@ npm run setup</pre>
             <div class="discord-community-container">
                 <h3>Need help or have questions?</h3>
                 <p>Join our Discord community for real-time support, discussions, and updates.</p>
-                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#5865F2" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link" style="font-weight: 600;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#5865F2" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                     Join our Discord Server
                 </a>
             </div>
@@ -783,26 +816,26 @@ npm run setup</pre>
             <div class="footer-content">
                 <div class="footer-column">
                     <div class="footer-logo">
-                        <img src="logo.png" alt="Logo" width="30" height="30">
+                        <img src="optimized_images/logo.webp" alt="Logo" width="30" height="30">
                         <h3>Desktop Commander MCP</h3>
                     </div>
                     <p>An open-source tool that enables terminal commands and file editing for Claude Desktop app.</p>
                     <br />
                     <div class="social-links">
-                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank" aria-label="GitHub Repository">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
                         </a>
-                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" aria-label="Discord Server">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                         </a>
-                        <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-package"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank" aria-label="NPM Package">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-package" aria-hidden="true"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                         </a>
-                        <a href="https://bsky.app/profile/dcommandermcp.bsky.social" target="_blank">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                        <a href="https://bsky.app/profile/dcommandermcp.bsky.social" target="_blank" aria-label="Bluesky Profile">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
                         </a>
-                        <a href="https://x.com/DCommander_MCP" target="_blank">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"></path></svg>
+                        <a href="https://x.com/DCommander_MCP" target="_blank" aria-label="X (Twitter) Profile">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"></path></svg>
                         </a>
                     </div>
                 </div>
@@ -836,8 +869,8 @@ npm run setup</pre>
         </div>
     </footer>
 
-        <!-- JavaScript -->
-    <script src="js/main.js"></script>
+        <!-- JavaScript - Load asynchronously -->
+    <script src="js/main.js" defer></script>
 
 </body>
 </html>
