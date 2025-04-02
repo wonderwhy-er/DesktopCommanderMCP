@@ -76,8 +76,14 @@
     </script>
         <!-- Preload critical CSS and images -->
     <link rel="preload" href="css/main.css" as="style">
+    <link rel="preload" href="css/header.css" as="style">
+    <link rel="preload" href="css/hero.css" as="style">
+    <link rel="preload" href="css/base.css" as="style">
     <link rel="preload" href="optimized_images/header.webp" as="image">
     <link rel="preload" href="optimized_images/logo.webp" as="image">
+    <!-- Preload critical fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
     <!-- Critical CSS -->
     <link rel="stylesheet" href="css/main.css">
@@ -88,11 +94,100 @@
         :root {
             --text-color-high-contrast: #f8f9fa;
             --section-text-color: #121212;
+            --primary-color: #171717;
+            --light-text: #ffffff;
+            --accent-color: #5865F2;
         }
-        body { margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        .container { width: 92%; max-width: 1200px; margin: 0 auto; padding: 0 15px; }
-        .header-container { display: flex; align-items: center; justify-content: space-between; padding: 15px 0; }
-        .hero-header-image { max-width: 100%; height: auto; }
+        /* Set body with no margin to prevent shifts */
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            overflow-x: hidden;
+        }
+        /* Critical container dimensions that prevent layout shifts */
+        .container { 
+            width: 92%; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 0 15px;
+            box-sizing: border-box;
+        }
+        /* Set fixed header height to prevent jumps */
+        header {
+            background: #171717;
+            color: #ffffff;
+            padding: 20px 0;
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            height: 80px;
+            box-sizing: border-box;
+        }
+        /* Constrain header layout */
+        .header-container { 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            padding: 0;
+            height: 40px;
+        }
+        /* Set hero section height and margin */
+        .hero {
+            background: #171717;
+            min-height: 90vh;
+            margin-top: 80px;
+            padding: 40px 0 60px 0;
+            display: flex;
+            align-items: center;
+            box-sizing: border-box;
+        }
+        /* Reserve space for hero image */
+        .hero-image-container {
+            flex: 1;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            height: 450px;
+        }
+        /* Make sure image has explicit dimensions */
+        .hero-header-image { 
+            max-width: 100%; 
+            height: auto;
+            width: auto;
+            border-radius: 8px;
+        }
+        /* Constrain content area dimensions */
+        .hero-content {
+            flex: 1;
+            max-width: 550px;
+        }
+        /* Set font sizes explicitly */
+        .hero h1 {
+            font-size: 2.8rem;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+        .hero p {
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        /* Discord button explicit styling */
+        .discord-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background-color: #5865F2;
+            font-weight: 600;
+            padding: 12px 24px;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
         /* Improve contrast for section text */
         .section-title p, .feature-card p, .how-it-works p,
         .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 500; }
@@ -105,6 +200,34 @@
         .footer-column p { color: #e6e6e6; font-weight: 500; }
         .download-card h3 { color: #ffffff; font-weight: 600; }
         .download-card p { color: #f8f9fa; font-weight: 500; }
+
+        /* Pre-set dimensions for nav menu to prevent shifts */
+        nav ul {
+            display: flex;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        nav ul li {
+            margin-left: 30px;
+        }
+        nav ul li a {
+            color: white;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        /* Badge sizing */
+        .badges {
+            margin-bottom: 25px;
+        }
+        .badge-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .badges img {
+            height: 20px;
+        }
     </style>
     <script>
         !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
@@ -167,7 +290,7 @@
                         </div>
                     </div>
                     <div class="hero-btns">
-                        <a href="https://discord.gg/kQ27sNnZr7" class="btn discord-btn">
+                        <a href="https://discord.gg/kQ27sNnZr7" class="btn discord-btn" style="background-color: #5865F2;">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                             JOIN DISCORD
                         </a>
@@ -802,7 +925,7 @@ npm run setup</pre>
             <div class="discord-community-container">
                 <h3>Need help or have questions?</h3>
                 <p>Join our Discord community for real-time support, discussions, and updates.</p>
-                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link" style="font-weight: 600;">
+                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link" style="font-weight: 600; color: #5865F2;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#5865F2" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                     Join our Discord Server
                 </a>

@@ -6,6 +6,25 @@ function loadCSS(url) {
     document.head.appendChild(link);
 }
 
+// Load critical CSS files immediately (synchronously)
+(function() {
+    // Critical CSS files - needed for above-the-fold content
+    var criticalCSSFiles = [
+        'css/base.css',
+        'css/header.css',
+        'css/hero.css'
+    ];
+    
+    // Load critical CSS files immediately
+    criticalCSSFiles.forEach(function(url) {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = url;
+        // Using insertBefore to add them before scripts to ensure they load faster
+        document.head.insertBefore(link, document.head.firstChild);
+    });
+})();
+
 // Load non-critical CSS files asynchronously after page load
 window.addEventListener('load', function() {
     // List of non-critical CSS files
@@ -17,14 +36,11 @@ window.addEventListener('load', function() {
         'css/faq.css',
         'css/testimonials.css',
         'css/features.css',
-        'css/hero.css',
         'css/community.css',
-        'css/usage.css',
-        'css/header.css',
-        'css/base.css'
+        'css/usage.css'
     ];
     
-    // Load each CSS file
+    // Load each CSS file asynchronously
     cssFiles.forEach(function(url) {
         loadCSS(url);
     });
@@ -51,54 +67,27 @@ function openTab(evt, tabName) {
     evt.currentTarget.classList.add("active");
 }
 
-// Carousel functionality
+// Make the openTab function available globally
+window.openTab = openTab;
+
+// Initialize any elements that require it
 document.addEventListener('DOMContentLoaded', function() {
-    const slides = document.querySelectorAll('.carousel-slide');
-    const indicators = document.querySelectorAll('.indicator');
-    const prevBtn = document.getElementById('prevSlide');
-    const nextBtn = document.getElementById('nextSlide');
-    let currentSlide = 0;
-    
-    // Function to show a specific slide
-    function showSlide(n) {
-        // Hide all slides
-        slides.forEach(slide => {
-            slide.classList.remove('active');
-        });
-        
-        // Remove active class from all indicators
-        indicators.forEach(indicator => {
-            indicator.classList.remove('active');
-        });
-        
-        // Show the selected slide and indicator
-        slides[n].classList.add('active');
-        indicators[n].classList.add('active');
-        currentSlide = n;
+    // Initialize first FAQ item as open if it exists
+    const firstAccordionItem = document.querySelector('.accordion-item');
+    if (firstAccordionItem) {
+        firstAccordionItem.classList.add('active');
     }
     
-    // Next slide
-    function nextSlide() {
-        const next = (currentSlide + 1) % slides.length;
-        showSlide(next);
-    }
+    // Mobile menu toggle
+    const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+    const nav = document.querySelector('nav');
     
-    // Previous slide
-    function prevSlide() {
-        const prev = (currentSlide - 1 + slides.length) % slides.length;
-        showSlide(prev);
-    }
-    
-    // Event listeners
-    prevBtn.addEventListener('click', prevSlide);
-    nextBtn.addEventListener('click', nextSlide);
-    
-    // Click on indicators
-    indicators.forEach((indicator, index) => {
-        indicator.addEventListener('click', () => {
-            showSlide(index);
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener('click', function() {
+            nav.classList.toggle('active');
+            this.classList.toggle('active');
         });
-    });
+    }
     
     // Accordion functionality
     const accordionHeaders = document.querySelectorAll('.accordion-header');
@@ -119,17 +108,209 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // Mobile menu toggle
-    const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-    const nav = document.querySelector('nav');
+    // Initialize testimonial carousel
+    initTestimonialCarousel();
+});
+
+// Testimonial Carousel Implementation
+function initTestimonialCarousel() {
+    const carousel = document.querySelector('.testimonial-carousel');
+    if (!carousel) return;
     
-    if (mobileMenuBtn) {
-        mobileMenuBtn.addEventListener('click', function() {
-            nav.classList.toggle('active');
-            this.classList.toggle('active');
+    const slides = document.querySelectorAll('.carousel-slide');
+    const prevBtn = document.getElementById('prevSlide');
+    const nextBtn = document.getElementById('nextSlide');
+    const indicators = document.querySelectorAll('.indicator');
+    
+    if (!slides.length || !prevBtn || !nextBtn) return;
+    
+    let currentSlide = 0;
+    const totalSlides = slides.length;
+    
+    // Preload all images to get their dimensions and reduce jumping
+    function preloadImages() {
+        const allImages = [];
+        let maxHeight = 0;
+        let loadedCount = 0;
+        
+        slides.forEach(slide => {
+            const img = slide.querySelector('img');
+            if (!img) return;
+            
+            // Check if already loaded or load it
+            if (img.complete) {
+                const height = img.offsetHeight;
+                maxHeight = Math.max(maxHeight, height);
+                loadedCount++;
+                
+                // If all images loaded, set the container height
+                if (loadedCount === slides.length) {
+                    setInitialContainerHeight(maxHeight);
+                }
+            } else {
+                img.addEventListener('load', () => {
+                    const height = img.offsetHeight;
+                    maxHeight = Math.max(maxHeight, height);
+                    loadedCount++;
+                    
+                    // If all images loaded, set the container height
+                    if (loadedCount === slides.length) {
+                        setInitialContainerHeight(maxHeight);
+                    }
+                });
+            }
+            
+            allImages.push(img);
         });
+        
+        // If no images or all already loaded, set container height
+        if (allImages.length === 0 || loadedCount === slides.length) {
+            setInitialContainerHeight(maxHeight);
+        }
     }
     
-    // Auto-rotate carousel every 5 seconds
-    setInterval(nextSlide, 5000);
+    // Set initial container height to the tallest slide
+    function setInitialContainerHeight(height) {
+        // Set a reasonable fixed height instead of calculating it dynamically
+        // This prevents layout jumps while images are still loading
+        const fixedHeight = 750; // Fixed height to prevent jumps
+        const slidesContainer = document.querySelector('.carousel-slides');
+        slidesContainer.style.height = fixedHeight + 'px';
+        
+        // Now we can start properly transitioning between slides
+        slidesContainer.classList.add('height-initialized');
+    }
+    
+    // Update height when changing slides (smoother than initial setup)
+    function updateCarouselHeight() {
+        const activeSlide = document.querySelector('.carousel-slide.active');
+        if (!activeSlide) return;
+        
+        const img = activeSlide.querySelector('img');
+        if (!img || !img.complete) return;
+        
+        // Add a small padding to avoid cutting off bottom of image
+        const height = img.offsetHeight + 20;
+        const slidesContainer = document.querySelector('.carousel-slides');
+        
+        // Only update if necessary and if significant difference
+        const currentHeight = parseInt(slidesContainer.style.height);
+        if (Math.abs(currentHeight - height) > 10) {
+            slidesContainer.style.height = height + 'px';
+        }
+    }
+    
+    // Show a specific slide
+    function showSlide(index) {
+        if (index < 0) index = totalSlides - 1;
+        if (index >= totalSlides) index = 0;
+        
+        // Update slides
+        slides.forEach((slide, i) => {
+            slide.classList.toggle('active', i === index);
+        });
+        
+        // Update indicators
+        indicators.forEach((indicator, i) => {
+            indicator.classList.toggle('active', i === index);
+            // Update aria-current attribute for accessibility
+            if (i === index) {
+                indicator.setAttribute('aria-current', 'true');
+            } else {
+                indicator.removeAttribute('aria-current');
+            }
+        });
+        
+        currentSlide = index;
+        updateCarouselHeight();
+    }
+    
+    // Event listeners for navigation
+    prevBtn.addEventListener('click', () => {
+        showSlide(currentSlide - 1);
+    });
+    
+    nextBtn.addEventListener('click', () => {
+        showSlide(currentSlide + 1);
+    });
+    
+    // Indicator clicks
+    indicators.forEach((indicator, index) => {
+        indicator.addEventListener('click', () => {
+            showSlide(index);
+        });
+    });
+    
+    // Preload images to reduce jumping
+    preloadImages();
+    
+    // Initialize with the first slide
+    showSlide(0);
+    
+    // Handle window resize
+    window.addEventListener('resize', updateCarouselHeight);
+    
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+            showSlide(currentSlide - 1);
+        } else if (e.key === 'ArrowRight') {
+            showSlide(currentSlide + 1);
+        }
+    });
+    
+    // Touch swipe support for mobile
+    let touchStartX = 0;
+    let touchEndX = 0;
+    
+    const handleSwipe = () => {
+        const diff = touchStartX - touchEndX;
+        if (Math.abs(diff) > 50) { // Threshold to detect a swipe
+            if (diff > 0) {
+                // Swipe left, show next slide
+                showSlide(currentSlide + 1);
+            } else {
+                // Swipe right, show previous slide
+                showSlide(currentSlide - 1);
+            }
+        }
+    };
+    
+    carousel.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+    });
+    
+    carousel.addEventListener('touchend', (e) => {
+        touchEndX = e.changedTouches[0].screenX;
+        handleSwipe();
+    });
+}
+
+// Smooth Scrolling
+document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+            window.scrollTo({
+                top: target.offsetTop - 80,
+                behavior: 'smooth'
+            });
+        }
+        
+        // Close mobile menu if open
+        const nav = document.querySelector('nav');
+        if (nav && nav.classList.contains('active')) {
+            nav.classList.remove('active');
+        }
+    });
+});
+
+// Sticky Header
+window.addEventListener('scroll', () => {
+    const header = document.querySelector('header');
+    if (header) {
+        header.classList.toggle('sticky', window.scrollY > 0);
+    }
 });
