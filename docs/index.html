@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, shrink-to-fit=no">
     <title>Desktop Commander MCP - Terminal Commands and File Editing for Claude</title>
     
     <!-- SEO Meta Tags -->
@@ -104,14 +104,17 @@
             padding: 0; 
             font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
             overflow-x: hidden;
+            width: 100%;
+            max-width: 100vw;
         }
         /* Critical container dimensions that prevent layout shifts */
         .container { 
-            width: 92%; 
+            width: 100%; 
             max-width: 1200px; 
             margin: 0 auto; 
             padding: 0 15px;
             box-sizing: border-box;
+            overflow-x: hidden;
         }
         /* Set fixed header height to prevent jumps */
         header {
@@ -169,6 +172,8 @@
             font-size: 2.8rem;
             margin-bottom: 20px;
             line-height: 1.2;
+            max-width: 100%;
+            word-wrap: break-word;
         }
         .hero p {
             font-size: 1.1rem;
@@ -242,8 +247,8 @@
     <header>
         <div class="container header-container">
             <a href="#" class="logo">
-                <img src="optimized_images/logo.webp" alt="Logo" width="40" height="40" /> &nbsp;
-                DesktopCommander
+                <img src="optimized_images/logo.webp" alt="Logo" width="35" height="35" /> 
+                <span style="margin-left: 5px;">DesktopCommander</span>
             </a>
             
             <div class="mobile-menu-btn">
@@ -467,7 +472,7 @@
                     <div class="step-content">
                         <h3>Smithery Install</h3>
                         <p>Install automatically via Smithery:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px;">npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude</pre>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude</pre>
                     </div>
                 </div>
             </div>
@@ -477,7 +482,7 @@
                     <div class="step-content">
                         <h3>NPX Install</h3>
                         <p>Install using npx directly:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
                     </div>
                 </div>
             </div>
@@ -487,7 +492,7 @@
                     <div class="step-content">
                         <h3>Manual Configuration</h3>
                         <p>Add this to your claude_desktop_config.json:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px;">
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">
 {
   "mcpServers": {
     "desktop-commander": {
@@ -508,7 +513,7 @@
                     <div class="step-content">
                         <h3>Local Installation</h3>
                         <p>Clone and build locally:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px;">git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
 cd ClaudeComputerCommander
 npm run setup</pre>
 </div>
@@ -595,7 +600,7 @@ npm run setup</pre>
                 <a href="https://analyticsindiamag.com/ai-features/this-developer-ditched-windsurf-cursor-using-claude-with-mcps/" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://analyticsindiamag.com/wp-content/uploads/2025/03/developer-ditched-cursor-windsurf-1300x731.jpg.webp" alt="Analytics India Magazine Article" class="media-thumbnail">
+                            <img src="https://analyticsindiamag.com/wp-content/uploads/2025/03/developer-ditched-cursor-windsurf-1300x731.jpg.webp" alt="Analytics India Magazine Article" class="media-thumbnail" style="max-width: 100%; height: auto;">
                         </div>
                         <div class="media-content">
                             <h3>Featured Article</h3>
@@ -611,7 +616,7 @@ npm run setup</pre>
                 <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://i3.ytimg.com/vi/ly3bed99Dy8/maxresdefault.jpg" alt="YouTube Tutorial Thumbnail" class="media-thumbnail">
+                            <img src="https://i3.ytimg.com/vi/ly3bed99Dy8/maxresdefault.jpg" alt="YouTube Tutorial Thumbnail" class="media-thumbnail" style="max-width: 100%; height: auto;">
                             <div class="play-button">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                             </div>
@@ -630,7 +635,7 @@ npm run setup</pre>
                 <a href="https://medium.com/@wonderwhy-er/claude-with-mcps-replaced-cursor-windsurf-how-did-that-happen-c1d1e2795e96" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://miro.medium.com/v2/resize:fit:786/format:webp/1*RRZ4SJ_ceHnrVZpuaAxGig.png" alt="Medium Blog Post" class="media-thumbnail">
+                            <img src="https://miro.medium.com/v2/resize:fit:786/format:webp/1*RRZ4SJ_ceHnrVZpuaAxGig.png" alt="Medium Blog Post" class="media-thumbnail" style="max-width: 100%; height: auto;">
                         </div>
                         <div class="media-content">
                             <h3>Medium Blog Post</h3>
@@ -678,7 +683,7 @@ npm run setup</pre>
                         <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-youtube"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
                     </div>
                     <h3>Video Tutorial</h3>
-                    <p>Watch tutorial and demo videos on YouTube.</p>
+                    <p>Watch tutorial and demo videos on YouTube.<br /><br /></p>
                     <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="btn" target="_blank">Watch Now</a>
                 </div>
             </div>
@@ -697,23 +702,23 @@ npm run setup</pre>
                 <div class="carousel-container">
                     <div class="carousel-slides">
                         <div class="carousel-slide active" data-slide="0">
-                            <img src="optimized_images/case1-large.webp" alt="User testimonial about Desktop Commander MCP" loading="lazy" width="1200" height="975">
+                            <img src="optimized_images/case1-large.webp" alt="User testimonial about Desktop Commander MCP" loading="lazy" style="max-width: 100%; height: auto;">
                         </div>
                         
                         <div class="carousel-slide" data-slide="1">
-                            <img src="optimized_images/case2-large.webp" alt="User feedback about Desktop Commander MCP" loading="lazy" width="1200" height="161">
+                            <img src="optimized_images/case2-large.webp" alt="User feedback about Desktop Commander MCP" loading="lazy" style="max-width: 100%; height: auto;">
                         </div>
                         
                         <div class="carousel-slide" data-slide="2">
-                            <img src="optimized_images/case3-large.webp" alt="Developer testimonial for Desktop Commander MCP" loading="lazy" width="1200" height="366">
+                            <img src="optimized_images/case3-large.webp" alt="Developer testimonial for Desktop Commander MCP" loading="lazy" style="max-width: 100%; height: auto;">
                         </div>
                         
                         <div class="carousel-slide" data-slide="3">
-                            <img src="optimized_images/case4-large.webp" alt="User review of Desktop Commander MCP" loading="lazy" width="1200" height="362">
+                            <img src="optimized_images/case4-large.webp" alt="User review of Desktop Commander MCP" loading="lazy" style="max-width: 100%; height: auto;">
                         </div>
                         
                         <div class="carousel-slide" data-slide="4">
-                            <img src="optimized_images/case5-large.webp" alt="Developer feedback on Desktop Commander MCP" loading="lazy" width="1200" height="220">
+                            <img src="optimized_images/case5-large.webp" alt="Developer feedback on Desktop Commander MCP" loading="lazy" style="max-width: 100%; height: auto;">
                         </div>
                     </div>
                     
