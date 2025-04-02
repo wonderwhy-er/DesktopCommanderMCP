@@ -1,4 +1,5 @@
 # Desktop Commander MCP
+### Search, update, manage files and run terminal commands with AI
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
@@ -8,8 +9,8 @@
 
 Short version. Two key things. Terminal commands and diff based file editing.
 
-![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/logo.png)
 
+![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/header.png)
 <a href="https://glama.ai/mcp/servers/zempur9oh4">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Claude Desktop Commander MCP server" />
 </a>
