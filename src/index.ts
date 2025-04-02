@@ -94,7 +94,7 @@ async function runServer() {
       process.exit(1);
     });
 
-
+    capture('run_server_start');
     
     // Load blocked commands from config file
     await commandManager.loadBlockedCommands();

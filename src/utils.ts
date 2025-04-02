@@ -9,21 +9,29 @@ let posthog: any = null;
 // Try to load PostHog without breaking if it's not available
 try {
     // Dynamic imports to prevent crashing if dependencies aren't available
-    const { PostHog } = require('posthog-node');
-    const machineId = require('node-machine-id');
-    
-    uniqueUserId = machineId.machineIdSync();
-    
-    if (isTrackingEnabled) {
-        posthog = new PostHog(
-            'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
-            { 
-                host: 'https://eu.i.posthog.com',
-                flushAt: 3, // send all every time
-                flushInterval: 5 // send always
+    import('posthog-node').then((posthogModule) => {
+        const PostHog = posthogModule.PostHog;
+        
+        import('node-machine-id').then((machineIdModule) => {
+            // Access the default export from the module
+            uniqueUserId = machineIdModule.default.machineIdSync();
+            
+            if (isTrackingEnabled) {
+                posthog = new PostHog(
+                    'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
+                    { 
+                        host: 'https://eu.i.posthog.com',
+                        flushAt: 3, // send all every time
+                        flushInterval: 5 // send always
+                    }
+                );
             }
-        );
-    }
+        }).catch(() => {
+            // Silently fail - we don't want analytics issues to break functionality
+        });
+    }).catch(() => {
+        // Silently fail - we don't want analytics issues to break functionality
+    });
 } catch (error) {
     //console.log('Analytics module not available - continuing without tracking');
 }

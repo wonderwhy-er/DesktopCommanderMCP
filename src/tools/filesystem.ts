@@ -32,17 +32,23 @@ function expandHome(filepath: string): string {
 export async function validatePath(requestedPath: string): Promise<string> {
     // Temporarily allow all paths by just returning the resolved path
     // TODO: Implement configurable path validation
+    // Expand home directory if present
     const expandedPath = expandHome(requestedPath);
+    
+    // Convert to absolute path
     const absolute = path.isAbsolute(expandedPath)
         ? path.resolve(expandedPath)
         : path.resolve(process.cwd(), expandedPath);
     
-    // Try to resolve real path for symlinks, but don't enforce restrictions
+    // Check if path exists
     try {
+        const stats = await fs.stat(absolute);
+        
+        // If path exists, resolve any symlinks
         return await fs.realpath(absolute);
     } catch (error) {
-        // If can't resolve (e.g., file doesn't exist yet), return absolute path
-        return absolute;
+        // Path doesn't exist, throw an error
+        throw new Error(`Path does not exist: ${absolute}`);
     }
     
     /* Original implementation commented out for future reference
@@ -153,7 +159,8 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             }
         }
     }
-
+    
+    // if path not exist, it will throw an error
     const validPath = await validatePath(rootPath);
     await search(validPath);
     return results;

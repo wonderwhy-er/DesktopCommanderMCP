@@ -55,6 +55,11 @@ Just run this in terminal
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
 ```
+
+For debugging mode (allows Node.js inspector connection):
+```
+npx @wonderwhy-er/desktop-commander@latest setup --debug
+```
 Restart Claude if running
 
 ### Option 2: Installing via Smithery
@@ -155,6 +160,40 @@ For commands that may take a while:
 2. Command continues in background
 3. Use `read_output` with PID to get new output
 4. Use `force_terminate` to stop if needed
+
+## Debugging
+
+If you need to debug the server, you can install it in debug mode:
+
+```bash
+# Using npx
+npx @wonderwhy-er/desktop-commander@latest setup --debug
+
+# Or if installed locally
+npm run setup:debug
+```
+
+This will:
+1. Configure Claude to use a separate "desktop-commander" server
+2. Enable Node.js inspector protocol with `--inspect-brk=9229` flag
+3. Pause execution at the start until a debugger connects
+4. Enable additional debugging environment variables
+
+To connect a debugger:
+- In Chrome, visit `chrome://inspect` and look for the Node.js instance
+- In VS Code, use the "Attach to Node Process" debug configuration
+- Other IDEs/tools may have similar "attach" options for Node.js debugging
+
+Important debugging notes:
+- The server will pause on startup until a debugger connects (due to the `--inspect-brk` flag)
+- If you don't see activity during debugging, ensure you're connected to the correct Node.js process
+- Multiple Node processes may be running; connect to the one on port 9229
+- The debug server is identified as "desktop-commander-debug" in Claude's MCP server list
+
+Troubleshooting:
+- If Claude times out while trying to use the debug server, your debugger might not be properly connected
+- When properly connected, the process will continue execution after hitting the first breakpoint
+- You can add additional breakpoints in your IDE once connected
 
 ## Model Context Protocol Integration
 

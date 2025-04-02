@@ -242,10 +242,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
   try {
     const { name, arguments: args } = request.params;
-
+    capture('server_call_tool');
     switch (name) {
       // Terminal tools
       case "execute_command": {
+        capture('server_execute_command');
         const parsed = ExecuteCommandArgsSchema.parse(args);
         return executeCommand(parsed);
       }
@@ -297,9 +298,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       // Filesystem tools
       case "edit_block": {
         capture('server_edit_block');
+        try {
         const parsed = EditBlockArgsSchema.parse(args);
         const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
-        try {
             await performSearchReplace(filePath, searchReplace);
             return {
                 content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
@@ -307,82 +308,139 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
-                content: [{ type: "text", text: errorMessage }],
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
             }; 
         }
       }
       case "read_file": {
         capture('server_read_file');
-        const parsed = ReadFileArgsSchema.parse(args);
-        const content = await readFile(parsed.path);
-        return {
-          content: [{ type: "text", text: content }],
-        };
+        try {
+            const parsed = ReadFileArgsSchema.parse(args);
+            const content = await readFile(parsed.path);
+            return {
+                content: [{ type: "text", text: content }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "read_multiple_files": {
         capture('server_read_multiple_files');
-        const parsed = ReadMultipleFilesArgsSchema.parse(args);
-        const results = await readMultipleFiles(parsed.paths);
-        return {
-          content: [{ type: "text", text: results.join("\n---\n") }],
-        };
+        try {
+            const parsed = ReadMultipleFilesArgsSchema.parse(args);
+            const results = await readMultipleFiles(parsed.paths);
+            return {
+            content: [{ type: "text", text: results.join("\n---\n") }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "write_file": {
         capture('server_write_file');
-        const parsed = WriteFileArgsSchema.parse(args);
-        await writeFile(parsed.path, parsed.content);
-        return {
-          content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
-        };
+        try {
+            const parsed = WriteFileArgsSchema.parse(args);
+            await writeFile(parsed.path, parsed.content);
+            return {
+                content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "create_directory": {
         capture('server_create_directory');
-        const parsed = CreateDirectoryArgsSchema.parse(args);
-        await createDirectory(parsed.path);
-        return {
-          content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
-        };
+        try {
+            const parsed = CreateDirectoryArgsSchema.parse(args);
+            await createDirectory(parsed.path);
+            return {
+                content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "list_directory": {
         capture('server_list_directory');
-        const parsed = ListDirectoryArgsSchema.parse(args);
-        const entries = await listDirectory(parsed.path);
-        return {
-          content: [{ type: "text", text: entries.join('\n') }],
-        };
+        try {
+            const parsed = ListDirectoryArgsSchema.parse(args);
+            const entries = await listDirectory(parsed.path);
+            return {
+                content: [{ type: "text", text: entries.join('\n') }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "move_file": {
         capture('server_move_file');
-        const parsed = MoveFileArgsSchema.parse(args);
-        await moveFile(parsed.source, parsed.destination);
-        return {
-          content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
-        };
+        try {
+            const parsed = MoveFileArgsSchema.parse(args);
+            await moveFile(parsed.source, parsed.destination);
+            return {
+                content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "search_files": {
         capture('server_search_files');
-        const parsed = SearchFilesArgsSchema.parse(args);
-        const results = await searchFiles(parsed.path, parsed.pattern);
-        return {
-          content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
-        };
+        try {
+            const parsed = SearchFilesArgsSchema.parse(args);
+            const results = await searchFiles(parsed.path, parsed.pattern);
+            return {
+                content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "search_code": {
         capture('server_search_code');
-        const parsed = SearchCodeArgsSchema.parse(args);
-        const results = await searchTextInFiles({
-          rootPath: parsed.path,
-          pattern: parsed.pattern,
-          filePattern: parsed.filePattern,
-          ignoreCase: parsed.ignoreCase,
-          maxResults: parsed.maxResults,
-          includeHidden: parsed.includeHidden,
-          contextLines: parsed.contextLines,
-        });
-        if (results.length === 0) {
-          return {
-            content: [{ type: "text", text: "No matches found" }],
-          };
+        let results = [];
+        try {
+            const parsed = SearchCodeArgsSchema.parse(args);
+            results = await searchTextInFiles({
+                rootPath: parsed.path,
+                pattern: parsed.pattern,
+                filePattern: parsed.filePattern,
+                ignoreCase: parsed.ignoreCase,
+                maxResults: parsed.maxResults,
+                includeHidden: parsed.includeHidden,
+                contextLines: parsed.contextLines,
+            });
+            if (results.length === 0) {
+                return {
+                    content: [{ type: "text", text: "No matches found" }],
+                };
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
         }
 
         // Format the results in a VS Code-like format
@@ -403,20 +461,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       case "get_file_info": {
         capture('server_get_file_info');
-        const parsed = GetFileInfoArgsSchema.parse(args);
-        const info = await getFileInfo(parsed.path);
-        return {
-          content: [{ 
-            type: "text", 
-            text: Object.entries(info)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join('\n') 
-          }],
-        };
+        try {
+            const parsed = GetFileInfoArgsSchema.parse(args);
+            const info = await getFileInfo(parsed.path);
+            return {
+            content: [{ 
+                type: "text", 
+                text: Object.entries(info)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join('\n') 
+            }],
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{ type: "text", text: `Error: ${errorMessage}` }],
+            };
+        }
       }
       case "list_allowed_directories": {
-        const directories = listAllowedDirectories();
         capture('server_list_allowed_directories');
+        const directories = listAllowedDirectories();
         return {
           content: [{ 
             type: "text", 

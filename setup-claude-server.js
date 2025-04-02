@@ -239,15 +239,16 @@ async function restartClaude() {
             }
         } catch {}
 		await new Promise((resolve) => setTimeout(resolve, 3000))
-
-		if (platform === "win32") {
-            // it will never start claude
-			// await execAsync(`start "" "Claude.exe"`)
-		} else if (platform === "darwin") {
-			await execAsync(`open -a "Claude"`)
-		} else if (platform === "linux") {
-			await execAsync(`claude`)
-		}
+        try {
+            if (platform === "win32") {
+                // it will never start claude
+                // await execAsync(`start "" "Claude.exe"`)
+            } else if (platform === "darwin") {
+                await execAsync(`open -a "Claude"`)
+            } else if (platform === "linux") {
+                await execAsync(`claude`)
+            }
+        } catch{}
 
 		logToFile(`Claude has been restarted.`)
 	} catch (error) {
@@ -287,8 +288,17 @@ if (!existsSync(claudeConfigPath)) {
     logToFile('Default config file created. Please update it with your Claude API credentials.');
 }
 
+// Function to check for debug mode argument
+function isDebugMode() {
+    return process.argv.includes('--debug');
+}
+
 // Main function to export for ESM compatibility
 export default async function setup() {
+    const debugMode = isDebugMode();
+    if (debugMode) {
+        logToFile('Debug mode enabled. Will configure with Node.js inspector options.');
+    }
     try {
         // Read existing config
         const configData = readFileSync(claudeConfigPath, 'utf8');
@@ -300,22 +310,67 @@ export default async function setup() {
 
         // Fix Windows path handling for npx execution
         let serverConfig;
-        if (isNpx) {
-            serverConfig = {
-                "command": isWindows ? "npx.cmd" : "npx",
-                "args": [
-                    "@wonderwhy-er/desktop-commander"
-                ]
-            };
+        
+        if (debugMode) {
+            // Use Node.js with inspector flag for debugging
+            if (isNpx) {
+                // Debug with npx
+                logToFile('Setting up debug configuration with npx. The process will pause on start until a debugger connects.');
+                // Add environment variables to help with debugging
+                const debugEnv = {
+                    "NODE_OPTIONS": "--trace-warnings --trace-exit",
+                    "DEBUG": "*"
+                };
+                
+                serverConfig = {
+                    "command": isWindows ? "node.exe" : "node",
+                    "args": [
+                        "--inspect-brk=9229",
+                        isWindows ? 
+                            join(process.env.APPDATA || '', "npm", "npx.cmd").replace(/\\/g, '\\\\') : 
+                            "$(which npx)",
+                        "@wonderwhy-er/desktop-commander"
+                    ],
+                    "env": debugEnv
+                };
+            } else {
+                // Debug with local installation path
+                const indexPath = join(__dirname, 'dist', 'index.js');
+                logToFile('Setting up debug configuration with local path. The process will pause on start until a debugger connects.');
+                // Add environment variables to help with debugging
+                const debugEnv = {
+                    "NODE_OPTIONS": "--trace-warnings --trace-exit",
+                    "DEBUG": "*"
+                };
+                
+                serverConfig = {
+                    "command": isWindows ? "node.exe" : "node",
+                    "args": [
+                        "--inspect-brk=9229",
+                        indexPath.replace(/\\/g, '\\\\') // Double escape backslashes for JSON
+                    ],
+                    "env": debugEnv
+                };
+            }
         } else {
-            // For local installation, use absolute path to handle Windows properly
-            const indexPath = join(__dirname, 'dist', 'index.js');
-            serverConfig = {
-                "command": "node",
-                "args": [
-                    indexPath.replace(/\\/g, '\\\\') // Double escape backslashes for JSON
-                ]
-            };
+            // Standard configuration without debug
+            if (isNpx) {
+                serverConfig = {
+                    "command": isWindows ? "npx.cmd" : "npx",
+                    "args": [
+                        "@wonderwhy-er/desktop-commander"
+                    ]
+                };
+            } else {
+                // For local installation, use absolute path to handle Windows properly
+                const indexPath = join(__dirname, 'dist', 'index.js');
+                serverConfig = {
+                    "command": "node",
+                    "args": [
+                        indexPath.replace(/\\/g, '\\\\') // Double escape backslashes for JSON
+                    ]
+                };
+            }
         }
 
         // Initialize mcpServers if it doesn't exist
@@ -337,7 +392,12 @@ export default async function setup() {
         await trackEvent('npx_setup_update_config');
         logToFile('Successfully added MCP server to Claude configuration!');
         logToFile(`Configuration location: ${claudeConfigPath}`);
-        logToFile('\nTo use the server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander" in Claude\'s MCP server list');
+        
+        if (debugMode) {
+            logToFile('\nTo use the debug server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander-debug" in Claude\'s MCP server list\n3. Connect your debugger to port 9229');
+        } else {
+            logToFile('\nTo use the server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander" in Claude\'s MCP server list');
+        }
 
         await restartClaude();
         
