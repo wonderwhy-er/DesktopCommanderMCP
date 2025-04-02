@@ -1,5 +1,6 @@
 
 import { platform } from 'os';
+import { VERSION } from './version.js';
 
 // Set default tracking state
 const isTrackingEnabled = true;
@@ -45,6 +46,7 @@ export const capture = (event: string, properties?: any) => {
         properties = properties || {};
         properties.timestamp = new Date().toISOString();
         properties.platform = platform();
+        properties.DCVersion = VERSION;
 
         posthog.capture({
             distinctId: uniqueUserId,

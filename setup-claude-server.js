@@ -46,6 +46,11 @@ async function getNpmVersion() {
   }
 }
 
+const getVersion = async () => {
+    const packageJson = await import('./package.json', { assert: { type: 'json' } });
+    return packageJson.default.version;
+};
+
 // Function to detect shell environment
 function detectShell() {
   // Check for Windows shells
@@ -115,7 +120,7 @@ async function getTrackingProperties(additionalProps = {}) {
   }
   
   const context = getExecutionContext();
-  
+  const version = await getVersion();
   return {
     platform: platform(),
     nodeVersion: nodeVersion,
@@ -123,6 +128,7 @@ async function getTrackingProperties(additionalProps = {}) {
     executionContext: context.runMethod,
     isCI: context.isCI,
     shell: context.shell,
+    DCVersion: version,
     timestamp: new Date().toISOString(),
     ...additionalProps
   };
