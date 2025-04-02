@@ -36,7 +36,7 @@
 
 .carousel-slides {
     position: relative;
-    height: auto;
+    height: 750px; /* Set a fixed initial height to prevent jumps */
     min-height: 200px;
     transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -72,6 +72,7 @@
     display: block;
     border-radius: 8px;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+    /* Remove transform scale and excess margin */
 }
 
 /* Carousel Navigation */

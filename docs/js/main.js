@@ -1,83 +1,115 @@
-// Mobile Menu Toggle
-const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-const nav = document.querySelector('nav');
+// Function to load CSS files asynchronously
+function loadCSS(url) {
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = url;
+    document.head.appendChild(link);
+}
 
-mobileMenuBtn.addEventListener('click', () => {
-    nav.classList.toggle('active');
-});
+// Load critical CSS files immediately (synchronously)
+(function() {
+    // Critical CSS files - needed for above-the-fold content
+    var criticalCSSFiles = [
+        'css/base.css',
+        'css/header.css',
+        'css/hero.css'
+    ];
+    
+    // Load critical CSS files immediately
+    criticalCSSFiles.forEach(function(url) {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = url;
+        // Using insertBefore to add them before scripts to ensure they load faster
+        document.head.insertBefore(link, document.head.firstChild);
+    });
+})();
 
-// Smooth Scrolling
-document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-    anchor.addEventListener('click', function (e) {
-        e.preventDefault();
-        
-        const target = document.querySelector(this.getAttribute('href'));
-        if (target) {
-            window.scrollTo({
-                top: target.offsetTop - 80,
-                behavior: 'smooth'
-            });
-        }
-        
-        // Close mobile menu if open
-        if (nav.classList.contains('active')) {
-            nav.classList.remove('active');
-        }
+// Load non-critical CSS files asynchronously after page load
+window.addEventListener('load', function() {
+    // List of non-critical CSS files
+    var cssFiles = [
+        'css/responsive.css',
+        'css/installation.css',
+        'css/media.css',
+        'css/footer.css',
+        'css/faq.css',
+        'css/testimonials.css',
+        'css/features.css',
+        'css/community.css',
+        'css/usage.css'
+    ];
+    
+    // Load each CSS file asynchronously
+    cssFiles.forEach(function(url) {
+        loadCSS(url);
     });
 });
 
-// FAQ Accordion
-const accordionHeaders = document.querySelectorAll('.accordion-header');
-
-accordionHeaders.forEach(header => {
-    header.addEventListener('click', () => {
-        const accordionItem = header.parentElement;
-        accordionItem.classList.toggle('active');
-    });
-});
-
-// Sticky Header
-window.addEventListener('scroll', () => {
-    const header = document.querySelector('header');
-    header.classList.toggle('sticky', window.scrollY > 0);
-});
-
-// Initialize first FAQ item as open
-document.querySelector('.accordion-item')?.classList.add('active');
-
-// Tab functionality
+// Tab switching functionality
 function openTab(evt, tabName) {
+    var i, tabContent, tabBtn;
+    
     // Hide all tab content
-    const tabContent = document.getElementsByClassName("tab-content");
-    for (let i = 0; i < tabContent.length; i++) {
+    tabContent = document.getElementsByClassName("tab-content");
+    for (i = 0; i < tabContent.length; i++) {
         tabContent[i].classList.remove("active");
     }
     
     // Remove active class from all tab buttons
-    const tabBtns = document.getElementsByClassName("tab-btn");
-    for (let i = 0; i < tabBtns.length; i++) {
-        tabBtns[i].classList.remove("active");
+    tabBtn = document.getElementsByClassName("tab-btn");
+    for (i = 0; i < tabBtn.length; i++) {
+        tabBtn[i].classList.remove("active");
     }
     
-    // Show the current tab and add active class to the button
+    // Show the selected tab and add an active class to the button
     document.getElementById(tabName).classList.add("active");
     evt.currentTarget.classList.add("active");
 }
 
+// Make the openTab function available globally
+window.openTab = openTab;
+
 // Initialize any elements that require it
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     // Initialize first FAQ item as open if it exists
     const firstAccordionItem = document.querySelector('.accordion-item');
     if (firstAccordionItem) {
         firstAccordionItem.classList.add('active');
     }
     
-    // Expose the openTab function globally if it's used inline
-    window.openTab = openTab;
+    // Mobile menu toggle
+    const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+    const nav = document.querySelector('nav');
+    
+    if (mobileMenuBtn) {
+        mobileMenuBtn.addEventListener('click', function() {
+            nav.classList.toggle('active');
+            this.classList.toggle('active');
+        });
+    }
+    
+    // Accordion functionality
+    const accordionHeaders = document.querySelectorAll('.accordion-header');
+    
+    accordionHeaders.forEach(header => {
+        header.addEventListener('click', function() {
+            const accordionItem = this.parentElement;
+            const accordionBody = this.nextElementSibling;
+            
+            accordionItem.classList.toggle('active');
+            
+            // Toggle height 
+            if (accordionItem.classList.contains('active')) {
+                accordionBody.style.maxHeight = accordionBody.scrollHeight + 'px';
+            } else {
+                accordionBody.style.maxHeight = '0';
+            }
+        });
+    });
     
     // Initialize testimonial carousel
     initTestimonialCarousel();
-    
 });
 
 // Testimonial Carousel Implementation
@@ -139,9 +171,11 @@ function initTestimonialCarousel() {
     
     // Set initial container height to the tallest slide
     function setInitialContainerHeight(height) {
-        if (height === 0) height = 300; // Default minimum height
+        // Set a reasonable fixed height instead of calculating it dynamically
+        // This prevents layout jumps while images are still loading
+        const fixedHeight = 750; // Fixed height to prevent jumps
         const slidesContainer = document.querySelector('.carousel-slides');
-        slidesContainer.style.height = height + 'px';
+        slidesContainer.style.height = fixedHeight + 'px';
         
         // Now we can start properly transitioning between slides
         slidesContainer.classList.add('height-initialized');
@@ -179,6 +213,12 @@ function initTestimonialCarousel() {
         // Update indicators
         indicators.forEach((indicator, i) => {
             indicator.classList.toggle('active', i === index);
+            // Update aria-current attribute for accessibility
+            if (i === index) {
+                indicator.setAttribute('aria-current', 'true');
+            } else {
+                indicator.removeAttribute('aria-current');
+            }
         });
         
         currentSlide = index;
@@ -245,3 +285,32 @@ function initTestimonialCarousel() {
         handleSwipe();
     });
 }
+
+// Smooth Scrolling
+document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+            window.scrollTo({
+                top: target.offsetTop - 80,
+                behavior: 'smooth'
+            });
+        }
+        
+        // Close mobile menu if open
+        const nav = document.querySelector('nav');
+        if (nav && nav.classList.contains('active')) {
+            nav.classList.remove('active');
+        }
+    });
+});
+
+// Sticky Header
+window.addEventListener('scroll', () => {
+    const header = document.querySelector('header');
+    if (header) {
+        header.classList.toggle('sticky', window.scrollY > 0);
+    }
+});
