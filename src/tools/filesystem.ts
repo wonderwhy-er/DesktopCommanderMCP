@@ -30,8 +30,6 @@ function expandHome(filepath: string): string {
 
 // Security utilities
 export async function validatePath(requestedPath: string): Promise<string> {
-    // Temporarily allow all paths by just returning the resolved path
-    // TODO: Implement configurable path validation
     // Expand home directory if present
     const expandedPath = expandHome(requestedPath);
     
@@ -47,8 +45,32 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // If path exists, resolve any symlinks
         return await fs.realpath(absolute);
     } catch (error) {
-        // Path doesn't exist, throw an error
-        throw new Error(`Path does not exist: ${absolute}`);
+        // Path doesn't exist
+        // For files or directories that don't exist yet, verify parent directory instead
+        const parentDir = path.dirname(absolute);
+        try {
+            // Check if parent directory exists and validate it
+            const realParentPath = await fs.realpath(parentDir);
+            
+            // Parent directory exists and is valid, return the original absolute path
+            return absolute;
+        } catch (parentError) {
+            // If parent directory doesn't exist, check if we're creating a nested structure
+            if (parentDir !== absolute && parentDir !== path.dirname(parentDir)) {
+                // Recursive case: try to validate the parent's parent
+                try {
+                    // This will recursively go up the directory tree until it finds an existing directory
+                    // or throws if none exists
+                    await validatePath(parentDir);
+                    return absolute;
+                } catch (e) {
+                    throw new Error(`Parent directory does not exist: ${parentDir}`);
+                }
+            } else {
+                // Base case: the immediate parent doesn't exist
+                throw new Error(`Parent directory does not exist: ${parentDir}`);
+            }
+        }
     }
     
     /* Original implementation commented out for future reference
