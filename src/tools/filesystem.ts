@@ -47,8 +47,8 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // If path exists, resolve any symlinks
         return await fs.realpath(absolute);
     } catch (error) {
-        // Path doesn't exist, throw an error
-        throw new Error(`Path does not exist: ${absolute}`);
+        // return path if it's not exist. This will be used for folder creation and many other file operations
+        return absolute;
     }
     
     /* Original implementation commented out for future reference
