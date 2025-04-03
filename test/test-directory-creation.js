@@ -7,11 +7,12 @@
  * 3. Testing nested directory creation
  */
 
-// Import the filesystem module
+// Import the filesystem module and assert for testing
 import { createDirectory } from '../dist/tools/filesystem.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import assert from 'assert';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -23,7 +24,9 @@ const SIMPLE_DIR = path.join(BASE_TEST_DIR, 'simple_dir');
 const NONEXISTENT_PARENT_DIR = path.join(BASE_TEST_DIR, 'nonexistent', 'test_dir');
 const NESTED_DIR = path.join(BASE_TEST_DIR, 'nested', 'path', 'structure');
 
-// Helper function to clean up test directories
+/**
+ * Helper function to clean up test directories
+ */
 async function cleanupTestDirectories() {
   try {
     console.log('Cleaning up test directories...');
@@ -37,83 +40,70 @@ async function cleanupTestDirectories() {
   }
 }
 
-// Test function
-async function runTests() {
-  console.log('=== Directory Creation Tests ===\n');
-  
+/**
+ * Setup function to prepare the test environment
+ */
+async function setup() {
   // Clean up before tests
   await cleanupTestDirectories();
   
   // Create base test directory
-  try {
-    await fs.mkdir(BASE_TEST_DIR, { recursive: true });
-    console.log(`✓ Created base test directory: ${BASE_TEST_DIR}`);
-  } catch (error) {
-    console.error(`✗ Failed to create base test directory: ${error.message}`);
-    return;
-  }
+  await fs.mkdir(BASE_TEST_DIR, { recursive: true });
+  console.log(`✓ Setup: created base test directory: ${BASE_TEST_DIR}`);
+}
+
+/**
+ * Teardown function to clean up after tests
+ */
+async function teardown() {
+  await cleanupTestDirectories();
+  console.log('✓ Teardown: test directories cleaned up');
+}
+
+/**
+ * Test function for directory creation
+ */
+async function testDirectoryCreation() {
+  console.log('=== Directory Creation Tests ===\n');
   
   // Test 1: Create directory with existing parent
   console.log('\nTest 1: Create directory with existing parent');
-  try {
-    await createDirectory(SIMPLE_DIR);
-    console.log(`✓ Success: Created directory ${SIMPLE_DIR}`);
-  } catch (error) {
-    console.error(`✗ Error: ${error.message}`);
-  }
+  await createDirectory(SIMPLE_DIR);
   
   // Test 2: Create directory with non-existent parent
   console.log('\nTest 2: Create directory with non-existent parent');
-  try {
-    await createDirectory(NONEXISTENT_PARENT_DIR);
-    console.log(`✓ Success: Created directory ${NONEXISTENT_PARENT_DIR}`);
-  } catch (error) {
-    console.error(`✗ Error: ${error.message}`);
-  }
+  await createDirectory(NONEXISTENT_PARENT_DIR);
   
   // Test 3: Create nested directory structure
   console.log('\nTest 3: Create nested directory structure');
-  try {
-    await createDirectory(NESTED_DIR);
-    console.log(`✓ Success: Created nested directory ${NESTED_DIR}`);
-  } catch (error) {
-    console.error(`✗ Error: ${error.message}`);
-  }
+  await createDirectory(NESTED_DIR);
   
-  // Verify directories were created
+  // Verify directories were created using assertions
   console.log('\nVerifying directory creation:');
-  let allCreated = true;
   
   for (const dir of [SIMPLE_DIR, NONEXISTENT_PARENT_DIR, NESTED_DIR]) {
-    try {
-      const stats = await fs.stat(dir);
-      if (stats.isDirectory()) {
-        console.log(`✓ Directory exists: ${dir}`);
-      } else {
-        console.log(`✗ Not a directory: ${dir}`);
-        allCreated = false;
-      }
-    } catch (error) {
-      console.log(`✗ Directory doesn't exist: ${dir}`);
-      allCreated = false;
-    }
+    const stats = await fs.stat(dir);
+    assert.ok(stats.isDirectory(), `Directory should exist and be a directory: ${dir}`);
+    console.log(`✓ Verified: ${dir} exists and is a directory`);
   }
   
-  // Clean up after tests
-  await cleanupTestDirectories();
-  
-  console.log('\n=== Test Results ===');
-  if (allCreated) {
-    console.log('✅ All tests passed!');
-    process.exit(0);
-  } else {
-    console.log('❌ Some tests failed!');
-    process.exit(1);
-  }
+  console.log('\n✅ All tests passed!');
 }
 
 // Run the tests
+async function runTests() {
+  try {
+    await setup();
+    await testDirectoryCreation();
+  } catch (error) {
+    console.error('❌ Test failed:', error.message);
+    process.exit(1);
+  } finally {
+    await teardown();
+  }
+}
+
 runTests().catch(error => {
-  console.error('Unhandled error:', error);
+  console.error('❌ Unhandled error:', error);
   process.exit(1);
 });

@@ -28,7 +28,41 @@ function expandHome(filepath: string): string {
     return filepath;
 }
 
-// Security utilities
+/**
+ * Recursively validates parent directories until it finds a valid one
+ * This function handles the case where we need to create nested directories
+ * and we need to check if any of the parent directories exist
+ * 
+ * @param directoryPath The path to validate
+ * @returns Promise<boolean> True if a valid parent directory was found
+ */
+async function validateParentDirectories(directoryPath: string): Promise<boolean> {
+    const parentDir = path.dirname(directoryPath);
+    
+    // Base case: we've reached the root or the same directory (shouldn't happen normally)
+    if (parentDir === directoryPath || parentDir === path.dirname(parentDir)) {
+        return false;
+    }
+
+    try {
+        // Check if the parent directory exists
+        await fs.realpath(parentDir);
+        return true;
+    } catch {
+        // Parent doesn't exist, recursively check its parent
+        return validateParentDirectories(parentDir);
+    }
+}
+
+/**
+ * Validates a path to ensure it can be accessed or created.
+ * For existing paths, returns the real path (resolving symlinks).
+ * For non-existent paths, validates parent directories to ensure they exist.
+ * 
+ * @param requestedPath The path to validate
+ * @returns Promise<string> The validated path
+ * @throws Error if the path or its parent directories don't exist
+ */
 export async function validatePath(requestedPath: string): Promise<string> {
     // Expand home directory if present
     const expandedPath = expandHome(requestedPath);
@@ -41,36 +75,16 @@ export async function validatePath(requestedPath: string): Promise<string> {
     // Check if path exists
     try {
         const stats = await fs.stat(absolute);
-        
         // If path exists, resolve any symlinks
         return await fs.realpath(absolute);
     } catch (error) {
-        // Path doesn't exist
-        // For files or directories that don't exist yet, verify parent directory instead
-        const parentDir = path.dirname(absolute);
-        try {
-            // Check if parent directory exists and validate it
-            const realParentPath = await fs.realpath(parentDir);
-            
-            // Parent directory exists and is valid, return the original absolute path
+        // Path doesn't exist - validate parent directories
+        if (await validateParentDirectories(absolute)) {
             return absolute;
-        } catch (parentError) {
-            // If parent directory doesn't exist, check if we're creating a nested structure
-            if (parentDir !== absolute && parentDir !== path.dirname(parentDir)) {
-                // Recursive case: try to validate the parent's parent
-                try {
-                    // This will recursively go up the directory tree until it finds an existing directory
-                    // or throws if none exists
-                    await validatePath(parentDir);
-                    return absolute;
-                } catch (e) {
-                    throw new Error(`Parent directory does not exist: ${parentDir}`);
-                }
-            } else {
-                // Base case: the immediate parent doesn't exist
-                throw new Error(`Parent directory does not exist: ${parentDir}`);
-            }
         }
+        
+        // If no valid parent directory was found, throw an error
+        throw new Error(`Parent directory does not exist: ${path.dirname(absolute)}`);
     }
     
     /* Original implementation commented out for future reference
