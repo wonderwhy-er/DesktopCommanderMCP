@@ -50,52 +50,58 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // return path if it's not exist. This will be used for folder creation and many other file operations
         return absolute;
     }
-    
-    /* Original implementation commented out for future reference
-    const expandedPath = expandHome(requestedPath);
-    const absolute = path.isAbsolute(expandedPath)
-        ? path.resolve(expandedPath)
-        : path.resolve(process.cwd(), expandedPath);
-        
-    const normalizedRequested = normalizePath(absolute);
-
-    // Check if path is within allowed directories
-    const isAllowed = allowedDirectories.some(dir => normalizedRequested.startsWith(normalizePath(dir)));
-    if (!isAllowed) {
-        throw new Error(`Access denied - path outside allowed directories: ${absolute}`);
-    }
-
-    // Handle symlinks by checking their real path
-    try {
-        const realPath = await fs.realpath(absolute);
-        const normalizedReal = normalizePath(realPath);
-        const isRealPathAllowed = allowedDirectories.some(dir => normalizedReal.startsWith(normalizePath(dir)));
-        if (!isRealPathAllowed) {
-            throw new Error("Access denied - symlink target outside allowed directories");
-        }
-        return realPath;
-    } catch (error) {
-        // For new files that don't exist yet, verify parent directory
-        const parentDir = path.dirname(absolute);
-        try {
-            const realParentPath = await fs.realpath(parentDir);
-            const normalizedParent = normalizePath(realParentPath);
-            const isParentAllowed = allowedDirectories.some(dir => normalizedParent.startsWith(normalizePath(dir)));
-            if (!isParentAllowed) {
-                throw new Error("Access denied - parent directory outside allowed directories");
-            }
-            return absolute;
-        } catch {
-            throw new Error(`Parent directory does not exist: ${parentDir}`);
-        }
-    }
-    */
 }
 
 // File operation tools
-export async function readFile(filePath: string): Promise<string> {
+export interface FileResult {
+    content: string;
+    mimeType: string;
+    isImage: boolean;
+}
+
+
+export async function readFile(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
     const validPath = await validatePath(filePath);
-    return fs.readFile(validPath, "utf-8");
+    
+    // Import the MIME type utilities
+    const { getMimeType, isImageFile } = await import('./mime-types.js');
+    
+    // Detect the MIME type based on file extension
+    const mimeType = getMimeType(validPath);
+    const isImage = isImageFile(mimeType);
+    
+    if (isImage) {
+        // For image files, read as Buffer and convert to base64
+        const buffer = await fs.readFile(validPath);
+        const content = buffer.toString('base64');
+        
+        if (returnMetadata === true) {
+            return { content, mimeType, isImage };
+        } else {
+            return content;
+        }
+    } else {
+        // For all other files, try to read as UTF-8 text
+        try {
+            const content = await fs.readFile(validPath, "utf-8");
+            
+            if (returnMetadata === true) {
+                return { content, mimeType, isImage };
+            } else {
+                return content;
+            }
+        } catch (error) {
+            // If UTF-8 reading fails, treat as binary and return base64 but still as text
+            const buffer = await fs.readFile(validPath);
+            const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
+            
+            if (returnMetadata === true) {
+                return { content, mimeType: 'text/plain', isImage: false };
+            } else {
+                return content;
+            }
+        }
+    }
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {
@@ -103,16 +109,33 @@ export async function writeFile(filePath: string, content: string): Promise<void
     await fs.writeFile(validPath, content, "utf-8");
 }
 
-export async function readMultipleFiles(paths: string[]): Promise<string[]> {
+export interface MultiFileResult {
+    path: string;
+    content?: string;
+    mimeType?: string;
+    isImage?: boolean;
+    error?: string;
+}
+
+export async function readMultipleFiles(paths: string[]): Promise<MultiFileResult[]> {
     return Promise.all(
         paths.map(async (filePath: string) => {
             try {
                 const validPath = await validatePath(filePath);
-                const content = await fs.readFile(validPath, "utf-8");
-                return `${filePath}:\n${content}\n`;
+                const fileResult = await readFile(validPath, true);
+
+                return {
+                    path: filePath,
+                    content: typeof fileResult === 'string' ? fileResult : fileResult.content,
+                    mimeType: typeof fileResult === 'string' ? "text/plain" : fileResult.mimeType,
+                    isImage: typeof fileResult === 'string' ? false : fileResult.isImage
+                };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                return `${filePath}: Error - ${errorMessage}`;
+                return {
+                    path: filePath,
+                    error: errorMessage
+                };
             }
         }),
     );

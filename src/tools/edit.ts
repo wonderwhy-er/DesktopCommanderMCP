@@ -6,19 +6,23 @@ interface SearchReplace {
 }
 
 export async function performSearchReplace(filePath: string, block: SearchReplace): Promise<void> {
+    // Read file as plain string (don't pass true to get just the string)
     const content = await readFile(filePath);
     
+    // Make sure content is a string
+    const contentStr = typeof content === 'string' ? content : content.content;
+    
     // Find first occurrence
-    const searchIndex = content.indexOf(block.search);
+    const searchIndex = contentStr.indexOf(block.search);
     if (searchIndex === -1) {
         throw new Error(`Search content not found in ${filePath}`);
     }
 
     // Replace content
     const newContent = 
-        content.substring(0, searchIndex) + 
+        contentStr.substring(0, searchIndex) + 
         block.replace + 
-        content.substring(searchIndex + block.search.length);
+        contentStr.substring(searchIndex + block.search.length);
 
     await writeFile(filePath, newContent);
 }

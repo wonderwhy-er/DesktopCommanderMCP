@@ -39,6 +39,7 @@ import {
   searchFiles,
   getFileInfo,
   listAllowedDirectories,
+  type FileResult,
 } from './tools/filesystem.js';
 import { parseEditBlock, performSearchReplace } from './tools/edit.js';
 import { searchTextInFiles } from './tools/search.js';
@@ -149,8 +150,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "read_file",
         description:
           "Read the complete contents of a file from the file system. " +
-          "Reads UTF-8 text and provides detailed error messages " +
-          "if the file cannot be read. Only works within allowed directories.",
+          "Handles text files normally and image files are returned as viewable images. " +
+          "Recognized image types: PNG, JPEG, GIF, BMP, SVG, WebP, ICO, TIFF. " +
+          "Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema),
       },
       {
@@ -158,6 +160,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Read the contents of multiple files simultaneously. " +
           "Each file's content is returned with its path as a reference. " +
+          "Handles text files normally and renders images as viewable content. " +
           "Failed reads for individual files won't stop the entire operation. " +
           "Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
@@ -316,10 +319,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         capture('server_read_file');
         try {
             const parsed = ReadFileArgsSchema.parse(args);
-            const content = await readFile(parsed.path);
-            return {
-                content: [{ type: "text", text: content }],
-            };
+            // Explicitly cast the result to FileResult since we're passing true
+            const fileResult = await readFile(parsed.path, true) as FileResult;
+            
+            if (fileResult.isImage) {
+                // For image files, return as an image content type
+                return {
+                    content: [
+                        { 
+                            type: "text", 
+                            text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
+                        },
+                        {
+                            type: "image",
+                            data: fileResult.content,
+                            mimeType: fileResult.mimeType
+                        }
+                    ],
+                };
+            } else {
+                // For all other files, return as text
+                return {
+                    content: [{ type: "text", text: fileResult.content }],
+                };
+            }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
@@ -331,10 +354,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         capture('server_read_multiple_files');
         try {
             const parsed = ReadMultipleFilesArgsSchema.parse(args);
-            const results = await readMultipleFiles(parsed.paths);
-            return {
-            content: [{ type: "text", text: results.join("\n---\n") }],
-            };
+            const fileResults = await readMultipleFiles(parsed.paths);
+            
+            // Create a text summary of all files
+            const textSummary = fileResults.map(result => {
+                if (result.error) {
+                    return `${result.path}: Error - ${result.error}`;
+                } else if (result.mimeType) {
+                    return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
+                } else {
+                    return `${result.path}: Unknown type`;
+                }
+            }).join("\n");
+            
+            // Create content items for each file
+            const contentItems: Array<{type: string, text?: string, data?: string, mimeType?: string}> = [];
+            
+            // Add the text summary
+            contentItems.push({ type: "text", text: textSummary });
+            
+            // Add each file content
+            for (const result of fileResults) {
+                if (!result.error && result.content !== undefined) {
+                    if (result.isImage && result.mimeType) {
+                        // For image files, add an image content item
+                        contentItems.push({
+                            type: "image",
+                            data: result.content,
+                            mimeType: result.mimeType
+                        });
+                    } else {
+                        // For text files, add a text summary
+                        contentItems.push({
+                            type: "text",
+                            text: `\n--- ${result.path} contents: ---\n${result.content}`
+                        });
+                    }
+                }
+            }
+            
+            return { content: contentItems };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
