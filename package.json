@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "MCP server for terminal operations and file editing",
   "license": "MIT",
   "author": "Eduards Ruzga",
@@ -70,6 +70,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.24",
+    "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",
     "typescript": "^5.3.3"

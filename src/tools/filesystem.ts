@@ -80,11 +80,15 @@ export async function validatePath(requestedPath: string): Promise<string> {
     } catch (error) {
         // Path doesn't exist - validate parent directories
         if (await validateParentDirectories(absolute)) {
+            // Return the path if a valid parent exists
+            // This will be used for folder creation and many other file operations
             return absolute;
         }
         
-        // If no valid parent directory was found, throw an error
-        throw new Error(`Parent directory does not exist: ${path.dirname(absolute)}`);
+        // If no valid parent directory was found, still return the absolute path
+        // to maintain compatibility with upstream behavior, but log a warning
+        console.warn(`Warning: Parent directory does not exist: ${path.dirname(absolute)}`);
+        return absolute;
     }
     
     /* Original implementation commented out for future reference
