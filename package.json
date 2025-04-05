@@ -31,8 +31,7 @@
     "setup": "npm install && npm run build && node setup-claude-server.js",
     "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
     "prepare": "npm run build",
-    "test": "node test/test.js",
-    "test:watch": "nodemon test/test.js",
+    "test": "node test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js"

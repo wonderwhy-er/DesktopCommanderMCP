@@ -90,20 +90,24 @@ async function testDirectoryCreation() {
   console.log('\n✅ All tests passed!');
 }
 
-// Run the tests
-async function runTests() {
+// Export the main test function
+export default async function runTests() {
   try {
     await setup();
     await testDirectoryCreation();
   } catch (error) {
     console.error('❌ Test failed:', error.message);
-    process.exit(1);
+    return false;
   } finally {
     await teardown();
   }
+  return true;
 }
 
-runTests().catch(error => {
-  console.error('❌ Unhandled error:', error);
-  process.exit(1);
-});
+// If this file is run directly (not imported), execute the test
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runTests().catch(error => {
+    console.error('❌ Unhandled error:', error);
+    process.exit(1);
+  });
+}
