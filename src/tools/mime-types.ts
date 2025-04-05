@@ -2,21 +2,14 @@
 export function getMimeType(filePath: string): string {
   const extension = filePath.toLowerCase().split('.').pop() || '';
   
-  // Image types
+  // Image types - only the formats we can display
   const imageTypes: Record<string, string> = {
     'png': 'image/png',
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
     'gif': 'image/gif',
-    'bmp': 'image/bmp',
-    'svg': 'image/svg+xml',
-    'webp': 'image/webp',
-    'ico': 'image/x-icon',
-    'tif': 'image/tiff',
-    'tiff': 'image/tiff',
+    'webp': 'image/webp'
   };
-  
-  // Text types - consider everything else as text for simplicity
   
   // Check if the file is an image
   if (extension in imageTypes) {

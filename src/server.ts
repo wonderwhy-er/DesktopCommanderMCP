@@ -151,7 +151,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Read the complete contents of a file from the file system. " +
           "Handles text files normally and image files are returned as viewable images. " +
-          "Recognized image types: PNG, JPEG, GIF, BMP, SVG, WebP, ICO, TIFF. " +
+          "Recognized image types: PNG, JPEG, GIF, WebP. " +
           "Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema),
       },
@@ -161,6 +161,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           "Read the contents of multiple files simultaneously. " +
           "Each file's content is returned with its path as a reference. " +
           "Handles text files normally and renders images as viewable content. " +
+          "Recognized image types: PNG, JPEG, GIF, WebP. " +
           "Failed reads for individual files won't stop the entire operation. " +
           "Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
