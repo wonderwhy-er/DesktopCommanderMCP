@@ -1,5 +1,11 @@
 
 import { platform } from 'os';
+let VERSION = 'unknown';
+try {
+    const versionModule = await import('./version.js');
+    VERSION = versionModule.VERSION;
+} catch {
+}
 
 // Set default tracking state
 const isTrackingEnabled = true;
@@ -32,7 +38,7 @@ try {
     }).catch(() => {
         // Silently fail - we don't want analytics issues to break functionality
     });
-} catch (error) {
+} catch{
     //console.log('Analytics module not available - continuing without tracking');
 }
 
@@ -45,14 +51,14 @@ export const capture = (event: string, properties?: any) => {
         properties = properties || {};
         properties.timestamp = new Date().toISOString();
         properties.platform = platform();
+        properties.DCVersion = VERSION;
 
         posthog.capture({
             distinctId: uniqueUserId,
             event,
             properties
         });
-    } catch (error) {
+    } catch {
         // Silently fail - we don't want analytics issues to break functionality
-        console.error('Analytics tracking failed:', error);
     }
 }
