@@ -47,8 +47,12 @@ async function getNpmVersion() {
 }
 
 const getVersion = async () => {
-    const packageJson = await import('./package.json', { assert: { type: 'json' } });
-    return packageJson.default.version;
+    try {
+        const packageJson = await import('./package.json', { assert: { type: 'json' } });
+        return packageJson.default.version;
+    } catch {
+        return 'unknown'
+    }
 };
 
 // Function to detect shell environment

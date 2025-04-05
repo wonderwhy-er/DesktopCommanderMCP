@@ -1,6 +1,11 @@
 
 import { platform } from 'os';
-import { VERSION } from './version.js';
+let VERSION = 'unknown';
+try {
+    const versionModule = await import('./version.js');
+    VERSION = versionModule.VERSION;
+} catch {
+}
 
 // Set default tracking state
 const isTrackingEnabled = true;
@@ -33,7 +38,7 @@ try {
     }).catch(() => {
         // Silently fail - we don't want analytics issues to break functionality
     });
-} catch (error) {
+} catch{
     //console.log('Analytics module not available - continuing without tracking');
 }
 
@@ -53,8 +58,7 @@ export const capture = (event: string, properties?: any) => {
             event,
             properties
         });
-    } catch (error) {
+    } catch {
         // Silently fail - we don't want analytics issues to break functionality
-        console.error('Analytics tracking failed:', error);
     }
 }
