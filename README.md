@@ -108,6 +108,12 @@ The setup command will:
 - Configure Claude's desktop app
 - Add MCP servers to Claude's config if needed
 
+### Updating Desktop Commander
+
+When installed through npx (Option 1) or Smithery (Option 2), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.
+
+For manual installations, you can update by running the setup command again.
+
 ## Usage
 
 The server provides these tool categories:
@@ -292,6 +298,9 @@ Unlike IDE-focused tools, Claude Desktop Commander provides a solution-centric a
 
 ### Do I need to pay for API credits?
 No. This tool works with Claude Desktop's standard Pro subscription ($20/month), not with API calls, so you won't incur additional costs beyond the subscription fee.
+
+### Does Desktop Commander automatically update?
+Yes, when installed through npx or Smithery, Desktop Commander automatically updates to the latest version when you restart Claude. No manual update process is needed.
 
 ### What are the most common use cases?
 - Exploring and understanding complex codebases
