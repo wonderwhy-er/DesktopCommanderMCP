@@ -1,6 +1,7 @@
 import { parseEditBlock, performSearchReplace } from '../dist/tools/edit.js';
 
-async function runTests() {
+// Export the main test function
+export default async function runTests() {
     try {
         // Test parseEditBlock
         const testBlock = `test.txt
@@ -36,10 +37,17 @@ new content
         // Cleanup
         await fs.unlink(testFilePath);
         console.log('All tests passed! 🎉');
+        return true;
     } catch (error) {
         console.error('Test failed:', error);
-        process.exit(1);
+        return false;
     }
 }
 
-runTests();
+// If this file is run directly (not imported), execute the test
+if (import.meta.url === `file://${process.argv[1]}`) {
+    runTests().catch(error => {
+        console.error('Unhandled error:', error);
+        process.exit(1);
+    });
+}

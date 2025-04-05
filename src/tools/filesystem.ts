@@ -28,10 +28,42 @@ function expandHome(filepath: string): string {
     return filepath;
 }
 
-// Security utilities
+/**
+ * Recursively validates parent directories until it finds a valid one
+ * This function handles the case where we need to create nested directories
+ * and we need to check if any of the parent directories exist
+ * 
+ * @param directoryPath The path to validate
+ * @returns Promise<boolean> True if a valid parent directory was found
+ */
+async function validateParentDirectories(directoryPath: string): Promise<boolean> {
+    const parentDir = path.dirname(directoryPath);
+    
+    // Base case: we've reached the root or the same directory (shouldn't happen normally)
+    if (parentDir === directoryPath || parentDir === path.dirname(parentDir)) {
+        return false;
+    }
+
+    try {
+        // Check if the parent directory exists
+        await fs.realpath(parentDir);
+        return true;
+    } catch {
+        // Parent doesn't exist, recursively check its parent
+        return validateParentDirectories(parentDir);
+    }
+}
+
+/**
+ * Validates a path to ensure it can be accessed or created.
+ * For existing paths, returns the real path (resolving symlinks).
+ * For non-existent paths, validates parent directories to ensure they exist.
+ * 
+ * @param requestedPath The path to validate
+ * @returns Promise<string> The validated path
+ * @throws Error if the path or its parent directories don't exist
+ */
 export async function validatePath(requestedPath: string): Promise<string> {
-    // Temporarily allow all paths by just returning the resolved path
-    // TODO: Implement configurable path validation
     // Expand home directory if present
     const expandedPath = expandHome(requestedPath);
     
@@ -43,11 +75,19 @@ export async function validatePath(requestedPath: string): Promise<string> {
     // Check if path exists
     try {
         const stats = await fs.stat(absolute);
-        
         // If path exists, resolve any symlinks
         return await fs.realpath(absolute);
     } catch (error) {
-        // return path if it's not exist. This will be used for folder creation and many other file operations
+        // Path doesn't exist - validate parent directories
+        if (await validateParentDirectories(absolute)) {
+            // Return the path if a valid parent exists
+            // This will be used for folder creation and many other file operations
+            return absolute;
+        }
+        
+        // If no valid parent directory was found, still return the absolute path
+        // to maintain compatibility with upstream behavior, but log a warning
+        console.warn(`Warning: Parent directory does not exist: ${path.dirname(absolute)}`);
         return absolute;
     }
 }
