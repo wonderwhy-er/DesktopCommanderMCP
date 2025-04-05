@@ -128,7 +128,7 @@ The server provides these tool categories:
 - `block_command`/`unblock_command`: Manage command blacklist
 
 ### Filesystem Tools
-- `read_file`/`write_file`: File operations
+- `read_file`/`write_file`: File operations (supports viewing PNG, JPEG, GIF, and WebP images directly in Claude)
 - `create_directory`/`list_directory`: Directory management  
 - `move_file`: Move/rename files
 - `search_files`: Pattern-based file search
