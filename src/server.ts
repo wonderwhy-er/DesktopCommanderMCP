@@ -311,6 +311,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             };
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
+            capture(name + "_error");
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
             }; 
@@ -340,11 +341,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 };
             } else {
                 // For all other files, return as text
+                capture("read_file_error");
                 return {
                     content: [{ type: "text", text: fileResult.content }],
                 };
             }
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -396,6 +399,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             
             return { content: contentItems };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -411,6 +415,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -426,6 +431,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -441,6 +447,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 content: [{ type: "text", text: entries.join('\n') }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -456,6 +463,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -471,6 +479,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -497,6 +506,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 };
             }
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
@@ -533,6 +543,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }],
             };
         } catch (error) {
+            capture(name + "_error");
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
                 content: [{ type: "text", text: `Error: ${errorMessage}` }],
