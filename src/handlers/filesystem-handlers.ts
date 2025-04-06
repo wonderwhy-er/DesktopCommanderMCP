@@ -1,0 +1,242 @@
+import {
+    readFile,
+    readMultipleFiles,
+    writeFile,
+    createDirectory,
+    listDirectory,
+    moveFile,
+    searchFiles,
+    getFileInfo,
+    listAllowedDirectories,
+    type FileResult,
+    type MultiFileResult
+} from '../tools/filesystem.js';
+
+import {
+    ReadFileArgsSchema,
+    ReadMultipleFilesArgsSchema,
+    WriteFileArgsSchema,
+    CreateDirectoryArgsSchema,
+    ListDirectoryArgsSchema,
+    MoveFileArgsSchema,
+    SearchFilesArgsSchema,
+    GetFileInfoArgsSchema
+} from '../tools/schemas.js';
+
+/**
+ * Handle read_file command
+ */
+export async function handleReadFile(args: unknown) {
+    try {
+        const parsed = ReadFileArgsSchema.parse(args);
+        // Explicitly cast the result to FileResult since we're passing true
+        const fileResult = await readFile(parsed.path, true, parsed.isUrl) as FileResult;
+        
+        if (fileResult.isImage) {
+            // For image files, return as an image content type
+            return {
+                content: [
+                    { 
+                        type: "text", 
+                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
+                    },
+                    {
+                        type: "image",
+                        data: fileResult.content,
+                        mimeType: fileResult.mimeType
+                    }
+                ],
+            };
+        } else {
+            // For all other files, return as text
+            return {
+                content: [{ type: "text", text: fileResult.content }],
+            };
+        }
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle read_multiple_files command
+ */
+export async function handleReadMultipleFiles(args: unknown) {
+    try {
+        const parsed = ReadMultipleFilesArgsSchema.parse(args);
+        const fileResults = await readMultipleFiles(parsed.paths);
+        
+        // Create a text summary of all files
+        const textSummary = fileResults.map(result => {
+            if (result.error) {
+                return `${result.path}: Error - ${result.error}`;
+            } else if (result.mimeType) {
+                return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
+            } else {
+                return `${result.path}: Unknown type`;
+            }
+        }).join("\n");
+        
+        // Create content items for each file
+        const contentItems: Array<{type: string, text?: string, data?: string, mimeType?: string}> = [];
+        
+        // Add the text summary
+        contentItems.push({ type: "text", text: textSummary });
+        
+        // Add each file content
+        for (const result of fileResults) {
+            if (!result.error && result.content !== undefined) {
+                if (result.isImage && result.mimeType) {
+                    // For image files, add an image content item
+                    contentItems.push({
+                        type: "image",
+                        data: result.content,
+                        mimeType: result.mimeType
+                    });
+                } else {
+                    // For text files, add a text summary
+                    contentItems.push({
+                        type: "text",
+                        text: `\n--- ${result.path} contents: ---\n${result.content}`
+                    });
+                }
+            }
+        }
+        
+        return { content: contentItems };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle write_file command
+ */
+export async function handleWriteFile(args: unknown) {
+    try {
+        const parsed = WriteFileArgsSchema.parse(args);
+        await writeFile(parsed.path, parsed.content);
+        return {
+            content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle create_directory command
+ */
+export async function handleCreateDirectory(args: unknown) {
+    try {
+        const parsed = CreateDirectoryArgsSchema.parse(args);
+        await createDirectory(parsed.path);
+        return {
+            content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle list_directory command
+ */
+export async function handleListDirectory(args: unknown) {
+    try {
+        const parsed = ListDirectoryArgsSchema.parse(args);
+        const entries = await listDirectory(parsed.path);
+        return {
+            content: [{ type: "text", text: entries.join('\n') }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle move_file command
+ */
+export async function handleMoveFile(args: unknown) {
+    try {
+        const parsed = MoveFileArgsSchema.parse(args);
+        await moveFile(parsed.source, parsed.destination);
+        return {
+            content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle search_files command
+ */
+export async function handleSearchFiles(args: unknown) {
+    try {
+        const parsed = SearchFilesArgsSchema.parse(args);
+        const results = await searchFiles(parsed.path, parsed.pattern);
+        return {
+            content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle get_file_info command
+ */
+export async function handleGetFileInfo(args: unknown) {
+    try {
+        const parsed = GetFileInfoArgsSchema.parse(args);
+        const info = await getFileInfo(parsed.path);
+        return {
+            content: [{ 
+                type: "text", 
+                text: Object.entries(info)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join('\n') 
+            }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
+        };
+    }
+}
+
+/**
+ * Handle list_allowed_directories command
+ */
+export function handleListAllowedDirectories() {
+    const directories = listAllowedDirectories();
+    return {
+        content: [{ 
+            type: "text", 
+            text: `Allowed directories:\n${directories.join('\n')}` 
+        }],
+    };
+}

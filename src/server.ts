@@ -7,7 +7,6 @@ import {
   type CallToolRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { commandManager } from './command-manager.js';
 import {
   ExecuteCommandArgsSchema,
   ReadOutputArgsSchema,
@@ -27,22 +26,6 @@ import {
   EditBlockArgsSchema,
   SearchCodeArgsSchema,
 } from './tools/schemas.js';
-import { executeCommand, readOutput, forceTerminate, listSessions } from './tools/execute.js';
-import { listProcesses, killProcess } from './tools/process.js';
-import {
-  readFile,
-  readMultipleFiles,
-  writeFile,
-  createDirectory,
-  listDirectory,
-  moveFile,
-  searchFiles,
-  getFileInfo,
-  listAllowedDirectories,
-  type FileResult,
-} from './tools/filesystem.js';
-import { parseEditBlock, performSearchReplace } from './tools/edit.js';
-import { searchTextInFiles } from './tools/search.js';
 
 import { VERSION } from './version.js';
 import { capture } from "./utils.js";
@@ -149,10 +132,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "read_file",
         description:
-          "Read the complete contents of a file from the file system. " +
+          "Read the complete contents of a file from the file system or a URL. " +
+          "When reading from the file system, only works within allowed directories. " +
+          "Can fetch content from URLs when isUrl parameter is set to true. " +
           "Handles text files normally and image files are returned as viewable images. " +
-          "Recognized image types: PNG, JPEG, GIF, WebP. " +
-          "Only works within allowed directories.",
+          "Recognized image types: PNG, JPEG, GIF, WebP.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema),
       },
       {
@@ -243,329 +227,110 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
+import * as handlers from './handlers/index.js';
+
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
   try {
     const { name, arguments: args } = request.params;
     capture('server_call_tool');
-    switch (name) {
-      // Terminal tools
-      case "execute_command": {
-        capture('server_execute_command');
-        const parsed = ExecuteCommandArgsSchema.parse(args);
-        return executeCommand(parsed);
+    
+    try {
+      // Using a more structured approach with dedicated handlers
+      switch (name) {
+        // Terminal tools
+        case "execute_command":
+          capture('server_execute_command');
+          return handlers.handleExecuteCommand(args);
+          
+        case "read_output":
+          capture('server_read_output');
+          return handlers.handleReadOutput(args);
+          
+        case "force_terminate":
+          capture('server_force_terminate');
+          return handlers.handleForceTerminate(args);
+          
+        case "list_sessions":
+          capture('server_list_sessions');
+          return handlers.handleListSessions();
+          
+        // Process tools
+        case "list_processes":
+          capture('server_list_processes');
+          return handlers.handleListProcesses();
+          
+        case "kill_process":
+          capture('server_kill_process');
+          return handlers.handleKillProcess(args);
+          
+        // Command management tools
+        case "block_command":
+          capture('server_block_command');
+          return handlers.handleBlockCommand(args);
+          
+        case "unblock_command":
+          capture('server_unblock_command');
+          return handlers.handleUnblockCommand(args);
+          
+        case "list_blocked_commands":
+          capture('server_list_blocked_commands');
+          return handlers.handleListBlockedCommands();
+          
+        // Filesystem tools
+        case "read_file":
+          capture('server_read_file');
+          return handlers.handleReadFile(args);
+          
+        case "read_multiple_files":
+          capture('server_read_multiple_files');
+          return handlers.handleReadMultipleFiles(args);
+          
+        case "write_file":
+          capture('server_write_file');
+          return handlers.handleWriteFile(args);
+          
+        case "create_directory":
+          capture('server_create_directory');
+          return handlers.handleCreateDirectory(args);
+          
+        case "list_directory":
+          capture('server_list_directory');
+          return handlers.handleListDirectory(args);
+          
+        case "move_file":
+          capture('server_move_file');
+          return handlers.handleMoveFile(args);
+          
+        case "search_files":
+          capture('server_search_files');
+          return handlers.handleSearchFiles(args);
+          
+        case "search_code":
+          capture('server_search_code');
+          return handlers.handleSearchCode(args);
+          
+        case "get_file_info":
+          capture('server_get_file_info');
+          return handlers.handleGetFileInfo(args);
+          
+        case "list_allowed_directories":
+          capture('server_list_allowed_directories');
+          return handlers.handleListAllowedDirectories();
+          
+        case "edit_block":
+          capture('server_edit_block');
+          return handlers.handleEditBlock(args);
+          
+        default:
+          capture('server_unknown_tool', { name });
+          throw new Error(`Unknown tool: ${name}`);
       }
-      case "read_output": {
-        capture('server_read_output');
-        const parsed = ReadOutputArgsSchema.parse(args);
-        return readOutput(parsed);
-      }
-      case "force_terminate": {
-        capture('server_force_terminate');
-        const parsed = ForceTerminateArgsSchema.parse(args);
-        return forceTerminate(parsed);
-      }
-      case "list_sessions":
-        capture('server_list_sessions');
-        return listSessions();
-      case "list_processes":
-        capture('server_list_processes');
-        return listProcesses();
-      case "kill_process": {
-        capture('server_kill_process');
-        const parsed = KillProcessArgsSchema.parse(args);
-        return killProcess(parsed);
-      }
-      case "block_command": {
-        capture('server_block_command');
-        const parsed = BlockCommandArgsSchema.parse(args);
-        const blockResult = await commandManager.blockCommand(parsed.command);
-        return {
-          content: [{ type: "text", text: blockResult }],
-        };
-      }
-      case "unblock_command": {
-        capture('server_unblock_command');
-        const parsed = UnblockCommandArgsSchema.parse(args);
-        const unblockResult = await commandManager.unblockCommand(parsed.command);
-        return {
-          content: [{ type: "text", text: unblockResult }],
-        };
-      }
-      case "list_blocked_commands": {
-        capture('server_list_blocked_commands');
-        const blockedCommands = await commandManager.listBlockedCommands();
-        return {
-          content: [{ type: "text", text: blockedCommands.join('\n') }],
-        };
-      }
-      
-      // Filesystem tools
-      case "edit_block": {
-        capture('server_edit_block');
-        try {
-        const parsed = EditBlockArgsSchema.parse(args);
-        const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
-            await performSearchReplace(filePath, searchReplace);
-            return {
-                content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
-            };
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            capture('server_' + name + "_error");
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            }; 
-        }
-      }
-      case "read_file": {
-        capture('server_read_file');
-        try {
-            const parsed = ReadFileArgsSchema.parse(args);
-            // Explicitly cast the result to FileResult since we're passing true
-            const fileResult = await readFile(parsed.path, true) as FileResult;
-            
-            if (fileResult.isImage) {
-                // For image files, return as an image content type
-                return {
-                    content: [
-                        { 
-                            type: "text", 
-                            text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
-                        },
-                        {
-                            type: "image",
-                            data: fileResult.content,
-                            mimeType: fileResult.mimeType
-                        }
-                    ],
-                };
-            } else {
-                // For all other files, return as text
-                capture('server_' + "read_file_error");
-                return {
-                    content: [{ type: "text", text: fileResult.content }],
-                };
-            }
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "read_multiple_files": {
-        capture('server_read_multiple_files');
-        try {
-            const parsed = ReadMultipleFilesArgsSchema.parse(args);
-            const fileResults = await readMultipleFiles(parsed.paths);
-            
-            // Create a text summary of all files
-            const textSummary = fileResults.map(result => {
-                if (result.error) {
-                    return `${result.path}: Error - ${result.error}`;
-                } else if (result.mimeType) {
-                    return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
-                } else {
-                    return `${result.path}: Unknown type`;
-                }
-            }).join("\n");
-            
-            // Create content items for each file
-            const contentItems: Array<{type: string, text?: string, data?: string, mimeType?: string}> = [];
-            
-            // Add the text summary
-            contentItems.push({ type: "text", text: textSummary });
-            
-            // Add each file content
-            for (const result of fileResults) {
-                if (!result.error && result.content !== undefined) {
-                    if (result.isImage && result.mimeType) {
-                        // For image files, add an image content item
-                        contentItems.push({
-                            type: "image",
-                            data: result.content,
-                            mimeType: result.mimeType
-                        });
-                    } else {
-                        // For text files, add a text summary
-                        contentItems.push({
-                            type: "text",
-                            text: `\n--- ${result.path} contents: ---\n${result.content}`
-                        });
-                    }
-                }
-            }
-            
-            return { content: contentItems };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "write_file": {
-        capture('server_write_file');
-        try {
-            const parsed = WriteFileArgsSchema.parse(args);
-            await writeFile(parsed.path, parsed.content);
-            return {
-                content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "create_directory": {
-        capture('server_create_directory');
-        try {
-            const parsed = CreateDirectoryArgsSchema.parse(args);
-            await createDirectory(parsed.path);
-            return {
-                content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "list_directory": {
-        capture('server_list_directory');
-        try {
-            const parsed = ListDirectoryArgsSchema.parse(args);
-            const entries = await listDirectory(parsed.path);
-            return {
-                content: [{ type: "text", text: entries.join('\n') }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "move_file": {
-        capture('server_move_file');
-        try {
-            const parsed = MoveFileArgsSchema.parse(args);
-            await moveFile(parsed.source, parsed.destination);
-            return {
-                content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "search_files": {
-        capture('server_search_files');
-        try {
-            const parsed = SearchFilesArgsSchema.parse(args);
-            const results = await searchFiles(parsed.path, parsed.pattern);
-            return {
-                content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "search_code": {
-        capture('server_search_code');
-        let results = [];
-        try {
-            const parsed = SearchCodeArgsSchema.parse(args);
-            results = await searchTextInFiles({
-                rootPath: parsed.path,
-                pattern: parsed.pattern,
-                filePattern: parsed.filePattern,
-                ignoreCase: parsed.ignoreCase,
-                maxResults: parsed.maxResults,
-                includeHidden: parsed.includeHidden,
-                contextLines: parsed.contextLines,
-            });
-            if (results.length === 0) {
-                return {
-                    content: [{ type: "text", text: "No matches found" }],
-                };
-            }
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-
-        // Format the results in a VS Code-like format
-        let currentFile = "";
-        let formattedResults = "";
-
-        results.forEach(result => {
-          if (result.file !== currentFile) {
-            formattedResults += `\n${result.file}:\n`;
-            currentFile = result.file;
-          }
-          formattedResults += `  ${result.line}: ${result.match}\n`;
-        });
-
-        return {
-          content: [{ type: "text", text: formattedResults.trim() }],
-        };
-      }
-      case "get_file_info": {
-        capture('server_get_file_info');
-        try {
-            const parsed = GetFileInfoArgsSchema.parse(args);
-            const info = await getFileInfo(parsed.path);
-            return {
-            content: [{ 
-                type: "text", 
-                text: Object.entries(info)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join('\n') 
-            }],
-            };
-        } catch (error) {
-            capture('server_' + name + "_error");
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{ type: "text", text: `Error: ${errorMessage}` }],
-            };
-        }
-      }
-      case "list_allowed_directories": {
-        capture('server_list_allowed_directories');
-        const directories = listAllowedDirectories();
-        return {
-          content: [{ 
-            type: "text", 
-            text: `Allowed directories:\n${directories.join('\n')}` 
-          }],
-        };
-      }
-
-      default:
-        capture('server_unknow_tool', {
-            name
-        });
-        throw new Error(`Unknown tool: ${name}`);
+    } catch (error) {
+      capture('server_' + name + "_error");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text", text: `Error: ${errorMessage}` }],
+      };
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

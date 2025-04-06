@@ -31,6 +31,7 @@ export const UnblockCommandArgsSchema = z.object({
 // Filesystem tools schemas
 export const ReadFileArgsSchema = z.object({
   path: z.string(),
+  isUrl: z.boolean().optional().default(false),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({

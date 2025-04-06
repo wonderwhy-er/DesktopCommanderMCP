@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
+import fetch from 'cross-fetch';
 
 // Store allowed directories - temporarily allowing all paths
 // TODO: Make this configurable through a configuration file
@@ -100,11 +101,63 @@ export interface FileResult {
 }
 
 
-export async function readFile(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
-    const validPath = await validatePath(filePath);
+/**
+ * Read file content from a URL
+ * @param url URL to fetch content from
+ * @param returnMetadata Whether to return metadata with the content
+ * @returns File content or file result with metadata
+ */
+export async function readFileFromUrl(url: string, returnMetadata?: boolean): Promise<string | FileResult> {
+    // Import the MIME type utilities
+    const { isImageFile } = await import('./mime-types.js');
     
+    try {
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        
+        // Get MIME type from Content-Type header
+        const contentType = response.headers.get('content-type') || 'text/plain';
+        const isImage = isImageFile(contentType);
+        
+        if (isImage) {
+            // For images, convert to base64
+            const buffer = await response.arrayBuffer();
+            const content = Buffer.from(buffer).toString('base64');
+            
+            if (returnMetadata === true) {
+                return { content, mimeType: contentType, isImage };
+            } else {
+                return content;
+            }
+        } else {
+            // For text content
+            const content = await response.text();
+            
+            if (returnMetadata === true) {
+                return { content, mimeType: contentType, isImage };
+            } else {
+                return content;
+            }
+        }
+    } catch (error) {
+        throw new Error(`Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+/**
+ * Read file content from the local filesystem
+ * @param filePath Path to the file
+ * @param returnMetadata Whether to return metadata with the content
+ * @returns File content or file result with metadata
+ */
+export async function readFileFromDisk(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
+    
+    const validPath = await validatePath(filePath);
     
     // Detect the MIME type based on file extension
     const mimeType = getMimeType(validPath);
@@ -142,6 +195,19 @@ export async function readFile(filePath: string, returnMetadata?: boolean): Prom
             }
         }
     }
+}
+
+/**
+ * Read a file from either the local filesystem or a URL
+ * @param filePath Path to the file or URL
+ * @param returnMetadata Whether to return metadata with the content
+ * @param isUrl Whether the path is a URL
+ * @returns File content or file result with metadata
+ */
+export async function readFile(filePath: string, returnMetadata?: boolean, isUrl?: boolean): Promise<string | FileResult> {
+    return isUrl 
+        ? readFileFromUrl(filePath, returnMetadata)
+        : readFileFromDisk(filePath, returnMetadata);
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {
