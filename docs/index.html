@@ -462,6 +462,7 @@
             
             <div class="tabs">
                 <button class="tab-btn active" onclick="openTab(event, 'npx')" style="color: #0056b3;">NPX Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'bash')" style="color: #121212; font-weight: 500;">Bash Install (macOS)</button>
                 <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 500;">Smithery Install</button>
                 <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 500;">Manual Configuration</button>
                 <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 500;">Local Installation</button>
@@ -483,10 +484,29 @@
                         <h3>NPX Install</h3>
                         <p>Install using npx directly:</p>
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
+                        <p>For macOS users, you can also use this bash script:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/feat/install_sh_script/install.sh | bash</pre>
                     </div>
                 </div>
             </div>
             
+            <div id="bash" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>Bash Install (macOS)</h3>
+                        <p>For macOS users, use our automated bash installer which will:</p>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li>Check your Node.js version and install it if needed</li>
+                            <li>Set up Desktop Commander automatically</li>
+                            <li>Configure all necessary dependencies</li>
+                        </ul>
+                        <pre
+                            style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/feat/install_sh_script/install.sh | bash</pre>
+                        <p style="margin-top: 10px; font-style: italic;">This is the simplest installation method for macOS users.
+                        </p>
+                    </div>
+                </div>
+            </div>
             <div id="manual" class="tab-content">
                 <div class="step">
                     <div class="step-content">
