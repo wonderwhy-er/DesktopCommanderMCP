@@ -112,7 +112,7 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
     const { isImageFile } = await import('./mime-types.js');
     
     // Set up fetch with timeout
-    const FETCH_TIMEOUT_MS = 10000; // 10 seconds timeout
+    const FETCH_TIMEOUT_MS = 30000;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     

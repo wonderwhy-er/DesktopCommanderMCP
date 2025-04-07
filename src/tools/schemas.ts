@@ -59,6 +59,7 @@ export const MoveFileArgsSchema = z.object({
 export const SearchFilesArgsSchema = z.object({
   path: z.string(),
   pattern: z.string(),
+  timeoutMs: z.number().optional(),
 });
 
 export const GetFileInfoArgsSchema = z.object({
@@ -74,6 +75,7 @@ export const SearchCodeArgsSchema = z.object({
   maxResults: z.number().optional(),
   includeHidden: z.boolean().optional(),
   contextLines: z.number().optional(),
+  timeoutMs: z.number().optional(),
 });
 
 // Edit tools schemas

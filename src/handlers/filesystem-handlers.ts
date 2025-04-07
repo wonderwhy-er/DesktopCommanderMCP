@@ -12,6 +12,8 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 
+import { withTimeout } from '../utils.js';
+
 import {
     ReadFileArgsSchema,
     ReadMultipleFilesArgsSchema,
@@ -150,9 +152,35 @@ export async function handleMoveFile(args: unknown) {
  */
 export async function handleSearchFiles(args: unknown) {
     const parsed = SearchFilesArgsSchema.parse(args);
-    const results = await searchFiles(parsed.path, parsed.pattern);
+    const timeoutMs = parsed.timeoutMs || 30000; // 30 seconds default
+    
+    // Apply timeout at the handler level
+    const searchOperation = async () => {
+        return await searchFiles(parsed.path, parsed.pattern);
+    };
+    
+    // Use withTimeout at the handler level
+    const results = await withTimeout(
+        searchOperation(),
+        timeoutMs,
+        'File search operation',
+        [] // Empty array as default on timeout
+    );
+    
+    if (results.length === 0) {
+        // Similar approach as in handleSearchCode
+        if (timeoutMs > 0) {
+            return {
+                content: [{ type: "text", text: `No matches found or search timed out after ${timeoutMs}ms.` }],
+            };
+        }
+        return {
+            content: [{ type: "text", text: "No matches found" }],
+        };
+    }
+    
     return {
-        content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
+        content: [{ type: "text", text: results.join('\n') }],
     };
 }
 

@@ -185,6 +185,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Finds files by name using a case-insensitive substring matching. " +
           "Searches through all subdirectories from the starting path. " +
+          "Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. " +
           "Only searches within allowed directories.",
         inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
       },
@@ -194,6 +195,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           "Search for text/code patterns within file contents using ripgrep. " +
           "Fast and powerful search similar to VS Code search functionality. " +
           "Supports regular expressions, file pattern filtering, and context lines. " +
+          "Has a default timeout of 30 seconds which can be customized. " +
           "Only searches within allowed directories.",
         inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
       },
