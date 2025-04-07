@@ -1,64 +1,118 @@
-
 import { platform } from 'os';
+import { createHash } from 'crypto';
+import * as https from 'https';
+
 let VERSION = 'unknown';
 try {
     const versionModule = await import('./version.js');
     VERSION = versionModule.VERSION;
 } catch {
+    // Continue without version info if not available
 }
+
+// Configuration
+const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L'; // Replace with your GA4 Measurement ID
+const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A'; // Replace with your GA4 API Secret
+const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
 
 // Set default tracking state
 const isTrackingEnabled = true;
 let uniqueUserId = 'unknown';
-let posthog: any = null;
 
-// Try to load PostHog without breaking if it's not available
+// Try to generate a unique user ID without breaking if dependencies aren't available
 try {
-    // Dynamic imports to prevent crashing if dependencies aren't available
-    import('posthog-node').then((posthogModule) => {
-        const PostHog = posthogModule.PostHog;
-        
-        import('node-machine-id').then((machineIdModule) => {
-            // Access the default export from the module
-            uniqueUserId = machineIdModule.default.machineIdSync();
-            
-            if (isTrackingEnabled) {
-                posthog = new PostHog(
-                    'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
-                    { 
-                        host: 'https://eu.i.posthog.com',
-                        flushAt: 3, // send all every time
-                        flushInterval: 5 // send always
-                    }
-                );
-            }
-        }).catch(() => {
-            // Silently fail - we don't want analytics issues to break functionality
-        });
+    // Dynamic import to prevent crashing if dependency isn't available
+    import('node-machine-id').then((machineIdModule) => {
+        // Access the default export from the module
+        uniqueUserId = machineIdModule.default.machineIdSync();
     }).catch(() => {
-        // Silently fail - we don't want analytics issues to break functionality
+        // Fallback to a semi-random ID if machine-id isn't available
+        uniqueUserId = createHash('sha256')
+            .update(`${platform()}-${process.env.USER || process.env.USERNAME || 'user'}-${Date.now()}`)
+            .digest('hex');
     });
-} catch{
-    //console.log('Analytics module not available - continuing without tracking');
+} catch {
+    // Fallback to a semi-random ID if import fails
+    uniqueUserId = createHash('sha256')
+        .update(`${platform()}-${process.env.USER || process.env.USERNAME || 'user'}-${Date.now()}`)
+        .digest('hex');
 }
 
+/**
+ * Send an event to Google Analytics
+ * @param event Event name
+ * @param properties Optional event properties
+ */
 export const capture = (event: string, properties?: any) => {
-    if (!posthog || !isTrackingEnabled) {
+    if (!isTrackingEnabled || !GA_MEASUREMENT_ID || !GA_API_SECRET) {
         return;
     }
     
     try {
-        properties = properties || {};
-        properties.timestamp = new Date().toISOString();
-        properties.platform = platform();
-        properties.DCVersion = VERSION;
-
-        posthog.capture({
-            distinctId: uniqueUserId,
-            event,
-            properties
+        // Prepare standard properties
+        const baseProperties = {
+            timestamp: new Date().toISOString(),
+            platform: platform(),
+            app_version: VERSION,
+            engagement_time_msec: "100"
+        };
+        
+        // Combine with custom properties
+        const eventProperties = {
+            ...baseProperties,
+            ...(properties || {})
+        };
+        
+        // Prepare GA4 payload
+        const payload = {
+            client_id: uniqueUserId,
+            non_personalized_ads: false,
+            events: [{
+                name: event,
+                params: eventProperties
+            }]
+        };
+        
+        // Send data to Google Analytics
+        const postData = JSON.stringify(payload);
+        
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+        };
+        
+        const req = https.request(GA_BASE_URL, options, (res) => {
+            // Response handling (optional)
+            let data = '';
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+            
+            res.on('end', () => {
+                if (res.statusCode !== 200 && res.statusCode !== 204) {
+                    // Optional debug logging
+                    // console.debug(`GA tracking error: ${res.statusCode} ${data}`);
+                }
+            });
         });
+        
+        req.on('error', () => {
+            // Silently fail - we don't want analytics issues to break functionality
+        });
+        
+        // Set timeout to prevent blocking the app
+        req.setTimeout(3000, () => {
+            req.destroy();
+        });
+        
+        // Send data
+        req.write(postData);
+        req.end();
+        
     } catch {
         // Silently fail - we don't want analytics issues to break functionality
     }
-}
+};

@@ -63,7 +63,6 @@
     "@vscode/ripgrep": "^1.15.9",
     "glob": "^10.3.10",
     "node-machine-id": "^1.1.12",
-    "posthog-node": "^4.11.1",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
