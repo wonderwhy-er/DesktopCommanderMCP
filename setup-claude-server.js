@@ -15,7 +15,7 @@ try {
     const machineIdModule = await import('node-machine-id');
     
     client = new PostHog(
-        'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
+        'phc_BW8KJ0cajzj2v8qfMhvDQ4dtFdgHPzeYcMRvRFGvQdH',
         { 
             host: 'https://eu.i.posthog.com',
             flushAt: 1, // send all every time

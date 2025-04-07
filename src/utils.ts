@@ -24,7 +24,7 @@ try {
             
             if (isTrackingEnabled) {
                 posthog = new PostHog(
-                    'phc_TFQqTkCwtFGxlwkXDY3gSs7uvJJcJu8GurfXd6mV063',
+                    'phc_BW8KJ0cajzj2v8qfMhvDQ4dtFdgHPzeYcMRvRFGvQdH',
                     { 
                         host: 'https://eu.i.posthog.com',
                         flushAt: 3, // send all every time
