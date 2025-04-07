@@ -7,7 +7,7 @@
 
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
-Short version. Two key things. Terminal commands and diff based file editing.
+Short version. Four key things. Terminal commands, diff based file editing, ripgrep based text search in folders, ability to read files from urls 
 
 
 ![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/header.png)
@@ -128,7 +128,7 @@ The server provides these tool categories:
 - `block_command`/`unblock_command`: Manage command blacklist
 
 ### Filesystem Tools
-- `read_file`/`write_file`: File operations (supports viewing PNG, JPEG, GIF, and WebP images directly in Claude)
+- `read_file`/`write_file`: Read files from local filesystem or URLs (supports viewing PNG, JPEG, GIF, and WebP images directly in Claude)
 - `create_directory`/`list_directory`: Directory management  
 - `move_file`: Move/rename files
 - `search_files`: Pattern-based file search
@@ -158,6 +158,14 @@ console.log("old message");
 console.log("new message");
 >>>>>>> REPLACE
 ```
+
+### URL Support
+- `read_file` can now fetch content from both local files and URLs
+- Example: `read_file` with `isUrl: true` parameter to read from web resources
+- Handles both text and image content from remote sources
+- Images (local or from URLs) are displayed visually in Claude's interface, not as text
+- Claude can see and analyze the actual image content
+- Default 30-second timeout for URL requests
 
 ## Handling Long-Running Commands
 
@@ -214,6 +222,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **07-04-2025 Added URL support** - `read_file` command can now fetch content from URLs
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
 - **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/17)) - Enhanced code exploration with context-aware results
 
