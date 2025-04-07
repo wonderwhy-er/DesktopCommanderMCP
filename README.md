@@ -163,6 +163,8 @@ console.log("new message");
 - `read_file` can now fetch content from both local files and URLs
 - Example: `read_file` with `isUrl: true` parameter to read from web resources
 - Handles both text and image content from remote sources
+- Images (local or from URLs) are displayed visually in Claude's interface, not as text
+- Claude can see and analyze the actual image content
 - Default 30-second timeout for URL requests
 
 ## Handling Long-Running Commands

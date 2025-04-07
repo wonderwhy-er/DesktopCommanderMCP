@@ -173,8 +173,9 @@ The tool enables a wide range of tasks:
 - Explore and understand codebases, including generating diagrams
 - Read, write, and edit files with surgical precision
 - Work with multiple codebases or projects simultaneously
-- Perform comprehensive code searches across directories
+- Perform comprehensive code searches across directories with timeout protection
 - Debug issues by comparing codebases
+- Fetch and analyze content from URLs
 
 **Automation tasks:**
 - Run and manage terminal commands, including long-running processes
@@ -188,9 +189,9 @@ The tool enables a wide range of tasks:
 - Analyze and summarize codebases
 - Produce reports on code quality or structure
 
-### How does it handle file editing?
+### How does it handle file editing and URL content?
 
-Claude Desktop Commander provides two main approaches to file editing:
+Claude Desktop Commander provides two main approaches to file editing and supports URL content:
 
 1. **Surgical text replacements (`edit_block`):**
    - Best for small changes (<20% of file size)
@@ -209,6 +210,11 @@ Claude Desktop Commander provides two main approaches to file editing:
    - Best for large changes (>20% of file size) or when edit_block fails
    - Replaces the entire content of a file
 
+3. **URL content retrieval (`read_file` with `isUrl: true`):**
+   - Fetch content from web resources
+   - Supports both text and image content from URLs
+   - Uses a 30-second timeout to prevent hanging on slow connections
+
 It also supports pattern-based replacements across multiple files.
 
 ### Can it help me understand complex codebases?
@@ -223,16 +229,22 @@ Yes, one of its strengths is codebase exploration. Claude can:
 
 This makes it particularly useful for onboarding to new projects or reviewing unfamiliar repositories.
 
-### How does it handle long-running commands?
+### How does it handle long-running commands and searches?
 
-Claude Desktop Commander has a sophisticated system for managing commands that may take a while to complete:
+Claude Desktop Commander has a sophisticated system for managing commands and operations that may take a while to complete:
 
 1. The `execute_command` function returns after a timeout with initial output
 2. The command continues running in the background
 3. You can use `read_output` with the PID to get new output as it becomes available
 4. You can use `force_terminate` to stop the command if needed
 
-This allows Claude to manage processes that would normally exceed conversation timeouts, such as video encoding, large file operations, or complex builds.
+For search operations:
+1. Both `search_files` and `search_code` have a default 30-second timeout
+2. This prevents searches from hanging indefinitely on large codebases
+3. You can customize the timeout duration with the `timeoutMs` parameter
+4. If a search times out, you'll receive a clear message indicating the timeout
+
+This allows Claude to manage processes that would normally exceed conversation timeouts, such as video encoding, large file operations, complex builds, or extensive searches.
 
 ### Can I use it for non-coding tasks?
 
