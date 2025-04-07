@@ -63,7 +63,14 @@ npx @wonderwhy-er/desktop-commander@latest setup --debug
 ```
 Restart Claude if running
 
-### Option 2: Installing via Smithery
+### Option 2: Using bash script installer (macOS)
+For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
+```
+curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
+```
+This script handles all dependencies and configuration automatically for a seamless setup experience.
+
+### Option 3: Installing via Smithery
 
 To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
@@ -71,7 +78,7 @@ To install Desktop Commander for Claude Desktop automatically via [Smithery](htt
 npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 ```
 
-### Option 3: Add to claude_desktop_config by hand
+### Option 4: Add to claude_desktop_config by hand
 Add this entry to your claude_desktop_config.json:
 
 - On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -93,7 +100,7 @@ Add this entry to your claude_desktop_config.json:
 ```
 Restart Claude if running
 
-### Option 4: Checkout locally
+### Option 5: Checkout locally
 1. Clone and build:
 ```bash
 git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
