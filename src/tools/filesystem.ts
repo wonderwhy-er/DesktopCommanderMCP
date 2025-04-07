@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
+import { withTimeout } from '../utils.js';
 
 // Store allowed directories - temporarily allowing all paths
 // TODO: Make this configurable through a configuration file
@@ -65,32 +66,47 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
  * @throws Error if the path or its parent directories don't exist
  */
 export async function validatePath(requestedPath: string): Promise<string> {
-    // Expand home directory if present
-    const expandedPath = expandHome(requestedPath);
+    const PATH_VALIDATION_TIMEOUT = 10000; // 10 seconds timeout
     
-    // Convert to absolute path
-    const absolute = path.isAbsolute(expandedPath)
-        ? path.resolve(expandedPath)
-        : path.resolve(process.cwd(), expandedPath);
-    
-    // Check if path exists
-    try {
-        const stats = await fs.stat(absolute);
-        // If path exists, resolve any symlinks
-        return await fs.realpath(absolute);
-    } catch (error) {
-        // Path doesn't exist - validate parent directories
-        if (await validateParentDirectories(absolute)) {
-            // Return the path if a valid parent exists
-            // This will be used for folder creation and many other file operations
+    const validationOperation = async (): Promise<string> => {
+        // Expand home directory if present
+        const expandedPath = expandHome(requestedPath);
+        
+        // Convert to absolute path
+        const absolute = path.isAbsolute(expandedPath)
+            ? path.resolve(expandedPath)
+            : path.resolve(process.cwd(), expandedPath);
+        
+        // Check if path exists
+        try {
+            const stats = await fs.stat(absolute);
+            // If path exists, resolve any symlinks
+            return await fs.realpath(absolute);
+        } catch (error) {
+            // Path doesn't exist - validate parent directories
+            if (await validateParentDirectories(absolute)) {
+                // Return the path if a valid parent exists
+                // This will be used for folder creation and many other file operations
+                return absolute;
+            }
+            // If no valid parent found, return the absolute path anyway
             return absolute;
         }
-        
-        // If no valid parent directory was found, still return the absolute path
-        // to maintain compatibility with upstream behavior, but log a warning
-        console.warn(`Warning: Parent directory does not exist: ${path.dirname(absolute)}`);
-        return absolute;
+    };
+    
+    // Execute with timeout
+    const result = await withTimeout(
+        validationOperation(),
+        PATH_VALIDATION_TIMEOUT,
+        `Path validation for ${requestedPath}`,
+        null
+    );
+    
+    if (result === null) {
+        throw new Error(`Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`);
     }
+    
+    return result;
 }
 
 // File operation tools
@@ -177,42 +193,81 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
     
     const validPath = await validatePath(filePath);
     
+    // Check file size before attempting to read
+    try {
+        const stats = await fs.stat(validPath);
+        const MAX_SIZE = 100 * 1024; // 100KB limit
+        
+        if (stats.size > MAX_SIZE) {
+            const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
+            if (returnMetadata) {
+                return { 
+                    content: message, 
+                    mimeType: 'text/plain', 
+                    isImage: false 
+                };
+            } else {
+                return message;
+            }
+        }
+    } catch (error) {
+        // If we can't stat the file, continue anyway and let the read operation handle errors
+        console.error(`Failed to stat file ${validPath}:`, error);
+    }
+    
     // Detect the MIME type based on file extension
     const mimeType = getMimeType(validPath);
     const isImage = isImageFile(mimeType);
     
-    if (isImage) {
-        // For image files, read as Buffer and convert to base64
-        const buffer = await fs.readFile(validPath);
-        const content = buffer.toString('base64');
-        
-        if (returnMetadata === true) {
-            return { content, mimeType, isImage };
-        } else {
-            return content;
-        }
-    } else {
-        // For all other files, try to read as UTF-8 text
-        try {
-            const content = await fs.readFile(validPath, "utf-8");
+    const FILE_READ_TIMEOUT = 30000; // 30 seconds timeout for file operations
+    
+    // Use withTimeout to handle potential hangs
+    const readOperation = async () => {
+        if (isImage) {
+            // For image files, read as Buffer and convert to base64
+            const buffer = await fs.readFile(validPath);
+            const content = buffer.toString('base64');
             
             if (returnMetadata === true) {
                 return { content, mimeType, isImage };
             } else {
                 return content;
             }
-        } catch (error) {
-            // If UTF-8 reading fails, treat as binary and return base64 but still as text
-            const buffer = await fs.readFile(validPath);
-            const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
-            
-            if (returnMetadata === true) {
-                return { content, mimeType: 'text/plain', isImage: false };
-            } else {
-                return content;
+        } else {
+            // For all other files, try to read as UTF-8 text
+            try {
+                const content = await fs.readFile(validPath, "utf-8");
+                
+                if (returnMetadata === true) {
+                    return { content, mimeType, isImage };
+                } else {
+                    return content;
+                }
+            } catch (error) {
+                // If UTF-8 reading fails, treat as binary and return base64 but still as text
+                const buffer = await fs.readFile(validPath);
+                const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
+                
+                if (returnMetadata === true) {
+                    return { content, mimeType: 'text/plain', isImage: false };
+                } else {
+                    return content;
+                }
             }
         }
-    }
+    };
+    
+    // Execute with timeout
+    const result = await withTimeout(
+        readOperation(),
+        FILE_READ_TIMEOUT,
+        `Read file operation for ${filePath}`,
+        returnMetadata ? 
+            { content: `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`, mimeType: 'text/plain', isImage: false } : 
+            `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`
+    );
+    
+    return result;
 }
 
 /**

@@ -29,31 +29,45 @@ import {
  * Handle read_file command
  */
 export async function handleReadFile(args: unknown) {
-    const parsed = ReadFileArgsSchema.parse(args);
-    // Explicitly cast the result to FileResult since we're passing true
-    const fileResult = await readFile(parsed.path, true, parsed.isUrl) as FileResult;
+    const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
     
-    if (fileResult.isImage) {
-        // For image files, return as an image content type
-        return {
-            content: [
-                { 
-                    type: "text", 
-                    text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
-                },
-                {
-                    type: "image",
-                    data: fileResult.content,
-                    mimeType: fileResult.mimeType
-                }
-            ],
-        };
-    } else {
-        // For all other files, return as text
-        return {
-            content: [{ type: "text", text: fileResult.content }],
-        };
-    }
+    const readFileOperation = async () => {
+        const parsed = ReadFileArgsSchema.parse(args);
+        // Explicitly cast the result to FileResult since we're passing true
+        const fileResult = await readFile(parsed.path, true, parsed.isUrl) as FileResult;
+        
+        if (fileResult.isImage) {
+            // For image files, return as an image content type
+            return {
+                content: [
+                    { 
+                        type: "text", 
+                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
+                    },
+                    {
+                        type: "image",
+                        data: fileResult.content,
+                        mimeType: fileResult.mimeType
+                    }
+                ],
+            };
+        } else {
+            // For all other files, return as text
+            return {
+                content: [{ type: "text", text: fileResult.content }],
+            };
+        }
+    };
+    
+    // Execute with timeout at the handler level
+    return await withTimeout(
+        readFileOperation(),
+        HANDLER_TIMEOUT,
+        'Read file handler operation',
+        {
+            content: [{ type: "text", text: `Operation timed out after ${HANDLER_TIMEOUT/1000} seconds. The file might be too large or on a slow/unresponsive storage device.` }],
+        }
+    );
 }
 
 /**

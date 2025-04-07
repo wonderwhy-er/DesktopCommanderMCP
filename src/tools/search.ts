@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './filesystem.js';
@@ -69,6 +69,13 @@ export async function searchCode(options: {
     const rg = spawn(rgPath, args);
     let stdoutBuffer = '';
     
+    // Store a reference to the child process for potential termination
+    const childProcess: ChildProcess = rg;
+    
+    // Store in a process list - this could be expanded to a global registry
+    // of running search processes if needed for management
+    (globalThis as any).currentSearchProcess = childProcess;
+    
     rg.stdout.on('data', (data) => {
       stdoutBuffer += data.toString();
     });
@@ -78,6 +85,11 @@ export async function searchCode(options: {
     });
     
     rg.on('close', (code) => {
+      // Clean up the global reference
+      if ((globalThis as any).currentSearchProcess === childProcess) {
+        delete (globalThis as any).currentSearchProcess;
+      }
+      
       if (code === 0 || code === 1) {
         // Process the buffered output
         const lines = stdoutBuffer.trim().split('\n');

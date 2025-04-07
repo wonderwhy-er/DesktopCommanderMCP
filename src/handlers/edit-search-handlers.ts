@@ -55,6 +55,17 @@ export async function handleSearchCode(args: unknown) {
         [] // Empty array as default on timeout
     );
     
+    // If timeout occurred, try to terminate the ripgrep process
+    if (results.length === 0 && (globalThis as any).currentSearchProcess) {
+        try {
+            console.log(`Terminating timed out search process (PID: ${(globalThis as any).currentSearchProcess.pid})`);
+            (globalThis as any).currentSearchProcess.kill();
+            delete (globalThis as any).currentSearchProcess;
+        } catch (error) {
+            console.error('Error terminating search process:', error);
+        }
+    }
+    
     if (results.length === 0) {
         if (timeoutMs > 0) {
             return {
