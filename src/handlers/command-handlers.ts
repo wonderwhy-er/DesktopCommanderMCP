@@ -30,7 +30,7 @@ export async function handleUnblockCommand(args: unknown) {
 /**
  * Handle list_blocked_commands command
  */
-export async function handleListBlockedCommands() {
+export function handleListBlockedCommands() {
     const blockedCommands = commandManager.listBlockedCommands();
     return {
         content: [{ type: "text", text: blockedCommands.join('\n') }],

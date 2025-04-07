@@ -233,104 +233,78 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
   try {
     const { name, arguments: args } = request.params;
     capture('server_call_tool');
+    // Add a single dynamic capture for the specific tool
+    capture('server_' + name);
     
-    try {
-      // Using a more structured approach with dedicated handlers
-      switch (name) {
-        // Terminal tools
-        case "execute_command":
-          capture('server_execute_command');
-          return handlers.handleExecuteCommand(args);
-          
-        case "read_output":
-          capture('server_read_output');
-          return handlers.handleReadOutput(args);
-          
-        case "force_terminate":
-          capture('server_force_terminate');
-          return handlers.handleForceTerminate(args);
-          
-        case "list_sessions":
-          capture('server_list_sessions');
-          return handlers.handleListSessions();
-          
-        // Process tools
-        case "list_processes":
-          capture('server_list_processes');
-          return handlers.handleListProcesses();
-          
-        case "kill_process":
-          capture('server_kill_process');
-          return handlers.handleKillProcess(args);
-          
-        // Command management tools
-        case "block_command":
-          capture('server_block_command');
-          return handlers.handleBlockCommand(args);
-          
-        case "unblock_command":
-          capture('server_unblock_command');
-          return handlers.handleUnblockCommand(args);
-          
-        case "list_blocked_commands":
-          capture('server_list_blocked_commands');
-          return handlers.handleListBlockedCommands();
-          
-        // Filesystem tools
-        case "read_file":
-          capture('server_read_file');
-          return handlers.handleReadFile(args);
-          
-        case "read_multiple_files":
-          capture('server_read_multiple_files');
-          return handlers.handleReadMultipleFiles(args);
-          
-        case "write_file":
-          capture('server_write_file');
-          return handlers.handleWriteFile(args);
-          
-        case "create_directory":
-          capture('server_create_directory');
-          return handlers.handleCreateDirectory(args);
-          
-        case "list_directory":
-          capture('server_list_directory');
-          return handlers.handleListDirectory(args);
-          
-        case "move_file":
-          capture('server_move_file');
-          return handlers.handleMoveFile(args);
-          
-        case "search_files":
-          capture('server_search_files');
-          return handlers.handleSearchFiles(args);
-          
-        case "search_code":
-          capture('server_search_code');
-          return handlers.handleSearchCode(args);
-          
-        case "get_file_info":
-          capture('server_get_file_info');
-          return handlers.handleGetFileInfo(args);
-          
-        case "list_allowed_directories":
-          capture('server_list_allowed_directories');
-          return handlers.handleListAllowedDirectories();
-          
-        case "edit_block":
-          capture('server_edit_block');
-          return handlers.handleEditBlock(args);
-          
-        default:
-          capture('server_unknown_tool', { name });
-          throw new Error(`Unknown tool: ${name}`);
-      }
-    } catch (error) {
-      capture('server_' + name + "_error");
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        content: [{ type: "text", text: `Error: ${errorMessage}` }],
-      };
+    // Using a more structured approach with dedicated handlers
+    switch (name) {
+      // Terminal tools
+      case "execute_command":
+        return handlers.handleExecuteCommand(args);
+        
+      case "read_output":
+        return handlers.handleReadOutput(args);
+        
+      case "force_terminate":
+        return handlers.handleForceTerminate(args);
+        
+      case "list_sessions":
+        return handlers.handleListSessions();
+        
+      // Process tools
+      case "list_processes":
+        return handlers.handleListProcesses();
+        
+      case "kill_process":
+        return handlers.handleKillProcess(args);
+        
+      // Command management tools
+      case "block_command":
+        return handlers.handleBlockCommand(args);
+        
+      case "unblock_command":
+        return handlers.handleUnblockCommand(args);
+        
+      case "list_blocked_commands":
+        return handlers.handleListBlockedCommands();
+        
+      // Filesystem tools
+      case "read_file":
+        return handlers.handleReadFile(args);
+        
+      case "read_multiple_files":
+        return handlers.handleReadMultipleFiles(args);
+        
+      case "write_file":
+        return handlers.handleWriteFile(args);
+        
+      case "create_directory":
+        return handlers.handleCreateDirectory(args);
+        
+      case "list_directory":
+        return handlers.handleListDirectory(args);
+        
+      case "move_file":
+        return handlers.handleMoveFile(args);
+        
+      case "search_files":
+        return handlers.handleSearchFiles(args);
+        
+      case "search_code":
+        return handlers.handleSearchCode(args);
+        
+      case "get_file_info":
+        return handlers.handleGetFileInfo(args);
+        
+      case "list_allowed_directories":
+        return handlers.handleListAllowedDirectories();
+        
+      case "edit_block":
+        return handlers.handleEditBlock(args);
+        
+      default:
+        capture('server_unknown_tool', { name });
+        throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

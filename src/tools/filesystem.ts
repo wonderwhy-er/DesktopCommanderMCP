@@ -111,8 +111,18 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
     // Import the MIME type utilities
     const { isImageFile } = await import('./mime-types.js');
     
+    // Set up fetch with timeout
+    const FETCH_TIMEOUT_MS = 10000; // 10 seconds timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            signal: controller.signal
+        });
+        
+        // Clear the timeout since fetch completed
+        clearTimeout(timeoutId);
         
         if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
@@ -143,6 +153,14 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
             }
         }
     } catch (error) {
+        // Clear the timeout to prevent memory leaks
+        clearTimeout(timeoutId);
+        
+        // Improve error message for timeout/abort cases
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error(`URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`);
+        }
+        
         throw new Error(`Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
