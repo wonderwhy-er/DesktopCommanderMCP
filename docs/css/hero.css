@@ -135,8 +135,11 @@
     padding: 12px 24px;
     font-size: 1rem;
     transition: all 0.3s ease;
-    position: relative;
     overflow: hidden;
+    height: 54px;
+    top: 8px;
+    position: relative;
+    border-radius: 10px;
 }
 
 .discord-btn::after {
@@ -145,7 +148,6 @@
     top: 0;
     left: -100%;
     width: 100%;
-    height: 100%;
     background: rgba(255, 255, 255, 0.1);
     transition: transform 0.4s ease-out;
     transform: skewX(-15deg);
