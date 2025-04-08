@@ -12,24 +12,33 @@ import {
     SearchCodeArgsSchema
 } from '../tools/schemas.js';
 
+import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils.js';
+import { createErrorResponse } from '../error-handlers.js';
 
 /**
  * Handle edit_block command
  */
-export async function handleEditBlock(args: unknown) {
-    const parsed = EditBlockArgsSchema.parse(args);
-    const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
-    await performSearchReplace(filePath, searchReplace);
-    return {
-        content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
-    };
+export async function handleEditBlock(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = EditBlockArgsSchema.parse(args);
+        const { filePath, searchReplace, error } = await parseEditBlock(parsed.blockContent);
+        
+        if (error) {
+            return createErrorResponse(error);
+        }
+        
+        return performSearchReplace(filePath, searchReplace);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
 }
 
 /**
  * Handle search_code command
  */
-export async function handleSearchCode(args: unknown) {
+export async function handleSearchCode(args: unknown): Promise<ServerResult> {
     const parsed = SearchCodeArgsSchema.parse(args);
     const timeoutMs = parsed.timeoutMs || 30000; // 30 seconds default
     

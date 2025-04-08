@@ -103,7 +103,8 @@ export async function validatePath(requestedPath: string): Promise<string> {
     );
     
     if (result === null) {
-        throw new Error(`Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`);
+        // Return a path with an error indicator instead of throwing
+        return `__ERROR__: Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`;
     }
     
     return result;
@@ -172,12 +173,20 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
         // Clear the timeout to prevent memory leaks
         clearTimeout(timeoutId);
         
-        // Improve error message for timeout/abort cases
-        if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new Error(`URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`);
+        // Return error information instead of throwing
+        const errorMessage = error instanceof DOMException && error.name === 'AbortError'
+            ? `URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`
+            : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
+            
+        if (returnMetadata === true) {
+            return { 
+                content: `Error: ${errorMessage}`, 
+                mimeType: 'text/plain', 
+                isImage: false 
+            };
+        } else {
+            return `Error: ${errorMessage}`;
         }
-        
-        throw new Error(`Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 

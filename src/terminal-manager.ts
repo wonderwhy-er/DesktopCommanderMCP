@@ -20,7 +20,12 @@ export class TerminalManager {
     
     // Ensure process.pid is defined before proceeding
     if (!process.pid) {
-      throw new Error('Failed to get process ID');
+      // Return a consistent error object instead of throwing
+      return {
+        pid: -1,  // Use -1 to indicate an error state
+        output: 'Error: Failed to get process ID. The command could not be executed.',
+        isBlocked: false
+      };
     }
     
     const session: TerminalSession = {

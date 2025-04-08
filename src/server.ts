@@ -230,8 +230,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 import * as handlers from './handlers/index.js';
+import { ServerResult } from './types.js';
 
-server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
   try {
     const { name, arguments: args } = request.params;
     capture('server_call_tool');
@@ -306,7 +307,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         
       default:
         capture('server_unknown_tool', { name });
-        throw new Error(`Unknown tool: ${name}`);
+        return {
+          content: [{ type: "text", text: `Error: Unknown tool: ${name}` }],
+          isError: true,
+        };
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
