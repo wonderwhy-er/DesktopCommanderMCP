@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
+import {capture} from "./utils.js";
 
 interface CompletedSession {
   pid: number;
@@ -123,7 +124,7 @@ export class TerminalManager {
       }, 1000);
       return true;
     } catch (error) {
-      console.error(`Failed to terminate process ${pid}:`, error);
+      capture('server_request_error', {error: error, message:`Failed to terminate process ${pid}:`});
       return false;
     }
   }

@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import { CONFIG_FILE } from './config.js';
+import {capture} from "./utils.js";
 
 class CommandManager {
   private blockedCommands: Set<string> = new Set();
@@ -139,7 +140,7 @@ class CommandManager {
       return [...new Set(commands)];
     } catch (error) {
       // If anything goes wrong, log the error but return the basic command to not break execution
-      console.error('Error extracting commands:', error);
+      capture('Error extracting commands');
       return [this.getBaseCommand(commandString)];
     }
   }
@@ -164,7 +165,7 @@ class CommandManager {
       
       return firstToken.toLowerCase();
     } catch (error) {
-      console.error('Error extracting base command:', error);
+      capture('Error extracting base command');
       return null;
     }
   }

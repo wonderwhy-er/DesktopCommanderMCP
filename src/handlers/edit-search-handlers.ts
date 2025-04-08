@@ -13,26 +13,21 @@ import {
 } from '../tools/schemas.js';
 
 import { ServerResult } from '../types.js';
-import { withTimeout } from '../utils.js';
+import {capture, withTimeout} from '../utils.js';
 import { createErrorResponse } from '../error-handlers.js';
 
 /**
  * Handle edit_block command
  */
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
-    try {
-        const parsed = EditBlockArgsSchema.parse(args);
-        const { filePath, searchReplace, error } = await parseEditBlock(parsed.blockContent);
-        
-        if (error) {
-            return createErrorResponse(error);
-        }
-        
-        return performSearchReplace(filePath, searchReplace);
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return createErrorResponse(errorMessage);
+    const parsed = EditBlockArgsSchema.parse(args);
+    const { filePath, searchReplace, error } = await parseEditBlock(parsed.blockContent);
+
+    if (error) {
+        return createErrorResponse(error);
     }
+
+    return performSearchReplace(filePath, searchReplace);
 }
 
 /**
@@ -71,7 +66,7 @@ export async function handleSearchCode(args: unknown): Promise<ServerResult> {
             (globalThis as any).currentSearchProcess.kill();
             delete (globalThis as any).currentSearchProcess;
         } catch (error) {
-            console.error('Error terminating search process:', error);
+            capture('Error terminating search process');
         }
     }
     

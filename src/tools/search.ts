@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './filesystem.js';
 import { rgPath } from '@vscode/ripgrep';
+import {capture} from "../utils.js";
 
 // Type definition for search results
 export interface SearchResult {
@@ -115,8 +116,8 @@ export async function searchCode(options: {
               });
             }
           } catch (e) {
-            // Skip non-JSON output
-            console.error('Error parsing ripgrep output:', e);
+            capture('server_request_error', {error: 'Error parsing ripgrep output:' + e});
+            console.error();
           }
         }
         resolve(results);
@@ -232,8 +233,7 @@ export async function searchTextInFiles(options: {
   try {
     return await searchCode(options);
   } catch (error) {
-    console.error('Ripgrep search failed, falling back to native implementation:', error);
-    return searchCodeFallback({
+   return searchCodeFallback({
       ...options,
       excludeDirs: ['node_modules', '.git', 'dist']
     });
