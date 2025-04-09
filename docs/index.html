@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, shrink-to-fit=no">
+    <title>Desktop Commander MCP - Terminal Commands and File Editing for Claude</title>
+    
+    <!-- SEO Meta Tags -->
+    <meta name="msvalidate.01" content="4D4A791B96EDF5431C0EA2DE6B59FB62" />
+    <meta name="description" content="Desktop Commander MCP is an open-source tool that enables terminal command execution and file editing directly through Claude Desktop app. Enhance your AI workflow with Claude.">
+    <meta name="keywords" content="Claude AI, Desktop Commander, terminal commands, file editing, Claude Desktop app, AI assistant, command execution, MCP, productivity tool">
+    <meta name="author" content="Desktop Commander MCP Team">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://wonderwhy-er.github.io/ClaudeDesktopCommander/">
+    <meta property="og:title" content="Desktop Commander MCP - Terminal Commands and File Editing for Claude AI">
+    <meta property="og:description" content="Execute terminal commands and edit files directly through Claude AI. Enhance your productivity with this open-source tool for Claude Desktop app.">
+    <meta property="og:image" content="https://wonderwhy-er.github.io/ClaudeDesktopCommander/logo.png">
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://wonderwhy-er.github.io/ClaudeDesktopCommander/">
+    <meta property="twitter:title" content="Desktop Commander MCP - Terminal Commands and File Editing for Claude AI">
+    <meta property="twitter:description" content="Execute terminal commands and edit files directly through Claude AI. Enhance your productivity with this open-source tool for Claude Desktop app.">
+    <meta property="twitter:image" content="https://wonderwhy-er.github.io/ClaudeDesktopCommander/logo.png">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://wonderwhy-er.github.io/ClaudeDesktopCommander/">
+    
+    <!-- Favicons - Using Only Existing Files -->
+    <!-- Standard Favicon -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png">
+    
+    <!-- Apple Touch Icon -->
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    
+    <!-- Android/Web App Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="android-chrome-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="android-chrome-512x512.png">
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#171717">
+    
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="site.webmanifest">
+    
+    <!-- Original Logo Reference (keeping for backward compatibility) -->
+    <link rel="icon" href="logo.png" type="image/png">
+    
+    <!-- Structured Data / JSON-LD -->
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            "name": "Desktop Commander MCP",
+            "operatingSystem": "Windows, macOS, Linux",
+            "applicationCategory": "DeveloperApplication",
+            "offers": {
+                "@type": "Offer",
+                "price": "0",
+                "priceCurrency": "USD"
+            },
+            "description": "Desktop Commander MCP is an open-source tool that enables terminal command execution and file editing directly through the Claude Desktop app.",
+            "downloadUrl": "https://github.com/wonderwhy-er/ClaudeDesktopCommander",
+            "softwareVersion": "1.0.0",
+            "author": {
+                "@type": "Organization",
+                "name": "Desktop Commander MCP Team",
+                "url": "https://github.com/wonderwhy-er"
+            }
+        }
+    </script>
+        <!-- Preload critical CSS and images -->
+    <link rel="preload" href="css/main.css" as="style">
+    <link rel="preload" href="css/header.css" as="style">
+    <link rel="preload" href="css/hero.css" as="style">
+    <link rel="preload" href="css/base.css" as="style">
+    <link rel="preload" href="optimized_images/header.webp" as="image">
+    <link rel="preload" href="optimized_images/logo.webp" as="image">
+    <!-- Preload critical fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <!-- Critical CSS -->
+    <link rel="stylesheet" href="css/main.css">
+
+    <!-- Inline critical CSS for initial render -->
+    <style>
+        /* Basic styles for initial render */
+        :root {
+            --text-color-high-contrast: #f8f9fa;
+            --section-text-color: #121212;
+            --primary-color: #171717;
+            --light-text: #ffffff;
+            --accent-color: #5865F2;
+        }
+        /* Set body with no margin to prevent shifts */
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            overflow-x: hidden;
+            width: 100%;
+            max-width: 100vw;
+        }
+        /* Critical container dimensions that prevent layout shifts */
+        .container { 
+            width: 100%; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 0 15px;
+            box-sizing: border-box;
+            overflow-x: hidden;
+        }
+        /* Set fixed header height to prevent jumps */
+        header {
+            background: #171717;
+            color: #ffffff;
+            padding: 20px 0;
+            position: fixed;
+            width: 100%;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            height: 80px;
+            box-sizing: border-box;
+        }
+        /* Constrain header layout */
+        .header-container { 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            padding: 0;
+            height: 40px;
+        }
+        /* Set hero section height and margin */
+        .hero {
+            background: #171717;
+            min-height: 90vh;
+            margin-top: 80px;
+            padding: 40px 0 60px 0;
+            display: flex;
+            align-items: center;
+            box-sizing: border-box;
+        }
+        /* Reserve space for hero image */
+        .hero-image-container {
+            flex: 1;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            height: 450px;
+        }
+        /* Make sure image has explicit dimensions */
+        .hero-header-image { 
+            max-width: 100%; 
+            height: auto;
+            width: auto;
+            border-radius: 8px;
+        }
+        /* Constrain content area dimensions */
+        .hero-content {
+            flex: 1;
+            max-width: 550px;
+        }
+        /* Set font sizes explicitly */
+        .hero h1 {
+            font-size: 2.8rem;
+            margin-bottom: 20px;
+            line-height: 1.2;
+            max-width: 100%;
+            word-wrap: break-word;
+        }
+        .hero p {
+            font-size: 1.1rem;
+            margin-bottom: 25px;
+            line-height: 1.5;
+        }
+        /* Discord button explicit styling */
+        .discord-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background-color: #5865F2;
+            font-weight: 600;
+            padding: 12px 24px;
+            color: white;
+            text-decoration: none;
+            border-radius: 10px;
+        }
+        /* Improve contrast for section text */
+        .section-title p, .feature-card p, .how-it-works p,
+        .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 500; }
+        /* Improve contrast for buttons and links */
+        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 600; }
+        /* Additional contrast improvements */
+        .feature-card h3, .community-card h3, .accordion-header span { color: #121212; }
+        .accordion-body p, .accordion-body li { color: #121212; }
+        .discord-community-container p { color: #121212; font-weight: 500; }
+        .footer-column p { color: #e6e6e6; font-weight: 500; }
+        .download-card h3 { color: #ffffff; font-weight: 600; }
+        .download-card p { color: #f8f9fa; font-weight: 500; }
+
+        /* Pre-set dimensions for nav menu to prevent shifts */
+        nav ul {
+            display: flex;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        nav ul li {
+            margin-left: 30px;
+        }
+        nav ul li a {
+            color: white;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        /* Badge sizing */
+        .badges {
+            margin-bottom: 25px;
+        }
+        .badge-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .badges img {
+            height: 20px;
+        }
+    </style>
+    <script>
+        !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+        posthog.init('phc_BW8KJ0cajzj2v8qfMhvDQ4dtFdgHPzeYcMRvRFGvQdH', {
+            api_host: 'https://eu.i.posthog.com',
+            person_profiles: 'identified_only', // or 'always' to create profiles for anonymous users as well
+        })
+    </script>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="container header-container">
+            <a href="#" class="logo">
+                <img src="optimized_images/logo.webp" alt="Logo" width="35" height="35" /> 
+                <span style="margin-left: 5px;">DesktopCommander</span>
+            </a>
+            
+            <div class="mobile-menu-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            </div>
+            
+            <nav>
+                <ul>
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#installation">Installation</a></li>
+                    <li><a href="#usage">Usage</a></li>
+                    <li><a href="#media">Media</a></li>
+                    <li><a href="#testimonials">Testimonials</a></li>
+                    <li><a href="#faq">FAQ</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <div class="hero-wrapper">
+                <div class="hero-content">
+                    <h1>Search, update, manage files and run terminal commands with AI</h1>
+                    <p style="color: #f0f0f0; font-weight: 500;">Execute terminal commands and edit files with Claude AI. Terminal commands and diff based file editing for Claude Desktop app.</p>
+                    <div class="badges">
+                        <div class="badge-row">
+                            <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank">
+                                <img src="https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander" alt="npm downloads">
+                            </a>
+                            <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank">
+                                <img src="https://img.shields.io/github/stars/wonderwhy-er/ClaudeComputerCommander?style=flat" alt="GitHub stars">
+                            </a>
+                            <a href="https://smithery.ai/server/@wonderwhy-er/desktop-commander" target="_blank">
+                                <img src="https://smithery.ai/badge/@wonderwhy-er/desktop-commander" alt="smithery badge">
+                            </a>
+                        </div>
+                        <div class="badge-row" style="margin-top: 8px;">
+                            <img src="https://img.shields.io/badge/Commands%20Run-220388-blue" alt="Commands Run" width="140" height="20">
+                            <img src="https://img.shields.io/badge/Files%20Read-94821-green" alt="Files Read" width="140" height="20">
+                            <img src="https://img.shields.io/badge/Files%20Edited-98450-orange" alt="Files Edited" width="140" height="20">
+                            <img src="https://img.shields.io/badge/Files%20Created-74845-purple" alt="Files Created" width="140" height="20">
+                        </div>
+
+                    </div>
+                    <div class="hero-btns">
+                        <a href="https://discord.gg/kQ27sNnZr7" class="btn discord-btn" style="background-color: #5865F2;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                            JOIN DISCORD
+                        </a>
+                        <div class="badge-row" style="margin-top: 8px;">
+                            <a href="https://www.producthunt.com/posts/desktop-commander-mcp?embed=true&utm_source=badge-featured&utm_medium=badge&utm_souce=badge-desktop&#0045;commander&#0045;mcp" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=948854&theme=light&t=1744097111340" alt="Desktop&#0032;Commander&#0032;MCP - Give&#0032;Claude&#0032;it&#0032;Full&#0032;Access&#0032;to&#0032;Your&#0032;Local&#0032;Files&#0032;&#0038;&#0032;Terminal | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+                        </div>
+                    </div>
+                    <div class="hero-bottom-links">
+                        <a href="#installation" class="text-link">INSTALLATION GUIDE</a>
+                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" class="text-link" target="_blank">VIEW ON GITHUB</a>
+                    </div>
+                </div>
+                <div class="hero-image-container">
+                    <div class="image-glow-wrapper">
+                        <img src="optimized_images/header.webp" alt="Desktop Commander Interface" class="hero-header-image">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="container">
+            <div class="section-title">
+                <h2>Features</h2>
+                <p style="color: #121212; font-weight: 500;">Desktop Commander MCP provides powerful tools for terminal and file operations</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-terminal"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                    </div>
+                    <h3>Terminal Command Execution</h3>
+                    <p>Execute terminal commands with output streaming directly from Claude Desktop app.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-clock"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    </div>
+                    <h3>Long-Running Commands</h3>
+                    <p>Support for command timeout and background execution for extended operations.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-activity"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    </div>
+                    <h3>Process Management</h3>
+                    <p>List and kill processes directly through Claude's interface.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file-text"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    </div>
+                    <h3>File Operations</h3>
+                    <p>Complete filesystem access to read, write, create, list, move files and directories. Supports viewing PNG, JPEG, GIF, and WebP images directly in Claude.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                    </div>
+                    <h3>Code Editing</h3>
+                    <p>Surgical text replacements for small changes and full file rewrites for major modifications.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-search"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    </div>
+                    <h3>File Search</h3>
+                    <p>Search through files with pattern matching and get detailed file metadata.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Demo Section -->
+    <!-- <section class="demo" id="demo">
+        <div class="container">
+            <div class="demo-content">
+                <div class="demo-text">
+                    <h2>See it in action</h2>
+                    <p>Claude Desktop Commander transforms how you interact with Claude AI. Watch the demo to see how you can enhance your productivity by using voice commands to control Claude.</p>
+                    <p>Simply install the extension, open Claude in your browser, and start speaking commands like "Submit", "Clear", "Copy response", and more.</p>
+                    <a href="https://github.com/wonderwhy-er/ClaudeDesktopCommander" class="btn" target="_blank">Learn More</a>
+                </div>
+                
+                <div class="demo-image">
+                    <div class="video-container">
+                        <!-Placeholder for video - using a colored div as we can't directly embed videos  ->
+                        <div style="width: 100%; height: 100%; background: var(--primary-color); display: flex; align-items: center; justify-content: center; color: white;">
+                            <div style="text-align: center;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-play-circle"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+                                <h3 style="margin-top: 15px;">Video Demo</h3>
+                                <p>Check GitHub for demo videos</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section> -->
+
+    <!-- Installation Section -->
+    <section class="how-it-works" id="installation">
+        <div class="container">
+            <div class="section-title">
+                <h2>Installation</h2>
+                <p style="color: #121212; font-weight: 500;">Getting started with Desktop Commander MCP is quick and easy</p>
+                <p style="color: #121212; font-weight: 500;">There are multiple options how to install DesktopCommanderMCP</p>
+            </div>
+            
+            <style>
+                .tabs {
+                    display: flex;
+                    flex-wrap: wrap;
+                    margin-bottom: 30px;
+                    border-bottom: 2px solid #eee;
+                }
+                
+                .tab-btn {
+                    padding: 12px 24px;
+                    margin: 0 4px;
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    font-weight: 600;
+                    color: #121212;
+                    position: relative;
+                    transition: all 0.3s ease;
+                    min-width: 44px;
+                    min-height: 44px;
+                }
+                
+                .tab-btn:hover {
+                    color: var(--primary-color);
+                }
+                
+                .tab-btn.active {
+                    color: var(--primary-color);
+                }
+                
+                .tab-btn.active::after {
+                    content: '';
+                    position: absolute;
+                    bottom: -2px;
+                    left: 0;
+                    width: 100%;
+                    height: 2px;
+                    background: var(--primary-color);
+                }
+                
+                .tab-content {
+                    display: none;
+                    padding: 20px 0;
+                }
+                
+                .tab-content.active {
+                    display: block;
+                }
+            </style>
+            
+            <div class="tabs">
+                <button class="tab-btn active" onclick="openTab(event, 'npx')" style="color: #0056b3;">NPX Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'bash')" style="color: #121212; font-weight: 500;">Bash Install (macOS)</button>
+                <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 500;">Smithery Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 500;">Manual Configuration</button>
+                <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 500;">Local Installation</button>
+            </div>
+            
+            <div id="smithery" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>Smithery Install</h3>
+                        <p>Install automatically via Smithery:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude</pre>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="npx" class="tab-content active">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>NPX Install</h3>
+                        <p>Install using npx directly:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
+                        <p>For macOS users, you can also use this bash script:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash</pre>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="bash" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>Bash Install (macOS)</h3>
+                        <p>For macOS users, use our automated bash installer which will:</p>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li>Check your Node.js version and install it if needed</li>
+                            <li>Set up Desktop Commander automatically</li>
+                            <li>Configure all necessary dependencies</li>
+                        </ul>
+                        <pre
+                            style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/feat/install_sh_script/install.sh | bash</pre>
+                        <p style="margin-top: 10px; font-style: italic;">This is the simplest installation method for macOS users.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div id="manual" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>Manual Configuration</h3>
+                        <p>Add this to your claude_desktop_config.json:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">
+{
+  "mcpServers": {
+    "desktop-commander": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@wonderwhy-er/desktop-commander"
+      ]
+    }
+  }
+}</pre>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="local" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>Local Installation</h3>
+                        <p>Clone and build locally:</p>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
+cd ClaudeComputerCommander
+npm run setup</pre>
+</div>
+</div>
+</div>
+<div style="text-align: left;">
+    <p>To install DesktopCommanderMCP you need to have Node.js and Claude Desktop installed on your system</p>
+    <p>Nodejs: <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
+    <p>Claude Desktop: <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
+</div>
+<br />
+<p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>
+
+        </div>
+    </section>
+
+    <!-- Usage Section -->
+    <section class="download" id="usage">
+        <div class="container">
+            <div class="section-title">
+                <h2>Usage Examples</h2>
+                <p>Desktop Commander MCP provides powerful terminal commands and file operations for Claude AI</p>
+            </div>
+
+            
+            <div class="download-options">
+                <div class="download-card">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-terminal"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+                    <div class="download-card-content">
+                        <h3>Terminal Commands</h3>
+                        <p>Examples of commands to run in Claude:</p>
+                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
+• Show me all hidden files in my ~/dev directory
+• Show me all processes with name node
+• Generate SSH key and save it in .ssh directory
+• Run "node -e 'console.log(\"Hello\")"
+• Find me where nodejs is installed
+• Kill all nodejs processes</pre>
+                    </div>
+                </div>
+                
+                <div class="download-card">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file-text"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <div class="download-card-content">
+                        <h3>File Operations</h3>
+                        <p>Examples of file operations in Claude:</p>
+                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
+• Read file path/to/file.txt
+• Resize all images in ~/dev/project/images folder to 100x100
+• Create tests for my project and update package.json with script to run tests with jest
+• Search for files containing "pattern"
+• Review all files in ~/project and create summary from these files
+• Get file metadata for package.json</pre>
+                    </div>
+                </div>
+                
+                <div class="download-card">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                    <div class="download-card-content">
+                        <h3>Code Editing</h3>
+                        <p>Examples of editing code with Claude:</p>
+                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
+• Review project in ~/dev/project and show me all issues
+• Find all security issues in ~/dev/project
+• Split file ~/dev/project/index.html into 3 files: html, js, css
+• Review my ~/dev/project and improve SEO
+• Create a new python project with .venv and FastAPI REST API boilerplate</pre>
+                    </div>
+                </div>
+            </div>
+            <p style="margin-top: 30px; font-style: italic; text-align: center;">For full documentation and advanced usage examples, visit <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" style="color: white; text-decoration: underline;">our GitHub repository</a>.</p>
+        </div>
+    </section>
+
+    <!-- Media Section -->
+    <section class="media-section" id="media">
+        <div class="container">
+            <div class="section-title">
+                <h2>Media & Coverage</h2>
+                <p>Learn more about Desktop Commander MCP from articles, videos and community</p>
+            </div>
+            
+            <div class="media-cards">
+                <a href="https://analyticsindiamag.com/ai-features/this-developer-ditched-windsurf-cursor-using-claude-with-mcps/" class="media-card-link" target="_blank">
+                    <div class="media-card">
+                        <div class="media-image">
+                            <img src="https://analyticsindiamag.com/wp-content/uploads/2025/03/developer-ditched-cursor-windsurf-1300x731.jpg.webp" alt="Analytics India Magazine Article" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                        </div>
+                        <div class="media-content">
+                            <h3>Featured Article</h3>
+                            <p>Analytics India Magazine covers how Desktop Commander MCP is changing the AI coding landscape</p>
+                            <div class="media-link">
+                                <span>Read Article</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+                            </div>
+                        </div>
+                    </div>
+                </a>
+                
+                <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="media-card-link" target="_blank">
+                    <div class="media-card">
+                        <div class="media-image">
+                            <img src="https://i3.ytimg.com/vi/ly3bed99Dy8/maxresdefault.jpg" alt="YouTube Tutorial Thumbnail" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                            <div class="play-button">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                            </div>
+                        </div>
+                        <div class="media-content">
+                            <h3>Video Tutorial</h3>
+                            <p>Watch Desktop Commander MCP in action with this detailed walkthrough and demonstration</p>
+                            <div class="media-link">
+                                <span>Watch Video</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+                            </div>
+                        </div>
+                    </div>
+                </a>
+                
+                <a href="https://medium.com/@wonderwhy-er/claude-with-mcps-replaced-cursor-windsurf-how-did-that-happen-c1d1e2795e96" class="media-card-link" target="_blank">
+                    <div class="media-card">
+                        <div class="media-image">
+                            <img src="https://miro.medium.com/v2/resize:fit:786/format:webp/1*RRZ4SJ_ceHnrVZpuaAxGig.png" alt="Medium Blog Post" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                        </div>
+                        <div class="media-content">
+                            <h3>Medium Blog Post</h3>
+                            <p>Discover how Claude with MCPs replaced traditional coding assistants like Cursor and Windsurf</p>
+                            <div class="media-link">
+                                <span>Read Blog</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+                            </div>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Community Section -->
+    <section class="community" id="community">
+        <div class="container">
+            <div class="section-title">
+                <h2>Join Our Community</h2>
+                <p style="color: #121212; font-weight: 500;">Connect with other users and contributors to share ideas, get help, and contribute to the project.</p>
+            </div>
+            
+            <div class="community-links">
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                    </div>
+                    <h3>GitHub</h3>
+                    <p>Star the repository, report issues, and contribute code.</p>
+                    <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" class="btn" target="_blank">GitHub Repo</a>
+                </div>
+                
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"></path></svg>
+                    </div>
+                    <h3>Discord</h3>
+                    <p>Join our Discord server to chat with the community in real-time.</p>
+                    <a href="https://discord.gg/kQ27sNnZr7" class="btn" target="_blank">Join Discord</a>
+                </div>
+                
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-youtube"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
+                    </div>
+                    <h3>Video Tutorial</h3>
+                    <p>Watch tutorial and demo videos on YouTube.<br /><br /></p>
+                    <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="btn" target="_blank">Watch Now</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials Section -->
+    <section class="testimonials-section" id="testimonials">
+        <div class="container">
+            <div class="section-title">
+                <h2>User Testimonials</h2>
+                <p>See what developers are saying about Desktop Commander MCP</p>
+            </div>
+
+            <div class="testimonial-carousel">
+                <div class="carousel-container">
+                    <div class="carousel-slides">
+                        <div class="carousel-slide active" data-slide="0">
+                            <img src="optimized_images/case1-large.webp" alt="Testimonial from pharmx: Claude replaced Cursor and Windsurf after frustration, becoming the preferred development tool" title="pharmx's experience: Switching from Cursor and Windsurf to Claude" loading="lazy" style="max-width: 100%; height: auto;">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="1">
+                            <img src="optimized_images/case2-large.webp" alt="Testimonial from naranbaz: Great tool that enables Claude to make surgical edits like a human developer" title="naranbaz appreciates the surgical editing capabilities" loading="lazy" style="max-width: 100%; height: auto;">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="2">
+                            <img src="optimized_images/case3-large.webp" alt="Testimonial from jesseburstrom5920: Switched from Windsurf to Claude MCP, saving money on tokens and gaining unlimited coding without cost concerns" title="jesseburstrom5920's experience: Cost savings and unlimited coding with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="3">
+                            <img src="optimized_images/case4-large.webp" alt="Testimonial from michaelajamian2211: Fixed critical Flutter app errors with Claude MCP after days of unsuccessful attempts with other tools" title="michaelajamian2211 solved critical Flutter app errors in hours with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
+                        </div>
+                        
+                        <div class="carousel-slide" data-slide="4">
+                            <img src="optimized_images/case5-large.webp" alt="Testimonial from play365alltime: Desktop Commander MCP is a life saver that eliminates duplicate costs of Claude and Cursor subscriptions" title="play365alltime celebrates cost savings and enhanced capabilities with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
+                        </div>
+                    </div>
+                    
+                    <button class="carousel-arrow carousel-arrow-left" id="prevSlide" aria-label="Previous testimonial">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    </button>
+                    
+                    <button class="carousel-arrow carousel-arrow-right" id="nextSlide" aria-label="Next testimonial">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </button>
+                </div>
+                
+                <div class="carousel-indicators">
+                    <button class="indicator active" data-slide="0" aria-label="Go to slide 1" aria-current="true"></button>
+                    <button class="indicator" data-slide="1" aria-label="Go to slide 2"></button>
+                    <button class="indicator" data-slide="2" aria-label="Go to slide 3"></button>
+                    <button class="indicator" data-slide="3" aria-label="Go to slide 4"></button>
+                    <button class="indicator" data-slide="4" aria-label="Go to slide 5"></button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section class="faq" id="faq">
+        <div class="container">
+            <div class="section-title">
+                <h2>Frequently Asked Questions</h2>
+                <p style="color: #121212; font-weight: 500;">Find answers to common questions about Desktop Commander MCP</p>
+            </div>
+            
+            <!-- Add structured data to improve SEO -->
+            <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": "What is Claude Desktop Commander?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Claude Desktop Commander is an MCP (Model Context Protocol) tool that allows Claude Desktop to access and control your computer's file system and terminal. It enables Claude to explore, read, and write files, execute commands, and manage processes - expanding Claude's capabilities beyond just conversation."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "How is this different from Cursor/Windsurf?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Unlike IDE-focused tools, Claude Desktop Commander provides a solution-centric approach that works with your entire OS, not just within a coding environment. Claude reads files in full rather than chunking them, can work across multiple projects simultaneously, and executes changes in one go rather than requiring constant review."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Do I need to pay for API credits?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "No. This tool works with Claude Desktop's standard Pro subscription ($20/month), not with API calls, so you won't incur additional costs beyond the subscription fee."
+                        }
+                    },
+                    {
+                        "@type": "Question",
+                        "name": "Does Desktop Commander automatically update?",
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": "Yes, when installed through npx or Smithery, Desktop Commander automatically updates to the latest version when you restart Claude. No manual update process is needed."
+                        }
+                    }
+                ]
+            }
+            </script>
+            
+            <div class="accordion">
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>What is Claude Desktop Commander?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Claude Desktop Commander is an MCP (Model Context Protocol) tool that allows Claude Desktop to access and control your computer's file system and terminal. It enables Claude to explore, read, and write files, execute commands, and manage processes - expanding Claude's capabilities beyond just conversation to become a comprehensive assistant that can work with your entire operating system.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How does it differ from coding tools like Cursor or Windsurf?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Unlike tools like Cursor or Windsurf which are primarily designed as coding IDEs, Claude Desktop Commander works with Claude to provide a more flexible, solution-centric approach. Key differences include:</p>
+                            <ul>
+                                <li>Claude reads full files during exploration, ensuring it captures the complete structure</li>
+                                <li>Coding tools like Windsurf & Cursor chunk and index files, sometimes missing key relationships</li>
+                                <li>Claude generates and displays diagrams directly in chat</li>
+                                <li>Claude Desktop Commander allows you to work across your entire system, not just within coding environments</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How much does it cost to use Claude Desktop Commander?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Claude Desktop Commander itself is free and open-source. However, to use it, you need a Claude Pro subscription, which costs $20/month. There are no additional charges beyond this subscription fee, unlike Claude Code or other API-based tools that charge per token.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Which operating systems does it support?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Claude Desktop Commander works with Windows, macOS, and Linux. Work is ongoing to improve Windows support, WSL integration, and enhance compatibility with various Linux distributions.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Is it safe to give Claude access to my file system?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Claude Desktop Commander operates within certain safety boundaries:</p>
+                            <ul>
+                                <li>While file restrictions are currently disabled, Claude typically only works with files in folders you specifically direct it to</li>
+                                <li>Claude can only perform actions that your user account has permission to do</li>
+                                <li>No data is sent to external servers beyond what you share in Claude conversations</li>
+                            </ul>
+                            <div class="warning">
+                                <p>Command blocking features are still in development. You should always review the actions Claude proposes before allowing it to make system changes, especially when working with important files or system configurations.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Is it suitable for large codebases?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Yes, users have reported success with very large codebases (one user mentioned 44k files with 11 million code lines). The tool can work across multiple projects and services simultaneously, making it suitable for complex development environments.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Does Desktop Commander automatically update?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Yes, when installed through npx or Smithery, Desktop Commander automatically updates to the latest version when you restart Claude. No manual update process is needed.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>I'm having trouble installing or using the tool. Where can I get help?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Join our <a href="https://discord.gg/kQ27sNnZr7">Discord server</a> for community support, check the <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues">GitHub issues</a> for known problems, or review our <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/blob/main/FAQ.md">comprehensive FAQ</a> for troubleshooting tips. If you encounter a new issue, please consider <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new">opening a GitHub issue</a> with details about your problem.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How does this compare to VSCode extensions like Cline?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Tools like Cline are great options that integrate directly with VSCode. The main differences are:</p>
+                            <ul>
+                                <li>Claude Desktop Commander works across your entire system, not just within the editor</li>
+                                <li>It can handle automation, terminal commands, and long-running processes</li>
+                                <li>It has a fixed cost with Claude Pro subscription rather than potential API charges</li>
+                                <li>It provides a more flexible approach not tied to a specific editor</li>
+                            </ul>
+                            <p>Many users employ both, using the right tool for different tasks.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+            <!-- More prominent link to full FAQ -->
+            <div class="github-faq-container">
+                <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/blob/main/FAQ.md" target="_blank" class="github-faq-link">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-book-open"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+                    View our comprehensive FAQ document on GitHub for more detailed answers
+                </a>
+            </div>
+            
+            <!-- Feedback mechanism -->
+            <div class="feedback-container">
+                <h3>Didn't find what you were looking for?</h3>
+                <p>Help us improve our FAQ by suggesting new questions or improvements.</p>
+                <div class="question-form">
+                    <form action="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new" method="get" target="_blank">
+                        <input type="hidden" name="template" value="faq_suggestion.md">
+                        <input type="hidden" name="title" value="FAQ Suggestion">
+                        <textarea name="body" placeholder="Suggest a question you'd like to see answered..."></textarea>
+                        <button type="submit" class="btn">Submit Suggestion</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Discord Community Link -->
+            <div class="discord-community-container">
+                <h3>Need help or have questions?</h3>
+                <p>Join our Discord community for real-time support, discussions, and updates.</p>
+                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link" style="font-weight: 600; color: #5865F2;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#5865F2" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                    Join our Discord Server
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-column">
+                    <div class="footer-logo">
+                        <img src="optimized_images/logo.webp" alt="Logo" width="30" height="30">
+                        <h3>Desktop Commander MCP</h3>
+                    </div>
+                    <p>An open-source tool that enables terminal commands and file editing for Claude Desktop app.</p>
+                    <br />
+                    <div class="social-links">
+                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank" aria-label="GitHub Repository">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                        </a>
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" aria-label="Discord Server">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                        </a>
+                        <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank" aria-label="NPM Package">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-package" aria-hidden="true"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        </a>
+                        <a href="https://bsky.app/profile/dcommandermcp.bsky.social" target="_blank" aria-label="Bluesky Profile">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                        </a>
+                        <a href="https://x.com/DCommander_MCP" target="_blank" aria-label="X (Twitter) Profile">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"></path></svg>
+                        </a>
+                    </div>
+                </div>
+                
+                <div class="footer-column">
+                    <h3>Quick Links</h3>
+                    <ul>
+                        <li><a href="#features">Features</a></li>
+                        <li><a href="#installation">Installation</a></li>
+                        <li><a href="#usage">Usage</a></li>
+                        <li><a href="#media">Media</a></li>
+                        <li><a href="#testimonials">Testimonials</a></li>
+                        <li><a href="#faq">FAQ</a></li>
+                    </ul>
+                </div>
+                
+                <div class="footer-column">
+                    <h3>Resources</h3>
+                    <ul>
+                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank">GitHub Repository</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/wiki" target="_blank">Documentation</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues" target="_blank">Issue Tracker</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/releases" target="_blank">Release Notes</a></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="copyright">
+                <p>&copy; 2025 Desktop Commander MCP. Open-source software under MIT license.</p>
+            </div>
+        </div>
+    </footer>
+
+        <!-- JavaScript - Load asynchronously -->
+    <script src="js/main.js" defer></script>
+
+</body>
+</html>

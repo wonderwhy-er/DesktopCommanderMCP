@@ -1,18 +1,23 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.1.19",
+  "version": "0.1.34",
   "description": "MCP server for terminal operations and file editing",
   "license": "MIT",
   "author": "Eduards Ruzga",
-  "homepage": "https://github.com/wonderwhy-er/ClaudeComputerCommander",
-  "bugs": "https://github.com/wonderwhy-er/ClaudeComputerCommander/issues",
+  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "bin": {
     "desktop-commander": "dist/index.js",
     "setup": "dist/setup-claude-server.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "logo.png",
+    "testemonials"
   ],
   "scripts": {
     "sync-version": "node scripts/sync-version.js",
@@ -22,10 +27,11 @@
     "build": "tsc && shx cp setup-claude-server.js dist/ && shx chmod +x dist/*.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
+    "start:debug": "node --inspect-brk=9229 dist/index.js",
     "setup": "npm install && npm run build && node setup-claude-server.js",
+    "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
     "prepare": "npm run build",
-    "test": "node test/test.js",
-    "test:watch": "nodemon test/test.js",
+    "test": "node test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js"
@@ -53,13 +59,18 @@
     "file-operations"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.0.1",
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "@vscode/ripgrep": "^1.15.9",
+    "cross-fetch": "^4.1.0",
     "glob": "^10.3.10",
+    "node-machine-id": "^1.1.12",
+    "posthog-node": "^4.11.1",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^20.17.24",
+    "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",
     "typescript": "^5.3.3"

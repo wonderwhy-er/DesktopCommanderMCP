@@ -1,31 +1,43 @@
 import { readFile, writeFile } from './filesystem.js';
+import { ServerResult } from '../types.js';
 
 interface SearchReplace {
     search: string;
     replace: string;
 }
 
-export async function performSearchReplace(filePath: string, block: SearchReplace): Promise<void> {
+export async function performSearchReplace(filePath: string, block: SearchReplace): Promise<ServerResult> {
+    // Read file as plain string (don't pass true to get just the string)
     const content = await readFile(filePath);
     
+    // Make sure content is a string
+    const contentStr = typeof content === 'string' ? content : content.content;
+    
     // Find first occurrence
-    const searchIndex = content.indexOf(block.search);
+    const searchIndex = contentStr.indexOf(block.search);
     if (searchIndex === -1) {
-        throw new Error(`Search content not found in ${filePath}`);
+        return {
+            content: [{ type: "text", text: `Search content not found in ${filePath}.` }],
+        };
     }
 
     // Replace content
     const newContent = 
-        content.substring(0, searchIndex) + 
+        contentStr.substring(0, searchIndex) + 
         block.replace + 
-        content.substring(searchIndex + block.search.length);
+        contentStr.substring(searchIndex + block.search.length);
 
     await writeFile(filePath, newContent);
+
+    return {
+        content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
+    };
 }
 
 export async function parseEditBlock(blockContent: string): Promise<{
     filePath: string;
     searchReplace: SearchReplace;
+    error?: string;
 }> {
     const lines = blockContent.split('\n');
     
@@ -38,7 +50,11 @@ export async function parseEditBlock(blockContent: string): Promise<{
     const replaceEnd = lines.indexOf('>>>>>>> REPLACE');
     
     if (searchStart === -1 || divider === -1 || replaceEnd === -1) {
-        throw new Error('Invalid edit block format - missing markers');
+        return {
+            filePath: '',
+            searchReplace: { search: '', replace: '' },
+            error: 'Invalid edit block format - missing markers'
+        };
     }
     
     // Extract search and replace content

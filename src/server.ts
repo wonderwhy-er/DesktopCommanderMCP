@@ -2,10 +2,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListPromptsRequestSchema,
   type CallToolRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { commandManager } from './command-manager.js';
 import {
   ExecuteCommandArgsSchema,
   ReadOutputArgsSchema,
@@ -23,28 +24,16 @@ import {
   SearchFilesArgsSchema,
   GetFileInfoArgsSchema,
   EditBlockArgsSchema,
+  SearchCodeArgsSchema,
   GetConfigArgsSchema,
   GetConfigValueArgsSchema,
   SetConfigValueArgsSchema,
   UpdateConfigArgsSchema,
 } from './tools/schemas.js';
-import { executeCommand, readOutput, forceTerminate, listSessions } from './tools/execute.js';
-import { listProcesses, killProcess } from './tools/process.js';
 import { getConfig, getConfigValue, setConfigValue, updateConfig } from './tools/config.js';
-import {
-  readFile,
-  readMultipleFiles,
-  writeFile,
-  createDirectory,
-  listDirectory,
-  moveFile,
-  searchFiles,
-  getFileInfo,
-  listAllowedDirectories,
-} from './tools/filesystem.js';
-import { parseEditBlock, performSearchReplace } from './tools/edit.js';
 
 import { VERSION } from './version.js';
+import { capture } from "./utils.js";
 
 console.error("Loading server.ts");
 
@@ -56,9 +45,27 @@ export const server = new Server(
   {
     capabilities: {
       tools: {},
+      resources: {},  // Add empty resources capability
+      prompts: {},    // Add empty prompts capability
     },
   },
 );
+
+// Add handler for resources/list method
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  // Return an empty list of resources
+  return {
+    resources: [],
+  };
+});
+
+// Add handler for prompts/list method
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  // Return an empty list of prompts
+  return {
+    prompts: [],
+  };
+});
 
 console.error("Setting up request handlers...");
 
@@ -92,7 +99,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           "Update multiple configuration values at once.",
         inputSchema: zodToJsonSchema(UpdateConfigArgsSchema),
       },
-      
+
       // Terminal tools
       {
         name: "execute_command",
@@ -162,9 +169,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "read_file",
         description:
-          "Read the complete contents of a file from the file system. " +
-          "Handles various text encodings and provides detailed error messages " +
-          "if the file cannot be read. Only works within allowed directories.",
+          "Read the complete contents of a file from the file system or a URL. " +
+          "When reading from the file system, only works within allowed directories. " +
+          "Can fetch content from URLs when isUrl parameter is set to true. " +
+          "Handles text files normally and image files are returned as viewable images. " +
+          "Recognized image types: PNG, JPEG, GIF, WebP.",
         inputSchema: zodToJsonSchema(ReadFileArgsSchema),
       },
       {
@@ -172,6 +181,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           "Read the contents of multiple files simultaneously. " +
           "Each file's content is returned with its path as a reference. " +
+          "Handles text files normally and renders images as viewable content. " +
+          "Recognized image types: PNG, JPEG, GIF, WebP. " +
           "Failed reads for individual files won't stop the entire operation. " +
           "Only works within allowed directories.",
         inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
@@ -209,10 +220,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "search_files",
         description:
-          "Recursively search for files and directories matching a pattern. " +
+          "Finds files by name using a case-insensitive substring matching. " +
           "Searches through all subdirectories from the starting path. " +
+          "Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. " +
           "Only searches within allowed directories.",
         inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
+      },
+      {
+        name: "search_code",
+        description:
+          "Search for text/code patterns within file contents using ripgrep. " +
+          "Fast and powerful search similar to VS Code search functionality. " +
+          "Supports regular expressions, file pattern filtering, and context lines. " +
+          "Has a default timeout of 30 seconds which can be customized. " +
+          "Only searches within allowed directories.",
+        inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
       },
       {
         name: "get_file_info",
@@ -236,8 +258,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "edit_block",
         description:
             "Apply surgical text replacements to files. Best for small changes (<20% of file size). " +
-            "Multiple blocks can be used for separate changes. Will verify changes after application. " +
-            "Format: filepath, then <<<<<<< SEARCH, content to find, =======, new content, >>>>>>> REPLACE.",
+            "Call repeatedly to change multiple blocks. Will verify changes after application. " +
+            "Format:\nfilepath\n<<<<<<< SEARCH\ncontent to find\n=======\nnew content\n>>>>>>> REPLACE",
         inputSchema: zodToJsonSchema(EditBlockArgsSchema),
       },
       ],
@@ -251,10 +273,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   }
 });
 
-server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest) => {
+import * as handlers from './handlers/index.js';
+import { ServerResult } from './types.js';
+
+server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
   try {
     const { name, arguments: args } = request.params;
+    capture('server_call_tool');
+    // Add a single dynamic capture for the specific tool
+    capture('server_' + name);
 
+    // Using a more structured approach with dedicated handlers
     switch (name) {
       // Config tools
       case "get_config":
@@ -267,7 +296,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             isError: true,
           };
         }
-      case "get_config_value": 
+      case "get_config_value":
         try {
           return await getConfigValue(args);
         } catch (error) {
@@ -297,154 +326,103 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             isError: true,
           };
         }
-      
+
       // Terminal tools
-      case "execute_command": {
-        const parsed = ExecuteCommandArgsSchema.parse(args);
-        return executeCommand(parsed);
-      }
-      case "read_output": {
-        const parsed = ReadOutputArgsSchema.parse(args);
-        return readOutput(parsed);
-      }
-      case "force_terminate": {
-        const parsed = ForceTerminateArgsSchema.parse(args);
-        return forceTerminate(parsed);
-      }
+      case "execute_command":
+        return handlers.handleExecuteCommand(args);
+
+      case "read_output":
+        return handlers.handleReadOutput(args);
+
+      case "force_terminate":
+        return handlers.handleForceTerminate(args);
+
       case "list_sessions":
-        return listSessions();
+        return handlers.handleListSessions();
+
+      // Process tools
       case "list_processes":
-        return listProcesses();
-      case "kill_process": {
-        const parsed = KillProcessArgsSchema.parse(args);
-        return killProcess(parsed);
-      }
-      case "block_command": {
-        const parsed = BlockCommandArgsSchema.parse(args);
-        const blockResult = await commandManager.blockCommand(parsed.command);
-        return {
-          content: [{ type: "text", text: blockResult }],
-        };
-      }
-      case "unblock_command": {
-        const parsed = UnblockCommandArgsSchema.parse(args);
-        const unblockResult = await commandManager.unblockCommand(parsed.command);
-        return {
-          content: [{ type: "text", text: unblockResult }],
-        };
-      }
-      case "list_blocked_commands": {
-        const blockedCommands = await commandManager.listBlockedCommands();
-        return {
-          content: [{ type: "text", text: blockedCommands.join('\n') }],
-        };
-      }
-      
+        return handlers.handleListProcesses();
+
+      case "kill_process":
+        return handlers.handleKillProcess(args);
+
+      // Command management tools
+      case "block_command":
+        return handlers.handleBlockCommand(args);
+
+      case "unblock_command":
+        return handlers.handleUnblockCommand(args);
+
+      case "list_blocked_commands":
+        return handlers.handleListBlockedCommands();
+
       // Filesystem tools
-      case "edit_block": {
-        const parsed = EditBlockArgsSchema.parse(args);
-        const { filePath, searchReplace } = await parseEditBlock(parsed.blockContent);
-        await performSearchReplace(filePath, searchReplace);
-        return {
-          content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
-        };
-      }
-      case "read_file": {
-        const parsed = ReadFileArgsSchema.parse(args);
-        const content = await readFile(parsed.path);
-        return {
-          content: [{ type: "text", text: content }],
-        };
-      }
-      case "read_multiple_files": {
-        const parsed = ReadMultipleFilesArgsSchema.parse(args);
-        const results = await readMultipleFiles(parsed.paths);
-        return {
-          content: [{ type: "text", text: results.join("\n---\n") }],
-        };
-      }
-      case "write_file": {
-        const parsed = WriteFileArgsSchema.parse(args);
-        await writeFile(parsed.path, parsed.content);
-        return {
-          content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
-        };
-      }
-      case "create_directory": {
-        const parsed = CreateDirectoryArgsSchema.parse(args);
-        await createDirectory(parsed.path);
-        return {
-          content: [{ type: "text", text: `Successfully created directory ${parsed.path}` }],
-        };
-      }
-      case "list_directory": {
-        const parsed = ListDirectoryArgsSchema.parse(args);
-        const entries = await listDirectory(parsed.path);
-        return {
-          content: [{ type: "text", text: entries.join('\n') }],
-        };
-      }
-      case "move_file": {
-        const parsed = MoveFileArgsSchema.parse(args);
-        await moveFile(parsed.source, parsed.destination);
-        return {
-          content: [{ type: "text", text: `Successfully moved ${parsed.source} to ${parsed.destination}` }],
-        };
-      }
-      case "search_files": {
-        const parsed = SearchFilesArgsSchema.parse(args);
-        const results = await searchFiles(parsed.path, parsed.pattern);
-        return {
-          content: [{ type: "text", text: results.length > 0 ? results.join('\n') : "No matches found" }],
-        };
-      }
-      case "get_file_info": {
-        const parsed = GetFileInfoArgsSchema.parse(args);
-        const info = await getFileInfo(parsed.path);
-        return {
-          content: [{ 
-            type: "text", 
-            text: Object.entries(info)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join('\n') 
-          }],
-        };
-      }
-      case "list_allowed_directories": {
-        const directories = listAllowedDirectories();
-        return {
-          content: [{ 
-            type: "text", 
-            text: `Allowed directories:\n${directories.join('\n')}` 
-          }],
-        };
-      }
-      // Config tools
-      case "get_config":
-        console.error("Handling get_config request");
-        return getConfig();
-      case "get_config_value": {
-        console.error("Handling get_config_value request");
-        const parsed = GetConfigValueArgsSchema.parse(args);
-        return getConfigValue(parsed);
-      }
-      case "set_config_value": {
-        console.error("Handling set_config_value request");
-        const parsed = SetConfigValueArgsSchema.parse(args);
-        return setConfigValue(parsed);
-      }
-      case "update_config": {
-        console.error("Handling update_config request");
-        const parsed = UpdateConfigArgsSchema.parse(args);
-        return updateConfig(parsed);
-      }
+      case "read_file":
+        return handlers.handleReadFile(args);
+
+      case "read_multiple_files":
+        return handlers.handleReadMultipleFiles(args);
+
+      case "write_file":
+        return handlers.handleWriteFile(args);
+
+      case "create_directory":
+        return handlers.handleCreateDirectory(args);
+
+      case "list_directory":
+        return handlers.handleListDirectory(args);
+
+      case "move_file":
+        return handlers.handleMoveFile(args);
+
+      case "search_files":
+        return handlers.handleSearchFiles(args);
+
+      case "search_code":
+        return handlers.handleSearchCode(args);
+
+      case "get_file_info":
+        return handlers.handleGetFileInfo(args);
+
+      case "list_allowed_directories":
+        return handlers.handleListAllowedDirectories();
+
+      case "edit_block":
+        return handlers.handleEditBlock(args);
+
+        // Config tools
+        case "get_config":
+            console.error("Handling get_config request");
+            return getConfig();
+        case "get_config_value": {
+            console.error("Handling get_config_value request");
+            const parsed = GetConfigValueArgsSchema.parse(args);
+            return getConfigValue(parsed);
+        }
+        case "set_config_value": {
+            console.error("Handling set_config_value request");
+            const parsed = SetConfigValueArgsSchema.parse(args);
+            return setConfigValue(parsed);
+        }
+        case "update_config": {
+            console.error("Handling update_config request");
+            const parsed = UpdateConfigArgsSchema.parse(args);
+            return updateConfig(parsed);
+        }
 
       default:
-        console.error(`Unknown tool: ${name}`);
-        throw new Error(`Unknown tool: ${name}`);
+        capture('server_unknown_tool', { name });
+        return {
+          content: [{ type: "text", text: `Error: Unknown tool: ${name}` }],
+          isError: true,
+        };
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    capture('server_request_error', {
+        error: errorMessage
+    });
     return {
       content: [{ type: "text", text: `Error: ${errorMessage}` }],
       isError: true,

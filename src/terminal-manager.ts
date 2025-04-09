@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
+import {capture} from "./utils.js";
 
 interface CompletedSession {
   pid: number;
@@ -23,7 +24,12 @@ export class TerminalManager {
     
     // Ensure process.pid is defined before proceeding
     if (!process.pid) {
-      throw new Error('Failed to get process ID');
+      // Return a consistent error object instead of throwing
+      return {
+        pid: -1,  // Use -1 to indicate an error state
+        output: 'Error: Failed to get process ID. The command could not be executed.',
+        isBlocked: false
+      };
     }
     
     const session: TerminalSession = {
@@ -121,7 +127,7 @@ export class TerminalManager {
       }, 1000);
       return true;
     } catch (error) {
-      console.error(`Failed to terminate process ${pid}:`, error);
+      capture('server_request_error', {error: error, message:`Failed to terminate process ${pid}:`});
       return false;
     }
   }

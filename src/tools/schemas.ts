@@ -50,6 +50,7 @@ export const UnblockCommandArgsSchema = z.object({
 // Filesystem tools schemas
 export const ReadFileArgsSchema = z.object({
   path: z.string(),
+  isUrl: z.boolean().optional().default(false),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -77,10 +78,23 @@ export const MoveFileArgsSchema = z.object({
 export const SearchFilesArgsSchema = z.object({
   path: z.string(),
   pattern: z.string(),
+  timeoutMs: z.number().optional(),
 });
 
 export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
+});
+
+// Search tools schema
+export const SearchCodeArgsSchema = z.object({
+  path: z.string(),
+  pattern: z.string(),
+  filePattern: z.string().optional(),
+  ignoreCase: z.boolean().optional(),
+  maxResults: z.number().optional(),
+  includeHidden: z.boolean().optional(),
+  contextLines: z.number().optional(),
+  timeoutMs: z.number().optional(),
 });
 
 // Edit tools schemas

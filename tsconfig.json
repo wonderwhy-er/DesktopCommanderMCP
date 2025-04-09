@@ -11,7 +11,8 @@
     "skipLibCheck": true,
     "diagnostics": true,
     "extendedDiagnostics": true,
-    "listEmittedFiles": true
+    "listEmittedFiles": true,
+    "types": ["node"]
   },
   "include": [
     "src/**/*.ts"
