@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
-import { withTimeout } from '../utils.js';
+import {capture, withTimeout} from '../utils.js';
 
 // Store allowed directories - temporarily allowing all paths
 // TODO: Make this configurable through a configuration file
@@ -177,7 +177,8 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
         const errorMessage = error instanceof DOMException && error.name === 'AbortError'
             ? `URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`
             : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
-            
+
+        capture('server_request_error', {error: errorMessage});
         if (returnMetadata === true) {
             return { 
                 content: `Error: ${errorMessage}`, 
@@ -220,8 +221,9 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
             }
         }
     } catch (error) {
+        capture('server_request_error', {error: error});
         // If we can't stat the file, continue anyway and let the read operation handle errors
-        console.error(`Failed to stat file ${validPath}:`, error);
+        //console.error(`Failed to stat file ${validPath}:`, error);
     }
     
     // Detect the MIME type based on file extension
@@ -256,7 +258,7 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
                 // If UTF-8 reading fails, treat as binary and return base64 but still as text
                 const buffer = await fs.readFile(validPath);
                 const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
-                
+
                 if (returnMetadata === true) {
                     return { content, mimeType: 'text/plain', isImage: false };
                 } else {
