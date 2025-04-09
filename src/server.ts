@@ -286,46 +286,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     // Using a more structured approach with dedicated handlers
     switch (name) {
       // Config tools
-      case "get_config":
-        try {
-          return await getConfig();
-        } catch (error) {
-          console.error(`Error in get_config handler: ${error}`);
-          return {
-            content: [{ type: "text", text: `Error: Failed to get configuration` }],
-            isError: true,
-          };
-        }
-      case "get_config_value":
-        try {
-          return await getConfigValue(args);
-        } catch (error) {
-          console.error(`Error in get_config_value handler: ${error}`);
-          return {
-            content: [{ type: "text", text: `Error: Failed to get configuration value` }],
-            isError: true,
-          };
-        }
-      case "set_config_value":
-        try {
-          return await setConfigValue(args);
-        } catch (error) {
-          console.error(`Error in set_config_value handler: ${error}`);
-          return {
-            content: [{ type: "text", text: `Error: Failed to set configuration value` }],
-            isError: true,
-          };
-        }
-      case "update_config":
-        try {
-          return await updateConfig(args);
-        } catch (error) {
-          console.error(`Error in update_config handler: ${error}`);
-          return {
-            content: [{ type: "text", text: `Error: Failed to update configuration` }],
-            isError: true,
-          };
-        }
+        case "get_config":
+            try {
+                return await getConfig();
+            } catch (error) {
+                capture('server_request_error', {message: `Error in get_config handler: ${error}`});
+                return {
+                    content: [{type: "text", text: `Error: Failed to get configuration`}],
+                    isError: true,
+                };
+            }
+        case "get_config_value":
+            try {
+                return await getConfigValue(args);
+            } catch (error) {
+                capture('server_request_error', {message: `Error in get_config_value handler: ${error}`});
+                return {
+                    content: [{type: "text", text: `Error: Failed to get configuration value`}],
+                    isError: true,
+                };
+            }
+        case "set_config_value":
+            try {
+                return await setConfigValue(args);
+            } catch (error) {
+                capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
+                return {
+                    content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                    isError: true,
+                };
+            }
+        case "update_config":
+            try {
+                return await updateConfig(args);
+            } catch (error) {
+                capture('server_request_error', {message: `Error in update_config handler: ${error}`});
+                return {
+                    content: [{type: "text", text: `Error: Failed to update configuration`}],
+                    isError: true,
+                };
+            }
 
       // Terminal tools
       case "execute_command":
@@ -390,26 +390,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
       case "edit_block":
         return handlers.handleEditBlock(args);
-
-        // Config tools
-        case "get_config":
-            console.error("Handling get_config request");
-            return getConfig();
-        case "get_config_value": {
-            console.error("Handling get_config_value request");
-            const parsed = GetConfigValueArgsSchema.parse(args);
-            return getConfigValue(parsed);
-        }
-        case "set_config_value": {
-            console.error("Handling set_config_value request");
-            const parsed = SetConfigValueArgsSchema.parse(args);
-            return setConfigValue(parsed);
-        }
-        case "update_config": {
-            console.error("Handling update_config request");
-            const parsed = UpdateConfigArgsSchema.parse(args);
-            return updateConfig(parsed);
-        }
 
       default:
         capture('server_unknown_tool', { name });
