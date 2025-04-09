@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
+import { configManager } from './config-manager.js';
 import {capture} from "./utils.js";
 
 interface CompletedSession {
@@ -16,9 +17,22 @@ export class TerminalManager {
   private completedSessions: Map<number, CompletedSession> = new Map();
   
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
+    // Get the shell from config if not specified
+    let shellToUse: string | boolean | undefined = shell;
+    if (!shellToUse) {
+      try {
+        const config = await configManager.getConfig();
+        shellToUse = config.shell || true;
+      } catch (error) {
+        // If there's an error getting the config, fall back to default
+        shellToUse = true;
+      }
+    }
+    
     const spawnOptions = { 
-      shell: shell || true
+      shell: shellToUse
     };
+    
     const process = spawn(command, [], spawnOptions);
     let output = '';
     
