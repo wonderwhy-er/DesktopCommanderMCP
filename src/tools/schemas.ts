@@ -5,18 +5,15 @@ console.error("Loading schemas.ts");
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({});
 
-export const GetConfigValueArgsSchema = z.object({
-  key: z.string(),
-});
-
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
   value: z.any(),
 });
 
-export const UpdateConfigArgsSchema = z.object({
-  config: z.record(z.any()),
-});
+// Empty schemas
+export const ListProcessesArgsSchema = z.object({});
+export const ListBlockedCommandsArgsSchema = z.object({});
+export const ListAllowedDirectoriesArgsSchema = z.object({});
 
 // Terminal tools schemas
 export const ExecuteCommandArgsSchema = z.object({
