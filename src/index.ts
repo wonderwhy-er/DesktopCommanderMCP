@@ -108,14 +108,6 @@ async function runServer() {
       // Continue anyway - we'll use an in-memory config
     }
 
-    try {
-      console.error("Loading blocked commands...");
-      await commandManager.loadBlockedCommands();
-      console.error("Blocked commands loaded successfully");
-    } catch (cmdError) {
-      console.error(`Failed to load blocked commands: ${cmdError instanceof Error ? cmdError.message : String(cmdError)}`);
-      console.error(cmdError instanceof Error && cmdError.stack ? cmdError.stack : 'No stack trace available');
-    }
 
     console.error("Connecting server...");
     await server.connect(transport);

@@ -192,12 +192,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         "Retrieve detailed metadata about a file or directory including size, creation time, last modified time, permissions, and type. Only works within allowed directories.",
                     inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
                 },
-                {
-                    name: "list_allowed_directories",
-                    description:
-                        "Returns the list of directories that this server is allowed to access.",
-                    inputSchema: zodToJsonSchema(ListAllowedDirectoriesArgsSchema),
-                },
+                // Note: list_allowed_directories removed - use get_config to check allowedDirectories
 
                 // Text editing tools
                 {
@@ -270,13 +265,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             // Command management tools
             case "block_command":
-                return handlers.handleBlockCommand(args);
+                return await handlers.handleBlockCommand(args);
 
             case "unblock_command":
-                return handlers.handleUnblockCommand(args);
+                return await handlers.handleUnblockCommand(args);
 
             case "list_blocked_commands":
-                return handlers.handleListBlockedCommands();
+                return await handlers.handleListBlockedCommands();
 
             // Filesystem tools
             case "read_file":
@@ -305,9 +300,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "get_file_info":
                 return handlers.handleGetFileInfo(args);
-
-            case "list_allowed_directories":
-                return handlers.handleListAllowedDirectories();
 
             case "edit_block":
                 return handlers.handleEditBlock(args);

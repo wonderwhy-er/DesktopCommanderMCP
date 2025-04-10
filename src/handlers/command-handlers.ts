@@ -1,4 +1,4 @@
-import { commandManager } from '../command-manager.js';
+import { configManager } from '../config-manager.js';
 
 import { 
     BlockCommandArgsSchema,
@@ -12,16 +12,33 @@ import { ServerResult } from '../types.js';
  */
 export async function handleBlockCommand(args: unknown): Promise<ServerResult> {
     const parsed = BlockCommandArgsSchema.parse(args);
-    const blockResult = await commandManager.blockCommand(parsed.command);
+    const command = parsed.command.toLowerCase().trim();
     
-    // Convert boolean result to appropriate message string
-    const message = blockResult 
-        ? `Successfully blocked command: ${parsed.command}`
-        : `Command is already blocked: ${parsed.command}`;
-    
-    return {
-        content: [{ type: "text", text: message }],
-    };
+    try {
+        const config = await configManager.getConfig();
+        const blockedCommands = config.blockedCommands || [];
+        
+        // Check if command is already blocked
+        if (blockedCommands.includes(command)) {
+            return {
+                content: [{ type: "text", text: `Command is already blocked: ${command}` }],
+            };
+        }
+        
+        // Add to blocked commands
+        const updatedBlockedCommands = [...blockedCommands, command];
+        await configManager.setValue('blockedCommands', updatedBlockedCommands);
+        
+        return {
+            content: [{ type: "text", text: `Successfully blocked command: ${command}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error blocking command: ${errorMessage}` }],
+            isError: true
+        };
+    }
 }
 
 /**
@@ -29,30 +46,56 @@ export async function handleBlockCommand(args: unknown): Promise<ServerResult> {
  */
 export async function handleUnblockCommand(args: unknown): Promise<ServerResult> {
     const parsed = UnblockCommandArgsSchema.parse(args);
-    const unblockResult = await commandManager.unblockCommand(parsed.command);
+    const command = parsed.command.toLowerCase().trim();
     
-    // Convert boolean result to appropriate message string
-    const message = unblockResult 
-        ? `Successfully unblocked command: ${parsed.command}`
-        : `Command is not blocked or doesn't exist: ${parsed.command}`;
-    
-    return {
-        content: [{ type: "text", text: message }],
-    };
+    try {
+        const config = await configManager.getConfig();
+        const blockedCommands = config.blockedCommands || [];
+        
+        // Check if command is blocked
+        if (!blockedCommands.includes(command)) {
+            return {
+                content: [{ type: "text", text: `Command is not blocked: ${command}` }],
+            };
+        }
+        
+        // Remove from blocked commands
+        const updatedBlockedCommands = blockedCommands.filter(cmd => cmd !== command);
+        await configManager.setValue('blockedCommands', updatedBlockedCommands);
+        
+        return {
+            content: [{ type: "text", text: `Successfully unblocked command: ${command}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error unblocking command: ${errorMessage}` }],
+            isError: true
+        };
+    }
 }
 
 /**
  * Handle list_blocked_commands command
  */
-export function handleListBlockedCommands(): ServerResult {
-    const blockedCommands = commandManager.listBlockedCommands();
-    
-    // Create appropriate message based on whether there are blocked commands
-    const message = blockedCommands.length > 0
-        ? `Blocked commands:\n${blockedCommands.join('\n')}`
-        : "No commands are currently blocked.";
-    
-    return {
-        content: [{ type: "text", text: message }],
-    };
+export async function handleListBlockedCommands(): Promise<ServerResult> {
+    try {
+        const config = await configManager.getConfig();
+        const blockedCommands = config.blockedCommands || [];
+        
+        // Create appropriate message based on whether there are blocked commands
+        const message = blockedCommands.length > 0
+            ? `Blocked commands:\n${blockedCommands.join('\n')}`
+            : "No commands are currently blocked.";
+        
+        return {
+            content: [{ type: "text", text: message }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+            content: [{ type: "text", text: `Error listing blocked commands: ${errorMessage}` }],
+            isError: true
+        };
+    }
 }

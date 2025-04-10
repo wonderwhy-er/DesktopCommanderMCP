@@ -3,20 +3,39 @@ import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
 import {capture, withTimeout} from '../utils.js';
+import {configManager} from '../config-manager.js';
 
-// Store allowed directories - temporarily allowing all paths
-// TODO: Make this configurable through a configuration file
-const allowedDirectories: string[] = [
-    "/" // Root directory - effectively allows all paths
+// Get allowed directories from config
+// This will be initialized later, starting with a permissive default
+let allowedDirectories: string[] = [
+    "/" // Root directory as a fallback - effectively allows all paths
 ];
 
-// Original implementation commented out for future reference
-/*
-const allowedDirectories: string[] = [
-    process.cwd(), // Current working directory
-    os.homedir()   // User's home directory
-];
-*/
+// Initialize allowed directories from configuration
+async function initAllowedDirectories() {
+    try {
+        const config = await configManager.getConfig();
+        if (config.allowedDirectories && Array.isArray(config.allowedDirectories) && config.allowedDirectories.length > 0) {
+            allowedDirectories = config.allowedDirectories;
+        } else {
+            // Fall back to default directories if not configured
+            allowedDirectories = [
+                process.cwd(), // Current working directory
+                os.homedir()   // User's home directory
+            ];
+            // Update config with default
+            await configManager.setValue('allowedDirectories', allowedDirectories);
+        }
+    } catch (error) {
+        console.error('Failed to initialize allowed directories:', error);
+        // Keep the default permissive path
+    }
+}
+
+// Initialize on module load
+initAllowedDirectories().catch(error => {
+    console.error('Error initializing filesystem allowed directories:', error);
+});
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
@@ -57,13 +76,35 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 }
 
 /**
+ * Checks if a path is within any of the allowed directories
+ * 
+ * @param pathToCheck Path to check
+ * @returns boolean True if path is allowed
+ */
+function isPathAllowed(pathToCheck: string): boolean {
+    // If root directory is allowed, all paths are allowed
+    if (allowedDirectories.includes('/')) {
+        return true;
+    }
+
+    const normalizedPathToCheck = normalizePath(pathToCheck);
+    
+    // Check if the path is within any allowed directory
+    return allowedDirectories.some(allowedDir => {
+        const normalizedAllowedDir = normalizePath(allowedDir);
+        return normalizedPathToCheck === normalizedAllowedDir || 
+               normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
+    });
+}
+
+/**
  * Validates a path to ensure it can be accessed or created.
  * For existing paths, returns the real path (resolving symlinks).
  * For non-existent paths, validates parent directories to ensure they exist.
  * 
  * @param requestedPath The path to validate
  * @returns Promise<string> The validated path
- * @throws Error if the path or its parent directories don't exist
+ * @throws Error if the path or its parent directories don't exist or if the path is not allowed
  */
 export async function validatePath(requestedPath: string): Promise<string> {
     const PATH_VALIDATION_TIMEOUT = 10000; // 10 seconds timeout
@@ -76,6 +117,11 @@ export async function validatePath(requestedPath: string): Promise<string> {
         const absolute = path.isAbsolute(expandedPath)
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
+            
+        // Check if path is allowed
+        if (!isPathAllowed(absolute)) {
+            return `__ERROR__: Path not allowed: ${requestedPath}. Must be within one of these directories: ${allowedDirectories.join(', ')}`;
+        }
         
         // Check if path exists
         try {
@@ -394,6 +440,5 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
     };
 }
 
-export function listAllowedDirectories(): string[] {
-    return ["/ (All paths are currently allowed)"];
-}
+// This function has been replaced with configManager.getConfig()
+// Use get_config tool to retrieve allowedDirectories

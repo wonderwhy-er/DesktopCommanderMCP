@@ -80,7 +80,18 @@ class ConfigManager {
         "dd if=/dev/zero of=/dev/sda",
         "mkfs",
         "mkfs.ext4",
-        "format"
+        "format",
+        "mount",
+        "umount",
+        "fdisk",
+        "dd",
+        "sudo",
+        "su",
+        "passwd",
+        "adduser",
+        "useradd",
+        "usermod",
+        "groupadd"
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
       allowedDirectories: [process.cwd()]
