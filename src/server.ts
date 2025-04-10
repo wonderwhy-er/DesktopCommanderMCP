@@ -13,8 +13,6 @@ import {
     ForceTerminateArgsSchema,
     ListSessionsArgsSchema,
     KillProcessArgsSchema,
-    BlockCommandArgsSchema,
-    UnblockCommandArgsSchema,
     ReadFileArgsSchema,
     ReadMultipleFilesArgsSchema,
     WriteFileArgsSchema,
@@ -28,8 +26,6 @@ import {
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
-    ListBlockedCommandsArgsSchema,
-    ListAllowedDirectoriesArgsSchema
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 
@@ -79,13 +75,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        "Get the complete server configuration as JSON.",
+                        "Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access).",
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {
                     name: "set_config_value",
                     description:
-                        "Set a specific configuration value by key.",
+                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths).",
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
@@ -120,21 +116,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "kill_process",
                     description: "Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process.",
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
-                },
-                {
-                    name: "block_command",
-                    description: "Add a command to the blacklist. Once blocked, the command cannot be executed until unblocked.",
-                    inputSchema: zodToJsonSchema(BlockCommandArgsSchema),
-                },
-                {
-                    name: "unblock_command",
-                    description: "Remove a command from the blacklist. Once unblocked, the command can be executed normally.",
-                    inputSchema: zodToJsonSchema(UnblockCommandArgsSchema),
-                },
-                {
-                    name: "list_blocked_commands",
-                    description: "List all currently blocked commands.",
-                    inputSchema: zodToJsonSchema(ListBlockedCommandsArgsSchema),
                 },
 
                 // Filesystem tools
@@ -262,16 +243,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "kill_process":
                 return handlers.handleKillProcess(args);
-
-            // Command management tools
-            case "block_command":
-                return await handlers.handleBlockCommand(args);
-
-            case "unblock_command":
-                return await handlers.handleUnblockCommand(args);
-
-            case "list_blocked_commands":
-                return await handlers.handleListBlockedCommands();
 
             // Filesystem tools
             case "read_file":

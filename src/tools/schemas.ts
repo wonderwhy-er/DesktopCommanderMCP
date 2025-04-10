@@ -12,8 +12,6 @@ export const SetConfigValueArgsSchema = z.object({
 
 // Empty schemas
 export const ListProcessesArgsSchema = z.object({});
-export const ListBlockedCommandsArgsSchema = z.object({});
-export const ListAllowedDirectoriesArgsSchema = z.object({});
 
 // Terminal tools schemas
 export const ExecuteCommandArgsSchema = z.object({
@@ -34,14 +32,6 @@ export const ListSessionsArgsSchema = z.object({});
 
 export const KillProcessArgsSchema = z.object({
   pid: z.number(),
-});
-
-export const BlockCommandArgsSchema = z.object({
-  command: z.string(),
-});
-
-export const UnblockCommandArgsSchema = z.object({
-  command: z.string(),
 });
 
 // Filesystem tools schemas
