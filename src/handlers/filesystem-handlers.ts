@@ -7,7 +7,6 @@ import {
     moveFile,
     searchFiles,
     getFileInfo,
-    listAllowedDirectories,
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
@@ -261,15 +260,5 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
     }
 }
 
-/**
- * Handle list_allowed_directories command
- */
-export function handleListAllowedDirectories(): ServerResult {
-    const directories = listAllowedDirectories();
-    return {
-        content: [{ 
-            type: "text", 
-            text: `Allowed directories:\n${directories.join('\n')}` 
-        }],
-    };
-}
+// The listAllowedDirectories function has been removed
+// Use get_config to retrieve the allowedDirectories configuration

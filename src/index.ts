@@ -3,6 +3,7 @@
 import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server } from './server.js';
 import { commandManager } from './command-manager.js';
+import { configManager } from './config-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { platform } from 'os';
@@ -35,7 +36,7 @@ async function runSetup() {
     // Fix for Windows ESM path issue
     const setupScriptPath = join(__dirname, 'setup-claude-server.js');
     const setupScriptUrl = createFileURL(setupScriptPath);
-    
+
     // Now import using the URL format
     const { default: setupModule } = await import(setupScriptUrl.href);
     if (typeof setupModule === 'function') {
@@ -61,7 +62,7 @@ async function runServer() {
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      
+
       // If this is a JSON parsing error, log it to stderr but don't crash
       if (errorMessage.includes('JSON') && errorMessage.includes('Unexpected token')) {
         process.stderr.write(`[desktop-commander] JSON parsing error: ${errorMessage}\n`);
@@ -79,7 +80,7 @@ async function runServer() {
     // Handle unhandled rejections
     process.on('unhandledRejection', async (reason) => {
       const errorMessage = reason instanceof Error ? reason.message : String(reason);
-      
+
       // If this is a JSON parsing error, log it to stderr but don't crash
       if (errorMessage.includes('JSON') && errorMessage.includes('Unexpected token')) {
         process.stderr.write(`[desktop-commander] JSON parsing rejection: ${errorMessage}\n`);
@@ -96,12 +97,25 @@ async function runServer() {
 
     capture('run_server_start');
     
-    // Load blocked commands from config file
-    await commandManager.loadBlockedCommands();
+    try {
+      console.error("Loading configuration...");
+      await configManager.loadConfig();
+      console.error("Configuration loaded successfully");
+    } catch (configError) {
+      console.error(`Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
+      console.error(configError instanceof Error && configError.stack ? configError.stack : 'No stack trace available');
+      console.error("Continuing with in-memory configuration only");
+      // Continue anyway - we'll use an in-memory config
+    }
 
+
+    console.error("Connecting server...");
     await server.connect(transport);
+    console.error("Server connected successfully");
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`FATAL ERROR: ${errorMessage}`);
+    console.error(error instanceof Error && error.stack ? error.stack : 'No stack trace available');
     process.stderr.write(JSON.stringify({
       type: 'error',
       timestamp: new Date().toISOString(),
@@ -117,6 +131,8 @@ async function runServer() {
 
 runServer().catch(async (error) => {
   const errorMessage = error instanceof Error ? error.message : String(error);
+  console.error(`RUNTIME ERROR: ${errorMessage}`);
+  console.error(error instanceof Error && error.stack ? error.stack : 'No stack trace available');
   process.stderr.write(JSON.stringify({
     type: 'error',
     timestamp: new Date().toISOString(),

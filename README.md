@@ -38,6 +38,10 @@ This is server that allows Claude desktop app to execute long-running terminal c
 - Command timeout and background execution support
 - Process management (list and kill processes)
 - Session management for long-running commands
+- Server configuration management:
+  - Get/set configuration values
+  - Update multiple settings at once
+  - Dynamic configuration changes without server restart
 - Full filesystem operations:
   - Read/write files
   - Create/list directories
@@ -128,8 +132,14 @@ For manual installations, you can update by running the setup command again.
 
 The server provides these tool categories:
 
+### Configuration Tools
+- `get_config`: Get the complete server configuration
+- `get_config_value`: Get a specific configuration value
+- `set_config_value`: Set a specific configuration value
+- `update_config`: Update multiple configuration values at once
+
 ### Terminal Tools
-- `execute_command`: Run commands with configurable timeout
+- `execute_command`: Run commands with configurable timeout and shell selection
 - `read_output`: Get output from long-running commands
 - `force_terminate`: Stop running command sessions
 - `list_sessions`: View active command sessions
@@ -180,6 +190,49 @@ console.log("new message");
 ## Handling Long-Running Commands
 
 For commands that may take a while:
+
+## Configuration Management
+
+You can manage server configuration using the provided tools:
+
+```javascript
+// Get the entire config
+get_config({})
+
+// Get a specific config value
+get_config_value({ "key": "defaultShell" })
+
+// Set a specific config value
+set_config_value({ "key": "defaultShell", "value": "/bin/zsh" })
+
+// Update multiple config values at once
+update_config({
+  "config": {
+    "defaultShell": "/bin/bash",
+    "logLevel": "debug",
+    "allowedDirectories": ["/Users/username/projects"]
+  }
+})
+```
+
+The configuration is saved to `config.json` in the server's working directory and persists between server restarts.
+
+## Using Different Shells
+
+You can specify which shell to use for command execution:
+
+```javascript
+// Using default shell (bash or system default)
+execute_command({ "command": "echo $SHELL" })
+
+// Using zsh specifically
+execute_command({ "command": "echo $SHELL", "shell": "/bin/zsh" })
+
+// Using bash specifically
+execute_command({ "command": "echo $SHELL", "shell": "/bin/bash" })
+```
+
+This allows you to use shell-specific features or maintain consistent environments across commands.
 
 1. `execute_command` returns after timeout with initial output
 2. Command continues in background

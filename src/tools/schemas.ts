@@ -1,9 +1,23 @@
 import { z } from "zod";
 
+console.error("Loading schemas.ts");
+
+// Config tools schemas
+export const GetConfigArgsSchema = z.object({});
+
+export const SetConfigValueArgsSchema = z.object({
+  key: z.string(),
+  value: z.any(),
+});
+
+// Empty schemas
+export const ListProcessesArgsSchema = z.object({});
+
 // Terminal tools schemas
 export const ExecuteCommandArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number().optional(),
+  shell: z.string().optional(),
 });
 
 export const ReadOutputArgsSchema = z.object({
@@ -18,14 +32,6 @@ export const ListSessionsArgsSchema = z.object({});
 
 export const KillProcessArgsSchema = z.object({
   pid: z.number(),
-});
-
-export const BlockCommandArgsSchema = z.object({
-  command: z.string(),
-});
-
-export const UnblockCommandArgsSchema = z.object({
-  command: z.string(),
 });
 
 // Filesystem tools schemas
