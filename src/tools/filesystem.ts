@@ -75,7 +75,7 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     // If root directory is allowed, all paths are allowed
     const allowedDirectories = await getAllowedDirs();
-    if (allowedDirectories.includes('/')) {
+    if (allowedDirectories.includes('/') || allowedDirectories.length === 0) {
         return true;
     }
 
@@ -136,7 +136,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
     const result = await withTimeout(
         validationOperation(),
         PATH_VALIDATION_TIMEOUT,
-        `Path validation for ${requestedPath}`,
+        `Path vcalidation for ${requestedPath}`,
         null
     );
     
