@@ -94,7 +94,7 @@ class ConfigManager {
         "groupadd"
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
-      allowedDirectories: [process.cwd()]
+      allowedDirectories: [os.homedir()]
     };
   }
 

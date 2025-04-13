@@ -5,37 +5,28 @@ import fetch from 'cross-fetch';
 import {capture, withTimeout} from '../utils.js';
 import {configManager} from '../config-manager.js';
 
-// Get allowed directories from config
-// This will be initialized later, starting with a permissive default
-let allowedDirectories: string[] = [
-    "/" // Root directory as a fallback - effectively allows all paths
-];
-
 // Initialize allowed directories from configuration
-async function initAllowedDirectories() {
+async function getAllowedDirs(): Promise<string[]> {
     try {
+        let allowedDirectories;
         const config = await configManager.getConfig();
-        if (config.allowedDirectories && Array.isArray(config.allowedDirectories) && config.allowedDirectories.length > 0) {
+        if (config.allowedDirectories && Array.isArray(config.allowedDirectories)) {
             allowedDirectories = config.allowedDirectories;
         } else {
             // Fall back to default directories if not configured
             allowedDirectories = [
-                process.cwd(), // Current working directory
                 os.homedir()   // User's home directory
             ];
             // Update config with default
             await configManager.setValue('allowedDirectories', allowedDirectories);
         }
+        return allowedDirectories;
     } catch (error) {
         console.error('Failed to initialize allowed directories:', error);
         // Keep the default permissive path
     }
+    return [];
 }
-
-// Initialize on module load
-initAllowedDirectories().catch(error => {
-    console.error('Error initializing filesystem allowed directories:', error);
-});
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
@@ -81,8 +72,9 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
  * @param pathToCheck Path to check
  * @returns boolean True if path is allowed
  */
-function isPathAllowed(pathToCheck: string): boolean {
+async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     // If root directory is allowed, all paths are allowed
+    const allowedDirectories = await getAllowedDirs();
     if (allowedDirectories.includes('/')) {
         return true;
     }
@@ -119,8 +111,8 @@ export async function validatePath(requestedPath: string): Promise<string> {
             : path.resolve(process.cwd(), expandedPath);
             
         // Check if path is allowed
-        if (!isPathAllowed(absolute)) {
-            return `__ERROR__: Path not allowed: ${requestedPath}. Must be within one of these directories: ${allowedDirectories.join(', ')}`;
+        if (!(await isPathAllowed(absolute))) {
+            return `__ERROR__: Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`;
         }
         
         // Check if path exists

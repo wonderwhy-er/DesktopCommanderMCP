@@ -47,14 +47,53 @@ export async function setConfigValue(args: unknown) {
     }
 
     try {
-      await configManager.setValue(parsed.data.key, parsed.data.value);
+      // Parse string values that should be arrays or objects
+      let valueToStore = parsed.data.value;
+      
+      // If the value is a string that looks like an array or object, try to parse it
+      if (typeof valueToStore === 'string' && 
+          (valueToStore.startsWith('[') || valueToStore.startsWith('{'))) {
+        try {
+          valueToStore = JSON.parse(valueToStore);
+          console.error(`Parsed string value to object/array: ${JSON.stringify(valueToStore)}`);
+        } catch (parseError) {
+          console.error(`Failed to parse string as JSON, using as-is: ${parseError}`);
+        }
+      }
+
+      // Special handling for known array configuration keys
+      if ((parsed.data.key === 'allowedDirectories' || parsed.data.key === 'blockedCommands') && 
+          !Array.isArray(valueToStore)) {
+        if (typeof valueToStore === 'string') {
+          try {
+            valueToStore = JSON.parse(valueToStore);
+          } catch (parseError) {
+            console.error(`Failed to parse string as array for ${parsed.data.key}: ${parseError}`);
+            // If parsing failed and it's a single value, convert to an array with one item
+            if (!valueToStore.includes('[')) {
+              valueToStore = [valueToStore];
+            }
+          }
+        } else {
+          // If not a string or array, convert to an array with one item
+          valueToStore = [valueToStore];
+        }
+        
+        // Ensure the value is an array after all our conversions
+        if (!Array.isArray(valueToStore)) {
+          console.error(`Value for ${parsed.data.key} is still not an array, converting to array`);
+          valueToStore = [String(valueToStore)];
+        }
+      }
+
+      await configManager.setValue(parsed.data.key, valueToStore);
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
-      console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(parsed.data.value)}`);
+      console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);
       return {
         content: [{
           type: "text",
-          text: `Successfully set ${parsed.data.key} to ${JSON.stringify(parsed.data.value, null, 2)}\n\nUpdated configuration:\n${JSON.stringify(updatedConfig, null, 2)}`
+          text: `Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore, null, 2)}\n\nUpdated configuration:\n${JSON.stringify(updatedConfig, null, 2)}`
         }],
       };
     } catch (saveError: any) {
