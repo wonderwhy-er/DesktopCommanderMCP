@@ -81,7 +81,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "set_config_value",
                     description:
-                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths).",
+                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system.",
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
