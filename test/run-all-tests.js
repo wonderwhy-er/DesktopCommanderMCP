@@ -70,7 +70,8 @@ async function runTestModules() {
   const testModules = [
     './test.js',
     './test-directory-creation.js',
-    './test-allowed-directories.js'
+    './test-allowed-directories.js',
+    './test-blocked-commands.js'
   ];
   
   // Dynamically find additional test files (optional)

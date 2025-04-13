@@ -151,15 +151,28 @@ class CommandManager {
 
     async validateCommand(command: string): Promise<boolean> {
         try {
-            // Get the base command (first word)
-            const baseCommand = this.getBaseCommand(command);
-            
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
             
-            // Check if the command is in the blocked list
-            return !blockedCommands.includes(baseCommand);
+            // Extract all commands from the command string
+            const allCommands = this.extractCommands(command);
+            
+            // If there are no commands extracted, fall back to base command
+            if (allCommands.length === 0) {
+                const baseCommand = this.getBaseCommand(command);
+                return !blockedCommands.includes(baseCommand);
+            }
+            
+            // Check if any of the extracted commands are in the blocked list
+            for (const cmd of allCommands) {
+                if (blockedCommands.includes(cmd)) {
+                    return false; // Command is blocked
+                }
+            }
+            
+            // No commands were blocked
+            return true;
         } catch (error) {
             console.error('Error validating command:', error);
             // If there's an error, default to allowing the command

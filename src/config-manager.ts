@@ -74,24 +74,49 @@ class ConfigManager {
   private getDefaultConfig(): ServerConfig {
     return {
       blockedCommands: [
-        "rm -rf /", 
-        ":(){ :|:& };:", 
-        "> /dev/sda",
-        "dd if=/dev/zero of=/dev/sda",
-        "mkfs",
-        "mkfs.ext4",
-        "format",
-        "mount",
-        "umount",
-        "fdisk",
-        "dd",
-        "sudo",
-        "su",
-        "passwd",
-        "adduser",
-        "useradd",
-        "usermod",
-        "groupadd"
+
+        // Disk and partition management
+        "mkfs",      // Create a filesystem on a device
+        "format",    // Format a storage device (cross-platform)
+        "mount",     // Mount a filesystem
+        "umount",    // Unmount a filesystem
+        "fdisk",     // Manipulate disk partition tables
+        "dd",        // Convert and copy files, can write directly to disks
+        "parted",    // Disk partition manipulator
+        "diskpart",  // Windows disk partitioning utility
+        
+        // System administration and user management
+        "sudo",      // Execute command as superuser
+        "su",        // Substitute user identity
+        "passwd",    // Change user password
+        "adduser",   // Add a user to the system
+        "useradd",   // Create a new user
+        "usermod",   // Modify user account
+        "groupadd",  // Create a new group
+        "chsh",      // Change login shell
+        "visudo",    // Edit the sudoers file
+        
+        // System control
+        "shutdown",  // Shutdown the system
+        "reboot",    // Restart the system
+        "halt",      // Stop the system
+        "poweroff",  // Power off the system
+        "init",      // Change system runlevel
+        
+        // Network and security
+        "iptables",  // Linux firewall administration
+        "firewall",  // Generic firewall command
+        "netsh",     // Windows network configuration
+        
+        // Windows system commands
+        "sfc",       // System File Checker
+        "bcdedit",   // Boot Configuration Data editor
+        "reg",       // Windows registry editor
+        "net",       // Network/user/service management
+        "sc",        // Service Control manager
+        "runas",     // Execute command as another user
+        "cipher",    // Encrypt/decrypt files or wipe data
+        "takeown"    // Take ownership of files
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
       allowedDirectories: [os.homedir()]
