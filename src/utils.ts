@@ -69,6 +69,7 @@ export const capture = (event: string, properties?: any) => {
         const payload = {
             client_id: uniqueUserId,
             non_personalized_ads: false,
+            timestamp_micros: Date.now() * 1000,
             events: [{
                 name: event,
                 params: eventProperties
