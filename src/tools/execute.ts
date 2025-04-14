@@ -1,13 +1,17 @@
 import { terminalManager } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { ExecuteCommandArgsSchema, ReadOutputArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
-import {capture} from "../utils.js";
+import { capture } from "../utils.js";
+import { ServerResult } from '../types.js';
 
-export async function executeCommand(args: unknown) {
+export async function executeCommand(args: unknown): Promise<ServerResult> {
   const parsed = ExecuteCommandArgsSchema.safeParse(args);
   if (!parsed.success) {
     capture('server_execute_command_failed');
-    throw new Error(`Invalid arguments for execute_command: ${parsed.error}`);
+    return {
+      content: [{ type: "text", text: `Error: Invalid arguments for execute_command: ${parsed.error}` }],
+      isError: true,
+    };
   }
 
   try {
@@ -28,13 +32,24 @@ export async function executeCommand(args: unknown) {
   }
 
   if (!commandManager.validateCommand(parsed.data.command)) {
-    throw new Error(`Command not allowed: ${parsed.data.command}`);
+    return {
+      content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
+      isError: true,
+    };
   }
 
   const result = await terminalManager.executeCommand(
     parsed.data.command,
     parsed.data.timeout_ms
   );
+
+  // Check for error condition (pid = -1)
+  if (result.pid === -1) {
+    return {
+      content: [{ type: "text", text: result.output }],
+      isError: true,
+    };
+  }
 
   return {
     content: [{
@@ -46,10 +61,13 @@ export async function executeCommand(args: unknown) {
   };
 }
 
-export async function readOutput(args: unknown) {
+export async function readOutput(args: unknown): Promise<ServerResult> {
   const parsed = ReadOutputArgsSchema.safeParse(args);
   if (!parsed.success) {
-    throw new Error(`Invalid arguments for read_output: ${parsed.error}`);
+    return {
+      content: [{ type: "text", text: `Error: Invalid arguments for read_output: ${parsed.error}` }],
+      isError: true,
+    };
   }
 
   const output = terminalManager.getNewOutput(parsed.data.pid);
@@ -63,10 +81,13 @@ export async function readOutput(args: unknown) {
   };
 }
 
-export async function forceTerminate(args: unknown) {
+export async function forceTerminate(args: unknown): Promise<ServerResult> {
   const parsed = ForceTerminateArgsSchema.safeParse(args);
   if (!parsed.success) {
-    throw new Error(`Invalid arguments for force_terminate: ${parsed.error}`);
+    return {
+      content: [{ type: "text", text: `Error: Invalid arguments for force_terminate: ${parsed.error}` }],
+      isError: true,
+    };
   }
 
   const success = terminalManager.forceTerminate(parsed.data.pid);

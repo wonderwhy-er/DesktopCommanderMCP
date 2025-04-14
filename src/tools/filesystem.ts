@@ -1,6 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
+import fetch from 'cross-fetch';
+import {capture, withTimeout} from '../utils.js';
 
 // Store allowed directories - temporarily allowing all paths
 // TODO: Make this configurable through a configuration file
@@ -64,32 +66,48 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
  * @throws Error if the path or its parent directories don't exist
  */
 export async function validatePath(requestedPath: string): Promise<string> {
-    // Expand home directory if present
-    const expandedPath = expandHome(requestedPath);
+    const PATH_VALIDATION_TIMEOUT = 10000; // 10 seconds timeout
     
-    // Convert to absolute path
-    const absolute = path.isAbsolute(expandedPath)
-        ? path.resolve(expandedPath)
-        : path.resolve(process.cwd(), expandedPath);
-    
-    // Check if path exists
-    try {
-        const stats = await fs.stat(absolute);
-        // If path exists, resolve any symlinks
-        return await fs.realpath(absolute);
-    } catch (error) {
-        // Path doesn't exist - validate parent directories
-        if (await validateParentDirectories(absolute)) {
-            // Return the path if a valid parent exists
-            // This will be used for folder creation and many other file operations
+    const validationOperation = async (): Promise<string> => {
+        // Expand home directory if present
+        const expandedPath = expandHome(requestedPath);
+        
+        // Convert to absolute path
+        const absolute = path.isAbsolute(expandedPath)
+            ? path.resolve(expandedPath)
+            : path.resolve(process.cwd(), expandedPath);
+        
+        // Check if path exists
+        try {
+            const stats = await fs.stat(absolute);
+            // If path exists, resolve any symlinks
+            return await fs.realpath(absolute);
+        } catch (error) {
+            // Path doesn't exist - validate parent directories
+            if (await validateParentDirectories(absolute)) {
+                // Return the path if a valid parent exists
+                // This will be used for folder creation and many other file operations
+                return absolute;
+            }
+            // If no valid parent found, return the absolute path anyway
             return absolute;
         }
-        
-        // If no valid parent directory was found, still return the absolute path
-        // to maintain compatibility with upstream behavior, but log a warning
-        console.warn(`Warning: Parent directory does not exist: ${path.dirname(absolute)}`);
-        return absolute;
+    };
+    
+    // Execute with timeout
+    const result = await withTimeout(
+        validationOperation(),
+        PATH_VALIDATION_TIMEOUT,
+        `Path validation for ${requestedPath}`,
+        null
+    );
+    
+    if (result === null) {
+        // Return a path with an error indicator instead of throwing
+        return `__ERROR__: Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`;
     }
+    
+    return result;
 }
 
 // File operation tools
@@ -100,48 +118,180 @@ export interface FileResult {
 }
 
 
-export async function readFile(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
-    const validPath = await validatePath(filePath);
+/**
+ * Read file content from a URL
+ * @param url URL to fetch content from
+ * @param returnMetadata Whether to return metadata with the content
+ * @returns File content or file result with metadata
+ */
+export async function readFileFromUrl(url: string, returnMetadata?: boolean): Promise<string | FileResult> {
+    // Import the MIME type utilities
+    const { isImageFile } = await import('./mime-types.js');
     
+    // Set up fetch with timeout
+    const FETCH_TIMEOUT_MS = 30000;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    
+    try {
+        const response = await fetch(url, {
+            signal: controller.signal
+        });
+        
+        // Clear the timeout since fetch completed
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        
+        // Get MIME type from Content-Type header
+        const contentType = response.headers.get('content-type') || 'text/plain';
+        const isImage = isImageFile(contentType);
+        
+        if (isImage) {
+            // For images, convert to base64
+            const buffer = await response.arrayBuffer();
+            const content = Buffer.from(buffer).toString('base64');
+            
+            if (returnMetadata === true) {
+                return { content, mimeType: contentType, isImage };
+            } else {
+                return content;
+            }
+        } else {
+            // For text content
+            const content = await response.text();
+            
+            if (returnMetadata === true) {
+                return { content, mimeType: contentType, isImage };
+            } else {
+                return content;
+            }
+        }
+    } catch (error) {
+        // Clear the timeout to prevent memory leaks
+        clearTimeout(timeoutId);
+        
+        // Return error information instead of throwing
+        const errorMessage = error instanceof DOMException && error.name === 'AbortError'
+            ? `URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`
+            : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
+
+        capture('server_request_error', {error: errorMessage});
+        if (returnMetadata === true) {
+            return { 
+                content: `Error: ${errorMessage}`, 
+                mimeType: 'text/plain', 
+                isImage: false 
+            };
+        } else {
+            return `Error: ${errorMessage}`;
+        }
+    }
+}
+
+/**
+ * Read file content from the local filesystem
+ * @param filePath Path to the file
+ * @param returnMetadata Whether to return metadata with the content
+ * @returns File content or file result with metadata
+ */
+export async function readFileFromDisk(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
+    
+    const validPath = await validatePath(filePath);
+    
+    // Check file size before attempting to read
+    try {
+        const stats = await fs.stat(validPath);
+        const MAX_SIZE = 100 * 1024; // 100KB limit
+        
+        if (stats.size > MAX_SIZE) {
+            const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
+            if (returnMetadata) {
+                return { 
+                    content: message, 
+                    mimeType: 'text/plain', 
+                    isImage: false 
+                };
+            } else {
+                return message;
+            }
+        }
+    } catch (error) {
+        capture('server_request_error', {error: error});
+        // If we can't stat the file, continue anyway and let the read operation handle errors
+        //console.error(`Failed to stat file ${validPath}:`, error);
+    }
     
     // Detect the MIME type based on file extension
     const mimeType = getMimeType(validPath);
     const isImage = isImageFile(mimeType);
     
-    if (isImage) {
-        // For image files, read as Buffer and convert to base64
-        const buffer = await fs.readFile(validPath);
-        const content = buffer.toString('base64');
-        
-        if (returnMetadata === true) {
-            return { content, mimeType, isImage };
-        } else {
-            return content;
-        }
-    } else {
-        // For all other files, try to read as UTF-8 text
-        try {
-            const content = await fs.readFile(validPath, "utf-8");
+    const FILE_READ_TIMEOUT = 30000; // 30 seconds timeout for file operations
+    
+    // Use withTimeout to handle potential hangs
+    const readOperation = async () => {
+        if (isImage) {
+            // For image files, read as Buffer and convert to base64
+            const buffer = await fs.readFile(validPath);
+            const content = buffer.toString('base64');
             
             if (returnMetadata === true) {
                 return { content, mimeType, isImage };
             } else {
                 return content;
             }
-        } catch (error) {
-            // If UTF-8 reading fails, treat as binary and return base64 but still as text
-            const buffer = await fs.readFile(validPath);
-            const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
-            
-            if (returnMetadata === true) {
-                return { content, mimeType: 'text/plain', isImage: false };
-            } else {
-                return content;
+        } else {
+            // For all other files, try to read as UTF-8 text
+            try {
+                const content = await fs.readFile(validPath, "utf-8");
+                
+                if (returnMetadata === true) {
+                    return { content, mimeType, isImage };
+                } else {
+                    return content;
+                }
+            } catch (error) {
+                // If UTF-8 reading fails, treat as binary and return base64 but still as text
+                const buffer = await fs.readFile(validPath);
+                const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
+
+                if (returnMetadata === true) {
+                    return { content, mimeType: 'text/plain', isImage: false };
+                } else {
+                    return content;
+                }
             }
         }
-    }
+    };
+    
+    // Execute with timeout
+    const result = await withTimeout(
+        readOperation(),
+        FILE_READ_TIMEOUT,
+        `Read file operation for ${filePath}`,
+        returnMetadata ? 
+            { content: `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`, mimeType: 'text/plain', isImage: false } : 
+            `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`
+    );
+    
+    return result;
+}
+
+/**
+ * Read a file from either the local filesystem or a URL
+ * @param filePath Path to the file or URL
+ * @param returnMetadata Whether to return metadata with the content
+ * @param isUrl Whether the path is a URL
+ * @returns File content or file result with metadata
+ */
+export async function readFile(filePath: string, returnMetadata?: boolean, isUrl?: boolean): Promise<string | FileResult> {
+    return isUrl 
+        ? readFileFromUrl(filePath, returnMetadata)
+        : readFileFromDisk(filePath, returnMetadata);
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {

@@ -34,3 +34,20 @@ export interface CompletedSession {
   startTime: Date;
   endTime: Date;
 }
+
+// Define the server response types
+export interface ServerResponseContent {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}
+
+export interface ServerResult {
+  content: ServerResponseContent[];
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+}
+
+// Define a helper type for tool handler functions
+export type ToolHandler<T = unknown> = (args: T) => Promise<ServerResult>;

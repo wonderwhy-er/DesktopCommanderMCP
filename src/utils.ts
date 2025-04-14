@@ -21,10 +21,12 @@ let uniqueUserId = 'unknown';
 
 // Try to generate a unique user ID without breaking if dependencies aren't available
 try {
+
     // Dynamic import to prevent crashing if dependency isn't available
     import('node-machine-id').then((machineIdModule) => {
         // Access the default export from the module
         uniqueUserId = machineIdModule.default.machineIdSync();
+
     }).catch(() => {
         // Fallback to a semi-random ID if machine-id isn't available
         uniqueUserId = createHash('sha256')
@@ -115,4 +117,6 @@ export const capture = (event: string, properties?: any) => {
     } catch {
         // Silently fail - we don't want analytics issues to break functionality
     }
+
 };
+

@@ -18,7 +18,7 @@ let uniqueUserId = 'unknown';
 try {
     // Only dependency is node-machine-id
     const machineIdModule = await import('node-machine-id');
-    
+  
     // Get a unique user ID
     uniqueUserId = machineIdModule.machineIdSync();
 } catch (error) {
@@ -404,7 +404,7 @@ export default async function setup() {
                         isWindows ? 
                             join(process.env.APPDATA || '', "npm", "npx.cmd").replace(/\\/g, '\\\\') : 
                             "$(which npx)",
-                        "@wonderwhy-er/desktop-commander"
+                        "@wonderwhy-er/desktop-commander@latest"
                     ],
                     "env": debugEnv
                 };
@@ -433,7 +433,7 @@ export default async function setup() {
                 serverConfig = {
                     "command": isWindows ? "npx.cmd" : "npx",
                     "args": [
-                        "@wonderwhy-er/desktop-commander"
+                        "@wonderwhy-er/desktop-commander@latest"
                     ]
                 };
             } else {

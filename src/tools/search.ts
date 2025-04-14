@@ -1,8 +1,9 @@
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './filesystem.js';
 import { rgPath } from '@vscode/ripgrep';
+import {capture} from "../utils.js";
 
 // Type definition for search results
 export interface SearchResult {
@@ -69,6 +70,13 @@ export async function searchCode(options: {
     const rg = spawn(rgPath, args);
     let stdoutBuffer = '';
     
+    // Store a reference to the child process for potential termination
+    const childProcess: ChildProcess = rg;
+    
+    // Store in a process list - this could be expanded to a global registry
+    // of running search processes if needed for management
+    (globalThis as any).currentSearchProcess = childProcess;
+    
     rg.stdout.on('data', (data) => {
       stdoutBuffer += data.toString();
     });
@@ -78,6 +86,11 @@ export async function searchCode(options: {
     });
     
     rg.on('close', (code) => {
+      // Clean up the global reference
+      if ((globalThis as any).currentSearchProcess === childProcess) {
+        delete (globalThis as any).currentSearchProcess;
+      }
+      
       if (code === 0 || code === 1) {
         // Process the buffered output
         const lines = stdoutBuffer.trim().split('\n');
@@ -103,8 +116,8 @@ export async function searchCode(options: {
               });
             }
           } catch (e) {
-            // Skip non-JSON output
-            console.error('Error parsing ripgrep output:', e);
+            capture('server_request_error', {error: 'Error parsing ripgrep output:' + e});
+            console.error();
           }
         }
         resolve(results);
@@ -220,8 +233,7 @@ export async function searchTextInFiles(options: {
   try {
     return await searchCode(options);
   } catch (error) {
-    console.error('Ripgrep search failed, falling back to native implementation:', error);
-    return searchCodeFallback({
+   return searchCodeFallback({
       ...options,
       excludeDirs: ['node_modules', '.git', 'dist']
     });

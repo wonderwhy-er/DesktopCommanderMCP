@@ -1,12 +1,12 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
-import { ProcessInfo } from '../types.js';
+import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
 
 const execAsync = promisify(exec);
 
-export async function listProcesses(): Promise<{content: Array<{type: string, text: string}>}> {
+export async function listProcesses(): Promise<ServerResult> {
   const command = os.platform() === 'win32' ? 'tasklist' : 'ps aux';
   try {
     const { stdout } = await execAsync(command);
@@ -32,15 +32,20 @@ export async function listProcesses(): Promise<{content: Array<{type: string, te
       }],
     };
   } catch (error) {
-    throw new Error('Failed to list processes');
+    return {
+      content: [{ type: "text", text: `Error: Failed to list processes: ${error instanceof Error ? error.message : String(error)}` }],
+      isError: true,
+    };
   }
 }
 
-export async function killProcess(args: unknown) {
-
+export async function killProcess(args: unknown): Promise<ServerResult> {
   const parsed = KillProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
-    throw new Error(`Invalid arguments for kill_process: ${parsed.error}`);
+    return {
+      content: [{ type: "text", text: `Error: Invalid arguments for kill_process: ${parsed.error}` }],
+      isError: true,
+    };
   }
 
   try {
@@ -49,6 +54,9 @@ export async function killProcess(args: unknown) {
       content: [{ type: "text", text: `Successfully terminated process ${parsed.data.pid}` }],
     };
   } catch (error) {
-    throw new Error(`Failed to kill process: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      content: [{ type: "text", text: `Error: Failed to kill process: ${error instanceof Error ? error.message : String(error)}` }],
+      isError: true,
+    };
   }
 }
