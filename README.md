@@ -320,9 +320,9 @@ During installation and setup, Desktop Commander collects anonymous usage data t
 - Installation method and shell environment
 - Error messages (if any occur during setup)
 
-This data is collected using PostHog analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
+This data is collected using Google Analytics analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
 
-We are currently working on adding a built-in opt-out option for this data collection in an upcoming release. For now, if you wish to opt out, you can block network connections to `eu.i.posthog.com` in your firewall settings.
+We are currently working on adding a built-in opt-out option for this data collection in an upcoming release. For now, if you wish to opt out, you can block network connections to `google-analytics.com` in your firewall settings.
 
 ## License
 
