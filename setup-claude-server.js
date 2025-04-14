@@ -258,12 +258,16 @@ async function restartClaude() {
             } else if (platform === "linux") {
                 await execAsync(`claude`)
             }
-        } catch{}
+            logToFile(`Claude has been restarted.`)
+        } catch{
 
-		logToFile(`Claude has been restarted.`)
+        }
+
+		
 	} catch (error) {
         await trackEvent('npx_setup_restart_claude_error', { error: error.message });
-		logToFile(`Failed to restart Claude: ${error}`, true)
+		logToFile(`Failed to restart Claude: ${error}. Please restart it manually.`, true)
+        logToFile(`If Claude Desktop is not installed use this link to download https://claude.ai/download`, true)
 	}
 }
 
