@@ -147,6 +147,7 @@ async function trackEvent(eventName, additionalProps = {}) {
     const payload = {
       client_id: uniqueUserId,
       non_personalized_ads: false,
+      timestamp_micros: Date.now() * 1000,
       events: [{
         name: eventName,
         params: eventProperties
