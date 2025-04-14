@@ -233,6 +233,49 @@
         .badges img {
             height: 20px;
         }
+    /* Copy button styles - only for installation section */
+    #installation .pre-container {
+        position: relative;
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+    
+    #installation .copy-button {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        background-color: rgba(0, 0, 0, 0.1);
+        color: #666;
+        border: none;
+        border-radius: 3px;
+        padding: 4px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.7;
+        transition: all 0.2s ease;
+        z-index: 10;
+    }
+    
+    #installation .copy-button:hover {
+        opacity: 1;
+        background-color: rgba(0, 0, 0, 0.2);
+    }
+    
+    #installation .copy-button.copied {
+        background-color: #2ecc71;
+        color: white;
+        opacity: 1;
+    }
+    
+    /* Style adjustments for pre elements inside the container */
+    #installation .pre-container > pre {
+        padding-top: 30px !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
     </style>
     <script>
         !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
@@ -543,10 +586,10 @@ npm run setup</pre>
 </div>
 </div>
 </div>
-<div style="text-align: left;">
-    <p>To install DesktopCommanderMCP you need to have Node.js and Claude Desktop installed on your system</p>
-    <p>Nodejs: <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
-    <p>Claude Desktop: <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
+<div style="text-align: left; background: #f8f8f8; padding: 12px; overflow-x: auto; border-radius: 5px; margin-top: 15px; margin-bottom: 15px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+    <p style="margin-top: 0; font-weight: 600; color: #171717;">To install DesktopCommanderMCP you need to have Node.js and Claude Desktop installed on your system:</p>
+    <p><strong>Node.js:</strong> <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
+    <p style="margin-bottom: 0;"><strong>Claude Desktop:</strong> <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
 </div>
 <br />
 <p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>

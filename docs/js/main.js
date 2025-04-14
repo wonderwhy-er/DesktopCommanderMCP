@@ -314,3 +314,74 @@ window.addEventListener('scroll', () => {
         header.classList.toggle('sticky', window.scrollY > 0);
     }
 });
+
+// Add copy button only to pre elements under installation section
+function addCopyButtons() {
+    const preElements = document.querySelectorAll('#installation pre');
+    
+    preElements.forEach(pre => {
+        // Create container to hold the pre and button
+        const container = document.createElement('div');
+        container.className = 'pre-container';
+        pre.parentNode.insertBefore(container, pre);
+        container.appendChild(pre);
+        
+        // Create the copy button
+        const copyButton = document.createElement('button');
+        copyButton.className = 'copy-button';
+        copyButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        copyButton.title = 'Copy to clipboard';
+        copyButton.setAttribute('aria-label', 'Copy to clipboard');
+        container.appendChild(copyButton);
+        
+        // Add click event to the button
+        copyButton.addEventListener('click', () => {
+            const text = pre.textContent;
+            
+            // Create a temporary textarea element to use for copying
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'absolute';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            
+            // Handle iOS devices
+            if (navigator.userAgent.match(/ipad|ipod|iphone/i)) {
+                const range = document.createRange();
+                range.selectNodeContents(textarea);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+                textarea.setSelectionRange(0, 999999);
+            } else {
+                textarea.select();
+            }
+            
+            try {
+                const successful = document.execCommand('copy');
+                const msg = successful ? 'Copied!' : 'Failed to copy';
+                
+                // Visual feedback
+                copyButton.classList.add('copied');
+                copyButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-check"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                
+                // Revert back after 2 seconds
+                setTimeout(() => {
+                    copyButton.classList.remove('copied');
+                    copyButton.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-copy"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+                }, 2000);
+                
+            } catch (err) {
+                console.error('Could not copy text: ', err);
+            }
+            
+            document.body.removeChild(textarea);
+        });
+    });
+}
+
+// Initialize copy buttons when the DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    addCopyButtons();
+});
