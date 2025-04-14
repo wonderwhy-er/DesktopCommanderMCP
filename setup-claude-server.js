@@ -5,28 +5,25 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { exec } from "node:child_process";
 import { version as nodeVersion } from 'process';
+import * as https from 'https';
 
-// Optional analytics - will gracefully degrade if posthog-node isn't available
-let client = null;
+// Google Analytics configuration
+const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L'; // Replace with your GA4 Measurement ID
+const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A';   // Replace with your GA4 API Secret
+const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
+
+// Optional analytics - will gracefully degrade if dependencies aren't available
 let uniqueUserId = 'unknown';
 
 try {
-    const { PostHog } = await import('posthog-node');
+    // Only dependency is node-machine-id
     const machineIdModule = await import('node-machine-id');
-    
-    client = new PostHog(
-        'phc_BW8KJ0cajzj2v8qfMhvDQ4dtFdgHPzeYcMRvRFGvQdH',
-        { 
-            host: 'https://eu.i.posthog.com',
-            flushAt: 1, // send all every time
-            flushInterval: 0 //send always
-        }
-    );
-    
+  
     // Get a unique user ID
     uniqueUserId = machineIdModule.machineIdSync();
 } catch (error) {
-    //console.error('Analytics module not available - continuing without tracking');
+    // Fall back to a semi-unique identifier if machine-id is not available
+    uniqueUserId = `${platform()}-${process.env.USER || process.env.USERNAME || 'unknown'}-${Date.now()}`;
 }
 
 // Function to get npm version
@@ -127,33 +124,102 @@ async function getTrackingProperties(additionalProps = {}) {
   const version = await getVersion();
   return {
     platform: platform(),
-    nodeVersion: nodeVersion,
-    npmVersion: npmVersionCache,
-    executionContext: context.runMethod,
-    isCI: context.isCI,
+    node_version: nodeVersion,
+    npm_version: npmVersionCache,
+    execution_context: context.runMethod,
+    is_ci: context.isCI,
     shell: context.shell,
-    DCVersion: version,
-    timestamp: new Date().toISOString(),
+    app_version: version,
+    engagement_time_msec: "100",
     ...additionalProps
   };
 }
 
-// Helper function for tracking that handles missing PostHog gracefully
+// Helper function for tracking that handles errors gracefully
 async function trackEvent(eventName, additionalProps = {}) {
-  if (!client) return; // Skip tracking if PostHog client isn't available
+  if (!GA_MEASUREMENT_ID || !GA_API_SECRET) return; // Skip tracking if GA isn't configured
   
   try {
-    client.capture({
-      distinctId: uniqueUserId,
-      event: eventName,
-      properties: await getTrackingProperties(additionalProps)
+    // Get enriched properties
+    const eventProperties = await getTrackingProperties(additionalProps);
+    
+    // Prepare GA4 payload
+    const payload = {
+      client_id: uniqueUserId,
+      non_personalized_ads: false,
+      timestamp_micros: Date.now() * 1000,
+      events: [{
+        name: eventName,
+        params: eventProperties
+      }]
+    };
+    
+    // Send to Google Analytics
+    const postData = JSON.stringify(payload);
+    
+    const options = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+    
+    return new Promise((resolve) => {
+      const req = https.request(GA_BASE_URL, options, (res) => {
+        // Optional response handling
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          resolve(true);
+        });
+      });
+      
+      req.on('error', (error) => {
+        logToFile(`GA error: ${error}`, true);
+        // Silently fail - we don't want tracking issues to break functionality
+        resolve(false);
+      });
+      
+      // Set timeout to prevent blocking
+      req.setTimeout(3000, () => {
+        req.destroy();
+        resolve(false);
+      });
+      
+      req.write(postData);
+      req.end();
+
+      // read response from request
+      req.on('response', (res) => {
+        // Optional response handling
+        let data = '';
+        res.on('data', (chunk) => {
+          logToFile(`GA response: ${chunk}`, true);
+          data += chunk;
+        });
+
+        //response status
+        res.on('error', (error) => {
+          logToFile(`GA error: ${error}`, true);
+          resolve(false);
+        });
+        
+        res.on('end', () => {
+          logToFile(`GA response: ${data}`, true);
+          resolve(true);
+        });
+      });
     });
   } catch (error) {
-    // Silently fail if tracking fails - we don't want to break the setup process
-    //console.log(`Note: Event tracking unavailable for ${eventName}`);
+    logToFile(`Error tracking event ${eventName}: ${error}`, true);
+    // Silently fail if tracking fails - we don't want to break the application
+    return false;
   }
 }
-
 // Initial tracking
 trackEvent('npx_setup_start');
 
@@ -417,26 +483,9 @@ export default async function setup() {
         
         await trackEvent('npx_setup_complete');
         
-        // Safe shutdown
-        if (client) {
-            try {
-                await client.shutdown();
-            } catch (error) {
-                // Ignore shutdown errors
-            }
-        }
     } catch (error) {
         await trackEvent('npx_setup_final_error', { error: error.message });
         logToFile(`Error updating Claude configuration: ${error}`, true);
-        
-        // Safe shutdown
-        if (client) {
-            try {
-                await client.shutdown();
-            } catch (error) {
-                // Ignore shutdown errors
-            }
-        }
         process.exit(1);
     }
 }
