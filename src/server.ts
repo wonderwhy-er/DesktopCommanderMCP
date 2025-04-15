@@ -196,9 +196,9 @@ import {ServerResult} from './types.js';
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     try {
         const {name, arguments: args} = request.params;
-        capture('server_call_tool');
-        // Add a single dynamic capture for the specific tool
-        capture('server_' + name);
+        capture('server_call_tool', {
+            name
+        });
 
         // Using a more structured approach with dedicated handlers
         switch (name) {
