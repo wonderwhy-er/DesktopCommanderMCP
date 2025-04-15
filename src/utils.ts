@@ -107,7 +107,7 @@ export function withTimeout<T>(
         if (!isCompleted) {
           isCompleted = true;
           clearTimeout(timeoutId);
-          if(defaultValue) {
+          if(defaultValue !== null){
             resolve(defaultValue);
           } else {
             reject(error);
