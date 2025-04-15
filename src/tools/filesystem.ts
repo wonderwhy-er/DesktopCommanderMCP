@@ -112,7 +112,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
             
         // Check if path is allowed
         if (!(await isPathAllowed(absolute))) {
-            throw(`__ERROR__: Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
+            throw(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
         
         // Check if path exists

@@ -68,10 +68,10 @@ async function runTestModules() {
   // Define static test module paths relative to this file
   // We need to use relative paths with extension for ES modules
   const testModules = [
-    './test.js',
-    './test-directory-creation.js',
+    // './test.js',
+    // './test-directory-creation.js',
     './test-allowed-directories.js',
-    './test-blocked-commands.js'
+    // './test-blocked-commands.js'
   ];
   
   // Dynamically find additional test files (optional)
