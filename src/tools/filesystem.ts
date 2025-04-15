@@ -142,7 +142,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
     
     if (result === null) {
         // Return a path with an error indicator instead of throwing
-        throw new Error(`__ERROR__: Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`);
+        throw new Error(`Path validation failed for path: ${requestedPath}`);
     }
     
     return result;
