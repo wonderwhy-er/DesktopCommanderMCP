@@ -83,14 +83,14 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     if(normalizedPathToCheck.slice(-1) === path.sep) {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
-    
+
     // Check if the path is within any allowed directory
-    return allowedDirectories.some(allowedDir => {
+    const isAllowed = allowedDirectories.some(allowedDir => {
         let normalizedAllowedDir = normalizePath(allowedDir);
         if(normalizedAllowedDir.slice(-1) === path.sep) {
             normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
         }
-        
+
         // Check if path is exactly the allowed directory
         if (normalizedPathToCheck === normalizedAllowedDir) {
             return true;
@@ -99,7 +99,8 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         // Check if path is a subdirectory of the allowed directory
         // Make sure to add a separator to prevent partial directory name matches
         // e.g. /home/user vs /home/username
-        if (normalizedPathToCheck.startsWith(normalizedAllowedDir)) {
+        const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
+        if (subdirCheck) {
             return true;
         }
         
@@ -107,9 +108,11 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
             return normalizedPathToCheck.startsWith('c:');
         }
-        
+
         return false;
     });
+
+    return isAllowed;
 }
 
 /**

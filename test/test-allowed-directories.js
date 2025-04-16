@@ -39,6 +39,11 @@ async function cleanupTestDirectories() {
     console.log('Cleaning up test directories...');
     await fs.rm(TEST_DIR, { recursive: true, force: true });
     await fs.rm(OUTSIDE_DIR, { recursive: true, force: true });
+    
+    // Clean up additional test directories
+    await fs.rm(path.join(__dirname, 'test_dir_abc'), { recursive: true, force: true }).catch(() => {});
+    await fs.rm(path.join(__dirname, 'test_dir_abc_xyz'), { recursive: true, force: true }).catch(() => {});
+    
     console.log('Cleanup complete.');
   } catch (error) {
     // Ignore errors if directory doesn't exist
@@ -52,14 +57,13 @@ async function cleanupTestDirectories() {
  * Check if a path is accessible
  */
 async function isPathAccessible(testPath) {
-//   console.log(`DEBUG isPathAccessible - Checking access to: ${testPath}`);
+  console.log(`DEBUG isPathAccessible - Checking access to: ${testPath}`);
   try {
-
     const validatedPath = await validatePath(testPath);
-    // console.log(`DEBUG isPathAccessible - Validation result: ${validatedPath}`);
+    console.log(`DEBUG isPathAccessible - Validation successful: ${validatedPath}`);
     return true
   } catch (error) {
-    // console.log(`DEBUG isPathAccessible - Validation result: ${error}`);
+    console.log(`DEBUG isPathAccessible - Validation failed: ${error}`);
     return false;
   }
 }
@@ -297,7 +301,62 @@ async function testSpecificAllowedDirectoryWithSlash() {
     assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
     
     console.log('✓ Specific allowedDirectories setting correctly restricts access');
-  }
+}
+
+/**
+ * Test that a path sharing a prefix with an allowed directory (but not a subdirectory) is correctly blocked
+ */
+async function testPrefixPathBlocking() {
+    console.log('\nTest 6: Prefix path blocking');
+    
+    // Create a directory with a name that would be caught by string prefix matching
+    // Deliberately use path names that are clearly not subdirectories of each other
+    const baseDir = path.join(__dirname, 'test_dir_abc');
+    const prefixMatchDir = path.join(__dirname, 'test_dir_abc_xyz');
+    
+    console.log(`DEBUG Test6 - Base directory: ${baseDir}`);
+    console.log(`DEBUG Test6 - Prefix-matching directory: ${prefixMatchDir}`);
+    
+    try {
+        // Create both directories for testing
+        await fs.mkdir(baseDir, { recursive: true });
+        await fs.mkdir(prefixMatchDir, { recursive: true });
+        
+        // Create test files
+        await fs.writeFile(path.join(baseDir, 'base-file.txt'), 'Base content');
+        await fs.writeFile(path.join(prefixMatchDir, 'prefix-file.txt'), 'Prefix content');
+        
+        // Set allowedDirectories to just the base directory
+        await configManager.setValue('allowedDirectories', [baseDir]);
+        
+        // Verify config was set correctly
+        const config = await configManager.getConfig();
+        console.log(`DEBUG Test6 - Config: ${JSON.stringify(config.allowedDirectories)}`);
+        assert.deepStrictEqual(config.allowedDirectories, [baseDir], 'allowedDirectories should contain only the base directory');
+        
+        // Test access to the base directory and its contents
+        const baseDirAccess = await isPathAccessible(baseDir);
+        const baseFileAccess = await isPathAccessible(path.join(baseDir, 'base-file.txt'));
+        
+        // Test access to the prefix-matching directory and its contents
+        const prefixDirAccess = await isPathAccessible(prefixMatchDir);
+        const prefixFileAccess = await isPathAccessible(path.join(prefixMatchDir, 'prefix-file.txt'));
+        
+        // Base directory and its contents should be accessible
+        assert.strictEqual(baseDirAccess, true, 'Base directory should be accessible');
+        assert.strictEqual(baseFileAccess, true, 'Files in base directory should be accessible');
+        
+        // Prefix-matching directory should NOT be accessible
+        assert.strictEqual(prefixDirAccess, false, 'Prefix-matching directory should not be accessible');
+        assert.strictEqual(prefixFileAccess, false, 'Files in prefix-matching directory should not be accessible');
+        
+        console.log('✓ Prefix path blocking works correctly');
+    } finally {
+        // Clean up test directories
+        await fs.rm(baseDir, { recursive: true, force: true }).catch(() => {});
+        await fs.rm(prefixMatchDir, { recursive: true, force: true }).catch(() => {});
+    }
+}
 
 /**
  * Main test function
@@ -319,6 +378,9 @@ async function testAllowedDirectories() {
 
   // Test 5: Specific directory in allowedDirectories
   await testSpecificAllowedDirectoryWithSlash();
+  
+  // Test 6: Prefix path blocking
+  await testPrefixPathBlocking();
   
   console.log('\n✅ All allowedDirectories tests passed!');
 }
