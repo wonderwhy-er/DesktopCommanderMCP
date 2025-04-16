@@ -71,7 +71,8 @@ async function runTestModules() {
     './test.js',
     './test-directory-creation.js',
     './test-allowed-directories.js',
-    './test-blocked-commands.js'
+    './test-blocked-commands.js',
+    './test-home-directory.js'
   ];
   
   // Dynamically find additional test files (optional)
