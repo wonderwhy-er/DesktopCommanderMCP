@@ -235,6 +235,9 @@ async function testHomeAllowedDirectory() {
     console.log(`DEBUG Test4 - Config: ${JSON.stringify(config.allowedDirectories)}`);
     assert.deepStrictEqual(config.allowedDirectories, [HOME_DIR], 'allowedDirectories should contain only the home directory');
     
+    // Check if OUTSIDE_DIR is inside the home directory
+    const isOutsideDirInHome = OUTSIDE_DIR.toLowerCase().startsWith(HOME_DIR.toLowerCase());
+
     // Test access to various locations
     const testDirAccess = await isPathAccessible(TEST_DIR);
     const testFileAccess = await isPathAccessible(path.join(TEST_DIR, 'test-file.txt'));
@@ -248,10 +251,18 @@ async function testHomeAllowedDirectory() {
     assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
     assert.strictEqual(homeDirAccess, true, 'Home directory should be accessible');
     assert.strictEqual(homeTildaDirAccess, true, 'HOME TILDA directory should be accessible');
-    assert.strictEqual(outsideDirAccess, false, 'Outside directory should not be accessible');
+    
+    // For the outside directory, the expectation depends on whether it's inside the home directory
+    // On Windows, the temp directory is often inside the user home directory
+    if (isOutsideDirInHome) {
+        assert.strictEqual(outsideDirAccess, true, 'Outside directory is inside home, so it should be accessible');
+    } else {
+        assert.strictEqual(outsideDirAccess, false, 'Outside directory should not be accessible');
+    }
+    
     assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
     
-    console.log('✓ Specific allowedDirectories setting correctly restricts access');
+    console.log('✓ Home directory allowedDirectories setting correctly restricts access');
 }
 
 /**

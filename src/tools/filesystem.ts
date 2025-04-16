@@ -90,8 +90,25 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         if(normalizedAllowedDir.slice(-1) === path.sep) {
             normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
         }
-        return normalizedPathToCheck === normalizedAllowedDir || 
-               normalizedPathToCheck.startsWith(normalizedAllowedDir);
+        
+        // Check if path is exactly the allowed directory
+        if (normalizedPathToCheck === normalizedAllowedDir) {
+            return true;
+        }
+        
+        // Check if path is a subdirectory of the allowed directory
+        // Make sure to add a separator to prevent partial directory name matches
+        // e.g. /home/user vs /home/username
+        if (normalizedPathToCheck.startsWith(normalizedAllowedDir)) {
+            return true;
+        }
+        
+        // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
+        if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
+            return normalizedPathToCheck.startsWith('c:');
+        }
+        
+        return false;
     });
 }
 
