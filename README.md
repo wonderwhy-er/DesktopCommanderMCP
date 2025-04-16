@@ -15,7 +15,7 @@ Short version. Four key things. Terminal commands, diff based file editing, ripg
 
 ![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/header.png)
 <a href="https://glama.ai/mcp/servers/zempur9oh4">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Claude Desktop Commander MCP server" />
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />
 </a>
 
 ## Table of Contents
@@ -110,8 +110,8 @@ Restart Claude if running
 ### Option 5: Checkout locally
 1. Clone and build:
 ```bash
-git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
-cd ClaudeComputerCommander
+git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
+cd DesktopCommanderMCP
 npm run setup
 ```
 Restart Claude if running
@@ -130,34 +130,32 @@ For manual installations, you can update by running the setup command again.
 
 ## Usage
 
-The server provides these tool categories:
+The server provides a comprehensive set of tools organized into several categories:
 
-### Configuration Tools
-- `get_config`: Get the complete server configuration
-- `get_config_value`: Get a specific configuration value
-- `set_config_value`: Set a specific configuration value
-- `update_config`: Update multiple configuration values at once
+### Available Tools
 
-### Terminal Tools
-- `execute_command`: Run commands with configurable timeout and shell selection
-- `read_output`: Get output from long-running commands
-- `force_terminate`: Stop running command sessions
-- `list_sessions`: View active command sessions
-- `list_processes`: View system processes
-- `kill_process`: Terminate processes by PID
-- `block_command`/`unblock_command`: Manage command blacklist
+| Category | Tool | Description |
+|----------|------|-------------|
+| **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories) |
+| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories) |
+| **Terminal** | `execute_command` | Execute a terminal command with configurable timeout and shell selection |
+| | `read_output` | Read new output from a running terminal session |
+| | `force_terminate` | Force terminate a running terminal session |
+| | `list_sessions` | List all active terminal sessions |
+| | `list_processes` | List all running processes with detailed information |
+| | `kill_process` | Terminate a running process by PID |
+| **Filesystem** | `read_file` | Read contents from local filesystem or URLs (supports text and images) |
+| | `read_multiple_files` | Read multiple files simultaneously |
+| | `write_file` | Completely replace file contents (best for large changes) |
+| | `create_directory` | Create a new directory or ensure it exists |
+| | `list_directory` | Get detailed listing of files and directories |
+| | `move_file` | Move or rename files and directories |
+| | `search_files` | Find files by name using case-insensitive substring matching |
+| | `search_code` | Search for text/code patterns within file contents using ripgrep |
+| | `get_file_info` | Retrieve detailed metadata about a file or directory |
+| **Text Editing** | `edit_block` | Apply surgical text replacements (best for changes <20% of file size) |
 
-### Filesystem Tools
-- `read_file`/`write_file`: Read files from local filesystem or URLs (supports viewing PNG, JPEG, GIF, and WebP images directly in Claude)
-- `create_directory`/`list_directory`: Directory management  
-- `move_file`: Move/rename files
-- `search_files`: Pattern-based file search
-- `get_file_info`: File metadata
-- `search_code`: Recursive ripgrep based text and code search
-
-### Edit Tools
-- `edit_block`: Apply surgical text replacements (best for changes <20% of file size)
-- `write_file`: Complete file rewrites (best for large changes >20% or when edit_block fails)
+### Tool Usage Examples
 
 Search/Replace Block Format:
 ```
@@ -193,29 +191,39 @@ For commands that may take a while:
 
 ## Configuration Management
 
+### ⚠️ Important Security Warnings
+
+1. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions during operation.
+
+2. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories. Full terminal sandboxing is on the roadmap.
+
+### Configuration Tools
+
 You can manage server configuration using the provided tools:
 
 ```javascript
 // Get the entire config
 get_config({})
 
-// Get a specific config value
-get_config_value({ "key": "defaultShell" })
-
 // Set a specific config value
 set_config_value({ "key": "defaultShell", "value": "/bin/zsh" })
 
-// Update multiple config values at once
-update_config({
-  "config": {
-    "defaultShell": "/bin/bash",
-    "logLevel": "debug",
-    "allowedDirectories": ["/Users/username/projects"]
-  }
-})
+// Set multiple config values using separate calls
+set_config_value({ "key": "defaultShell", "value": "/bin/bash" })
+set_config_value({ "key": "allowedDirectories", "value": ["/Users/username/projects"] })
 ```
 
 The configuration is saved to `config.json` in the server's working directory and persists between server restarts.
+
+### Best Practices
+
+1. **Create a dedicated chat for configuration changes**: Make all your config changes in one chat, then start a new chat for your actual work.
+
+2. **Be careful with empty `allowedDirectories`**: Setting this to an empty array (`[]`) grants access to your entire filesystem for file operations.
+
+3. **Use specific paths**: Instead of using broad paths like `/`, specify exact directories you want to access.
+
+4. **Always verify configuration after changes**: Use `get_config({})` to confirm your changes were applied correctly.
 
 ## Using Different Shells
 
@@ -285,20 +293,25 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
+- **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
+- **14-04-2025 Linux improvements** - Enhanced compatibility with various Linux distributions
+- **12-04-2025 Better allowed directories and blocked commands** - Improved security and path validation for file read/write and terminal command restrictions.
+Terminal still can access files ignoring allowed directories.
+- **11-04-2025 Shell configuration** - Added ability to configure preferred shell for command execution
 - **07-04-2025 Added URL support** - `read_file` command can now fetch content from URLs
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
-- **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/17)) - Enhanced code exploration with context-aware results
+- **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeServerCommander/pull/17)) - Enhanced code exploration with context-aware results
 
 ## Work in Progress and TODOs
 
-The following features are currently being developed or planned:
+The following features are currently being explored:
 
-- **Better configurations** ([in progress](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/16)) - Improved settings for allowed paths, commands and shell environment
-- **Windows environment fixes** ([in progress](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/13)) - Resolving issues specific to Windows platforms
-- **Linux improvements** ([in progress](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/12)) - Enhancing compatibility with various Linux distributions
 - **Support for WSL** - Windows Subsystem for Linux integration
 - **Support for SSH** - Remote server command execution
-- **Installation troubleshooting guide** - Comprehensive help for setup issues
+- **Better file support like csv/pdf**
+- **Terminal sandboxing for Mac/Linux/Windows for better security**
+- **File reading modes** - for example allow to read html as plain text or markdown
 
 ## Website
 
@@ -349,7 +362,7 @@ If you find this project useful, please consider giving it a ⭐ star on GitHub!
 
 We welcome contributions from the community! Whether you've found a bug, have a feature request, or want to contribute code, here's how you can help:
 
-- **Found a bug?** Open an issue at [github.com/wonderwhy-er/ClaudeComputerCommander/issues](https://github.com/wonderwhy-er/ClaudeComputerCommander/issues)
+- **Found a bug?** Open an issue at [github.com/wonderwhy-er/DesktopCommanderMCP/issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues)
 - **Have a feature idea?** Submit a feature request in the issues section
 - **Want to contribute code?** Fork the repository, create a branch, and submit a pull request
 - **Questions or discussions?** Start a discussion in the GitHub Discussions tab
@@ -362,7 +375,7 @@ If you find this tool valuable for your workflow, please consider [supporting th
 
 Here are answers to some common questions. For a more comprehensive FAQ, see our [detailed FAQ document](FAQ.md).
 
-### What is Claude Desktop Commander?
+### What is DesktopCommanderMCP?
 It's an MCP tool that enables Claude Desktop to access your file system and terminal, turning Claude into a versatile assistant for coding, automation, codebase exploration, and more.
 
 ### How is this different from Cursor/Windsurf?
@@ -382,7 +395,7 @@ Yes, when installed through npx or Smithery, Desktop Commander automatically upd
 - Making surgical code changes with precise control
 
 ### I'm having trouble installing or using the tool. Where can I get help?
-Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/ClaudeComputerCommander/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new) with details about your problem.
+Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new) with details about your problem.
 
 ## Data Collection
 
