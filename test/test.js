@@ -6,9 +6,17 @@ import { configManager } from '../dist/config-manager.js';
 
 // Export the main test function
 export default async function runTests() {
+    // Store original config to restore later
+    let originalConfig;
+    
     try {
+        // Save original configuration
+        originalConfig = await configManager.getConfig();
+        
         const __filename = fileURLToPath(import.meta.url);
         const __dirname = path.dirname(__filename);
+        
+        // Set allowed directories for this test
         await configManager.setValue('allowedDirectories', [__dirname]);
         // Test parseEditBlock
         const testBlock = `test.txt
@@ -48,6 +56,12 @@ new content
     } catch (error) {
         console.error('Test failed:', error);
         return false;
+    } finally {
+        // Restore original configuration
+        if (originalConfig) {
+            console.log('Restoring original configuration...');
+            await configManager.updateConfig(originalConfig);
+        }
     }
 }
 
