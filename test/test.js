@@ -1,22 +1,40 @@
 
 import path from 'path';
+import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { parseEditBlock, performSearchReplace } from '../dist/tools/edit.js';
 import { configManager } from '../dist/config-manager.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const TEST_FILEPATH = path.join(__dirname, 'test.txt')
+
+async function setup() {
+  // Save original config to restore later
+  const originalConfig = await configManager.getConfig();
+  return originalConfig;
+}
+
+
+/**
+ * Teardown function to clean up after tests
+ */
+async function teardown(originalConfig) {
+
+  // Reset configuration to original
+  await configManager.updateConfig(originalConfig);
+
+  await fs.rm(TEST_FILEPATH, { force: true, recursive: true });
+  // Clean up test directories
+  console.log('✓ Teardown: test directories cleaned up and config restored');
+}
+
+
+
 // Export the main test function
-export default async function runTests() {
-    // Store original config to restore later
-    let originalConfig;
-    
+async function testParseEditBlock() {
     try {
-        // Save original configuration
-        originalConfig = await configManager.getConfig();
-        
-        const __filename = fileURLToPath(import.meta.url);
-        const __dirname = path.dirname(__filename);
-        
-        // Set allowed directories for this test
         await configManager.setValue('allowedDirectories', [__dirname]);
         // Test parseEditBlock
         const testBlock = `test.txt
@@ -31,16 +49,15 @@ new content
 
         // Create a test file
         const fs = await import('fs/promises');
-        const testFilePath = path.join(__dirname, 'test.txt');
-        await fs.writeFile(testFilePath, 'This is old content to replace');
+        await fs.writeFile(TEST_FILEPATH, 'This is old content to replace');
 
         // Test performSearchReplace
-        await performSearchReplace(testFilePath, {
+        await performSearchReplace(TEST_FILEPATH, {
             search: 'old content',
             replace: 'new content'
         });
 
-        const result = await fs.readFile(testFilePath, 'utf8');
+        const result = await fs.readFile(TEST_FILEPATH, 'utf8');
         console.log('File content after replacement:', result);
 
         if (result.includes('new content')) {
@@ -50,25 +67,38 @@ new content
         }
 
         // Cleanup
-        await fs.unlink(testFilePath);
+        await fs.unlink(TEST_FILEPATH);
         console.log('All tests passed! 🎉');
         return true;
     } catch (error) {
         console.error('Test failed:', error);
         return false;
-    } finally {
-        // Restore original configuration
-        if (originalConfig) {
-            console.log('Restoring original configuration...');
-            await configManager.updateConfig(originalConfig);
-        }
     }
 }
 
+
+// Export the main test function
+export default async function runTests() {
+    let originalConfig;
+    try {
+      originalConfig = await setup();
+      await testParseEditBlock();
+    } catch (error) {
+      console.error('❌ Test failed:', error.message);
+      return false;
+    } finally {
+      if (originalConfig) {
+        await teardown(originalConfig);
+      }
+    }
+    return true;
+}
+
+
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
-    runTests().catch(error => {
-        console.error('Unhandled error:', error);
-        process.exit(1);
-    });
+runTests().catch(error => {
+    console.error('❌ Unhandled error:', error);
+    process.exit(1);
+});
 }
