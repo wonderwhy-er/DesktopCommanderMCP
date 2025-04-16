@@ -133,37 +133,45 @@ export const capture = (event: string, properties?: any) => {
  * @returns Promise that resolves with the operation result or the default value on timeout
  */
 export function withTimeout<T>(
-    operation: Promise<T>, 
-    timeoutMs: number, 
-    operationName: string,
-    defaultValue: T
-  ): Promise<T> {
-    return new Promise((resolve) => {
-      let isCompleted = false;
-      
-      // Set up timeout
-      const timeoutId = setTimeout(() => {
+  operation: Promise<T>, 
+  timeoutMs: number, 
+  operationName: string,
+  defaultValue: T
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let isCompleted = false;
+    
+    // Set up timeout
+    const timeoutId = setTimeout(() => {
+      if (!isCompleted) {
+        isCompleted = true;
+        if(defaultValue !== null){
+            resolve(defaultValue);
+        } else {
+            reject(`__ERROR__: ${operationName} timed out after ${timeoutMs/1000} seconds`);
+        }
+      }
+    }, timeoutMs);
+
+    // Execute the operation
+    operation
+      .then(result => {
         if (!isCompleted) {
           isCompleted = true;
-          resolve(defaultValue);
+          clearTimeout(timeoutId);
+          resolve(result);
         }
-      }, timeoutMs);
-      
-      // Execute the operation
-      operation
-        .then(result => {
-          if (!isCompleted) {
-            isCompleted = true;
-            clearTimeout(timeoutId);
-            resolve(result);
-          }
-        })
-        .catch(error => {
-          if (!isCompleted) {
-            isCompleted = true;
-            clearTimeout(timeoutId);
+      })
+      .catch(error => {
+        if (!isCompleted) {
+          isCompleted = true;
+          clearTimeout(timeoutId);
+          if(defaultValue !== null){
             resolve(defaultValue);
+          } else {
+            reject(error);
           }
-        });
-    });
-  }
+        }
+      });
+  });
+}

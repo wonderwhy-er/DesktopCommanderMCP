@@ -48,8 +48,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
     
     const readFileOperation = async () => {
         const parsed = ReadFileArgsSchema.parse(args);
-        // Explicitly cast the result to FileResult since we're passing true
-        const fileResult = await readFile(parsed.path, true, parsed.isUrl) as FileResult;
+        const fileResult = await readFile(parsed.path, parsed.isUrl);
         
         if (fileResult.isImage) {
             // For image files, return as an image content type
@@ -75,14 +74,17 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
     };
     
     // Execute with timeout at the handler level
-    return await withTimeout(
+    const result = await withTimeout(
         readFileOperation(),
         HANDLER_TIMEOUT,
         'Read file handler operation',
-        {
-            content: [{ type: "text", text: `Operation timed out after ${HANDLER_TIMEOUT/1000} seconds. The file might be too large or on a slow/unresponsive storage device.` }],
-        }
+        null
     );
+    if (result == null) {
+        // Handles the impossible case where withTimeout resolves to null instead of throwing
+        throw new Error('Failed to read the file');
+    }
+    return result;
 }
 
 /**
