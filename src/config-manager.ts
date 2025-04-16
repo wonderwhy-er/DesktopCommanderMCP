@@ -119,7 +119,7 @@ class ConfigManager {
         "takeown"    // Take ownership of files
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
-      allowedDirectories: [os.homedir()]
+      allowedDirectories: []
     };
   }
 
