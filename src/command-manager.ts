@@ -1,30 +1,7 @@
-import fs from 'fs/promises';
-import {CONFIG_FILE} from './config.js';
+import {configManager} from './config-manager.js';
 import {capture} from "./utils.js";
 
 class CommandManager {
-    private blockedCommands: Set<string> = new Set();
-
-    async loadBlockedCommands(): Promise<void> {
-        try {
-            const configData = await fs.readFile(CONFIG_FILE, 'utf-8');
-            const config = JSON.parse(configData);
-            this.blockedCommands = new Set(config.blockedCommands);
-        } catch (error) {
-            this.blockedCommands = new Set();
-        }
-    }
-
-    async saveBlockedCommands(): Promise<void> {
-        try {
-            const config = {
-                blockedCommands: Array.from(this.blockedCommands)
-            };
-            await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
-        } catch (error) {
-            // Handle error if needed
-        }
-    }
 
     getBaseCommand(command: string) {
         return command.split(' ')[0].toLowerCase().trim();
@@ -172,33 +149,36 @@ class CommandManager {
         }
     }
 
-    validateCommand(command: string): boolean {
-        const baseCommand = this.getBaseCommand(command);
-        return !this.blockedCommands.has(baseCommand);
-    }
-
-    async blockCommand(command: string): Promise<boolean> {
-        command = command.toLowerCase().trim();
-        if (this.blockedCommands.has(command)) {
-            return false;
+    async validateCommand(command: string): Promise<boolean> {
+        try {
+            // Get blocked commands from config
+            const config = await configManager.getConfig();
+            const blockedCommands = config.blockedCommands || [];
+            
+            // Extract all commands from the command string
+            const allCommands = this.extractCommands(command);
+            
+            // If there are no commands extracted, fall back to base command
+            if (allCommands.length === 0) {
+                const baseCommand = this.getBaseCommand(command);
+                return !blockedCommands.includes(baseCommand);
+            }
+            
+            // Check if any of the extracted commands are in the blocked list
+            for (const cmd of allCommands) {
+                if (blockedCommands.includes(cmd)) {
+                    return false; // Command is blocked
+                }
+            }
+            
+            // No commands were blocked
+            return true;
+        } catch (error) {
+            console.error('Error validating command:', error);
+            // If there's an error, default to allowing the command
+            // This is less secure but prevents blocking all commands due to config issues
+            return true;
         }
-        this.blockedCommands.add(command);
-        await this.saveBlockedCommands();
-        return true;
-    }
-
-    async unblockCommand(command: string): Promise<boolean> {
-        command = command.toLowerCase().trim();
-        if (!this.blockedCommands.has(command)) {
-            return false;
-        }
-        this.blockedCommands.delete(command);
-        await this.saveBlockedCommands();
-        return true;
-    }
-
-    listBlockedCommands(): string[] {
-        return Array.from(this.blockedCommands).sort();
     }
 }
 
