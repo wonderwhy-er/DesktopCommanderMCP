@@ -2,7 +2,9 @@ import { spawn } from 'child_process';
 import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
-import {capture} from "./utils.js";
+import { capture } from "./utils.js";
+import { executeSandboxedCommand, isSandboxAvailable } from './sandbox/index.js';
+import os from 'os';
 
 interface CompletedSession {
   pid: number;
@@ -17,16 +19,50 @@ export class TerminalManager {
   private completedSessions: Map<number, CompletedSession> = new Map();
   
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
+    // Get the configuration
+    let config;
+    try {
+      config = await configManager.getConfig();
+    } catch (error) {
+      config = { allowedDirectories: [os.homedir()] };
+    }
+
+    // Check if sandbox execution is available and enabled
+    const useSandbox = isSandboxAvailable() && config.useSandbox !== false;
+    
+    // Log what execution mode we're using
+    console.log(`Executing command "${command}" with ${useSandbox ? 'sandbox' : 'regular'} execution`);
+    
+    if (useSandbox) {
+      try {
+        // Get the allowed directories for sandbox
+        const allowedDirectories = config.allowedDirectories || [os.homedir()];
+        
+        // Use the platform-specific sandbox implementation
+        console.log(`Executing command in sandbox: ${command}`);
+        console.log(`Allowed directories: ${allowedDirectories.join(', ')}`);
+        
+        const result = await executeSandboxedCommand(command, timeoutMs, shell);
+        
+        // If sandbox execution worked, return the result
+        if (result.pid !== -1) {
+          console.log(`Sandbox execution successful with PID ${result.pid}`);
+          return result;
+        }
+        
+        // Otherwise fall back to regular execution
+        console.warn(`Sandbox execution failed, falling back to regular execution: ${result.output}`);
+      } catch (error) {
+        console.error('Error in sandbox execution:', error);
+        console.warn('Falling back to regular execution due to error');
+      }
+    }
+    
+    // Regular command execution (used when sandbox is not available or fails)
     // Get the shell from config if not specified
     let shellToUse: string | boolean | undefined = shell;
     if (!shellToUse) {
-      try {
-        const config = await configManager.getConfig();
-        shellToUse = config.shell || true;
-      } catch (error) {
-        // If there's an error getting the config, fall back to default
-        shellToUse = true;
-      }
+      shellToUse = config.defaultShell || true;
     }
     
     const spawnOptions = { 
