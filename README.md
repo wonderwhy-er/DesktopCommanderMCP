@@ -187,6 +187,22 @@ console.log("new message");
 - Claude can see and analyze the actual image content
 - Default 30-second timeout for URL requests
 
+## Security Features
+
+### Path Restricted File Access
+Desktop Commander restricts file operations to specific directories by default:
+- Only your home directory is accessible by default
+- Adding more directories can be done via configuration
+- All file operations (read, write, search) are checked against allowed directories
+- Setting empty allowed directories list (`[]`) grants access to the entire filesystem
+
+### Blocked Commands
+For security, potentially dangerous commands are blocked by default:
+- System commands like `format`, `mkfs`, `dd`, and `fdisk` are blocked
+- Administrative commands like `sudo`, `su`, and `passwd` are blocked
+- System control commands like `shutdown` and `reboot` are blocked
+- Can be customized via configuration
+
 ## Handling Long-Running Commands
 
 For commands that may take a while:

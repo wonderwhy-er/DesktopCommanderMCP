@@ -8,6 +8,7 @@ export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
   allowedDirectories?: string[];
+  useSandbox?: boolean;  // Whether to use platform-specific sandbox for command execution
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -119,7 +120,9 @@ class ConfigManager {
         "takeown"    // Take ownership of files
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
-      allowedDirectories: [os.homedir()]
+      allowedDirectories: [os.homedir()],
+      // Enable sandbox by default on supported platforms (currently macOS)
+      useSandbox: os.platform() === 'darwin'
     };
   }
 
