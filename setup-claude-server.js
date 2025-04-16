@@ -179,7 +179,6 @@ async function trackEvent(eventName, additionalProps = {}) {
       });
       
       req.on('error', (error) => {
-        logToFile(`GA error: ${error}`, true);
         // Silently fail - we don't want tracking issues to break functionality
         resolve(false);
       });
@@ -198,18 +197,15 @@ async function trackEvent(eventName, additionalProps = {}) {
         // Optional response handling
         let data = '';
         res.on('data', (chunk) => {
-          logToFile(`GA response: ${chunk}`, true);
           data += chunk;
         });
 
         //response status
         res.on('error', (error) => {
-          logToFile(`GA error: ${error}`, true);
           resolve(false);
         });
         
         res.on('end', () => {
-          logToFile(`GA response: ${data}`, true);
           resolve(true);
         });
       });
