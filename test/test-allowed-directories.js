@@ -53,13 +53,12 @@ async function cleanupTestDirectories() {
 async function isPathAccessible(testPath) {
   console.log(`DEBUG isPathAccessible - Checking access to: ${testPath}`);
   try {
+
     const validatedPath = await validatePath(testPath);
     console.log(`DEBUG isPathAccessible - Validation result: ${validatedPath}`);
-    const isAccessible = !validatedPath.startsWith('__ERROR__');
-    console.log(`DEBUG isPathAccessible - Path accessible: ${isAccessible}`);
-    return isAccessible;
+    return true
   } catch (error) {
-    console.log(`DEBUG isPathAccessible - Error during validation: ${error.message}`);
+    console.log(`DEBUG isPathAccessible - Validation result: ${error}`);
     return false;
   }
 }

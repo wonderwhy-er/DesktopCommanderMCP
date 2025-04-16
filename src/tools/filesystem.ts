@@ -112,7 +112,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
             
         // Check if path is allowed
         if (!(await isPathAllowed(absolute))) {
-            return `__ERROR__: Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`;
+            throw(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
         
         // Check if path exists
@@ -136,13 +136,13 @@ export async function validatePath(requestedPath: string): Promise<string> {
     const result = await withTimeout(
         validationOperation(),
         PATH_VALIDATION_TIMEOUT,
-        `Path vcalidation for ${requestedPath}`,
+        `Path validation for ${requestedPath}`,
         null
     );
     
     if (result === null) {
         // Return a path with an error indicator instead of throwing
-        return `__ERROR__: Path validation timed out after ${PATH_VALIDATION_TIMEOUT/1000} seconds for: ${requestedPath}`;
+        throw new Error(`Path validation failed for path: ${requestedPath}`);
     }
     
     return result;
@@ -159,10 +159,9 @@ export interface FileResult {
 /**
  * Read file content from a URL
  * @param url URL to fetch content from
- * @param returnMetadata Whether to return metadata with the content
  * @returns File content or file result with metadata
  */
-export async function readFileFromUrl(url: string, returnMetadata?: boolean): Promise<string | FileResult> {
+export async function readFileFromUrl(url: string): Promise<FileResult> {
     // Import the MIME type utilities
     const { isImageFile } = await import('./mime-types.js');
     
@@ -192,20 +191,12 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
             const buffer = await response.arrayBuffer();
             const content = Buffer.from(buffer).toString('base64');
             
-            if (returnMetadata === true) {
-                return { content, mimeType: contentType, isImage };
-            } else {
-                return content;
-            }
+            return { content, mimeType: contentType, isImage };
         } else {
             // For text content
             const content = await response.text();
             
-            if (returnMetadata === true) {
-                return { content, mimeType: contentType, isImage };
-            } else {
-                return content;
-            }
+            return { content, mimeType: contentType, isImage };
         }
     } catch (error) {
         // Clear the timeout to prevent memory leaks
@@ -216,16 +207,7 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
             ? `URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`
             : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
 
-        capture('server_request_error', {error: errorMessage});
-        if (returnMetadata === true) {
-            return { 
-                content: `Error: ${errorMessage}`, 
-                mimeType: 'text/plain', 
-                isImage: false 
-            };
-        } else {
-            return `Error: ${errorMessage}`;
-        }
+        throw new Error(errorMessage);
     }
 }
 
@@ -235,10 +217,10 @@ export async function readFileFromUrl(url: string, returnMetadata?: boolean): Pr
  * @param returnMetadata Whether to return metadata with the content
  * @returns File content or file result with metadata
  */
-export async function readFileFromDisk(filePath: string, returnMetadata?: boolean): Promise<string | FileResult> {
+export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
-    
+
     const validPath = await validatePath(filePath);
     
     // Check file size before attempting to read
@@ -248,18 +230,15 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
         
         if (stats.size > MAX_SIZE) {
             const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
-            if (returnMetadata) {
-                return { 
-                    content: message, 
-                    mimeType: 'text/plain', 
-                    isImage: false 
-                };
-            } else {
-                return message;
-            }
+            return { 
+                content: message, 
+                mimeType: 'text/plain', 
+                isImage: false 
+            };
         }
     } catch (error) {
-        capture('server_request_error', {error: error});
+        console.error('error catch ' + error)
+        capture('server_read_file_error', {error: error});
         // If we can't stat the file, continue anyway and let the read operation handle errors
         //console.error(`Failed to stat file ${validPath}:`, error);
     }
@@ -277,44 +256,33 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
             const buffer = await fs.readFile(validPath);
             const content = buffer.toString('base64');
             
-            if (returnMetadata === true) {
-                return { content, mimeType, isImage };
-            } else {
-                return content;
-            }
+            return { content, mimeType, isImage };
         } else {
             // For all other files, try to read as UTF-8 text
             try {
                 const content = await fs.readFile(validPath, "utf-8");
                 
-                if (returnMetadata === true) {
-                    return { content, mimeType, isImage };
-                } else {
-                    return content;
-                }
+                return { content, mimeType, isImage };
             } catch (error) {
                 // If UTF-8 reading fails, treat as binary and return base64 but still as text
                 const buffer = await fs.readFile(validPath);
                 const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
 
-                if (returnMetadata === true) {
-                    return { content, mimeType: 'text/plain', isImage: false };
-                } else {
-                    return content;
-                }
+                return { content, mimeType: 'text/plain', isImage: false };
             }
         }
     };
-    
     // Execute with timeout
     const result = await withTimeout(
         readOperation(),
         FILE_READ_TIMEOUT,
         `Read file operation for ${filePath}`,
-        returnMetadata ? 
-            { content: `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`, mimeType: 'text/plain', isImage: false } : 
-            `Operation timed out after ${FILE_READ_TIMEOUT/1000} seconds`
+        null
     );
+    if (result == null) {
+        // Handles the impossible case where withTimeout resolves to null instead of throwing
+        throw new Error('Failed to read the file');
+    }
     
     return result;
 }
@@ -326,10 +294,10 @@ export async function readFileFromDisk(filePath: string, returnMetadata?: boolea
  * @param isUrl Whether the path is a URL
  * @returns File content or file result with metadata
  */
-export async function readFile(filePath: string, returnMetadata?: boolean, isUrl?: boolean): Promise<string | FileResult> {
+export async function readFile(filePath: string, isUrl?: boolean): Promise<FileResult> {
     return isUrl 
-        ? readFileFromUrl(filePath, returnMetadata)
-        : readFileFromDisk(filePath, returnMetadata);
+        ? readFileFromUrl(filePath)
+        : readFileFromDisk(filePath);
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {
@@ -350,7 +318,7 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
         paths.map(async (filePath: string) => {
             try {
                 const validPath = await validatePath(filePath);
-                const fileResult = await readFile(validPath, true);
+                const fileResult = await readFile(validPath);
 
                 return {
                     path: filePath,

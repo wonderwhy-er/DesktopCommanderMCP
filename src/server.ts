@@ -196,9 +196,9 @@ import {ServerResult} from './types.js';
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     try {
         const {name, arguments: args} = request.params;
-        capture('server_call_tool');
-        // Add a single dynamic capture for the specific tool
-        capture('server_' + name);
+        capture('server_call_tool', {
+            name
+        });
 
         // Using a more structured approach with dedicated handlers
         switch (name) {
@@ -226,54 +226,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             // Terminal tools
             case "execute_command":
-                return handlers.handleExecuteCommand(args);
+                return await handlers.handleExecuteCommand(args);
 
             case "read_output":
-                return handlers.handleReadOutput(args);
+                return await handlers.handleReadOutput(args);
 
             case "force_terminate":
-                return handlers.handleForceTerminate(args);
+                return await handlers.handleForceTerminate(args);
 
             case "list_sessions":
-                return handlers.handleListSessions();
+                return await handlers.handleListSessions();
 
             // Process tools
             case "list_processes":
-                return handlers.handleListProcesses();
+                return await handlers.handleListProcesses();
 
             case "kill_process":
-                return handlers.handleKillProcess(args);
+                return await handlers.handleKillProcess(args);
 
             // Filesystem tools
             case "read_file":
-                return handlers.handleReadFile(args);
+                return await handlers.handleReadFile(args);
 
             case "read_multiple_files":
-                return handlers.handleReadMultipleFiles(args);
+                return await handlers.handleReadMultipleFiles(args);
 
             case "write_file":
-                return handlers.handleWriteFile(args);
+                return await handlers.handleWriteFile(args);
 
             case "create_directory":
-                return handlers.handleCreateDirectory(args);
+                return await handlers.handleCreateDirectory(args);
 
             case "list_directory":
-                return handlers.handleListDirectory(args);
+                return await handlers.handleListDirectory(args);
 
             case "move_file":
-                return handlers.handleMoveFile(args);
+                return await handlers.handleMoveFile(args);
 
             case "search_files":
-                return handlers.handleSearchFiles(args);
+                return await handlers.handleSearchFiles(args);
 
             case "search_code":
-                return handlers.handleSearchCode(args);
+                return await handlers.handleSearchCode(args);
 
             case "get_file_info":
-                return handlers.handleGetFileInfo(args);
+                return await handlers.handleGetFileInfo(args);
 
             case "edit_block":
-                return handlers.handleEditBlock(args);
+                return await handlers.handleEditBlock(args);
 
             default:
                 capture('server_unknown_tool', {name});

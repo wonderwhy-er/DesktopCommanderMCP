@@ -8,13 +8,15 @@ interface SearchReplace {
 
 export async function performSearchReplace(filePath: string, block: SearchReplace): Promise<ServerResult> {
     // Read file as plain string (don't pass true to get just the string)
-    const content = await readFile(filePath);
+    const {content} = await readFile(filePath);
     
     // Make sure content is a string
-    const contentStr = typeof content === 'string' ? content : content.content;
+    if( typeof content !== 'string') {
+        throw new Error('Wrong content for file ' + filePath);
+    };
     
     // Find first occurrence
-    const searchIndex = contentStr.indexOf(block.search);
+    const searchIndex = content.indexOf(block.search);
     if (searchIndex === -1) {
         return {
             content: [{ type: "text", text: `Search content not found in ${filePath}.` }],
@@ -23,9 +25,9 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
 
     // Replace content
     const newContent = 
-        contentStr.substring(0, searchIndex) + 
+        content.substring(0, searchIndex) + 
         block.replace + 
-        contentStr.substring(searchIndex + block.search.length);
+        content.substring(searchIndex + block.search.length);
 
     await writeFile(filePath, newContent);
 

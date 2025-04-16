@@ -79,17 +79,21 @@ export function withTimeout<T>(
   operationName: string,
   defaultValue: T
 ): Promise<T> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let isCompleted = false;
     
     // Set up timeout
     const timeoutId = setTimeout(() => {
       if (!isCompleted) {
         isCompleted = true;
-        resolve(defaultValue);
+        if(defaultValue !== null){
+            resolve(defaultValue);
+        } else {
+            reject(`__ERROR__: ${operationName} timed out after ${timeoutMs/1000} seconds`);
+        }
       }
     }, timeoutMs);
-    
+
     // Execute the operation
     operation
       .then(result => {
@@ -103,7 +107,11 @@ export function withTimeout<T>(
         if (!isCompleted) {
           isCompleted = true;
           clearTimeout(timeoutId);
-          resolve(defaultValue);
+          if(defaultValue !== null){
+            resolve(defaultValue);
+          } else {
+            reject(error);
+          }
         }
       });
   });
