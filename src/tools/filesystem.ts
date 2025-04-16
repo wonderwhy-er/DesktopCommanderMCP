@@ -30,7 +30,7 @@ async function getAllowedDirs(): Promise<string[]> {
 
 // Normalize all paths consistently
 function normalizePath(p: string): string {
-    return path.normalize(p).toLowerCase();
+    return path.normalize(expandHome(p)).toLowerCase();
 }
 
 function expandHome(filepath: string): string {
