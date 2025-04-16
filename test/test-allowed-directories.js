@@ -146,6 +146,7 @@ async function testSpecificAllowedDirectory() {
   const testDirAccess = await isPathAccessible(TEST_DIR);
   const testFileAccess = await isPathAccessible(path.join(TEST_DIR, 'test-file.txt'));
   const homeDirAccess = await isPathAccessible(HOME_DIR);
+  const homeTildaDirAccess = await isPathAccessible('~');
   const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
   const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
   
@@ -153,6 +154,7 @@ async function testSpecificAllowedDirectory() {
   assert.strictEqual(testDirAccess, true, 'Test directory should be accessible');
   assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
   assert.strictEqual(homeDirAccess, TEST_DIR === HOME_DIR, 'Home directory should not be accessible (unless it equals test dir)');
+  assert.strictEqual(homeTildaDirAccess, TEST_DIR === HOME_DIR, 'Home directory should not be accessible (unless it equals test dir)');
   assert.strictEqual(outsideDirAccess, false, 'Outside directory should not be accessible');
   assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
   
@@ -182,9 +184,11 @@ async function testRootInAllowedDirectories() {
   console.log(`DEBUG Test3 - Testing ROOT_PATH access: ${TEST_ROOT_PATH}`);
   const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
   console.log(`DEBUG Test3 - ROOT_PATH access result: ${rootAccess}`);
+  const rootTildaAccess = await isPathAccessible('~');
   
   // Root path should be accessible
   assert.strictEqual(rootAccess, true, 'Root path should be accessible when set in allowedDirectories');
+  assert.strictEqual(rootTildaAccess, true, 'Root path should be accessible when set in allowedDirectories');
   
   // Check if we're on Windows
   if (isWindows) {
@@ -215,6 +219,40 @@ async function testRootInAllowedDirectories() {
   console.log('✓ Root in allowedDirectories test passed with platform-specific behavior');
 }
 
+
+/**
+ * Test with home directory in allowedDirectories
+ */
+async function testHomeAllowedDirectory() {
+    console.log('\nTest 4: Home directory in allowedDirectories');
+    
+    // Set allowedDirectories to just the home directory
+    await configManager.setValue('allowedDirectories', [HOME_DIR]);
+    
+    // Verify config was set correctly
+    const config = await configManager.getConfig();
+    console.log(`DEBUG Test4 - Config: ${JSON.stringify(config.allowedDirectories)}`);
+    assert.deepStrictEqual(config.allowedDirectories, [HOME_DIR], 'allowedDirectories should contain only the home directory');
+    
+    // Test access to various locations
+    const testDirAccess = await isPathAccessible(TEST_DIR);
+    const testFileAccess = await isPathAccessible(path.join(TEST_DIR, 'test-file.txt'));
+    const homeDirAccess = await isPathAccessible(HOME_DIR);
+    const homeTildaDirAccess = await isPathAccessible('~');
+    const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
+    const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
+    
+    // Only test directory and its contents should be accessible
+    assert.strictEqual(testDirAccess, true, 'Test directory should be accessible');
+    assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
+    assert.strictEqual(homeDirAccess, true, 'Home directory should be accessible');
+    assert.strictEqual(homeTildaDirAccess, true, 'HOME TILDA directory should be accessible');
+    assert.strictEqual(outsideDirAccess, false, 'Outside directory should not be accessible');
+    assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
+    
+    console.log('✓ Specific allowedDirectories setting correctly restricts access');
+  }
+
 /**
  * Main test function
  */
@@ -229,6 +267,9 @@ async function testAllowedDirectories() {
   
   // Test 3: Root directory in allowedDirectories
   await testRootInAllowedDirectories();
+
+  // Test 4: Home directory in allowedDirectories
+  await testHomeAllowedDirectory();
   
   console.log('\n✅ All allowedDirectories tests passed!');
 }
