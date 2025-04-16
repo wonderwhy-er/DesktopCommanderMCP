@@ -1,8 +1,15 @@
+
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { parseEditBlock, performSearchReplace } from '../dist/tools/edit.js';
+import { configManager } from '../dist/config-manager.js';
 
 // Export the main test function
 export default async function runTests() {
     try {
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+        await configManager.setValue('allowedDirectories', [__dirname]);
         // Test parseEditBlock
         const testBlock = `test.txt
 <<<<<<< SEARCH

@@ -79,13 +79,16 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         return true;
     }
 
-    const normalizedPathToCheck = normalizePath(pathToCheck);
+    let normalizedPathToCheck = normalizePath(pathToCheck);
+    if(normalizedPathToCheck.slice(-1) === path.sep) {
+        normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
+    }
     
     // Check if the path is within any allowed directory
     return allowedDirectories.some(allowedDir => {
         let normalizedAllowedDir = normalizePath(allowedDir);
-        if(normalizedAllowedDir.slice(-1) !== path.sep) {
-            normalizedAllowedDir += path.sep;
+        if(normalizedAllowedDir.slice(-1) === path.sep) {
+            normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
         }
         return normalizedPathToCheck === normalizedAllowedDir || 
                normalizedPathToCheck.startsWith(normalizedAllowedDir);

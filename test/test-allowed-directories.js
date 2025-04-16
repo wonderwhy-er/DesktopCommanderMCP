@@ -22,6 +22,7 @@ const __dirname = path.dirname(__filename);
 
 // Define test paths for different locations
 const HOME_DIR = os.homedir();
+const TEST_DIR_WITH_SLASH = path.join(__dirname, 'test_allowed_dirs') + '/';
 const TEST_DIR = path.join(__dirname, 'test_allowed_dirs');
 const OUTSIDE_DIR = path.join(os.tmpdir(), 'test_outside_allowed');
 const ROOT_PATH = '/';
@@ -51,14 +52,14 @@ async function cleanupTestDirectories() {
  * Check if a path is accessible
  */
 async function isPathAccessible(testPath) {
-  console.log(`DEBUG isPathAccessible - Checking access to: ${testPath}`);
+//   console.log(`DEBUG isPathAccessible - Checking access to: ${testPath}`);
   try {
 
     const validatedPath = await validatePath(testPath);
-    console.log(`DEBUG isPathAccessible - Validation result: ${validatedPath}`);
+    // console.log(`DEBUG isPathAccessible - Validation result: ${validatedPath}`);
     return true
   } catch (error) {
-    console.log(`DEBUG isPathAccessible - Validation result: ${error}`);
+    // console.log(`DEBUG isPathAccessible - Validation result: ${error}`);
     return false;
   }
 }
@@ -251,6 +252,40 @@ async function testHomeAllowedDirectory() {
     assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
     
     console.log('✓ Specific allowedDirectories setting correctly restricts access');
+}
+
+/**
+ * Test with specific directory with slash at the end in allowedDirectories
+ */
+async function testSpecificAllowedDirectoryWithSlash() {
+    console.log('\nTest 5: Specific directory with slash at the end in allowedDirectories');
+    
+    // Set allowedDirectories to just the test directory
+    await configManager.setValue('allowedDirectories', [TEST_DIR_WITH_SLASH]);
+    
+    // Verify config was set correctly
+    const config = await configManager.getConfig();
+    console.log(`DEBUG Test5 - Config: ${JSON.stringify(config.allowedDirectories)}`);
+    console.log("TEST_DIR_WITH_SLASH", TEST_DIR_WITH_SLASH)
+    assert.deepStrictEqual(config.allowedDirectories, [TEST_DIR_WITH_SLASH], 'allowedDirectories should contain only the test directory');
+    
+    // Test access to various locations
+    const testDirAccess = await isPathAccessible(TEST_DIR);
+    const testFileAccess = await isPathAccessible(path.join(TEST_DIR, 'test-file.txt'));
+    const homeDirAccess = await isPathAccessible(HOME_DIR);
+    const homeTildaDirAccess = await isPathAccessible('~');
+    const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
+    const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
+    
+    // Only test directory and its contents should be accessible
+    assert.strictEqual(testDirAccess, true, 'Test directory should be accessible');
+    assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
+    assert.strictEqual(homeDirAccess, TEST_DIR === HOME_DIR, 'Home directory should not be accessible (unless it equals test dir)');
+    assert.strictEqual(homeTildaDirAccess, TEST_DIR === HOME_DIR, 'Home directory should not be accessible (unless it equals test dir)');
+    assert.strictEqual(outsideDirAccess, false, 'Outside directory should not be accessible');
+    assert.strictEqual(rootAccess, false, 'Root path should not be accessible');
+    
+    console.log('✓ Specific allowedDirectories setting correctly restricts access');
   }
 
 /**
@@ -270,6 +305,9 @@ async function testAllowedDirectories() {
 
   // Test 4: Home directory in allowedDirectories
   await testHomeAllowedDirectory();
+
+  // Test 5: Specific directory in allowedDirectories
+  await testSpecificAllowedDirectoryWithSlash();
   
   console.log('\n✅ All allowedDirectories tests passed!');
 }
