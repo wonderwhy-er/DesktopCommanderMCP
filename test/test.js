@@ -23,7 +23,7 @@ new content
 
         // Create a test file
         const fs = await import('fs/promises');
-        const testFilePath = 'test/test.txt';
+        const testFilePath = path.join(__dirname, 'test.txt');
         await fs.writeFile(testFilePath, 'This is old content to replace');
 
         // Test performSearchReplace
