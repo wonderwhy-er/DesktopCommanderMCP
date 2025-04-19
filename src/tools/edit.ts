@@ -92,7 +92,8 @@ export async function parseEditBlock(blockContent: string): Promise<EditBlockRes
       // Parse flags if present
       currentFlags = { global: false, ignoreCase: false, dryRun: false };
       if (line.includes(':')) {
-        const flagStr = line.split(':')[1].trim().toLowerCase();
+        // Strip the leading "<<<<<<< SEARCH" part and re-join everything after the first ":"
+        const flagStr = line.split(':').slice(1).join(':').trim().toLowerCase();
         
         // Process each flag character
         for (let j = 0; j < flagStr.length; j++) {
@@ -122,6 +123,15 @@ export async function parseEditBlock(blockContent: string): Promise<EditBlockRes
               }
             }
           }
+        }
+        
+        // Validate incompatible flag combinations
+        if (currentFlags.global && currentFlags.count !== undefined) {
+          errors.blocks?.push({
+            index: currentBlockIndex,
+            lineNumber: i,
+            error: "Flags 'g' and 'n:X' are mutually exclusive"
+          });
         }
       }
     } 
@@ -231,6 +241,17 @@ export async function performSearchReplace(
       // Combine block-level flags with operation-level options
       const effectiveDryRun = flags.dryRun || globalDryRun;
       
+      // Validate empty search pattern
+      if (search.length === 0) {
+        replacementSummary.push({
+          search,
+          replace,
+          applied: false,
+          error: 'Search pattern must not be empty'
+        });
+        continue;
+      }
+      
       // Validate search pattern length
       if (search.length > MAX_PATTERN_SIZE) {
         replacementSummary.push({ 
@@ -275,8 +296,10 @@ export async function performSearchReplace(
           resultContent += newContent.substring(lastIndex);
         }
         
-        // Update content
-        newContent = resultContent;
+        // Only update content if not in dry run mode
+        if (!effectiveDryRun) {
+          newContent = resultContent;
+        }
         
         // Track the result
         totalReplacements += replacementCount;
@@ -297,11 +320,15 @@ export async function performSearchReplace(
         // Make a copy for comparison
         const originalContent = newContent;
         
-        // Apply the replacement
-        newContent = newContent.replace(searchRegex, replace);
+        // Count matches but only apply if not in dry run mode
+        const matches = newContent.match(searchRegex) || [];
+        const replacementCount = matches.length;
         
-        // Count replacements by comparing with regex
-        const replacementCount = (originalContent.match(searchRegex) || []).length;
+        if (!effectiveDryRun && replacementCount > 0) {
+          // Apply the replacement
+          newContent = newContent.replace(searchRegex, replace);
+        }
+        
         totalReplacements += replacementCount;
         
         // Track the result
@@ -327,11 +354,13 @@ export async function performSearchReplace(
         // Extract the actual matched text (preserving original case)
         const actualMatch = newContent.substring(searchIndex, searchIndex + search.length);
         
-        // Apply the replacement
-        newContent = 
-          newContent.substring(0, searchIndex) + 
-          replace + 
-          newContent.substring(searchIndex + search.length);
+        // Apply the replacement if not in dry run mode
+        if (!effectiveDryRun) {
+          newContent = 
+            newContent.substring(0, searchIndex) + 
+            replace + 
+            newContent.substring(searchIndex + search.length);
+        }
         
         // Track the result
         replacementSummary.push({ 
@@ -354,11 +383,13 @@ export async function performSearchReplace(
           continue;
         }
         
-        // Apply the replacement
-        newContent = 
-          newContent.substring(0, searchIndex) + 
-          replace + 
-          newContent.substring(searchIndex + search.length);
+        // Apply the replacement if not in dry run mode
+        if (!effectiveDryRun) {
+          newContent = 
+            newContent.substring(0, searchIndex) + 
+            replace + 
+            newContent.substring(searchIndex + search.length);
+        }
         
         // Track the successful replacement
         replacementSummary.push({ 
@@ -394,14 +425,18 @@ export async function performSearchReplace(
     };
   }
   
-  // If not dry run, apply the changes to the file
-  if (!globalDryRun && totalReplacements > 0) {
+  // If not dry run and no blocks have dry run flag, apply the changes to the file
+  if (
+    !globalDryRun && 
+    totalReplacements > 0 && 
+    !blocks.some(b => b.flags?.dryRun)
+  ) {
     await writeFile(filePath, newContent);
   }
   
   // Generate result message
   // For backward compatibility with single block
-  if (blocks.length === 1 && replacementSummary[0].applied && !globalDryRun) {
+  if (blocks.length === 1 && replacementSummary[0].applied && !globalDryRun && !blocks[0].flags?.dryRun) {
     return {
       content: [{ type: "text", text: `Successfully applied edit to ${filePath}` }],
     };
