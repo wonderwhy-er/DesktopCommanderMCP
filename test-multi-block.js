@@ -34,6 +34,19 @@ async function testMultipleBlocks() {
     // Read the modified content
     const modifiedContent = await fs.readFile(testFilePath, 'utf8');
     console.log('Modified content:\n', modifiedContent);
+
+    // Create expected content with the specific replacements
+    let expectedContent = originalContent
+      .replace('First pattern: This line will be replaced first.', 'First block replacement successful.')
+      .replace('Second pattern: This line will be replaced globally.', 'Second block replacement successful.')
+      .replace('Second pattern: This line will be replaced globally.', 'Second block replacement successful.');
+
+    // The third pattern in the test file doesn't exist in the original content, so no further replacements
+
+    // Verify the replacements were successful
+    if (modifiedContent !== expectedContent) {
+      throw new Error('Content does not match expected replacements');
+    }
     
     // Restore the original content
     await fs.writeFile(testFilePath, originalContent);

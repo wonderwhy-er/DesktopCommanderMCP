@@ -37,6 +37,15 @@ async function testSingleBlock() {
     // Read the modified content
     const modifiedContent = await fs.readFile(testFilePath, 'utf8');
     console.log('Modified content:\n', modifiedContent);
+
+    // Verify the replacement was successful
+    const expectedContent = originalContent.replace(
+      'First pattern: This line will be replaced first.',
+      'Direct single object replacement successful.'
+    );
+    if (modifiedContent !== expectedContent) {
+      throw new Error('Content does not match expected replacement');
+    }
     
     // Restore the original content
     await fs.writeFile(testFilePath, originalContent);
