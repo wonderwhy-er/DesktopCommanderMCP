@@ -1,4 +1,4 @@
-/Users/davidleathers/dev/desktop-commander/test-edit-block.txt
+./test-edit-block.txt
 <<<<<<< SEARCH:g
 pattern
 =======
