@@ -36,4 +36,7 @@ coverage/
 .idea
 .history
 
-server.log
+server.log-e 
+# Temporary and backup files
+backup/
+*.bak
