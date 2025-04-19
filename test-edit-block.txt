@@ -1,0 +1,11 @@
+This is a test file for the enhanced edit_block functionality.
+
+It contains several lines of text that we can search and replace.
+
+First pattern: This line will be replaced first.
+
+Second pattern: This line will be replaced second.
+
+Third pattern: This line won't be found in our test.
+
+The end of the test file.

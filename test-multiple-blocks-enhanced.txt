@@ -1,0 +1,16 @@
+/Users/davidleathers/dev/desktop-commander/test-edit-block.txt
+<<<<<<< SEARCH:g
+pattern
+=======
+PATTERN (global replacement)
+>>>>>>> REPLACE
+<<<<<<< SEARCH:i
+MIXED
+=======
+mixed (case-insensitive)
+>>>>>>> REPLACE
+<<<<<<< SEARCH:gi
+line
+=======
+LINE (global & case-insensitive)
+>>>>>>> REPLACE

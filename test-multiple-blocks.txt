@@ -1,0 +1,16 @@
+/Users/davidleathers/dev/desktop-commander/test-edit-block.txt
+<<<<<<< SEARCH
+First pattern: This line will be replaced first.
+=======
+First pattern: This line has been successfully replaced.
+>>>>>>> REPLACE
+<<<<<<< SEARCH
+Second pattern: This line will be replaced second.
+=======
+Second pattern: This line has also been successfully replaced.
+>>>>>>> REPLACE
+<<<<<<< SEARCH
+Pattern that doesn't exist in the file.
+=======
+This replacement won't be applied.
+>>>>>>> REPLACE

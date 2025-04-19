@@ -17,17 +17,37 @@ import {capture, withTimeout} from '../utils.js';
 import {createErrorResponse} from '../error-handlers.js';
 
 /**
- * Handle edit_block command
+ * Handle edit_block command with enhanced capabilities
  */
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
-    const parsed = EditBlockArgsSchema.parse(args);
-    const {filePath, searchReplace, error} = await parseEditBlock(parsed.blockContent);
-
-    if (error) {
-        return createErrorResponse(error);
+    try {
+        // Parse input arguments
+        const parsed = EditBlockArgsSchema.parse(args);
+        
+        // Parse the block content (enhanced implementation)
+        const { filePath, searchReplace, errors } = await parseEditBlock(parsed.blockContent);
+        
+        // Handle parsing errors
+        if (errors?.global) {
+            return createErrorResponse(errors.global);
+        }
+        
+        // Report block-specific errors if present
+        if (errors?.blocks && errors.blocks.length > 0) {
+            const errorMessages = errors.blocks.map(error => 
+                `Block ${error.index + 1}${error.lineNumber ? ` (line ${error.lineNumber})` : ''}: ${error.error}`
+            ).join('\n');
+            
+            return createErrorResponse(`Parse errors in edit blocks:\n${errorMessages}`);
+        }
+        
+        // Use enhanced implementation for all replacements
+        return await performSearchReplace(filePath, searchReplace);
+    } catch (error) {
+        // Maintain existing error handling
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
     }
-
-    return performSearchReplace(filePath, searchReplace);
 }
 
 /**

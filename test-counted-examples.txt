@@ -1,0 +1,6 @@
+/Users/davidleathers/dev/desktop-commander/test-edit-block.txt
+<<<<<<< SEARCH:n:2
+pattern
+=======
+PATTERN (replace only first 2)
+>>>>>>> REPLACE
