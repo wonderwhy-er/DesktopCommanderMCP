@@ -1,6 +1,8 @@
-import {
-    performSearchReplace
-} from '../tools/edit.js';
+/**
+ * SPDX-License-Identifier: MIT
+ * 
+ * Copyright (c) 2025 Desktope Commander MCP Contributors
+ */
 
 import {
     searchTextInFiles
@@ -11,22 +13,20 @@ import {
     SearchCodeArgsSchema
 } from '../tools/schemas.js';
 
+// Import enhanced edit functionality from polyform-licensed code
+import { handleEnhancedEditBlock } from '../polyform-license-src/edit/handlers.js';
+
 import {ServerResult} from '../types.js';
 import {capture, withTimeout} from '../utils.js';
 import {createErrorResponse} from '../error-handlers.js';
 
 /**
  * Handle edit_block command
+ * Delegates to the enhanced implementation in the polyform-licensed code
  */
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
-    const parsed = EditBlockArgsSchema.parse(args);
-    
-    const searchReplace = {
-        search: parsed.old_string,
-        replace: parsed.new_string
-    };
-
-    return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
+    // Forward the request to the enhanced implementation
+    return handleEnhancedEditBlock(args);
 }
 
 /**

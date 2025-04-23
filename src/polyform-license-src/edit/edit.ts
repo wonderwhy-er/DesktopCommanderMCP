@@ -1,7 +1,16 @@
-import { readFile, writeFile } from './filesystem.js';
-import { ServerResult } from '../types.js';
+/**
+ * SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
+ * 
+ * Copyright (c) 2025 Desktope Commander MCP Contributors
+ * 
+ * This file is licensed under the PolyForm Small Business License 1.0.0
+ * See the LICENSE file in the /src/polyform directory for the full license text.
+ */
+
+import { readFile, writeFile } from '../../tools/filesystem.js';
+import { ServerResult } from '../../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
-import { capture } from '../utils.js';
+import { capture } from '../../utils.js';
 
 interface SearchReplace {
     search: string;

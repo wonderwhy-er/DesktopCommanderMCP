@@ -1,3 +1,9 @@
+/**
+ * SPDX-License-Identifier: MIT
+ * 
+ * Copyright (c) 2025 Desktope Commander MCP Contributors
+ */
+
 import { z } from "zod";
 
 console.error("Loading schemas.ts");
