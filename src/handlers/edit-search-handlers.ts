@@ -1,5 +1,4 @@
 import {
-    parseEditBlock,
     performSearchReplace
 } from '../tools/edit.js';
 
@@ -21,13 +20,13 @@ import {createErrorResponse} from '../error-handlers.js';
  */
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     const parsed = EditBlockArgsSchema.parse(args);
-    const {filePath, searchReplace, error} = await parseEditBlock(parsed.blockContent);
+    
+    const searchReplace = {
+        search: parsed.old_string,
+        replace: parsed.new_string
+    };
 
-    if (error) {
-        return createErrorResponse(error);
-    }
-
-    return performSearchReplace(filePath, searchReplace);
+    return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
 }
 
 /**

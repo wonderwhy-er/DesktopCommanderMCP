@@ -86,5 +86,8 @@ export const SearchCodeArgsSchema = z.object({
 
 // Edit tools schemas
 export const EditBlockArgsSchema = z.object({
-  blockContent: z.string(),
+  file_path: z.string(),
+  old_string: z.string(),
+  new_string: z.string(),
+  expected_replacements: z.number().optional().default(1),
 });

@@ -179,7 +179,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "edit_block",
                     description:
-                        "Apply surgical text replacements to files. Best for small changes (<20% of file size). Call repeatedly to change multiple blocks. Will verify changes after application. IMPORTANT: Absolute paths are recommended for the file path to ensure clarity and reliability. Format:\nfilepath\n<<<<<<< SEARCH\ncontent to find\n=======\nnew content\n>>>>>>> REPLACE",
+                        "Apply surgical text replacements to files. Best for small changes (<20% of file size). Takes file_path, old_string (text to replace), new_string (replacement text), and optional expected_replacements parameter. By default, replaces only ONE occurrence of the search text. To replace multiple occurrences, provide the expected_replacements parameter with the exact number of matches expected. UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), make sure your old_string uniquely identifies what you want to change by including 3-5 lines of context before and after the change point, with exact whitespace and indentation. IMPORTANT: Absolute paths are recommended for the file_path to ensure clarity and reliability.",
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },
             ],
