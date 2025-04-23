@@ -1,13 +1,29 @@
 import { readFile, writeFile } from './filesystem.js';
 import { ServerResult } from '../types.js';
+import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
+import { capture } from '../utils.js';
 
 interface SearchReplace {
     search: string;
     replace: string;
 }
 
+interface FuzzyMatch {
+    start: number;
+    end: number;
+    value: string;
+    distance: number;
+    similarity: number;
+}
+
+/**
+ * Threshold for fuzzy matching - similarity must be at least this value to be considered
+ * (0-1 scale where 1 is perfect match and 0 is completely different)
+ */
+const FUZZY_THRESHOLD = 0.7;
+
 export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
-    // Read file as plain string (don't pass true to get just the string)
+    // Read file as plain string
     const {content} = await readFile(filePath);
     
     // Make sure content is a string
@@ -15,7 +31,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         throw new Error('Wrong content for file ' + filePath);
     }
     
-    // Count occurrences to check uniqueness or match expected replacements
+    // First try exact match
     let tempContent = content;
     let count = 0;
     let pos = tempContent.indexOf(block.search);
@@ -25,12 +41,35 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         pos = tempContent.indexOf(block.search, pos + 1);
     }
     
-    // Check if we have the expected number of replacements
-    if (count === 0) {
+    // If exact match found and count matches expected replacements, proceed with exact replacement
+    if (count > 0 && count === expectedReplacements) {
+        // Replace all occurrences
+        let newContent = content;
+        
+        // If we're only replacing one occurrence, replace it directly
+        if (expectedReplacements === 1) {
+            const searchIndex = newContent.indexOf(block.search);
+            newContent = 
+                newContent.substring(0, searchIndex) + 
+                block.replace + 
+                newContent.substring(searchIndex + block.search.length);
+        } else {
+            // Replace all occurrences using split and join for multiple replacements
+            newContent = newContent.split(block.search).join(block.replace);
+        }
+        
+        await writeFile(filePath, newContent);
+        
         return {
-            content: [{ type: "text", text: `Search content not found in ${filePath}.` }],
+            content: [{ 
+                type: "text", 
+                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}` 
+            }],
         };
-    } else if (count !== expectedReplacements) {
+    }
+    
+    // If exact match found but count doesn't match expected, inform the user
+    if (count > 0 && count !== expectedReplacements) {
         return {
             content: [{ 
                 type: "text", 
@@ -41,29 +80,106 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         };
     }
     
-    // Replace all occurrences
-    let newContent = content;
-    
-    // If we're only replacing one occurrence, replace it directly
-    if (expectedReplacements === 1) {
-        const searchIndex = newContent.indexOf(block.search);
-        newContent = 
-            newContent.substring(0, searchIndex) + 
-            block.replace + 
-            newContent.substring(searchIndex + block.search.length);
-    } else {
-        // Replace all occurrences using split and join for multiple replacements
-        newContent = newContent.split(block.search).join(block.replace);
+    // If exact match not found, try fuzzy search
+    if (count === 0) {
+        // Track fuzzy search time
+        const startTime = performance.now();
+        
+        // Perform fuzzy search
+        const fuzzyResult = recursiveFuzzyIndexOf(content, block.search);
+        const similarity = getSimilarityRatio(block.search, fuzzyResult.value);
+        
+        // Calculate execution time in milliseconds
+        const executionTime = performance.now() - startTime;
+        
+        // Check if the fuzzy match is "close enough"
+        if (similarity >= FUZZY_THRESHOLD) {
+            // Format differences for clearer output
+            const diff = highlightDifferences(block.search, fuzzyResult.value);
+            
+            // Capture the fuzzy search event
+            capture('server_fuzzy_search_performed', {
+                similarity: similarity,
+                execution_time_ms: executionTime,
+                search_length: block.search.length,
+                file_size: content.length,
+                threshold: FUZZY_THRESHOLD,
+                found_text_length: fuzzyResult.value.length
+            });
+            
+            // If we allow fuzzy matches, we would make the replacement here
+            // For now, we'll return a detailed message about the fuzzy match
+            return {
+                content: [{ 
+                    type: "text", 
+                    text: `Exact match not found, but found a similar text with ${Math.round(similarity * 100)}% similarity (found in ${executionTime.toFixed(2)}ms):\n\n` +
+                          `Search string: "${block.search}"\n` +
+                          `Found: "${fuzzyResult.value}"\n\n` +
+                          `Differences:\n${diff}\n\n` +
+                          `To replace this text, use the exact text found in the file.`
+                }],
+            };
+        } else {
+            // If the fuzzy match isn't close enough
+            // Still capture the fuzzy search event even for unsuccessful matches
+            capture('fuzzy_search_performed', {
+                similarity: similarity,
+                execution_time_ms: executionTime,
+                search_length: block.search.length,
+                file_size: content.length,
+                threshold: FUZZY_THRESHOLD,
+                found_text_length: fuzzyResult.value.length,
+                file_path: filePath,
+                below_threshold: true
+            });
+            
+            return {
+                content: [{ 
+                    type: "text", 
+                    text: `Search content not found in ${filePath}. The closest match was "${fuzzyResult.value}" ` +
+                          `with only ${Math.round(similarity * 100)}% similarity, which is below the ${Math.round(FUZZY_THRESHOLD * 100)}% threshold. ` +
+                          `(Fuzzy search completed in ${executionTime.toFixed(2)}ms)`
+                }],
+            };
+        }
     }
     
-    await writeFile(filePath, newContent);
-    
+    // This should never happen, but return a generic error just in case
     return {
-        content: [{ 
-            type: "text", 
-            text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}` 
-        }],
+        content: [{ type: "text", text: `Unexpected error during search and replace operation.` }],
     };
 }
 
-// Function removed as it's no longer needed with direct parameter passing
+/**
+ * Highlights differences between the expected string and the actual string found
+ * @param expected The string that was searched for
+ * @param actual The string that was found
+ * @returns A formatted string showing the differences
+ */
+function highlightDifferences(expected: string, actual: string): string {
+    // Simple character-by-character comparison
+    let result = '';
+    const maxLen = Math.max(expected.length, actual.length);
+    
+    let expectedLine = '';
+    let diffLine = '';
+    let actualLine = '';
+    
+    for (let i = 0; i < maxLen; i++) {
+        const expChar = i < expected.length ? expected[i] : '';
+        const actChar = i < actual.length ? actual[i] : '';
+        
+        expectedLine += expChar || ' ';
+        actualLine += actChar || ' ';
+        
+        if (expChar === actChar) {
+            diffLine += ' ';
+        } else {
+            diffLine += '^';
+        }
+    }
+    
+    return `Expected: "${expectedLine}"\n` +
+           `Diff:     "${diffLine}"\n` +
+           `Actual:   "${actualLine}"`;
+}
