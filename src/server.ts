@@ -122,55 +122,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "read_file",
                     description:
-                        "Read the complete contents of a file from the file system or a URL. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP.",
+                        "Read the complete contents of a file from the file system or a URL. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. IMPORTANT: Absolute paths are recommended for clarity and reliability.",
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {
                     name: "read_multiple_files",
                     description:
-                        "Read the contents of multiple files simultaneously. Each file's content is returned with its path as a reference. Handles text files normally and renders images as viewable content. Recognized image types: PNG, JPEG, GIF, WebP. Failed reads for individual files won't stop the entire operation. Only works within allowed directories.",
+                        "Read the contents of multiple files simultaneously. Each file's content is returned with its path as a reference. Handles text files normally and renders images as viewable content. Recognized image types: PNG, JPEG, GIF, WebP. Failed reads for individual files won't stop the entire operation. Only works within allowed directories. IMPORTANT: Absolute paths are recommended for all file paths to ensure clarity and reliability.",
                     inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
                 },
                 {
                     name: "write_file",
                     description:
-                        "Completely replace file contents. Best for large changes (>20% of file) or when edit_block fails. Use with caution as it will overwrite existing files. Only works within allowed directories.",
+                        "Completely replace file contents. Best for large changes (>20% of file) or when edit_block fails. Use with caution as it will overwrite existing files. Only works within allowed directories. IMPORTANT: Absolute paths are recommended for clarity and reliability.",
                     inputSchema: zodToJsonSchema(WriteFileArgsSchema),
                 },
                 {
                     name: "create_directory",
                     description:
-                        "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. Only works within allowed directories.",
+                        "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. Only works within allowed directories. IMPORTANT: Absolute paths are recommended for clarity and reliability.",
                     inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
                 },
                 {
                     name: "list_directory",
                     description:
-                        "Get a detailed listing of all files and directories in a specified path. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories.",
+                        "Get a detailed listing of all files and directories in a specified path. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories. IMPORTANT: Absolute paths are recommended for clarity and reliability.",
                     inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
                 },
                 {
                     name: "move_file",
                     description:
-                        "Move or rename files and directories. Can move files between directories and rename them in a single operation. Both source and destination must be within allowed directories.",
+                        "Move or rename files and directories. Can move files between directories and rename them in a single operation. Both source and destination must be within allowed directories. IMPORTANT: Absolute paths are recommended for both source and destination to ensure clarity and reliability.",
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
                 },
                 {
                     name: "search_files",
                     description:
-                        "Finds files by name using a case-insensitive substring matching. Searches through all subdirectories from the starting path. Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. Only searches within allowed directories.",
+                        "Finds files by name using a case-insensitive substring matching. Searches through all subdirectories from the starting path. Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. Only searches within allowed directories. IMPORTANT: Absolute paths are recommended for the starting directory to ensure clarity and reliability.",
                     inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
                 },
                 {
                     name: "search_code",
                     description:
-                        "Search for text/code patterns within file contents using ripgrep. Fast and powerful search similar to VS Code search functionality. Supports regular expressions, file pattern filtering, and context lines. Has a default timeout of 30 seconds which can be customized. Only searches within allowed directories.",
+                        "Search for text/code patterns within file contents using ripgrep. Fast and powerful search similar to VS Code search functionality. Supports regular expressions, file pattern filtering, and context lines. Has a default timeout of 30 seconds which can be customized. Only searches within allowed directories. IMPORTANT: Absolute paths are recommended for the starting directory to ensure clarity and reliability.",
                     inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
                 },
                 {
                     name: "get_file_info",
                     description:
-                        "Retrieve detailed metadata about a file or directory including size, creation time, last modified time, permissions, and type. Only works within allowed directories.",
+                        "Retrieve detailed metadata about a file or directory including size, creation time, last modified time, permissions, and type. Only works within allowed directories. IMPORTANT: Absolute paths are recommended for clarity and reliability.",
                     inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
                 },
                 // Note: list_allowed_directories removed - use get_config to check allowedDirectories
@@ -179,7 +179,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "edit_block",
                     description:
-                        "Apply surgical text replacements to files. Best for small changes (<20% of file size). Call repeatedly to change multiple blocks. Will verify changes after application. Format:\nfilepath\n<<<<<<< SEARCH\ncontent to find\n=======\nnew content\n>>>>>>> REPLACE",
+                        "Apply surgical text replacements to files. Best for small changes (<20% of file size). Call repeatedly to change multiple blocks. Will verify changes after application. IMPORTANT: Absolute paths are recommended for the file path to ensure clarity and reliability. Format:\nfilepath\n<<<<<<< SEARCH\ncontent to find\n=======\nnew content\n>>>>>>> REPLACE",
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },
             ],
