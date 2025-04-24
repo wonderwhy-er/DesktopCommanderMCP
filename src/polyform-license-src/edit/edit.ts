@@ -32,6 +32,16 @@ interface FuzzyMatch {
 const FUZZY_THRESHOLD = 0.7;
 
 export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
+    // Check for empty search string to prevent infinite loops
+    if (block.search === "") {
+        return {
+            content: [{ 
+                type: "text", 
+                text: "Empty search strings are not allowed. Please provide a non-empty string to search for."
+            }],
+        };
+    }
+
     // Read file as plain string
     const {content} = await readFile(filePath);
     

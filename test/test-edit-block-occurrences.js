@@ -6,6 +6,8 @@
  * 2. Testing failure when fewer occurrences than expected
  * 3. Testing success when exactly the right number of occurrences
  * 4. Testing context-specific replacements
+ * 5. Testing handling of non-existent patterns
+ * 6. Testing handling of empty search strings
  */
 
 import { configManager } from '../dist/config-manager.js';
@@ -275,6 +277,35 @@ async function testNonExistentPattern() {
 }
 
 /**
+ * Test case for empty search string
+ */
+async function testEmptySearchString() {
+  console.log('\nTest 6: Empty search string');
+  
+  try {
+    // Try to use an empty search string
+    const result = await handleEditBlock({
+      file_path: CONTEXT_TEST_FILE,
+      old_string: '',
+      new_string: 'This replacement should not be applied.',
+      expected_replacements: 1
+    });
+    
+    // Check that we got the appropriate error message
+    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
+    assert.ok(
+      result.content[0].text.includes('Empty search strings are not allowed'),
+      'Should report that empty search strings are not allowed'
+    );
+    
+    console.log('✓ Test correctly rejected empty search string');
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+    throw error;
+  }
+}
+
+/**
  * Main test function
  */
 async function runEditBlockOccurrencesTests() {
@@ -294,6 +325,9 @@ async function runEditBlockOccurrencesTests() {
   
   // Test 5: Non-existent pattern
   await testNonExistentPattern();
+  
+  // Test 6: Empty search string
+  await testEmptySearchString();
   
   console.log('\n✅ All edit_block multiple occurrences tests passed!');
 }
