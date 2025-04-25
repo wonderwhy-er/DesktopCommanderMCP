@@ -132,8 +132,6 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
                 content: [{ 
                     type: "text", 
                     text: `Exact match not found, but found a similar text with ${Math.round(similarity * 100)}% similarity (found in ${executionTime.toFixed(2)}ms):\n\n` +
-                          `Search string: "${block.search}"\n` +
-                          `Found: "${fuzzyResult.value}"\n\n` +
                           `Differences:\n${diff}\n\n` +
                           `To replace this text, use the exact text found in the file.`
                 }],
@@ -170,35 +168,38 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
 }
 
 /**
- * Highlights differences between the expected string and the actual string found
+ * Generates a character-level diff using standard {-removed-}{+added+} format
  * @param expected The string that was searched for
  * @param actual The string that was found
- * @returns A formatted string showing the differences
+ * @returns A formatted string showing character-level differences
  */
 function highlightDifferences(expected: string, actual: string): string {
-    // Simple character-by-character comparison
-    let result = '';
-    const maxLen = Math.max(expected.length, actual.length);
+    // Implementation of a simplified character-level diff
     
-    let expectedLine = '';
-    let diffLine = '';
-    let actualLine = '';
-    
-    for (let i = 0; i < maxLen; i++) {
-        const expChar = i < expected.length ? expected[i] : '';
-        const actChar = i < actual.length ? actual[i] : '';
-        
-        expectedLine += expChar || ' ';
-        actualLine += actChar || ' ';
-        
-        if (expChar === actChar) {
-            diffLine += ' ';
-        } else {
-            diffLine += '^';
-        }
+    // Find common prefix and suffix
+    let prefixLength = 0;
+    const minLength = Math.min(expected.length, actual.length);
+
+    // Determine common prefix length
+    while (prefixLength < minLength &&
+           expected[prefixLength] === actual[prefixLength]) {
+        prefixLength++;
+    }
+
+    // Determine common suffix length
+    let suffixLength = 0;
+    while (suffixLength < minLength - prefixLength &&
+           expected[expected.length - 1 - suffixLength] === actual[actual.length - 1 - suffixLength]) {
+        suffixLength++;
     }
     
-    return `Expected: "${expectedLine}"\n` +
-           `Diff:     "${diffLine}"\n` +
-           `Actual:   "${actualLine}"`;
+    // Extract the common and different parts
+    const commonPrefix = expected.substring(0, prefixLength);
+    const commonSuffix = expected.substring(expected.length - suffixLength);
+
+    const expectedDiff = expected.substring(prefixLength, expected.length - suffixLength);
+    const actualDiff = actual.substring(prefixLength, actual.length - suffixLength);
+
+    // Format the output as a character-level diff
+    return `${commonPrefix}{-${expectedDiff}-}{+${actualDiff}+}${commonSuffix}`;
 }

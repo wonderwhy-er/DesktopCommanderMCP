@@ -10,7 +10,7 @@
 
 [![Product Hunt](https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=948854&theme=light)](https://www.producthunt.com/posts/desktop-commander-mcp)
 
-Short version. Four key things. Terminal commands, diff based file editing, ripgrep based text search in folders, ability to read files from urls 
+Short version: Four key features - Terminal command execution, diff-based file editing, ripgrep-powered text search in folders, and ability to read files from URLs.
 
 
 ![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/header.png)
