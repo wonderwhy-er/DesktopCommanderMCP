@@ -161,9 +161,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         }
     }
     
-    // This should never happen, but return a generic error just in case
-        content: [{ type: "text", text: `Unexpected error during search and replace operation.` }],
-    };
+    throw new Error("Unexpected error during search and replace operation.");
 }
 
 /**
