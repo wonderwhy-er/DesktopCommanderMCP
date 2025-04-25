@@ -139,7 +139,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         } else {
             // If the fuzzy match isn't close enough
             // Still capture the fuzzy search event even for unsuccessful matches
-            capture('fuzzy_search_performed', {
+            capture('server_fuzzy_search_performed', {
                 similarity: similarity,
                 execution_time_ms: executionTime,
                 search_length: block.search.length,
