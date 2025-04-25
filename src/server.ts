@@ -21,12 +21,12 @@ import {
     MoveFileArgsSchema,
     SearchFilesArgsSchema,
     GetFileInfoArgsSchema,
-    EditBlockArgsSchema,
     SearchCodeArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
 } from './tools/schemas.js';
+import { EditBlockArgsSchema } from './polyform-license-src/edit/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 
 import {VERSION} from './version.js';

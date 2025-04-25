@@ -9,7 +9,6 @@ import {
 } from '../tools/search.js';
 
 import {
-    EditBlockArgsSchema,
     SearchCodeArgsSchema
 } from '../tools/schemas.js';
 
@@ -18,7 +17,6 @@ import { handleEnhancedEditBlock } from '../polyform-license-src/edit/handlers.j
 
 import {ServerResult} from '../types.js';
 import {capture, withTimeout} from '../utils.js';
-import {createErrorResponse} from '../error-handlers.js';
 
 /**
  * Handle edit_block command
