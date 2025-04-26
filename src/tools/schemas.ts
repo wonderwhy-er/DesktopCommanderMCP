@@ -1,9 +1,3 @@
-/**
- * SPDX-License-Identifier: MIT
- * 
- * Copyright (c) 2025 Desktope Commander MCP Contributors
- */
-
 import { z } from "zod";
 
 console.error("Loading schemas.ts");
@@ -88,4 +82,12 @@ export const SearchCodeArgsSchema = z.object({
   includeHidden: z.boolean().optional(),
   contextLines: z.number().optional(),
   timeoutMs: z.number().optional(),
+});
+
+// Edit tools schema
+export const EditBlockArgsSchema = z.object({
+  file_path: z.string(),
+  old_string: z.string(),
+  new_string: z.string(),
+  expected_replacements: z.number().optional().default(1),
 });

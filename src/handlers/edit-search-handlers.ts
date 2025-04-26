@@ -1,31 +1,22 @@
-/**
- * SPDX-License-Identifier: MIT
- * 
- * Copyright (c) 2025 Desktope Commander MCP Contributors
- */
-
 import {
     searchTextInFiles
 } from '../tools/search.js';
 
 import {
-    SearchCodeArgsSchema
+    SearchCodeArgsSchema,
+    EditBlockArgsSchema
 } from '../tools/schemas.js';
 
-// Import enhanced edit functionality from polyform-licensed code
-import { handleEnhancedEditBlock } from '../polyform-license-src/edit/handlers.js';
+import { handleEditBlock } from '../tools/edit.js';
 
-import {ServerResult} from '../types.js';
-import {capture, withTimeout} from '../utils.js';
+import { ServerResult } from '../types.js';
+import { capture, withTimeout } from '../utils.js';
 
 /**
  * Handle edit_block command
- * Delegates to the enhanced implementation in the polyform-licensed code
+ * Uses the enhanced implementation with multiple occurrence support and fuzzy matching
  */
-export async function handleEditBlock(args: unknown): Promise<ServerResult> {
-    // Forward the request to the enhanced implementation
-    return handleEnhancedEditBlock(args);
-}
+export { handleEditBlock };
 
 /**
  * Handle search_code command

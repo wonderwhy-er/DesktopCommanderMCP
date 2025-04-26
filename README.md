@@ -293,7 +293,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
-- **23-04-2025 Dual licensing** - Added PolyForm Small Business License for enhanced edit functionality
+- **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
 - **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
 - **14-04-2025 Linux improvements** - Enhanced compatibility with various Linux distributions
@@ -412,9 +412,4 @@ We are currently working on adding a built-in opt-out option for this data colle
 
 ## License
 
-This project is primarily licensed under the MIT License. However, some components use a different license:
-
-- **MIT License:** Most of the codebase is available under the MIT License, allowing for free use, modification, and distribution.
-- **PolyForm Small Business License:** The enhanced edit functionality (fuzzy search, multi-occurrence replacement) in the `src/polyform` directory is available under the PolyForm Small Business License, which is free for companies with fewer than 100 employees and less than $1,000,000 USD in annual revenue.
-
-See the LICENSE file in the root directory and the LICENSE file in the src/polyform directory for complete license details.
+MIT

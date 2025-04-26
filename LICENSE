@@ -19,8 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-NOTE: The enhanced edit functionality in the src/polyform directory is licensed 
-under the PolyForm Small Business License 1.0.0. See the LICENSE file in that 
-directory for the full license text. This subfolder license takes precedence over 
-the MIT license for all code within that directory.

@@ -1,16 +1,8 @@
-/**
- * SPDX-License-Identifier: PolyForm-Small-Business-1.0.0
- * 
- * Copyright (c) 2025 Desktope Commander MCP Contributors
- * 
- * This file is licensed under the PolyForm Small Business License 1.0.0
- * See the LICENSE file in the /src/polyform directory for the full license text.
- */
-
-import { readFile, writeFile } from '../../tools/filesystem.js';
-import { ServerResult } from '../../types.js';
+import { readFile, writeFile } from './filesystem.js';
+import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
-import { capture } from '../../utils.js';
+import { capture } from '../utils.js';
+import {EditBlockArgsSchema, SearchCodeArgsSchema} from "./schemas.js";
 
 interface SearchReplace {
     search: string;
@@ -199,4 +191,21 @@ function highlightDifferences(expected: string, actual: string): string {
 
     // Format the output as a character-level diff
     return `${commonPrefix}{-${expectedDiff}-}{+${actualDiff}+}${commonSuffix}`;
+}
+
+/**
+ * Handle edit_block command with enhanced functionality
+ * - Supports multiple replacements
+ * - Validates expected replacements count
+ * - Provides detailed error messages
+ */
+export async function handleEditBlock(args: unknown): Promise<ServerResult> {
+    const parsed = EditBlockArgsSchema.parse(args);
+    
+    const searchReplace = {
+        search: parsed.old_string,
+        replace: parsed.new_string
+    };
+
+    return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
 }
