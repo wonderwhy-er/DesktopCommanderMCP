@@ -51,6 +51,11 @@
     <!-- Original Logo Reference (keeping for backward compatibility) -->
     <link rel="icon" href="logo.png" type="image/png">
     
+    <!-- Google Fonts - Poppins and Roboto -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet">
+    
     <!-- Structured Data / JSON-LD -->
     <script type="application/ld+json">
         {
@@ -65,7 +70,7 @@
                 "priceCurrency": "USD"
             },
             "description": "Desktop Commander MCP is an open-source tool that enables terminal command execution and file editing directly through the Claude Desktop app.",
-            "downloadUrl": "https://github.com/wonderwhy-er/ClaudeDesktopCommander",
+            "downloadUrl": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
             "softwareVersion": "1.0.0",
             "author": {
                 "@type": "Organization",
@@ -90,7 +95,8 @@
     <link rel="preload" href="css/header.css" as="style">
     <link rel="preload" href="css/hero.css" as="style">
     <link rel="preload" href="css/base.css" as="style">
-    <link rel="preload" href="optimized_images/header.webp" as="image">
+    <link rel="preload" href="cropped_video.mp4" as="video" type="video/mp4" media="(min-width: 768px)">
+    <link rel="preload" href="vertical_video_mobile.mp4" as="video" type="video/mp4" media="(max-width: 767px)">
     <link rel="preload" href="optimized_images/logo.webp" as="image">
     <!-- Preload critical fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -105,18 +111,20 @@
         :root {
             --text-color-high-contrast: #f8f9fa;
             --section-text-color: #121212;
-            --primary-color: #171717;
+            --primary-color: #0A0A0A;
             --light-text: #ffffff;
-            --accent-color: #5865F2;
+            --accent-color: #0078D7;
+            --super-black: #0A0A0A;
         }
         /* Set body with no margin to prevent shifts */
         body { 
             margin: 0; 
             padding: 0; 
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            font-family: 'Poppins', 'Roboto', Helvetica, Arial, sans-serif; 
             overflow-x: hidden;
             width: 100%;
             max-width: 100vw;
+            font-weight: 300;
         }
         /* Critical container dimensions that prevent layout shifts */
         .container { 
@@ -129,7 +137,7 @@
         }
         /* Set fixed header height to prevent jumps */
         header {
-            background: #171717;
+            background: #000000;
             color: #ffffff;
             padding: 20px 0;
             position: fixed;
@@ -139,6 +147,19 @@
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
             height: 80px;
             box-sizing: border-box;
+            overflow: visible;
+        }
+        .header-cta-btn {
+            background-color: #0078D7; 
+            color: white; 
+            padding: 8px 15px; 
+            border-radius: 5px; 
+            text-decoration: none; 
+            font-weight: 300;
+        }
+        .header-cta-btn:hover {
+            color: white;
+            background-color: #0056a0;
         }
         /* Constrain header layout */
         .header-container { 
@@ -147,75 +168,312 @@
             justify-content: space-between; 
             padding: 0;
             height: 40px;
+            overflow: visible;
         }
-        /* Set hero section height and margin */
+        /* Set hero section height and margin to accommodate video size */
         .hero {
-            background: #171717;
+            background: #000000;
             min-height: 90vh;
-            margin-top: 80px;
+            margin-top: 0; /* Removed margin as promotion bar handles spacing */
             padding: 40px 0 60px 0;
             display: flex;
             align-items: center;
             box-sizing: border-box;
         }
-        /* Reserve space for hero image */
+        
+        .hero-wrapper {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            width: 100%;
+            gap: 30px; /* Add some space between elements */
+        }
+        /* Improved hero container for better video fit */
         .hero-image-container {
             flex: 1;
             display: flex;
             justify-content: flex-end;
             align-items: center;
-            height: 450px;
+            min-height: 600px; /* Taller to accommodate video */
+            padding-top: 80px;
+            position: relative;
+            z-index: 1;
         }
-        /* Make sure image has explicit dimensions */
-        .hero-header-image { 
-            max-width: 100%; 
-            height: auto;
-            width: auto;
-            border-radius: 8px;
+        /* Enhanced video styling to ensure proper fit */
+        .hero-header-video { 
+            width: 960px; /* Default width for desktop */
+            height: auto; /* Maintain aspect ratio */
+            max-width: 100%; /* Ensure responsiveness */
+            border-radius: 12px;
+            display: block; /* Proper display behavior */
+            object-fit: cover; /* Ensure video covers container */
+        }
+        
+        
+        .video-glow-wrapper {
+            position: relative;
+            display: inline-block;
+            border-radius: 12px;
+            overflow: hidden;
+            max-width: 100%;
+        }
+        
+        .video-glow-wrapper::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 12px;
+            z-index: -1;
         }
         /* Constrain content area dimensions */
         .hero-content {
             flex: 1;
-            max-width: 550px;
+            max-width: 650px;
         }
         /* Set font sizes explicitly */
-        .hero h1 {
-            font-size: 2.8rem;
-            margin-bottom: 20px;
-            line-height: 1.2;
-            max-width: 100%;
-            word-wrap: break-word;
-        }
         .hero p {
             font-size: 1.1rem;
             margin-bottom: 25px;
             line-height: 1.5;
         }
-        /* Discord button explicit styling */
-        .discord-btn {
+        /* Button styling */
+        .primary-btn, .secondary-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
             gap: 10px;
-            background-color: #5865F2;
-            font-weight: 600;
+            font-weight: 300;
             padding: 12px 24px;
             color: white;
             text-decoration: none;
             border-radius: 10px;
         }
+        
+        .primary-btn {
+            background-color: #0078D7;
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 120, 215, 0.25);
+            font-weight: 300;
+        }
+        
+        .primary-btn:hover {
+            background-color: #0056a0;
+            box-shadow: 0 6px 12px rgba(0, 120, 215, 0.35);
+        }
+        
+        .secondary-btn {
+            background-color: transparent;
+            border: 2px solid #ffffff;
+            font-weight: 300;
+        }
+        
+        .contact-btn:hover {
+            background-color: #0056a0 !important;
+        }
+        
+        /* Promotion Bar Styles */
+        .promotion-bar {
+            background-color: #0078D7;
+            padding: 8px 0;
+            color: white;
+            text-align: center;
+            margin-top: 80px; /* Same as header height */
+        }
+        
+        .promotion-content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        
+        @media (max-width: 768px) {
+            .header-cta-btn {
+                display: none;
+            }
+            
+            .promotion-bar {
+                margin-top: 60px;
+            }
+            
+            #command-counter {
+                font-size: 1.2rem;
+            }
+            .command-counter-number {
+                font-size: 1.2rem;
+            }
+            
+            .counter-label {
+                font-size: 0.9rem;
+            }
+            
+            .hero-wrapper {
+                flex-direction: column;
+            }
+            
+            .hero-image-container {
+                margin-top: 30px;
+                justify-content: center;
+            }
+            
+            .hero-header-video {
+                width: 100%;
+                max-width: 90%;
+                height: auto;
+                max-height: 80vh; /* Limit height on mobile */
+            }
+            
+            .video-glow-wrapper {
+                width: 100%;
+                text-align: center;
+                margin: 0 auto;
+            }
+            
+            .hero-image-container {
+                min-height: auto;
+                justify-content: center;
+                padding: 40px 0;
+            }
+            
+            .hero-image-container {
+                height: auto;
+                justify-content: center;
+            }
+            
+            .hero-image-container {
+                height: auto;
+                padding: 30px 0;
+            }
+        }
         /* Improve contrast for section text */
         .section-title p, .feature-card p, .how-it-works p,
-        .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 500; }
+        .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 300; }
         /* Improve contrast for buttons and links */
-        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 600; }
+        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 300; }
         /* Additional contrast improvements */
-        .feature-card h3, .community-card h3, .accordion-header span { color: #121212; }
-        .accordion-body p, .accordion-body li { color: #121212; }
-        .discord-community-container p { color: #121212; font-weight: 500; }
-        .footer-column p { color: #e6e6e6; font-weight: 500; }
-        .download-card h3 { color: #ffffff; font-weight: 600; }
-        .download-card p { color: #f8f9fa; font-weight: 500; }
+        .feature-card h3, .community-card h3, .accordion-header span { color: #121212; font-weight: 300; }
+        .accordion-body p, .accordion-body li { color: #121212; font-weight: 300; }
+        .discord-community-container p { color: #121212; font-weight: 300; }
+        .footer-column p { color: #e6e6e6; font-weight: 300; }
+        .download-card h3 { color: #ffffff; font-weight: 300; }
+        .download-card p { color: #f8f9fa; font-weight: 300; }
+        
+        /* Segments Section Styles */
+        .segments-section {
+            background-color: #f8f9fa;
+            padding: 80px 0;
+        }
+        
+        .segments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .segment-card {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+            padding: 30px 25px;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .segment-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .segment-icon {
+            margin-bottom: 20px;
+            color: #0078D7;
+        }
+        
+        .segment-card h3 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            color: #171717;
+            font-weight: 300;
+        }
+        
+        .segment-card p {
+            margin-bottom: 20px;
+            color: #555;
+            font-weight: 300;
+        }
+        
+        .segment-jobs {
+            margin-bottom: 20px;
+        }
+        
+        .segment-jobs ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .segment-jobs li {
+            position: relative;
+            padding-left: 25px;
+            margin-bottom: 8px;
+            color: #444;
+        }
+        
+        .segment-jobs li:before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #0078D7;
+        }
+        
+        .segment-link {
+            display: inline-block;
+            padding: 8px 20px;
+            background-color: transparent;
+            border: 1px solid #0078D7;
+            color: #0078D7;
+            font-weight: 300;
+            border-radius: 5px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            text-align: center;
+            margin-top: auto;
+        }
+
+        .segment-card {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .segment-card .segment-jobs {
+            flex-grow: 0;
+        }
+
+        .segment-card .segment-link {
+            margin-top: auto;
+        }
+        
+        .segment-link:hover {
+            background-color: #0078D7;
+            color: #ffffff;
+        }
+        
+        .segments-cta {
+            text-align: center;
+            margin-top: 50px;
+        }
+        
+        @media (max-width: 768px) {
+            .segments-grid {
+                grid-template-columns: 1fr;
+            }
+        }
 
         /* Pre-set dimensions for nav menu to prevent shifts */
         nav ul {
@@ -226,11 +484,95 @@
         }
         nav ul li {
             margin-left: 30px;
+            position: relative;
         }
         nav ul li a {
             color: white;
             text-decoration: none;
-            font-weight: 500;
+            font-weight: 300;
+            display: flex;
+            align-items: center;
+        }
+        /* Dropdown styles */
+        .dropdown-toggle svg {
+            margin-left: 5px;
+            transition: transform 0.3s ease;
+        }
+        .dropdown:hover .dropdown-toggle svg {
+            transform: rotate(180deg);
+        }
+        nav .dropdown {
+            position: relative;
+        }
+        .dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--super-black);
+            min-width: 180px;
+            border-radius: 5px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.3s ease;
+            padding: 10px 0;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            display: block;
+            margin-top: 5px;
+        }
+        .dropdown:hover .dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .dropdown-menu li {
+            margin: 0 !important;
+            width: 100%;
+            padding: 0;
+        }
+        .dropdown-menu li a {
+            padding: 8px 15px;
+            display: block;
+            color: white;
+            font-weight: 300;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+        .dropdown-menu li a:hover {
+            background: rgba(255, 255, 255, 0.1);
+            padding-left: 20px;
+        }
+        .dropdown-menu li a::after {
+            display: none;
+        }
+        /* Mobile dropdown styles will be addressed in responsive CSS */
+        @media (max-width: 768px) {
+            .dropdown-menu {
+                position: static;
+                background: transparent;
+                box-shadow: none;
+                display: none;
+                opacity: 1;
+                visibility: visible;
+                transform: none;
+                transition: none;
+                padding: 0 0 0 20px;
+                width: 100%;
+            }
+            .dropdown-menu li {
+                margin: 10px 0 !important;
+            }
+            .dropdown-menu li a {
+                padding: 5px 0;
+            }
+            .dropdown-menu li a:hover {
+                background: transparent;
+                padding-left: 5px;
+            }
+            .dropdown.active .dropdown-menu {
+                display: block;
+            }
         }
         /* Badge sizing */
         .badges {
@@ -243,6 +585,31 @@
         }
         .badges img {
             height: 20px;
+        }
+
+        /* Typing effect styles */
+        .dynamic-title-container {
+            width: 100%;
+            text-align: left;
+        }
+        .dynamic-title {
+            margin-top: 0;
+            text-align: left;
+            font-weight: 300;
+        }
+        .typed-text {
+            display: inline;
+        }
+        .cursor {
+            display: inline-block;
+            width: 3px;
+            background-color: #ffffff;
+            margin-left: 2px;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
         }
     /* Copy button styles - only for installation section */
     #installation .pre-container {
@@ -287,6 +654,37 @@
         margin-top: 0 !important;
         margin-bottom: 0 !important;
     }
+    
+    
+    .discord-btn {
+        display: inline-flex; 
+        align-items: center; 
+        gap: 10px; 
+        padding: 10px 20px; 
+        border-radius: 6px; 
+        background-color: #0078D7; 
+        color: white; 
+        text-decoration: none; 
+        font-weight: 300;
+    }
+
+    .discord-btn:hover {
+        background-color: #0056a0;
+        color: white; 
+    }
+    
+    
+    .featured-btn {
+        background-color: #0078D7;
+        border-color: #0078D7;
+        color: #ffffff;
+    }
+    
+    .featured-btn:hover {
+        color: #ffffff;
+        background-color: #0056a0;
+        border-color: #0056a0;
+    }
     </style>
 </head>
 <body>
@@ -298,167 +696,272 @@
                 <span style="margin-left: 5px;">DesktopCommander</span>
             </a>
             
-            <div class="mobile-menu-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-            </div>
-            
-            <nav>
+            <div class="header-right">
+                <nav>
                 <ul>
-                    <li><a href="#features">Features</a></li>
+                    <li class="dropdown">
+                        <a href="#cases" class="dropdown-toggle">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
+                        <ul class="dropdown-menu">
+                            <li><a href="#cases-software">Software Engineer</a></li>
+                            <li><a href="#cases-devops">DevOps</a></li>
+                            <li><a href="#cases-writer">Technical Writer</a></li>
+                            <li><a href="#cases-uxui">UX/UI Designer</a></li>
+                        </ul>
+                    </li>
                     <li><a href="#installation">Installation</a></li>
-                    <li><a href="#usage">Usage</a></li>
-                    <li><a href="#media">Media</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
-                    <li><a href="#faq">FAQ</a></li>
+                    <li class="dropdown">
+                        <a href="#" class="dropdown-toggle">Resources <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
+                        <ul class="dropdown-menu">
+                            
+                            <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank">Join Discord</a></li>
+                            <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GITHUB</a></li>
+                            <li><a href="#media">Media</a></li>
+                            <li><a href="#faq">FAQ</a></li>
+                        </ul>
+                    </li>
                 </ul>
-            </nav>
+                </nav>
+                <a href="#installation" class="header-cta-btn">Install</a>
+                <div class="mobile-menu-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </div>
+            </div>
         </div>
     </header>
+
+
+    <!-- Promotion Counter Bar
+    <div class="promotion-bar">
+        <div class="container">
+            <div class="promotion-content">
+                <div class="counter-wrapper">
+                    <span class="counter-label" >More than <span class="command-counter-number">4000</span> users trust DesktopCommander. More than </span>
+                    <span id="command-counter">1,000,000</span>
+                    <span class="counter-label">commands executed</span>
+                </div>
+            </div>
+        </div>
+    </div> -->
 
     <!-- Hero Section -->
     <section class="hero">
         <div class="container">
             <div class="hero-wrapper">
                 <div class="hero-content">
-                    <h1>Search, update, manage files and run terminal commands with AI</h1>
-                    <p style="color: #f0f0f0; font-weight: 500;">Execute terminal commands and edit files with Claude AI. Terminal commands and diff based file editing for Claude Desktop app.</p>
+                    <div class="dynamic-title-container">
+                        <h1 class="dynamic-title">Your personal<br />AI <span class="typed-text"></span><span class="cursor">&nbsp;</span><br />without token costs</h1>
+                    </div>
+                    <p style="color: #f0f0f0; font-weight: 300;">Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.</p>
                     <div class="badges">
                         <div class="badge-row">
                             <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank">
                                 <img src="https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander" alt="npm downloads">
                             </a>
-                            <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank">
-                                <img src="https://img.shields.io/github/stars/wonderwhy-er/ClaudeComputerCommander?style=flat" alt="GitHub stars">
+                            <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">
+                                <img src="https://img.shields.io/github/stars/wonderwhy-er/DesktopCommanderMCP?style=flat" alt="GitHub stars">
                             </a>
                             <a href="https://smithery.ai/server/@wonderwhy-er/desktop-commander" target="_blank">
                                 <img src="https://smithery.ai/badge/@wonderwhy-er/desktop-commander" alt="smithery badge">
                             </a>
                         </div>
-                        <div class="badge-row" style="margin-top: 8px;">
-                            <img src="https://img.shields.io/badge/Commands%20Run-220388-blue" alt="Commands Run" width="140" height="20">
-                            <img src="https://img.shields.io/badge/Files%20Read-94821-green" alt="Files Read" width="140" height="20">
-                            <img src="https://img.shields.io/badge/Files%20Edited-98450-orange" alt="Files Edited" width="140" height="20">
-                            <img src="https://img.shields.io/badge/Files%20Created-74845-purple" alt="Files Created" width="140" height="20">
-                        </div>
-
                     </div>
                     <div class="hero-btns">
-                        <a href="https://discord.gg/kQ27sNnZr7" class="btn discord-btn" style="background-color: #5865F2;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                        <a href="#installation" class="btn primary-btn blue_btn">
+                            INSTALL
+                        </a>
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn secondary-btn contact-btn" style="background-color: transparent; border: 2px solid #ffffff; color: #ffffff;">
                             JOIN DISCORD
                         </a>
-                        <div class="badge-row" style="margin-top: 8px;">
-                            <a href="https://www.producthunt.com/posts/desktop-commander-mcp?embed=true&utm_source=badge-featured&utm_medium=badge&utm_souce=badge-desktop&#0045;commander&#0045;mcp" target="_blank"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=948854&theme=light&t=1744097111340" alt="Desktop&#0032;Commander&#0032;MCP - Give&#0032;Claude&#0032;it&#0032;Full&#0032;Access&#0032;to&#0032;Your&#0032;Local&#0032;Files&#0032;&#0038;&#0032;Terminal | Product Hunt" style="width: 250px; height: 54px;" width="250" height="54" /></a>
-                        </div>
-                    </div>
-                    <div class="hero-bottom-links">
-                        <a href="#installation" class="text-link">INSTALLATION GUIDE</a>
-                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" class="text-link" target="_blank">VIEW ON GITHUB</a>
                     </div>
                 </div>
                 <div class="hero-image-container">
-                    <div class="image-glow-wrapper">
-                        <img src="optimized_images/header.webp" alt="Desktop Commander Interface" class="hero-header-image">
+                    <div class="video-glow-wrapper">
+                        <video autoplay loop muted playsinline class="hero-header-video">
+                            <source src="cropped_video.mp4" type="video/mp4" media="(min-width: 768px)">
+                            <source src="vertical_video_mobile.mp4" type="video/mp4" media="(max-width: 767px)">
+                            Your browser does not support the video tag.
+                        </video>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Features Section -->
-    <section class="features" id="features">
+    <!-- Platform Benefits Section -->
+    <section class="platform-benefits-section">
         <div class="container">
-            <div class="section-title">
-                <h2>Features</h2>
-                <p style="color: #121212; font-weight: 500;">Desktop Commander MCP provides powerful tools for terminal and file operations</p>
+            <h2>All of your AI development tools in one place</h2>
+            <p class="section-subtitle">No need to buy separate tools for coding, file access, terminal commands, DevOps, and automation. Desktop Commander puts it all in one chat.</p>
+            
+            <div class="explore-button">
+                <a href="#cases" class="btn">Explore use cases</a>
             </div>
             
-            <div class="features-grid">
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-terminal"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+            <div class="benefits-grid">
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                     </div>
-                    <h3>Terminal Command Execution</h3>
-                    <p>Execute terminal commands with output streaming directly from Claude Desktop app.</p>
+                    <h3>Local file storage and processing</h3>
+                    <p>All your files remain safely on your local machine. Only the necessary data is sent to Claude's LLM for processing and analysis.</p>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-clock"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
                     </div>
-                    <h3>Long-Running Commands</h3>
-                    <p>Support for command timeout and background execution for extended operations.</p>
+                    <h3>Unlimited token access</h3>
+                    <p>Work without worrying about API token limits or per-token costs. Use Desktop Claude client to gain access to unlimited tokens. We recommend Claude Max subscription for the best experience.</p>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-activity"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
                     </div>
-                    <h3>Process Management</h3>
-                    <p>List and kill processes directly through Claude's interface.</p>
+                    <h3>Smart file system integration</h3>
+                    <p>Claude understands your project structure with intelligent file search and can make precise surgical changes to your codebase.</p>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file-text"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                     </div>
-                    <h3>File Operations</h3>
-                    <p>Complete filesystem access to read, write, create, list, move files and directories. Supports viewing PNG, JPEG, GIF, and WebP images directly in Claude.</p>
+                    <h3>Full terminal access</h3>
+                    <p>Execute any command line operation directly through Claude's interface for seamless development, testing, and deployment workflows.</p>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path><line x1="22" y1="10" x2="2" y2="10"></line></svg>
                     </div>
-                    <h3>Code Editing</h3>
-                    <p>Surgical text replacements for small changes and full file rewrites for major modifications.</p>
+                    <h3>Cross-platform compatibility</h3>
+                    <p>Works seamlessly across Windows, macOS, and Linux with native support for each operating system's capabilities.</p>
                 </div>
                 
-                <div class="feature-card">
-                    <div class="feature-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-search"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <div class="benefit-card">
+                    <div class="benefit-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                     </div>
-                    <h3>File Search</h3>
-                    <p>Search through files with pattern matching and get detailed file metadata.</p>
+                    <h3>Customizable configuration</h3>
+                    <p>Tailor security settings, file access permissions, and command execution rules to match your specific requirements and comfort level.</p>
                 </div>
             </div>
         </div>
     </section>
-
-    <!-- Demo Section -->
-    <!-- <section class="demo" id="demo">
+    <!-- User Segments Section -->
+    <section class="segments-section" id="cases">
         <div class="container">
-            <div class="demo-content">
-                <div class="demo-text">
-                    <h2>See it in action</h2>
-                    <p>Claude Desktop Commander transforms how you interact with Claude AI. Watch the demo to see how you can enhance your productivity by using voice commands to control Claude.</p>
-                    <p>Simply install the extension, open Claude in your browser, and start speaking commands like "Submit", "Clear", "Copy response", and more.</p>
-                    <a href="https://github.com/wonderwhy-er/ClaudeDesktopCommander" class="btn" target="_blank">Learn More</a>
+            <div class="section-title">
+                <h2>USE CASES</h2>
+                <p style="color: #121212; font-weight: 300;">See how Desktop Commander serves different professionals with their specific needs</p>
+            </div>
+            
+            <div class="segments-grid">
+                <!-- Software Engineer Segment -->
+                <div class="segment-card" id="cases-software">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6"></path><path d="M8 6l-6 6 6 6"></path></svg>
+                    </div>
+                    <h3>AI Software Engineer</h3>
+                    <p>Build products faster without coding skills.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Create and update big projects</li>
+                            <li>Code review</li>
+                            <li>Knows your codebase</li>
+                            <li>Code security audit</li>
+                            <li>Add test coverage</li>
+                            <li>Improve SEO</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#technical-professionals" class="segment-link">Learn More</a> -->
                 </div>
                 
-                <div class="demo-image">
-                    <div class="video-container">
-                        <!-Placeholder for video - using a colored div as we can't directly embed videos  ->
-                        <div style="width: 100%; height: 100%; background: var(--primary-color); display: flex; align-items: center; justify-content: center; color: white;">
-                            <div style="text-align: center;">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-play-circle"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
-                                <h3 style="margin-top: 15px;">Video Demo</h3>
-                                <p>Check GitHub for demo videos</p>
-                            </div>
-                        </div>
+                <!-- DevOps Segment -->
+                <div class="segment-card" id="cases-devops">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                     </div>
+                    <h3>AI DevOps</h3>
+                    <p>Streamline environment setup, server configuration, and deployment processes.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Configure local environments</li>
+                            <li>Configure Ansible/Terraform</li>
+                            <li>Install and configure Dockerfiles</li>
+                            <li>Explore remote server logs</li>
+                            <li>Configure remote servers with SSH</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#devops-professionals" class="segment-link">Learn More</a> -->
+                </div>
+                
+                <!-- Tech Writer Segment -->
+                <div class="segment-card" id="cases-writer">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    </div>
+                    <h3>AI Technical Writer</h3>
+                    <p>Maintain consistent documentation and streamline content creation processes.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Create and update project documentation</li>
+                            <li>Generate release notes</li>
+                            <li>Review and optimize content SEO</li>
+                            <li>Keep project documentation up to date</li>
+                            <li>Create UML and flow diagram from the code</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#technical-writers" class="segment-link">Learn More</a> -->
+                </div>
+                
+                <!-- UX/UI Segment -->
+                <div class="segment-card" id="cases-uxui">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    </div>
+                    <h3>AI UX/UI Designer</h3>
+                    <p>Manage design assets and streamline the implementation of designs into code.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Convert Figma files to product</li>
+                            <li>Create clickable prototype faster</li>
+                            <li>Resize and update images</li>
+                            <li>Process design files faster, smarter, and at scale</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#ux-ui-professionals" class="segment-link">Learn More</a> -->
+                </div>
+
+                <!-- assistant -->
+                <div class="segment-card" id="cases-assistant">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    </div>
+                    <h3>AI Assistant</h3>
+                    <p>Organize files and automate document processing.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Organize files on your computer</li>
+                            <li>Organize your knowledge in obsidian</li>
+                            <li>Review and summarize documents </li>
+                            <li>Check documents for errors</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#ux-ui-professionals" class="segment-link">Learn More</a> -->
                 </div>
             </div>
         </div>
-    </section> -->
+    </section>
 
     <!-- Installation Section -->
     <section class="how-it-works" id="installation">
         <div class="container">
             <div class="section-title">
                 <h2>Installation</h2>
-                <p style="color: #121212; font-weight: 500;">Getting started with Desktop Commander MCP is quick and easy</p>
-                <p style="color: #121212; font-weight: 500;">There are multiple options how to install DesktopCommanderMCP</p>
+                <p style="color: #121212; font-weight: 300;">Getting started with Desktop Commander MCP is quick and easy</p>
+                <p style="color: #121212; font-weight: 300;">There are multiple options for installing DesktopCommanderMCP</p>
             </div>
             
             <style>
@@ -475,7 +978,7 @@
                     background: transparent;
                     border: none;
                     cursor: pointer;
-                    font-weight: 600;
+                    font-weight: 300;
                     color: #121212;
                     position: relative;
                     transition: all 0.3s ease;
@@ -498,7 +1001,7 @@
                     left: 0;
                     width: 100%;
                     height: 2px;
-                    background: var(--primary-color);
+                    background: #0078D7;
                 }
                 
                 .tab-content {
@@ -513,10 +1016,10 @@
             
             <div class="tabs">
                 <button class="tab-btn active" onclick="openTab(event, 'npx')" style="color: #0056b3;">NPX Install</button>
-                <button class="tab-btn" onclick="openTab(event, 'bash')" style="color: #121212; font-weight: 500;">Bash Install (macOS)</button>
-                <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 500;">Smithery Install</button>
-                <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 500;">Manual Configuration</button>
-                <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 500;">Local Installation</button>
+                <button class="tab-btn" onclick="openTab(event, 'bash')" style="color: #121212; font-weight: 300;">Bash Install (macOS)</button>
+                <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 300;">Smithery Install</button>
+                <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 300;">Manual Configuration</button>
+                <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 300;">Local Installation</button>
             </div>
             
             <div id="smithery" class="tab-content">
@@ -584,16 +1087,16 @@
                     <div class="step-content">
                         <h3>Local Installation</h3>
                         <p>Clone and build locally:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/ClaudeComputerCommander.git
-cd ClaudeComputerCommander
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/DesktopCommanderMCP
+cd DesktopCommanderMCP
 npm run setup</pre>
 </div>
 </div>
 </div>
 <div style="text-align: left; background: #f8f8f8; padding: 12px; overflow-x: auto; border-radius: 5px; margin-top: 15px; margin-bottom: 15px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <p style="margin-top: 0; font-weight: 600; color: #171717;">To install DesktopCommanderMCP you need to have Node.js and Claude Desktop installed on your system:</p>
-    <p><strong>Node.js:</strong> <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
-    <p style="margin-bottom: 0;"><strong>Claude Desktop:</strong> <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
+    <p style="margin-top: 0; color: #171717;">To install DesktopCommanderMCP you need to have Node.js v18.18.0+ and Claude Desktop installed on your system:</p>
+    <p><strong>Download Node.js:</strong> <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
+    <p style="margin-bottom: 0;"><strong>Download Claude Desktop:</strong> <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
 </div>
 <br />
 <p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>
@@ -601,64 +1104,142 @@ npm run setup</pre>
         </div>
     </section>
 
-    <!-- Usage Section -->
-    <section class="download" id="usage">
+    <!-- Trusted by Developers Section -->
+    <section class="trusted-by-developers-section">
         <div class="container">
             <div class="section-title">
-                <h2>Usage Examples</h2>
-                <p>Desktop Commander MCP provides powerful terminal commands and file operations for Claude AI</p>
+                <h2>Trusted by Developers</h2>
+                <p>Join thousands of developers who have transformed their Claude experience with Desktop Commander.</p>
             </div>
-
             
-            <div class="download-options">
-                <div class="download-card">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-terminal"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
-                    <div class="download-card-content">
-                        <h3>Terminal Commands</h3>
-                        <p>Examples of commands to run in Claude:</p>
-                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
-• Show me all hidden files in my ~/dev directory
-• Show me all processes with name node
-• Generate SSH key and save it in .ssh directory
-• Run "node -e 'console.log(\"Hello\")"
-• Find me where nodejs is installed
-• Kill all nodejs processes</pre>
-                    </div>
+            <div class="metrics-container">
+                <div class="metric-card">
+                    <h3 class="metric-value">26K+</h3>
+                    <p class="metric-label">Weekly Downloads</p>
                 </div>
                 
-                <div class="download-card">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-file-text"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                    <div class="download-card-content">
-                        <h3>File Operations</h3>
-                        <p>Examples of file operations in Claude:</p>
-                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
-• Read file path/to/file.txt
-• Resize all images in ~/dev/project/images folder to 100x100
-• Create tests for my project and update package.json with script to run tests with jest
-• Search for files containing "pattern"
-• Review all files in ~/project and create summary from these files
-• Get file metadata for package.json</pre>
-                    </div>
+                <div class="metric-card">
+                    <h3 class="metric-value">9/10</h3>
+                    <p class="metric-label">User Rating</p>
                 </div>
                 
-                <div class="download-card">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-edit-2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>
-                    <div class="download-card-content">
-                        <h3>Code Editing</h3>
-                        <p>Examples of editing code with Claude:</p>
-                        <pre style="background: rgba(255, 255, 255, 0.2); padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; color: white; text-align: left;">
-• Review project in ~/dev/project and show me all issues
-• Find all security issues in ~/dev/project
-• Split file ~/dev/project/index.html into 3 files: html, js, css
-• Review my ~/dev/project and improve SEO
-• Create a new python project with .venv and FastAPI REST API boilerplate</pre>
-                    </div>
+                <div class="metric-card">
+                    <h3 class="metric-value">1800+</h3>
+                    <p class="metric-label">GitHub Stars</p>
                 </div>
             </div>
-            <p style="margin-top: 30px; font-style: italic; text-align: center;">For full documentation and advanced usage examples, visit <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" style="color: white; text-decoration: underline;">our GitHub repository</a>.</p>
+            
+            <div class="trusted-by-cta">
+                <a href="#installation" class="btn ">Install</a>
+            </div>
         </div>
     </section>
 
+    
+    <!-- Testimonials Section -->
+    <section class="testimonials-section" id="testimonials">
+        <div class="container">
+            <div class="section-title">
+                <h2>User Testimonials</h2>
+                <p>See what developers are saying about Desktop Commander MCP</p>
+            </div>
+
+            <div class="responsive-testimonial-image">
+                <img src="testimonials.png" class="desktop-testimonial" alt="Desktop Commander MCP User Testimonials" />
+                <img src="testimonials_1080.png" class="mobile-testimonial" alt="Desktop Commander MCP User Testimonials" />
+            </div>
+            <style>
+                .responsive-testimonial-image {
+                    max-width: 1200px;
+                    margin: 0 auto 30px;
+                    overflow-x: hidden;
+                    text-align: center;
+                }
+                .desktop-testimonial {
+                    display: block;
+                    width: 100%;
+                    max-width: 1200px;
+                    height: auto;
+                }
+                .mobile-testimonial {
+                    display: none;
+                    width: 900px;
+                    min-width: 900px;
+                    height: auto;
+                    margin: 0 auto;
+                }
+                
+                @media (max-width: 1200px) {
+                    .responsive-testimonial-image {
+                        max-width: 100%;
+                    }
+                }
+                
+                @media (max-width: 900px) {
+                    .responsive-testimonial-image {
+                        max-width: 100%;
+                        overflow-x: hidden;
+                    }
+                }
+                
+                @media (max-width: 768px) {
+                    .desktop-testimonial {
+                        display: none;
+                    }
+                    .mobile-testimonial {
+                        display: block;
+                        position: relative;
+                        left: 50%;
+                        transform: translateX(-50%);
+                    }
+                    .responsive-testimonial-image {
+                        position: relative;
+                        overflow: hidden;
+                    }
+                }
+            </style>
+
+        </div>
+    </section>
+
+    <!-- Community Section -->
+    <section class="community" id="community">
+        <div class="container">
+            <div class="section-title">
+                <h2>Join Our Community</h2>
+                <p style="color: #121212; font-weight: 300;">Connect with other users and contributors to share ideas, get help, and contribute to the project.</p>
+            </div>
+            
+            <div class="community-links">
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                    </div>
+                    <h3>GitHub</h3>
+                    <p>Star the repository, report issues, and contribute code.</p>
+                    <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" class="btn" target="_blank">GitHub Repo</a>
+                </div>
+                
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"></path></svg>
+                    </div>
+                    <h3>Discord</h3>
+                    <p>Join our Discord server to chat with the community in real-time.</p>
+                    <a href="https://discord.gg/kQ27sNnZr7" class="btn" target="_blank">Join Discord</a>
+                </div>
+                
+                <div class="community-card">
+                    <div class="community-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-youtube"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
+                    </div>
+                    <h3>Video Tutorial</h3>
+                    <p>Watch tutorial and demo videos on YouTube.<br /><br /></p>
+                    <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="btn" target="_blank">Watch Now</a>
+                </div>
+            </div>
+        </div>
+    </section>
     <!-- Media Section -->
     <section class="media-section" id="media">
         <div class="container">
@@ -721,104 +1302,14 @@ npm run setup</pre>
             </div>
         </div>
     </section>
-    
-    <!-- Community Section -->
-    <section class="community" id="community">
-        <div class="container">
-            <div class="section-title">
-                <h2>Join Our Community</h2>
-                <p style="color: #121212; font-weight: 500;">Connect with other users and contributors to share ideas, get help, and contribute to the project.</p>
-            </div>
-            
-            <div class="community-links">
-                <div class="community-card">
-                    <div class="community-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
-                    </div>
-                    <h3>GitHub</h3>
-                    <p>Star the repository, report issues, and contribute code.</p>
-                    <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" class="btn" target="_blank">GitHub Repo</a>
-                </div>
-                
-                <div class="community-card">
-                    <div class="community-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"></path></svg>
-                    </div>
-                    <h3>Discord</h3>
-                    <p>Join our Discord server to chat with the community in real-time.</p>
-                    <a href="https://discord.gg/kQ27sNnZr7" class="btn" target="_blank">Join Discord</a>
-                </div>
-                
-                <div class="community-card">
-                    <div class="community-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-youtube"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
-                    </div>
-                    <h3>Video Tutorial</h3>
-                    <p>Watch tutorial and demo videos on YouTube.<br /><br /></p>
-                    <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="btn" target="_blank">Watch Now</a>
-                </div>
-            </div>
-        </div>
-    </section>
 
-    <!-- Testimonials Section -->
-    <section class="testimonials-section" id="testimonials">
-        <div class="container">
-            <div class="section-title">
-                <h2>User Testimonials</h2>
-                <p>See what developers are saying about Desktop Commander MCP</p>
-            </div>
-
-            <div class="testimonial-carousel">
-                <div class="carousel-container">
-                    <div class="carousel-slides">
-                        <div class="carousel-slide active" data-slide="0">
-                            <img src="optimized_images/case1-large.webp" alt="Testimonial from pharmx: Claude replaced Cursor and Windsurf after frustration, becoming the preferred development tool" title="pharmx's experience: Switching from Cursor and Windsurf to Claude" loading="lazy" style="max-width: 100%; height: auto;">
-                        </div>
-                        
-                        <div class="carousel-slide" data-slide="1">
-                            <img src="optimized_images/case2-large.webp" alt="Testimonial from naranbaz: Great tool that enables Claude to make surgical edits like a human developer" title="naranbaz appreciates the surgical editing capabilities" loading="lazy" style="max-width: 100%; height: auto;">
-                        </div>
-                        
-                        <div class="carousel-slide" data-slide="2">
-                            <img src="optimized_images/case3-large.webp" alt="Testimonial from jesseburstrom5920: Switched from Windsurf to Claude MCP, saving money on tokens and gaining unlimited coding without cost concerns" title="jesseburstrom5920's experience: Cost savings and unlimited coding with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
-                        </div>
-                        
-                        <div class="carousel-slide" data-slide="3">
-                            <img src="optimized_images/case4-large.webp" alt="Testimonial from michaelajamian2211: Fixed critical Flutter app errors with Claude MCP after days of unsuccessful attempts with other tools" title="michaelajamian2211 solved critical Flutter app errors in hours with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
-                        </div>
-                        
-                        <div class="carousel-slide" data-slide="4">
-                            <img src="optimized_images/case5-large.webp" alt="Testimonial from play365alltime: Desktop Commander MCP is a life saver that eliminates duplicate costs of Claude and Cursor subscriptions" title="play365alltime celebrates cost savings and enhanced capabilities with Claude MCP" loading="lazy" style="max-width: 100%; height: auto;">
-                        </div>
-                    </div>
-                    
-                    <button class="carousel-arrow carousel-arrow-left" id="prevSlide" aria-label="Previous testimonial">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
-                    </button>
-                    
-                    <button class="carousel-arrow carousel-arrow-right" id="nextSlide" aria-label="Next testimonial">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                    </button>
-                </div>
-                
-                <div class="carousel-indicators">
-                    <button class="indicator active" data-slide="0" aria-label="Go to slide 1" aria-current="true"></button>
-                    <button class="indicator" data-slide="1" aria-label="Go to slide 2"></button>
-                    <button class="indicator" data-slide="2" aria-label="Go to slide 3"></button>
-                    <button class="indicator" data-slide="3" aria-label="Go to slide 4"></button>
-                    <button class="indicator" data-slide="4" aria-label="Go to slide 5"></button>
-                </div>
-            </div>
-        </div>
-    </section>
 
     <!-- FAQ Section -->
     <section class="faq" id="faq">
         <div class="container">
             <div class="section-title">
                 <h2>Frequently Asked Questions</h2>
-                <p style="color: #121212; font-weight: 500;">Find answers to common questions about Desktop Commander MCP</p>
+                <p style="color: #121212; font-weight: 300;">Find answers to common questions about Desktop Commander MCP</p>
             </div>
             
             <!-- Add structured data to improve SEO -->
@@ -901,7 +1392,7 @@ npm run setup</pre>
                     </div>
                     <div class="accordion-body">
                         <div class="accordion-body-inner">
-                            <p>Claude Desktop Commander itself is free and open-source. However, to use it, you need a Claude Pro subscription, which costs $20/month. There are no additional charges beyond this subscription fee, unlike Claude Code or other API-based tools that charge per token.</p>
+                            <p>Claude Commander is free and open source for personal use. <strong>For companies with annual revenue more than 1M USD and more than 10 people, we are charging $20 per license. To use DesktopCommander, you also need a Claude Pro, which costs $20 or / Claude Max subscription for $100 per month.</strong></p>
                         </div>
                     </div>
                 </div>
@@ -925,14 +1416,15 @@ npm run setup</pre>
                     </div>
                     <div class="accordion-body">
                         <div class="accordion-body-inner">
-                            <p>Claude Desktop Commander operates within certain safety boundaries:</p>
+                            <p>Claude Desktop Commander operates within a configurable security framework:</p>
                             <ul>
-                                <li>While file restrictions are currently disabled, Claude typically only works with files in folders you specifically direct it to</li>
-                                <li>Claude can only perform actions that your user account has permission to do</li>
+                                <li>File access can be restricted to specific directories you designate</li>
+                                <li>Command blocking allows you to prevent execution of sensitive commands</li>
+                                <li>Claude only performs actions your user account has permission to execute</li>
                                 <li>No data is sent to external servers beyond what you share in Claude conversations</li>
                             </ul>
                             <div class="warning">
-                                <p>Command blocking features are still in development. You should always review the actions Claude proposes before allowing it to make system changes, especially when working with important files or system configurations.</p>
+                                <p>You can customize security settings by asking Claude about configuration options. Always review actions Claude proposes before approval, especially when working with important files or system configurations.</p>
                             </div>
                         </div>
                     </div>
@@ -969,7 +1461,7 @@ npm run setup</pre>
                     </div>
                     <div class="accordion-body">
                         <div class="accordion-body-inner">
-                            <p>Join our <a href="https://discord.gg/kQ27sNnZr7">Discord server</a> for community support, check the <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues">GitHub issues</a> for known problems, or review our <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/blob/main/FAQ.md">comprehensive FAQ</a> for troubleshooting tips. If you encounter a new issue, please consider <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new">opening a GitHub issue</a> with details about your problem.</p>
+                            <p>Join our <a href="https://discord.gg/kQ27sNnZr7">Discord server</a> for community support, check the <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues">GitHub issues</a> for known problems, or review our <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md">comprehensive FAQ</a> for troubleshooting tips. If you encounter a new issue, please consider <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new">opening a GitHub issue</a> with details about your problem.</p>
                         </div>
                     </div>
                 </div>
@@ -997,7 +1489,7 @@ npm run setup</pre>
 
             <!-- More prominent link to full FAQ -->
             <div class="github-faq-container">
-                <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/blob/main/FAQ.md" target="_blank" class="github-faq-link">
+                <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md" target="_blank" class="github-faq-link">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-book-open"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
                     View our comprehensive FAQ document on GitHub for more detailed answers
                 </a>
@@ -1008,7 +1500,7 @@ npm run setup</pre>
                 <h3>Didn't find what you were looking for?</h3>
                 <p>Help us improve our FAQ by suggesting new questions or improvements.</p>
                 <div class="question-form">
-                    <form action="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues/new" method="get" target="_blank">
+                    <form action="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new" method="get" target="_blank">
                         <input type="hidden" name="template" value="faq_suggestion.md">
                         <input type="hidden" name="title" value="FAQ Suggestion">
                         <textarea name="body" placeholder="Suggest a question you'd like to see answered..."></textarea>
@@ -1021,27 +1513,233 @@ npm run setup</pre>
             <div class="discord-community-container">
                 <h3>Need help or have questions?</h3>
                 <p>Join our Discord community for real-time support, discussions, and updates.</p>
-                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="discord-link" style="font-weight: 600; color: #5865F2;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#5865F2" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
+                <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="featured-btn discord-btn" >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="white" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                     Join our Discord Server
                 </a>
             </div>
         </div>
     </section>
+    <style>
+        footer {
+            color: #ffffff;
+            padding: 50px 0 20px;
+        }
+        
+        footer a {
+            color: #ffffff;
+            opacity: 0.8;
+            transition: opacity 0.3s;
+        }
+        
+        footer a:hover {
+            opacity: 1;
+            color: #0078D7;
+        }
+    </style>
+    
+    <!-- Styles for Trusted by Developers Section -->
+    <style>
+        /* Platform Benefits Section Styles */
+        .platform-benefits-section {
+            background-color: #ffffff;
+            padding: 100px 0 70px;
+            margin-top: 80px;
+        }
+        
+        .platform-benefits-section h2 {
+            font-size: 2.4rem;
+            font-weight: 300;
+            color: #171717;
+            text-align: center;
+            margin-bottom: 20px;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .section-subtitle {
+            text-align: center;
+            font-size: 1.2rem;
+            color: #555;
+            max-width: 800px;
+            margin: 0 auto 30px;
+            font-weight: 300;
+        }
+        
+        .explore-button {
+            text-align: center;
+            margin-bottom: 60px;
+        }
 
+        .explore-button .btn {
+            background-color: #0078D7;
+            color: white;
+            padding: 12px 30px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 300;
+            display: inline-block;
+        }
+        
+        .explore-button .btn:hover {
+            color: white;
+            background-color: #0056a0;
+        }
+
+        .blue_btn {
+            background-color: #0078D7;
+            color: white;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 300;
+            transition: all 0.3s ease;
+        }
+        
+        .blue_btn:hover {
+            color: white;
+            background-color: #0056a0;
+        }
+        
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 20px;
+        }
+        
+        .benefit-card {
+            padding: 25px;
+            border-radius: 10px;
+            background-color: #f8f9fa;
+            transition: all 0.3s ease;
+        }
+        
+        .benefit-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+        
+        .benefit-icon {
+            color: #0078D7;
+            margin-bottom: 15px;
+        }
+        
+        .benefit-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 12px;
+            color: #171717;
+            font-weight: 300;
+        }
+        
+        .benefit-card p {
+            color: #555;
+            font-weight: 300;
+            line-height: 1.5;
+        }
+        
+        @media (max-width: 768px) {
+            .platform-benefits-section {
+                padding: 80px 0 50px;
+                margin-top: 60px;
+            }
+            
+            .platform-benefits-section h2 {
+                font-size: 2rem;
+                padding: 0 15px;
+            }
+            
+            .benefits-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .benefit-card {
+                padding: 20px;
+            }
+        }
+        
+        .trusted-by-developers-section {
+            background-color: #f8f9fa;
+            padding: 80px 0;
+            text-align: center;
+        }
+        
+        .metrics-container {
+            display: flex;
+            justify-content: center;
+            gap: 60px;
+            margin-top: 50px;
+            flex-wrap: wrap;
+        }
+        
+        .metric-card {
+            padding: 20px;
+            min-width: 200px;
+        }
+        
+        .metric-value {
+            font-size: 3.5rem;
+            font-weight: 300;
+            color: #0078D7;
+            margin-bottom: 10px;
+        }
+        
+        .metric-label {
+            font-size: 1.2rem;
+            color: #555;
+            font-weight: 300;
+        }
+        
+        .trusted-by-cta {
+            margin-top: 60px;
+        }
+        .trusted-by-cta .btn {
+            background-color: #0078D7;
+            color: white;
+            padding: 12px 30px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 300;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+        
+        .trusted-by-cta .btn:hover {
+            background-color: #0056a0;
+            transform: translateY(-2px);
+        }
+        
+        @media (max-width: 768px) {
+            .metrics-container {
+                gap: 30px;
+            }
+            
+            .metric-value {
+                font-size: 2.8rem;
+            }
+        }
+    </style>
+    
+    <!-- CTA Banner Section -->
+    <section class="cta-banner">
+        <div class="container">
+            <h2 class="cta-heading">Skip coding.<br />Let AI build your product.</h2>
+            <a href="#installation" class="cta-button">Install DesktopCommander now</a>
+        </div>
+    </section>
     <!-- Footer -->
-    <footer>
+    <footer style="background-color: var(--super-black);">
         <div class="container">
             <div class="footer-content">
                 <div class="footer-column">
                     <div class="footer-logo">
                         <img src="optimized_images/logo.webp" alt="Logo" width="30" height="30">
-                        <h3>Desktop Commander MCP</h3>
+                        <h3>Desktop Commander</h3>
                     </div>
-                    <p>An open-source tool that enables terminal commands and file editing for Claude Desktop app.</p>
+                    <p>Build products faster without coding skills.</p>
                     <br />
                     <div class="social-links">
-                        <a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank" aria-label="GitHub Repository">
+                        <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" aria-label="GitHub Repository">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
                         </a>
                         <a href="https://discord.gg/kQ27sNnZr7" target="_blank" aria-label="Discord Server">
@@ -1060,24 +1758,26 @@ npm run setup</pre>
                 </div>
                 
                 <div class="footer-column">
-                    <h3>Quick Links</h3>
+                    <h3>Use Cases</h3>
                     <ul>
-                        <li><a href="#features">Features</a></li>
-                        <li><a href="#installation">Installation</a></li>
-                        <li><a href="#usage">Usage</a></li>
-                        <li><a href="#media">Media</a></li>
-                        <li><a href="#testimonials">Testimonials</a></li>
-                        <li><a href="#faq">FAQ</a></li>
+                        <li><a href="#cases-software">AI Software Engineer</a></li>
+                        <li><a href="#cases-devops">AI DevOps</a></li>
+                        <li><a href="#cases-writer">AI Technical Writer</a></li>
+                        <li><a href="#cases-uxui">AI UX/UI Designer</a></li>
                     </ul>
                 </div>
                 
                 <div class="footer-column">
                     <h3>Resources</h3>
                     <ul>
-                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander" target="_blank">GitHub Repository</a></li>
-                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/wiki" target="_blank">Documentation</a></li>
-                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/issues" target="_blank">Issue Tracker</a></li>
-                        <li><a href="https://github.com/wonderwhy-er/ClaudeComputerCommander/releases" target="_blank">Release Notes</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GitHub Repository</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/wiki" target="_blank">Documentation</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues" target="_blank">Issue Tracker</a></li>
+                        <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/releases" target="_blank">Release Notes</a></li>
+                        <li><a href="#installation">Installation</a></li>
+                        <li><a href="#testimonials">Testimonials</a></li>
+                        <li><a href="#media">Media</a></li>
+                        <li><a href="#faq">FAQ</a></li>
                     </ul>
                 </div>
             </div>
@@ -1087,9 +1787,107 @@ npm run setup</pre>
             </div>
         </div>
     </footer>
+    
+
+    
+    <style>
+        .cta-banner {
+            background-color: #0078D7;
+            padding: 80px 0;
+            text-align: center;
+            margin-top: 0;
+        }
+        
+        .cta-heading {
+            font-size: 3rem;
+            color: white;
+            margin-bottom: 30px;
+            font-weight: 300;
+            line-height: 1.2;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background-color: white;
+            color: #0078D7;
+            font-size: 1.2rem;
+            padding: 16px 36px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 300;
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button:hover {
+            color: #0078D7;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        @media (max-width: 768px) {
+            .cta-heading {
+                font-size: 2rem;
+                padding: 0 20px;
+            }
+        }
+    </style>
 
         <!-- JavaScript - Load asynchronously -->
     <script src="js/main.js" defer></script>
 
+    <!-- JavaScript for command counter and typing effect -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Command counter implementation
+            const commandCounter = document.getElementById('command-counter');
+            
+            // Typing effect implementation
+            const typedTextSpan = document.querySelector('.typed-text');
+            const cursor = document.querySelector('.cursor');
+            
+            const roles = ["Full Stack Engineer", "DevOps", "Tech Writer", "QA Engineer", "UX/UI Designer", "Assistant"];
+            let roleIndex = 0;
+            let charIndex = 0;
+            let isDeleting = false;
+            let typingDelay = 100; // Delay between each character typing
+            let deletingDelay = 50; // Delay between each character deletion
+            let newTextDelay = 500; // Delay before typing new role
+            
+            function type() {
+                const currentRole = roles[roleIndex];
+                
+                if (isDeleting) {
+                    // Deleting text
+                    typedTextSpan.textContent = currentRole.substring(0, charIndex - 1);
+                    charIndex--;
+                    typingDelay = deletingDelay;
+                } else {
+                    // Typing text
+                    typedTextSpan.textContent = currentRole.substring(0, charIndex + 1);
+                    charIndex++;
+                    typingDelay = 100;
+                }
+                
+                // Logic for transitioning between typing and deleting
+                if (!isDeleting && charIndex === currentRole.length) {
+                    // Finished typing current text
+                    isDeleting = true;
+                    typingDelay = newTextDelay;
+                } else if (isDeleting && charIndex === 0) {
+                    // Finished deleting current text
+                    isDeleting = false;
+                    roleIndex = (roleIndex + 1) % roles.length;
+                }
+                
+                setTimeout(type, typingDelay);
+            }
+            
+            // Start the typing effect
+            setTimeout(type, newTextDelay);
+        });
+    </script>
 </body>
 </html>

@@ -8,12 +8,12 @@
 
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
-[![Product Hunt](https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=948854&theme=light)](https://www.producthunt.com/posts/desktop-commander-mcp)
 
-Short version. Four key things. Terminal commands, diff based file editing, ripgrep based text search in folders, ability to read files from urls 
+Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.
 
 
-![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/header.png)
+![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/docs/vertical_video_mobile.mp4)
+
 <a href="https://glama.ai/mcp/servers/zempur9oh4">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />
 </a>
@@ -24,13 +24,15 @@ Short version. Four key things. Terminal commands, diff based file editing, ripg
 - [Usage](#usage)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#work-in-progress-and-todos)
-- [Media links](#media)
+- [Media Links](#media)
 - [Testimonials](#testimonials)
 - [Frequently Asked Questions](#frequently-asked-questions)
 - [Contributing](#contributing)
 - [License](#license)
 
-This is server that allows Claude desktop app to execute long-running terminal commands on your computer and manage processes through Model Context Protocol (MCP) + Built on top of [MCP Filesystem Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to provide additional search and replace file editing capabilities .
+All of your AI development tools in one place.
+Desktop Commander puts all dev tools in one chat.
+Execute long-running terminal commands on your computer and manage processes through Model Context Protocol (MCP). Built on top of [MCP Filesystem Server](https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem) to provide additional search and replace file editing capabilities.
 
 ## Features
 
@@ -48,7 +50,7 @@ This is server that allows Claude desktop app to execute long-running terminal c
   - Move files/directories
   - Search files
   - Get file metadata
-  - Code editing capabilities:
+- Code editing capabilities:
   - Surgical text replacements for small changes
   - Full file rewrites for major changes
   - Multiple file support
@@ -59,7 +61,7 @@ This is server that allows Claude desktop app to execute long-running terminal c
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
 
 ### Option 1: Install through npx
-Just run this in terminal
+Just run this in terminal:
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
 ```
@@ -68,7 +70,7 @@ For debugging mode (allows Node.js inspector connection):
 ```
 npx @wonderwhy-er/desktop-commander@latest setup --debug
 ```
-Restart Claude if running
+Restart Claude if running.
 
 ### Option 2: Using bash script installer (macOS)
 For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
@@ -85,7 +87,7 @@ To install Desktop Commander for Claude Desktop automatically via [Smithery](htt
 npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 ```
 
-### Option 4: Add to claude_desktop_config by hand
+### Option 4: Add to claude_desktop_config manually
 Add this entry to your claude_desktop_config.json:
 
 - On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -105,7 +107,7 @@ Add this entry to your claude_desktop_config.json:
   }
 }
 ```
-Restart Claude if running
+Restart Claude if running.
 
 ### Option 5: Checkout locally
 1. Clone and build:
@@ -114,7 +116,7 @@ git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
 cd DesktopCommanderMCP
 npm run setup
 ```
-Restart Claude if running
+Restart Claude if running.
 
 The setup command will:
 - Install dependencies
@@ -124,7 +126,7 @@ The setup command will:
 
 ### Updating Desktop Commander
 
-When installed through npx (Option 1) or Smithery (Option 2), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.
+When installed through npx (Option 1) or Smithery (Option 3), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.
 
 For manual installations, you can update by running the setup command again.
 
@@ -193,7 +195,7 @@ For commands that may take a while:
 
 ### ⚠️ Important Security Warnings
 
-1. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions during operation.
+1. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions.
 
 2. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories. Full terminal sandboxing is on the roadmap.
 
@@ -309,15 +311,16 @@ The following features are currently being explored:
 
 - **Support for WSL** - Windows Subsystem for Linux integration
 - **Support for SSH** - Remote server command execution
-- **Better file support like csv/pdf**
+- **Better file support for formats like CSV/PDF**
 - **Terminal sandboxing for Mac/Linux/Windows for better security**
-- **File reading modes** - for example allow to read html as plain text or markdown
+- **File reading modes** - For example, allow reading HTML as plain text or markdown
 
 ## Website
 
 Visit our official website at [https://desktopcommander.app/](https://desktopcommander.app/) for the latest information, documentation, and updates.
 
 ## Media
+
 Learn more about this project through these resources:
 
 ### Article
@@ -375,7 +378,7 @@ If you find this tool valuable for your workflow, please consider [supporting th
 
 Here are answers to some common questions. For a more comprehensive FAQ, see our [detailed FAQ document](FAQ.md).
 
-### What is DesktopCommanderMCP?
+### What is Desktop Commander?
 It's an MCP tool that enables Claude Desktop to access your file system and terminal, turning Claude into a versatile assistant for coding, automation, codebase exploration, and more.
 
 ### How is this different from Cursor/Windsurf?
@@ -405,7 +408,7 @@ During installation and setup, Desktop Commander collects anonymous usage data t
 - Installation method and shell environment
 - Error messages (if any occur during setup)
 
-This data is collected using Google Analytics analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
+This data is collected using Google Analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
 
 We are currently working on adding a built-in opt-out option for this data collection in an upcoming release. For now, if you wish to opt out, you can block network connections to `google-analytics.com` in your firewall settings.
 
