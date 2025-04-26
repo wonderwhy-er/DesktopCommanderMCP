@@ -686,6 +686,114 @@
         border-color: #0056a0;
     }
     </style>
+    
+    <!-- Additional CSS for mobile/desktop menu separation and title display -->
+    <style>
+        /* Desktop/Mobile Menu Styles */
+        .mobile-nav {
+            display: none; /* Hidden by default */
+        }
+        
+        /* Title display controls */
+        .mobile-title {
+            display: none; /* Hidden on desktop */
+        }
+        
+        .desktop-title {
+            display: block; /* Shown on desktop */
+        }
+        
+        /* Media queries for responsive menu */
+        @media (max-width: 768px) {
+            .desktop-nav {
+                display: none; /* Hide desktop nav on mobile */
+            }
+            
+            .mobile-nav {
+                display: none; /* Still hidden until toggled */
+            }
+            
+            /* Switch title display on mobile */
+            .desktop-title {
+                display: none; /* Hide dynamic title on mobile */
+            }
+            
+            .mobile-title {
+                display: block; /* Show static title on mobile */
+                text-align: center; /* Center align title on mobile */
+                margin-top: 40px; /* Add space at top to show "Your personal" text */
+            }
+            
+            .mobile-title .dynamic-title {
+                text-align: center; /* Ensure heading is centered */
+                margin-top: 0; /* Reset margin */
+                padding-top: 30px; /* Additional padding at top */
+                font-size: 2.2rem; /* Larger text for better readability */
+                line-height: 1.4; /* Improved line spacing */
+            }
+            
+            .hero-content {
+                width: 100%; /* Full width on mobile */
+                text-align: center; /* Center all content */
+                padding: 0 15px; /* Add side padding */
+                margin-top: 30px; /* Push content down from menu */
+            }
+            
+            .hero-content .badges {
+                display: flex;
+                justify-content: center;
+            }
+            
+            .hero-content .badge-row {
+                justify-content: center;
+            }
+            
+            .hero-content .hero-btns {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 15px;
+            }
+            
+            .mobile-nav.active {
+                display: block; /* Show when active */
+                position: fixed;
+                top: 80px;
+                left: 0;
+                width: 100%;
+                background: var(--dark-color);
+                padding: 20px 0;
+                box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+                z-index: 1000;
+            }
+            
+            .mobile-nav ul {
+                flex-direction: column;
+                align-items: center;
+                padding: 0;
+                margin: 0;
+            }
+            
+            .mobile-nav ul li {
+                margin: 12px 0;
+                width: 100%;
+                text-align: center;
+            }
+            
+            .mobile-nav ul li a {
+                display: block;
+                padding: 8px 0;
+                color: var(--light-text);
+                text-decoration: none;
+                font-weight: 500;
+                width: 100%;
+            }
+            
+            .mobile-nav ul li a:hover {
+                color: var(--secondary-color);
+            }
+        }
+    </style>
 </head>
 <body>
     <!-- Header -->
@@ -697,7 +805,8 @@
             </a>
             
             <div class="header-right">
-                <nav>
+                <!-- Desktop Navigation -->
+                <nav class="desktop-nav">
                 <ul>
                     <li class="dropdown">
                         <a href="#cases" class="dropdown-toggle">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
@@ -713,7 +822,6 @@
                     <li class="dropdown">
                         <a href="#" class="dropdown-toggle">Resources <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
                         <ul class="dropdown-menu">
-                            
                             <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank">Join Discord</a></li>
                             <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GITHUB</a></li>
                             <li><a href="#media">Media</a></li>
@@ -722,6 +830,20 @@
                     </li>
                 </ul>
                 </nav>
+                
+                <!-- Mobile Navigation (no dropdowns) -->
+                <nav class="mobile-nav">
+                <ul>
+                    <li><a href="#cases">Use Cases</a></li>
+                    <li><a href="#installation">Installation</a></li>
+                    <li><a href="#testimonials">Testimonials</a></li>
+                    <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank">Join Discord</a></li>
+                    <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GITHUB</a></li>
+                    <li><a href="#media">Media</a></li>
+                    <li><a href="#faq">FAQ</a></li>
+                </ul>
+                </nav>
+                
                 <a href="#installation" class="header-cta-btn">Install</a>
                 <div class="mobile-menu-btn">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
@@ -749,8 +871,14 @@
         <div class="container">
             <div class="hero-wrapper">
                 <div class="hero-content">
-                    <div class="dynamic-title-container">
+                    <!-- Desktop title with typing effect -->
+                    <div class="dynamic-title-container desktop-title">
                         <h1 class="dynamic-title">Your personal<br />AI <span class="typed-text">Full Stack Engineer</span><span class="cursor">&nbsp;</span><br />without token costs</h1>
+                    </div>
+                    
+                    <!-- Mobile title with static text -->
+                    <div class="dynamic-title-container mobile-title">
+                        <h1 class="dynamic-title">Your personal<br />AI Full Stack Engineer<br />without token costs</h1>
                     </div>
                     <p style="color: #f0f0f0; font-weight: 300;">Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.</p>
                     <div class="badges">
@@ -1844,55 +1972,68 @@ npm run setup</pre>
             // Command counter implementation
             const commandCounter = document.getElementById('command-counter');
             
-            // Typing effect implementation
-            const typedTextSpan = document.querySelector('.typed-text');
-            const cursor = document.querySelector('.cursor');
-            
-            const roles = ["Full Stack Engineer", "DevOps", "Tech Writer", "QA Engineer", "UX/UI Designer", "Assistant"];
-            let roleIndex = 0;
-            // Set initial role to be "Full Stack Engineer"
-            typedTextSpan.textContent = roles[0];
-            let charIndex = roles[0].length;
-            let isDeleting = false;
-            let typingDelay = 100; // Delay between each character typing
-            let deletingDelay = 50; // Delay between each character deletion
-            let newTextDelay = 2000; // Delay before typing new role - increased to show the first role longer
-            
-            function type() {
-                const currentRole = roles[roleIndex];
+            // Only run typing effect on desktop devices (screen width > 768px)
+            if (window.innerWidth > 768) {
+                // Typing effect implementation - desktop only
+                const typedTextSpan = document.querySelector('.desktop-title .typed-text');
+                const cursor = document.querySelector('.desktop-title .cursor');
                 
-                if (isDeleting) {
-                    // Deleting text
-                    typedTextSpan.textContent = currentRole.substring(0, charIndex - 1);
-                    charIndex--;
-                    typingDelay = deletingDelay;
-                } else {
-                    // Typing text
-                    typedTextSpan.textContent = currentRole.substring(0, charIndex + 1);
-                    charIndex++;
-                    typingDelay = 100;
+                if (typedTextSpan && cursor) {
+                    const roles = ["Full Stack Engineer", "DevOps", "Tech Writer", "QA Engineer", "UX/UI Designer", "Assistant"];
+                    let roleIndex = 0;
+                    // Set initial role to be "Full Stack Engineer"
+                    typedTextSpan.textContent = roles[0];
+                    let charIndex = roles[0].length;
+                    let isDeleting = false;
+                    let typingDelay = 60; // Delay between each character typing
+                    let deletingDelay = 40; // Delay between each character deletion
+                    let newTextDelay = 1000; // Delay before typing new role - increased to show the first role longer
+                    
+                    function type() {
+                        const currentRole = roles[roleIndex];
+                        
+                        if (isDeleting) {
+                            // Deleting text
+                            typedTextSpan.textContent = currentRole.substring(0, charIndex - 1);
+                            charIndex--;
+                            typingDelay = deletingDelay;
+                        } else {
+                            // Typing text
+                            typedTextSpan.textContent = currentRole.substring(0, charIndex + 1);
+                            charIndex++;
+                            typingDelay = 100;
+                        }
+                        
+                        // Logic for transitioning between typing and deleting
+                        if (!isDeleting && charIndex === currentRole.length) {
+                            // Finished typing current text
+                            isDeleting = true;
+                            typingDelay = newTextDelay;
+                        } else if (isDeleting && charIndex === 0) {
+                            // Finished deleting current text
+                            isDeleting = false;
+                            roleIndex = (roleIndex + 1) % roles.length;
+                        }
+                        
+                        setTimeout(type, typingDelay);
+                    }
+                    
+                    // Start the typing effect after a delay
+                    // We've already pre-filled the first role, so now we start the animation cycle
+                    setTimeout(() => {
+                        isDeleting = true;
+                        setTimeout(type, newTextDelay);
+                    }, 50);
                 }
-                
-                // Logic for transitioning between typing and deleting
-                if (!isDeleting && charIndex === currentRole.length) {
-                    // Finished typing current text
-                    isDeleting = true;
-                    typingDelay = newTextDelay;
-                } else if (isDeleting && charIndex === 0) {
-                    // Finished deleting current text
-                    isDeleting = false;
-                    roleIndex = (roleIndex + 1) % roles.length;
-                }
-                
-                setTimeout(type, typingDelay);
             }
             
-            // Start the typing effect after a delay
-            // We've already pre-filled the first role, so now we start the animation cycle
-            setTimeout(() => {
-                isDeleting = true;
-                setTimeout(type, newTextDelay);
-            }, 50);
+            // Also handle resize events to disable/enable typing effect
+            window.addEventListener('resize', function() {
+                // If switching from mobile to desktop, reload the page to initialize the typing effect
+                if (window.innerWidth > 768 && !document.querySelector('.desktop-title').style.display) {
+                    location.reload();
+                }
+            });
         });
     </script>
 </body>
