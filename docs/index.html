@@ -750,7 +750,7 @@
             <div class="hero-wrapper">
                 <div class="hero-content">
                     <div class="dynamic-title-container">
-                        <h1 class="dynamic-title">Your personal<br />AI <span class="typed-text"></span><span class="cursor">&nbsp;</span><br />without token costs</h1>
+                        <h1 class="dynamic-title">Your personal<br />AI <span class="typed-text">Full Stack Engineer</span><span class="cursor">&nbsp;</span><br />without token costs</h1>
                     </div>
                     <p style="color: #f0f0f0; font-weight: 300;">Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.</p>
                     <div class="badges">
@@ -1850,11 +1850,13 @@ npm run setup</pre>
             
             const roles = ["Full Stack Engineer", "DevOps", "Tech Writer", "QA Engineer", "UX/UI Designer", "Assistant"];
             let roleIndex = 0;
-            let charIndex = 0;
+            // Set initial role to be "Full Stack Engineer"
+            typedTextSpan.textContent = roles[0];
+            let charIndex = roles[0].length;
             let isDeleting = false;
             let typingDelay = 100; // Delay between each character typing
             let deletingDelay = 50; // Delay between each character deletion
-            let newTextDelay = 500; // Delay before typing new role
+            let newTextDelay = 2000; // Delay before typing new role - increased to show the first role longer
             
             function type() {
                 const currentRole = roles[roleIndex];
@@ -1885,8 +1887,12 @@ npm run setup</pre>
                 setTimeout(type, typingDelay);
             }
             
-            // Start the typing effect
-            setTimeout(type, newTextDelay);
+            // Start the typing effect after a delay
+            // We've already pre-filled the first role, so now we start the animation cycle
+            setTimeout(() => {
+                isDeleting = true;
+                setTimeout(type, newTextDelay);
+            }, 50);
         });
     </script>
 </body>
