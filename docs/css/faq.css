@@ -88,9 +88,6 @@
     text-align: center;
     margin: 20px 0 40px;
     padding: 15px;
-    background: rgba(61, 136, 248, 0.1);
-    border-radius: 8px;
-    border: 1px solid rgba(61, 136, 248, 0.2);
 }
 
 /* Discord Community Link */
@@ -98,16 +95,14 @@
     text-align: center;
     margin: 30px 0;
     padding: 25px;
-    background: rgba(88, 101, 242, 0.15);
-    border-radius: 8px;
-    border: 1px solid rgba(88, 101, 242, 0.3);
+    border: none;
 }
 
 .discord-link {
     display: inline-flex;
     align-items: center;
     font-weight: 600;
-    color: #5865F2;
+    color: #0078D7;
     text-decoration: none;
     transition: all 0.3s ease;
     font-size: 1.1rem;

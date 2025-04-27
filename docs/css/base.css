@@ -5,7 +5,7 @@
     --light-color: #f8f8f8;
     --text-color: #444;
     --light-text: #f8f8f8;
-    --accent-color: #5865F2;
+    --accent-color: #0078D7;
     --accent-rgb: 88, 101, 242;
     --section-padding: 80px 0;
     --border-radius: 12px;
@@ -25,7 +25,7 @@ html {
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Poppins', 'Roboto', 'Segoe UI', Helvetica, Arial, sans-serif;
     line-height: 1.6;
     color: var(--text-color);
     overflow-x: hidden;

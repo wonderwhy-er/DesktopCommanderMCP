@@ -80,14 +80,41 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Mobile menu toggle
     const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-    const nav = document.querySelector('nav');
+    const mobileNav = document.querySelector('.mobile-nav');
     
     if (mobileMenuBtn) {
         mobileMenuBtn.addEventListener('click', function() {
-            nav.classList.toggle('active');
+            mobileNav.classList.toggle('active');
             this.classList.toggle('active');
         });
     }
+    
+    // Dropdown toggle for both mobile and desktop
+    const dropdownToggles = document.querySelectorAll('.dropdown-toggle');
+    
+    dropdownToggles.forEach(toggle => {
+        toggle.addEventListener('click', function(e) {
+            // Only prevent default for mobile view
+            if (window.innerWidth <= 768) {
+                e.preventDefault();
+                const parentDropdown = this.parentElement;
+                
+                // Close other open dropdowns
+                document.querySelectorAll('.dropdown').forEach(dropdown => {
+                    if (dropdown !== parentDropdown) {
+                        dropdown.classList.remove('active');
+                    }
+                });
+                
+                // Toggle current dropdown
+                parentDropdown.classList.toggle('active');
+            } else {
+                // For desktop, still prevent default but don't toggle active class
+                // (hover will handle this instead)
+                e.preventDefault();
+            }
+        });
+    });
     
     // Accordion functionality
     const accordionHeaders = document.querySelectorAll('.accordion-header');
@@ -293,17 +320,26 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         
         const target = document.querySelector(this.getAttribute('href'));
         if (target) {
+            // Extra offset for section IDs that are inside the cases section
+            const isSubsection = this.getAttribute('href').startsWith('#cases-');
+            const offset = isSubsection ? 120 : 80;
+            
             window.scrollTo({
-                top: target.offsetTop - 80,
+                top: target.offsetTop - offset,
                 behavior: 'smooth'
             });
         }
         
         // Close mobile menu if open
-        const nav = document.querySelector('nav');
-        if (nav && nav.classList.contains('active')) {
-            nav.classList.remove('active');
+        const mobileNav = document.querySelector('.mobile-nav');
+        if (mobileNav && mobileNav.classList.contains('active')) {
+            mobileNav.classList.remove('active');
         }
+        
+        // Close any open dropdowns
+        document.querySelectorAll('.dropdown').forEach(dropdown => {
+            dropdown.classList.remove('active');
+        });
     });
 });
 
