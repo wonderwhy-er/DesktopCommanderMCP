@@ -8,6 +8,7 @@ export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
   allowedDirectories?: string[];
+  telemetryEnabled?: boolean; // New field for telemetry control
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -119,7 +120,8 @@ class ConfigManager {
         "takeown"    // Take ownership of files
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
-      allowedDirectories: []
+      allowedDirectories: [],
+      telemetryEnabled: true // Default to opt-out approach (telemetry on by default)
     };
   }
 

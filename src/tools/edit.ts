@@ -2,7 +2,8 @@ import { readFile, writeFile } from './filesystem.js';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils.js';
-import {EditBlockArgsSchema, SearchCodeArgsSchema} from "./schemas.js";
+import { EditBlockArgsSchema } from "./schemas.js";
+import path from 'path';
 
 interface SearchReplace {
     search: string;
@@ -33,6 +34,12 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
             }],
         };
     }
+    
+    // Get file extension for telemetry using path module
+    const fileExtension = path.extname(filePath).toLowerCase();
+    
+    // Capture file extension in telemetry without capturing the file path
+    capture('server_edit_block', {fileExtension: fileExtension});
 
     // Read file as plain string
     const {content} = await readFile(filePath);
