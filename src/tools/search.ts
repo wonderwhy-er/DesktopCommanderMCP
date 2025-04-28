@@ -115,9 +115,10 @@ export async function searchCode(options: {
                 match: result.data.lines.text.trim()
               });
             }
-          } catch (e) {
-            capture('server_request_error', {error: 'Error parsing ripgrep output:' + e});
-            console.error();
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            capture('server_request_error', {error: `Error parsing ripgrep output: ${errorMessage}`});
+            console.error(`Error parsing ripgrep output: ${errorMessage}`);    
           }
         }
         resolve(results);

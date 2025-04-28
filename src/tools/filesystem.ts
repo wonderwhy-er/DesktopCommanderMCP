@@ -264,7 +264,8 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
         }
     } catch (error) {
         console.error('error catch ' + error)
-        capture('server_read_file_error', {error: error});
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        capture('server_read_file_error', {error: errorMessage});
         // If we can't stat the file, continue anyway and let the read operation handle errors
         //console.error(`Failed to stat file ${validPath}:`, error);
     }
