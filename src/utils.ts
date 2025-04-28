@@ -41,6 +41,40 @@ async function getOrCreateUUID(): Promise<string> {
 }
 
 /**
+ * Sanitizes error objects to remove potentially sensitive information like file paths
+ * @param error Error object or string to sanitize
+ * @returns An object with sanitized message and optional error code
+ */
+export function sanitizeError(error: any): {message: string, code?: string} {
+    let errorMessage = '';
+    let errorCode = undefined;
+    
+    if (error instanceof Error) {
+        // Extract just the error name and message without stack trace
+        errorMessage = error.name + ': ' + error.message;
+        
+        // Extract error code if available (common in Node.js errors)
+        if ('code' in error) {
+            errorCode = (error as any).code;
+        }
+    } else if (typeof error === 'string') {
+        errorMessage = error;
+    } else {
+        errorMessage = 'Unknown error';
+    }
+    
+    // Remove any file paths using regex
+    // This pattern matches common path formats including Windows and Unix-style paths
+    errorMessage = errorMessage.replace(/(?:\/|\\)[\w\d_.-\/\\]+/g, '[PATH]');
+    errorMessage = errorMessage.replace(/[A-Za-z]:\\[\w\d_.-\/\\]+/g, '[PATH]');
+    
+    return { 
+        message: errorMessage, 
+        code: errorCode 
+    };
+}
+
+/**
  * Send an event to Google Analytics
  * @param event Event name
  * @param properties Optional event properties
@@ -60,6 +94,39 @@ export const capture = async (event: string, properties?: any) => {
             uniqueUserId = await getOrCreateUUID();
         }
         
+        // Create a deep copy of properties to avoid modifying the original objects
+        // This ensures we don't alter error objects that are also returned to the AI
+        const sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+        
+        // Sanitize error objects if present
+        if (sanitizedProperties.error) {
+            // Handle different types of error objects
+            if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
+                const sanitized = sanitizeError(sanitizedProperties.error);
+                sanitizedProperties.error = sanitized.message;
+                if (sanitized.code) {
+                    sanitizedProperties.errorCode = sanitized.code;
+                }
+            } else if (typeof sanitizedProperties.error === 'string') {
+                sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
+            }
+        }
+        
+        // Handle message properties that might contain file paths
+        if (sanitizedProperties.message && typeof sanitizedProperties.message === 'string') {
+            sanitizedProperties.message = sanitizeError({ message: sanitizedProperties.message }).message;
+        }
+        
+        // Remove any properties that might contain paths
+        const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
+        for (const key of Object.keys(sanitizedProperties)) {
+            const lowerKey = key.toLowerCase();
+            if (sensitiveKeys.some(sensitiveKey => lowerKey.includes(sensitiveKey)) && 
+                lowerKey !== 'fileextension') { // keep fileExtension as it's safe
+                delete sanitizedProperties[key];
+            }
+        }
+        
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
@@ -68,10 +135,10 @@ export const capture = async (event: string, properties?: any) => {
             engagement_time_msec: "100"
         };
         
-        // Combine with custom properties
+        // Combine with sanitized properties
         const eventProperties = {
             ...baseProperties,
-            ...(properties || {})
+            ...sanitizedProperties
         };
         
         // Prepare GA4 payload
@@ -146,6 +213,7 @@ export function withTimeout<T>(
   operationName: string,
   defaultValue: T
 ): Promise<T> {
+  // Don't sanitize operation name for logs - only telemetry will sanitize if needed
   return new Promise((resolve, reject) => {
     let isCompleted = false;
     
@@ -156,6 +224,8 @@ export function withTimeout<T>(
         if(defaultValue !== null){
             resolve(defaultValue);
         } else {
+            // Keep the original operation name in the error message
+            // Telemetry sanitization happens at the capture level
             reject(`__ERROR__: ${operationName} timed out after ${timeoutMs/1000} seconds`);
         }
       }
@@ -177,6 +247,7 @@ export function withTimeout<T>(
           if(defaultValue !== null){
             resolve(defaultValue);
           } else {
+            // Pass the original error unchanged - sanitization for telemetry happens in capture
             reject(error);
           }
         }

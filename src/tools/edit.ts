@@ -146,7 +146,6 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
                 file_size: content.length,
                 threshold: FUZZY_THRESHOLD,
                 found_text_length: fuzzyResult.value.length,
-                file_path: filePath,
                 below_threshold: true
             });
             

@@ -68,6 +68,8 @@ We take your privacy seriously:
 - The UUID is stored in your configuration file (`~/.claude-server-commander/config.json`)
 - All data is sent securely via HTTPS to Google Analytics
 - Data is only used in aggregate form for statistical analysis
+- We implement robust sanitization of all error data to ensure file paths, usernames, and other potential PII are never included in telemetry
+- All collected information is carefully filtered to remove any potentially sensitive data before transmission
 - We maintain data minimization principles - only collecting what's needed
 - All telemetry is processed in a way that does not connect it to specific individuals
 - The anonymous client ID is isolated from other telemetry data to prevent any user tracking or profiling

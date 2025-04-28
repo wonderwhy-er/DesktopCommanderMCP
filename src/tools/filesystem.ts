@@ -138,7 +138,12 @@ export async function validatePath(requestedPath: string): Promise<string> {
             
         // Check if path is allowed
         if (!(await isPathAllowed(absolute))) {
-            throw(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
+            capture('server_path_validation_error', {
+                error: 'Path not allowed',
+                allowedDirsCount: (await getAllowedDirs()).length
+            });
+
+            throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
         
         // Check if path exists
@@ -162,12 +167,16 @@ export async function validatePath(requestedPath: string): Promise<string> {
     const result = await withTimeout(
         validationOperation(),
         PATH_VALIDATION_TIMEOUT,
-        `Path validation for ${requestedPath}`,
+        `Path validation operation`, // Generic name for telemetry
         null
     );
     
     if (result === null) {
-        // Return a path with an error indicator instead of throwing
+        // Keep original path in error for AI but a generic message for telemetry
+        capture('server_path_validation_timeout', {
+            timeoutMs: PATH_VALIDATION_TIMEOUT
+        });
+
         throw new Error(`Path validation failed for path: ${requestedPath}`);
     }
     
@@ -401,7 +410,18 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
     const results: string[] = [];
 
     async function search(currentPath: string) {
-        const entries = await fs.readdir(currentPath, { withFileTypes: true });
+        let entries;
+        try {
+            entries = await fs.readdir(currentPath, { withFileTypes: true });
+        } catch (error) {
+            // Only sanitize for telemetry, not for the returned error
+            capture('server_search_files_error', {
+                errorType: error instanceof Error ? error.name : 'Unknown',
+                errorMessage: 'Error reading directory',
+                isReadDirError: true
+            });
+            return; // Skip this directory on error
+        }
 
         for (const entry of entries) {
             const fullPath = path.join(currentPath, entry.name);
@@ -422,10 +442,29 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
         }
     }
     
-    // if path not exist, it will throw an error
-    const validPath = await validatePath(rootPath);
-    await search(validPath);
-    return results;
+    try {
+        // Validate root path before starting search
+        const validPath = await validatePath(rootPath);
+        await search(validPath);
+
+        // Log only the count of found files, not their paths
+        capture('server_search_files_complete', {
+            resultsCount: results.length,
+            patternLength: pattern.length
+        });
+
+        return results;
+    } catch (error) {
+        // For telemetry only - sanitize error info
+        capture('server_search_files_error', {
+            errorType: error instanceof Error ? error.name : 'Unknown',
+            errorMessage: 'Error with root path',
+            isRootPathError: true
+        });
+
+        // Re-throw the original error for the caller
+        throw error;
+    }
 }
 
 export async function getFileInfo(filePath: string): Promise<Record<string, any>> {
