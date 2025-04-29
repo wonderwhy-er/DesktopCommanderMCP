@@ -96,7 +96,12 @@ export const capture = async (event: string, properties?: any) => {
         
         // Create a deep copy of properties to avoid modifying the original objects
         // This ensures we don't alter error objects that are also returned to the AI
-        const sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+let sanitizedProperties;
+try {
+       sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+        } catch () {
+        sanitizedProperties = {}
+        }
         
         // Sanitize error objects if present
         if (sanitizedProperties.error) {
