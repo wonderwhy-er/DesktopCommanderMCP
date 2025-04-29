@@ -84,7 +84,10 @@ export const SearchCodeArgsSchema = z.object({
   timeoutMs: z.number().optional(),
 });
 
-// Edit tools schemas
+// Edit tools schema
 export const EditBlockArgsSchema = z.object({
-  blockContent: z.string(),
+  file_path: z.string(),
+  old_string: z.string(),
+  new_string: z.string(),
+  expected_replacements: z.number().optional().default(1),
 });

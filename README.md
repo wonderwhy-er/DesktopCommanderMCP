@@ -295,6 +295,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
 - **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
 - **14-04-2025 Linux improvements** - Enhanced compatibility with various Linux distributions

@@ -2,7 +2,7 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { parseEditBlock, performSearchReplace } from '../dist/tools/edit.js';
+import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { configManager } from '../dist/config-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,34 +33,28 @@ async function teardown(originalConfig) {
 
 
 // Export the main test function
-async function testParseEditBlock() {
+async function testEditBlock() {
     try {
         await configManager.setValue('allowedDirectories', [__dirname]);
-        // Test parseEditBlock
-        const testBlock = `test.txt
-<<<<<<< SEARCH
-old content
-=======
-new content
->>>>>>> REPLACE`;
-
-        const parsed = await parseEditBlock(testBlock);
-        console.log('Parse test passed:', parsed);
-
+        
         // Create a test file
         const fs = await import('fs/promises');
         await fs.writeFile(TEST_FILEPATH, 'This is old content to replace');
 
-        // Test performSearchReplace
-        await performSearchReplace(TEST_FILEPATH, {
-            search: 'old content',
-            replace: 'new content'
+        // Test handleEditBlock
+        const result = await handleEditBlock({
+            file_path: TEST_FILEPATH,
+            old_string: 'old content',
+            new_string: 'new content',
+            expected_replacements: 1
         });
 
-        const result = await fs.readFile(TEST_FILEPATH, 'utf8');
-        console.log('File content after replacement:', result);
+        console.log('Edit block result:', result);
 
-        if (result.includes('new content')) {
+        const fileContent = await fs.readFile(TEST_FILEPATH, 'utf8');
+        console.log('File content after replacement:', fileContent);
+
+        if (fileContent.includes('new content')) {
             console.log('Replace test passed!');
         } else {
             throw new Error('Replace test failed!');
@@ -82,7 +76,7 @@ export default async function runTests() {
     let originalConfig;
     try {
       originalConfig = await setup();
-      await testParseEditBlock();
+      await testEditBlock();
     } catch (error) {
       console.error('❌ Test failed:', error.message);
       return false;

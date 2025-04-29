@@ -76,13 +76,13 @@ async function runTestModules() {
   ];
   
   // Dynamically find additional test files (optional)
-  const testDir = path.join(__dirname, 'test');
+  // Use the current directory (no need for a subdirectory)
   try {
-    const files = await fs.readdir(testDir);
+    const files = await fs.readdir(__dirname);
     for (const file of files) {
-      const relativePath = `./test/${file}`;
-      if (file.startsWith('test-') && file.endsWith('.js') && !testModules.includes(relativePath)) {
-        testModules.push(relativePath);
+      // Only include files that aren't already in the testModules list
+      if (file.startsWith('test-') && file.endsWith('.js') && !testModules.includes(`./${file}`)) {
+        testModules.push(`./${file}`);
       }
     }
   } catch (error) {
