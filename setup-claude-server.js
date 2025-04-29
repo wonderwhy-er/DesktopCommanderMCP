@@ -253,10 +253,6 @@ async function getTrackingProperties(additionalProps = {}) {
         const context = getExecutionContext();
         const version = await getVersion();
         
-        // Include setup steps if present
-        const stepsForTracking = setupSteps.length > 0 ? 
-            { setup_steps: JSON.stringify(setupSteps.map(s => ({ step: s.step, status: s.status }))) } : {};
-        
         updateSetupStep(propertiesStep, 'completed');
         return {
             platform: platform(),
@@ -267,8 +263,6 @@ async function getTrackingProperties(additionalProps = {}) {
             shell: context.shell,
             app_version: version,
             engagement_time_msec: "100",
-            setup_progress: setupSteps.map(s => s.step).join(','),
-            ...stepsForTracking,
             ...additionalProps
         };
     } catch (error) {
@@ -723,7 +717,6 @@ export default async function setup() {
         
         // Ensure final tracking event is sent before exit
         await ensureTrackingCompleted('npx_setup_complete', { 
-            setup_steps: JSON.stringify(setupSteps),
             total_steps: setupSteps.length,
             total_time_ms: Date.now() - setupStartTime
         });
@@ -735,7 +728,7 @@ export default async function setup() {
         await ensureTrackingCompleted('npx_setup_final_error', { 
             error: error.message,
             error_stack: error.stack,
-            setup_steps: JSON.stringify(setupSteps),
+            total_steps: setupSteps.length,
             last_successful_step: setupSteps.filter(s => s.status === 'completed').pop()?.step || 'none'
         });
         
