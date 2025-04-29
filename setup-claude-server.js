@@ -134,7 +134,43 @@ async function getTrackingProperties(additionalProps = {}) {
   };
 }
 
-// Helper function for tracking that handles errors gracefully
+// Enhanced version with step tracking - will replace the original after initialization
+async function enhancedGetTrackingProperties(additionalProps = {}) {
+  const propertiesStep = addSetupStep('get_tracking_properties');
+  try {
+    if (npmVersionCache === null) {
+      npmVersionCache = await getNpmVersion();
+    }
+
+    const context = getExecutionContext();
+    const version = await getVersion();
+
+    updateSetupStep(propertiesStep, 'completed');
+    return {
+      platform: platform(),
+      node_version: nodeVersion,
+      npm_version: npmVersionCache,
+      execution_context: context.runMethod,
+      is_ci: context.isCI,
+      shell: context.shell,
+      app_version: version,
+      engagement_time_msec: "100",
+      ...additionalProps
+    };
+  } catch (error) {
+    updateSetupStep(propertiesStep, 'failed', error);
+    return {
+      platform: platform(),
+      node_version: nodeVersion,
+      error: error.message,
+      engagement_time_msec: "100",
+      ...additionalProps
+    };
+  }
+}
+
+// Basic tracking implementation (kept to prevent breaking initial tracking)
+// The enhanced implementation with retries is further down in the file
 async function trackEvent(eventName, additionalProps = {}) {
   if (!GA_MEASUREMENT_ID || !GA_API_SECRET) return; // Skip tracking if GA isn't configured
 
@@ -191,7 +227,7 @@ async function trackEvent(eventName, additionalProps = {}) {
       req.write(postData);
       req.end();
 
-      // read response from reques
+      // read response from request
       req.on('response', (res) => {
         // Optional response handling
         let data = '';
@@ -289,8 +325,7 @@ switch (os) {
         claudeConfigPath = join(homedir(), '.claude_desktop_config.json');
 }
 
-// Optional analytics - will gracefully degrade if dependencies aren't available
-let uniqueUserId = 'unknown';
+// Setup tracking
 let setupSteps = []; // Track setup progress
 let setupStartTime = Date.now();
 
@@ -337,153 +372,12 @@ try {
     addSetupStep('initialize_machine_id', 'failed', error);
 }
 
-// Function to get npm version
-async function getNpmVersion() {
-    const npmVersionStep = addSetupStep('get_npm_version');
-    try {
-        const result = await new Promise((resolve, reject) => {
-            exec('npm --version', { timeout: 5000 }, (error, stdout, stderr) => {
-                if (error) {
-                    reject(error);
-                    return;
-                }
-                resolve(stdout.trim());
-            });
-        });
-        updateSetupStep(npmVersionStep, 'completed');
-        return result;
-    } catch (error) {
-        updateSetupStep(npmVersionStep, 'failed', error);
-        return 'unknown';
-    }
-}
-
-const getVersion = async () => {
-    const versionStep = addSetupStep('get_package_version');
-    try {
-        const packageJson = await import('./package.json', { assert: { type: 'json' } });
-        updateSetupStep(versionStep, 'completed');
-        return packageJson.default.version;
-    } catch (error) {
-        updateSetupStep(versionStep, 'failed', error);
-        return 'unknown';
-    }
-};
-
-// Function to detect shell environmen
-function detectShell() {
-    const shellDetectionStep = addSetupStep('detect_shell');
-    try {
-        // Check for Windows shells
-        if (process.platform === 'win32') {
-            if (process.env.TERM_PROGRAM === 'vscode') return 'vscode-terminal';
-            if (process.env.WT_SESSION) return 'windows-terminal';
-            if (process.env.SHELL?.includes('bash')) return 'git-bash';
-            if (process.env.TERM?.includes('xterm')) return 'xterm-on-windows';
-            if (process.env.ComSpec?.toLowerCase().includes('powershell')) return 'powershell';
-            if (process.env.PROMPT) return 'cmd';
-
-            // WSL detection
-            if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) {
-                return `wsl-${process.env.WSL_DISTRO_NAME || 'unknown'}`;
-            }
-
-            updateSetupStep(shellDetectionStep, 'completed');
-            return 'windows-unknown';
-        }
-
-        // Unix-based shells
-        if (process.env.SHELL) {
-            const shellPath = process.env.SHELL.toLowerCase();
-            if (shellPath.includes('bash')) return 'bash';
-            if (shellPath.includes('zsh')) return 'zsh';
-            if (shellPath.includes('fish')) return 'fish';
-            if (shellPath.includes('ksh')) return 'ksh';
-            if (shellPath.includes('csh')) return 'csh';
-            if (shellPath.includes('dash')) return 'dash';
-            return `other-unix-${shellPath.split('/').pop()}`;
-        }
-
-        // Terminal emulators and IDE terminals
-        if (process.env.TERM_PROGRAM) {
-            return process.env.TERM_PROGRAM.toLowerCase();
-        }
-
-        updateSetupStep(shellDetectionStep, 'completed');
-        return 'unknown-shell';
-    } catch (error) {
-        updateSetupStep(shellDetectionStep, 'failed', error);
-        return 'error-detecting-shell';
-    }
-}
-
-// Function to determine execution contex
-function getExecutionContext() {
-    const contextStep = addSetupStep('get_execution_context');
-    try {
-        // Check if running from npx
-        const isNpx = process.env.npm_lifecycle_event === 'npx' ||
-                    process.env.npm_execpath?.includes('npx') ||
-                    process.env._?.includes('npx') ||
-                    import.meta.url.includes('node_modules');
-
-        // Check if installed globally
-        const isGlobal = process.env.npm_config_global === 'true' ||
-                       process.argv[1]?.includes('node_modules/.bin');
-
-        // Check if it's run from a script in package.json
-        const isNpmScript = !!process.env.npm_lifecycle_script;
-
-        updateSetupStep(contextStep, 'completed');
-        return {
-            runMethod: isNpx ? 'npx' : (isGlobal ? 'global' : (isNpmScript ? 'npm_script' : 'direct')),
-            isCI: !!process.env.CI || !!process.env.GITHUB_ACTIONS || !!process.env.TRAVIS || !!process.env.CIRCLECI,
-            shell: detectShell()
-        };
-    } catch (error) {
-        updateSetupStep(contextStep, 'failed', error);
-        return { runMethod: 'unknown', isCI: false, shell: 'unknown' };
-    }
-}
-
-// Helper function to get standard environment properties for tracking
-let npmVersionCache = null;
-async function getTrackingProperties(additionalProps = {}) {
-    const propertiesStep = addSetupStep('get_tracking_properties');
-    try {
-        if (npmVersionCache === null) {
-            npmVersionCache = await getNpmVersion();
-        }
-
-        const context = getExecutionContext();
-        const version = await getVersion();
-
-        updateSetupStep(propertiesStep, 'completed');
-        return {
-            platform: platform(),
-            node_version: nodeVersion,
-            npm_version: npmVersionCache,
-            execution_context: context.runMethod,
-            is_ci: context.isCI,
-            shell: context.shell,
-            app_version: version,
-            engagement_time_msec: "100",
-            ...additionalProps
-        };
-    } catch (error) {
-        updateSetupStep(propertiesStep, 'failed', error);
-        return {
-            platform: platform(),
-            node_version: nodeVersion,
-            error: error.message,
-            engagement_time_msec: "100",
-            ...additionalProps
-        };
-    }
-}
+// Enhanced version of getTrackingProperties will be defined further down
+// The original simple version is kept for initial tracking
 
 // Enhanced tracking function with retries and better error handling
-async function trackEvent(eventName, additionalProps = {}) {
+// This replaces the basic implementation for all tracking after initialization
+async function enhancedTrackEvent(eventName, additionalProps = {}) {
     const trackingStep = addSetupStep(`track_event_${eventName}`);
 
     if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
@@ -582,6 +476,11 @@ async function trackEvent(eventName, additionalProps = {}) {
     updateSetupStep(trackingStep, 'failed', lastError);
     return false;
 }
+
+// Replace the previous functions with the enhanced versions
+// after the initial tracking setup
+trackEvent = enhancedTrackEvent;
+getTrackingProperties = enhancedGetTrackingProperties;
 
 // Ensure tracking completes before process exits
 async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutMs = 6000) {
@@ -695,22 +594,6 @@ async function restartClaude() {
         await trackEvent('npx_setup_restart_claude_error', { error: error.message });
         logToFile(`Failed to restart Claude: ${error}. Please restart it manually.`, true);
         logToFile(`If Claude Desktop is not installed use this link to download https://claude.ai/download`, true);
-    }
-}
-
-// Check if config file exists and create default if no
-if (!existsSync(claudeConfigPath)) {
-    logToFile(`Claude config file not found at: ${claudeConfigPath}`);
-    logToFile('Creating default config file...');
-
-    // Track new installation
-    await trackEvent('npx_setup_create_default_config');
-
-    // Create the directory if it doesn't exis
-    const configDir = dirname(claudeConfigPath);
-    if (!existsSync(configDir)) {
-        import('fs').then(fs => fs.mkdirSync(configDir, { recursive: true }));
-    }
     }
 }
 
