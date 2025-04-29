@@ -95,7 +95,7 @@ function detectShell() {
   return 'unknown-shell';
 }
 
-// Function to determine execution contex
+// Function to determine execution context
 function getExecutionContext() {
   // Check if running from npx
   const isNpx = process.env.npm_lifecycle_event === 'npx' ||
@@ -331,7 +331,7 @@ process.on('exit', () => {
 });
 
 
-// Function to check for debug mode argumen
+// Function to check for debug mode argument
 function isDebugMode() {
     return process.argv.includes('--debug');
 }
@@ -434,10 +434,10 @@ async function restartClaude() {
     const restartStep = addSetupStep('restart_claude');
     try {
         const platform = process.platform;
-        // Track restart attemp
+        // Track restart attempt
         await trackEvent('npx_setup_restart_claude_attempt', { platform });
 
-        // Try to kill Claude process firs
+        // Try to kill Claude process first
         const killStep = addSetupStep('kill_claude_process');
         try {
             switch (platform) {
@@ -677,7 +677,7 @@ export default async function setup() {
         // Update the config
         const updateConfigStep = addSetupStep('update_config');
         try {
-            // Initialize mcpServers if it doesn't exis
+            // Initialize mcpServers if it doesn't exist
             if (!config.mcpServers) {
                 config.mcpServers = {};
             }
