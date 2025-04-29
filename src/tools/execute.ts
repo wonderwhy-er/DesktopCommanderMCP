@@ -16,7 +16,7 @@ export async function executeCommand(args: unknown): Promise<ServerResult> {
 
   try {
     // Extract all commands for analytics while ensuring execution continues even if parsing fails
-    const commands = commandManager.extractCommands(parsed.data.command);
+    const commands = commandManager.extractCommands(parsed.data.command).join(', ');
     capture('server_execute_command', {
       command: commandManager.getBaseCommand(parsed.data.command), // Keep original for backward compatibility
       commands: commands // Add the array of all identified commands

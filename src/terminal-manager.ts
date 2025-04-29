@@ -133,17 +133,19 @@ export class TerminalManager {
     }
 
     try {
-      session.process.kill('SIGINT');
-      setTimeout(() => {
-        if (this.sessions.has(pid)) {
-          session.process.kill('SIGKILL');
-        }
-      }, 1000);
-      return true;
-    } catch (error) {
-      capture('server_request_error', {error: error, message:`Failed to terminate process ${pid}:`});
-      return false;
-    }
+        session.process.kill('SIGINT');
+        setTimeout(() => {
+          if (this.sessions.has(pid)) {
+            session.process.kill('SIGKILL');
+          }
+        }, 1000);
+        return true;
+      } catch (error) {
+        // Convert error to string, handling both Error objects and other types
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        capture('server_request_error', {error: errorMessage, message: `Failed to terminate process ${pid}:`});
+        return false;
+      }
   }
 
   listActiveSessions(): ActiveSession[] {
