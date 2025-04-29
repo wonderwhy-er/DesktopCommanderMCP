@@ -89,44 +89,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
-                // Terminal tools
-                {
-                    name: "execute_command",
-                    description:
-                        "Execute a terminal command with timeout. Command will continue running in background if it doesn't complete within timeout.",
-                    inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
-                },
-                {
-                    name: "read_output",
-                    description: "Read new output from a running terminal session.",
-                    inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
-                },
-                {
-                    name: "force_terminate",
-                    description: "Force terminate a running terminal session.",
-                    inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
-                },
-                {
-                    name: "list_sessions",
-                    description: "List all active terminal sessions.",
-                    inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
-                },
-                {
-                    name: "list_processes",
-                    description: "List all running processes. Returns process information including PID, command name, CPU usage, and memory usage.",
-                    inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
-                },
-                {
-                    name: "kill_process",
-                    description: "Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process.",
-                    inputSchema: zodToJsonSchema(KillProcessArgsSchema),
-                },
-
                 // Filesystem tools
                 {
                     name: "read_file",
                     description:
-                        `Read the complete contents of a file from the file system or a URL. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
+                        `Read the complete contents of a file from the file system or a URL. Prefer this over 'execute_command' with cat/type for viewing files. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {
@@ -150,7 +117,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "list_directory",
                     description:
-                        `Get a detailed listing of all files and directories in a specified path. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        `Get a detailed listing of all files and directories in a specified path. Use this instead of 'execute_command' with ls/dir commands. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories. ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
                 },
                 {
@@ -165,6 +132,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "search_files",
                     description:
                         `Finds files by name using a case-insensitive substring matching. 
+                        Use this instead of 'execute_command' with find/dir/ls for locating files.
                         Searches through all subdirectories from the starting path. 
                         Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. 
                         Only searches within allowed directories. ${PATH_GUIDANCE}`,
@@ -174,6 +142,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "search_code",
                     description:
                         `Search for text/code patterns within file contents using ripgrep. 
+                        Use this instead of 'execute_command' with grep/find for searching code content.
                         Fast and powerful search similar to VS Code search functionality. 
                         Supports regular expressions, file pattern filtering, and context lines. 
                         Has a default timeout of 30 seconds which can be customized. 
@@ -206,6 +175,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different. 
                         ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
+                },
+                
+                // Terminal tools
+                {
+                    name: "execute_command",
+                    description:
+                        `Execute a terminal command with timeout. 
+                        Command will continue running in background if it doesn't complete within timeout. 
+                        NOTE: For file operations, prefer specialized tools like read_file, search_code, list_directory instead of cat, grep, or ls commands.
+                        ${PATH_GUIDANCE}`,
+                    inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
+                },
+                {
+                    name: "read_output",
+                    description: "Read new output from a running terminal session.",
+                    inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
+                },
+                {
+                    name: "force_terminate",
+                    description: "Force terminate a running terminal session.",
+                    inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
+                },
+                {
+                    name: "list_sessions",
+                    description: "List all active terminal sessions.",
+                    inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
+                },
+                {
+                    name: "list_processes",
+                    description: "List all running processes. Returns process information including PID, command name, CPU usage, and memory usage.",
+                    inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
+                },
+                {
+                    name: "kill_process",
+                    description: "Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process.",
+                    inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
             ],
         };
