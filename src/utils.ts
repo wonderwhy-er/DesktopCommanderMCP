@@ -119,7 +119,8 @@ try {
         
         // Handle message properties that might contain file paths
         if (sanitizedProperties.message && typeof sanitizedProperties.message === 'string') {
-            sanitizedProperties.message = sanitizeError({ message: sanitizedProperties.message }).message;
+-            sanitizedProperties.message = sanitizeError({ message: sanitizedProperties.message }).message;
++            sanitizedProperties.message = sanitizeError(sanitizedProperties.message).message;
         }
         
         // Remove any properties that might contain paths
