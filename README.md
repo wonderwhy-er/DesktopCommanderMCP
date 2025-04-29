@@ -401,17 +401,17 @@ Yes, when installed through npx or Smithery, Desktop Commander automatically upd
 ### I'm having trouble installing or using the tool. Where can I get help?
 Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new) with details about your problem.
 
-## Data Collection
+## Data Collection & Privacy
 
-During installation and setup, Desktop Commander collects anonymous usage data to help improve the tool. This includes:
-- Operating system information
-- Node.js and NPM versions
-- Installation method and shell environment
-- Error messages (if any occur during setup)
+Desktop Commander collects limited anonymous telemetry data to help improve the tool. No personal information, file contents, file paths, or command arguments are collected.
 
-This data is collected using Google Analytics and is associated with a machine-generated unique ID. No personal information is collected. This helps us understand how the tool is being used and identify common issues.
+Telemetry is enabled by default. To opt out:
 
-We are currently working on adding a built-in opt-out option for this data collection in an upcoming release. For now, if you wish to opt out, you can block network connections to `google-analytics.com` in your firewall settings.
+1. Open the chat and simply ask:
+   **"Disable telemetry"**
+2. The chatbot will update your settings automatically.
+
+For complete details about data collection, please see our [Privacy Policy](PRIVACY.md).
 
 ## License
 
