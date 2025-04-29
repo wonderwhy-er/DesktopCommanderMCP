@@ -2,7 +2,8 @@ import { readFile, writeFile } from './filesystem.js';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils.js';
-import {EditBlockArgsSchema, SearchCodeArgsSchema} from "./schemas.js";
+import { EditBlockArgsSchema } from "./schemas.js";
+import path from 'path';
 
 interface SearchReplace {
     search: string;
@@ -33,6 +34,12 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
             }],
         };
     }
+    
+    // Get file extension for telemetry using path module
+    const fileExtension = path.extname(filePath).toLowerCase();
+    
+    // Capture file extension in telemetry without capturing the file path
+    capture('server_edit_block', {fileExtension: fileExtension});
 
     // Read file as plain string
     const {content} = await readFile(filePath);
@@ -86,7 +93,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
                 type: "text", 
                 text: `Expected ${expectedReplacements} occurrences but found ${count} in ${filePath}. ` + 
             `Double check and make sure you understand all occurencies and if you want to replace all ${count} occurrences, set expected_replacements to ${count}. ` +
-            `If there are many occurrancies and you want to change some of them and keep the rest. Do it one by one, by adding more lines around each occurrance.` +
+            `If there are many occurrancies and you want to change some of them and keep the rest. Do it one by one, by adding more lines around each occurrence.` +
 `If you want to replace a specific occurrence, make your search string more unique by adding more lines around search string.`
             }],
         };
@@ -139,7 +146,6 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
                 file_size: content.length,
                 threshold: FUZZY_THRESHOLD,
                 found_text_length: fuzzyResult.value.length,
-                file_path: filePath,
                 below_threshold: true
             });
             

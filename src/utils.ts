@@ -1,6 +1,7 @@
-import { platform } from 'os';
-import { createHash } from 'crypto';
+import {platform} from 'os';
+import {randomUUID} from 'crypto';
 import * as https from 'https';
+import {configManager} from './config-manager.js';
 
 let VERSION = 'unknown';
 try {
@@ -17,29 +18,60 @@ const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=
 const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
 
 
-// Set default tracking state
-const isTrackingEnabled = true;
+// Will be initialized when needed
 let uniqueUserId = 'unknown';
 
-// Try to generate a unique user ID without breaking if dependencies aren't available
-try {
+// Function to get or create a persistent UUID
+async function getOrCreateUUID(): Promise<string> {
+    try {
+        // Try to get the UUID from the config
+        let clientId = await configManager.getValue('clientId');
 
-    // Dynamic import to prevent crashing if dependency isn't available
-    import('node-machine-id').then((machineIdModule) => {
-        // Access the default export from the module
-        uniqueUserId = machineIdModule.default.machineIdSync();
+        // If it doesn't exist, create a new one and save it
+        if (!clientId) {
+            clientId = randomUUID();
+            await configManager.setValue('clientId', clientId);
+        }
 
-    }).catch(() => {
-        // Fallback to a semi-random ID if machine-id isn't available
-        uniqueUserId = createHash('sha256')
-            .update(`${platform()}-${process.env.USER || process.env.USERNAME || 'user'}-${Date.now()}`)
-            .digest('hex');
-    });
-} catch {
-    // Fallback to a semi-random ID if import fails
-    uniqueUserId = createHash('sha256')
-        .update(`${platform()}-${process.env.USER || process.env.USERNAME || 'user'}-${Date.now()}`)
-        .digest('hex');
+        return clientId;
+    } catch (error) {
+        // Fallback to a random UUID if config operations fail
+        return randomUUID();
+    }
+}
+
+/**
+ * Sanitizes error objects to remove potentially sensitive information like file paths
+ * @param error Error object or string to sanitize
+ * @returns An object with sanitized message and optional error code
+ */
+export function sanitizeError(error: any): { message: string, code?: string } {
+    let errorMessage = '';
+    let errorCode = undefined;
+
+    if (error instanceof Error) {
+        // Extract just the error name and message without stack trace
+        errorMessage = error.name + ': ' + error.message;
+
+        // Extract error code if available (common in Node.js errors)
+        if ('code' in error) {
+            errorCode = (error as any).code;
+        }
+    } else if (typeof error === 'string') {
+        errorMessage = error;
+    } else {
+        errorMessage = 'Unknown error';
+    }
+
+    // Remove any file paths using regex
+    // This pattern matches common path formats including Windows and Unix-style paths
+    errorMessage = errorMessage.replace(/(?:\/|\\)[\w\d_.-\/\\]+/g, '[PATH]');
+    errorMessage = errorMessage.replace(/[A-Za-z]:\\[\w\d_.-\/\\]+/g, '[PATH]');
+
+    return {
+        message: errorMessage,
+        code: errorCode
+    };
 }
 
 /**
@@ -47,12 +79,54 @@ try {
  * @param event Event name
  * @param properties Optional event properties
  */
-export const capture = (event: string, properties?: any) => {
-    if (!isTrackingEnabled || !GA_MEASUREMENT_ID || !GA_API_SECRET) {
-        return;
-    }
-    
+export const capture = async (event: string, properties?: any) => {
     try {
+        // Check if telemetry is enabled in config (defaults to true if not set)
+        const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+
+        // If telemetry is explicitly disabled or GA credentials are missing, don't send
+        if (telemetryEnabled === false || !GA_MEASUREMENT_ID || !GA_API_SECRET) {
+            return;
+        }
+
+        // Get or create the client ID if not already initialized
+        if (uniqueUserId === 'unknown') {
+            uniqueUserId = await getOrCreateUUID();
+        }
+
+        // Create a deep copy of properties to avoid modifying the original objects
+        // This ensures we don't alter error objects that are also returned to the AI
+        let sanitizedProperties;
+        try {
+            sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+        } catch (e) {
+            sanitizedProperties = {}
+        }
+
+        // Sanitize error objects if present
+        if (sanitizedProperties.error) {
+            // Handle different types of error objects
+            if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
+                const sanitized = sanitizeError(sanitizedProperties.error);
+                sanitizedProperties.error = sanitized.message;
+                if (sanitized.code) {
+                    sanitizedProperties.errorCode = sanitized.code;
+                }
+            } else if (typeof sanitizedProperties.error === 'string') {
+                sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
+            }
+        }
+
+        // Remove any properties that might contain paths
+        const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
+        for (const key of Object.keys(sanitizedProperties)) {
+            const lowerKey = key.toLowerCase();
+            if (sensitiveKeys.some(sensitiveKey => lowerKey.includes(sensitiveKey)) &&
+                lowerKey !== 'fileextension') { // keep fileExtension as it's safe
+                delete sanitizedProperties[key];
+            }
+        }
+
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
@@ -60,13 +134,13 @@ export const capture = (event: string, properties?: any) => {
             app_version: VERSION,
             engagement_time_msec: "100"
         };
-        
-        // Combine with custom properties
+
+        // Combine with sanitized properties
         const eventProperties = {
             ...baseProperties,
-            ...(properties || {})
+            ...sanitizedProperties
         };
-        
+
         // Prepare GA4 payload
         const payload = {
             client_id: uniqueUserId,
@@ -77,10 +151,10 @@ export const capture = (event: string, properties?: any) => {
                 params: eventProperties
             }]
         };
-        
+
         // Send data to Google Analytics
         const postData = JSON.stringify(payload);
-        
+
         const options = {
             method: 'POST',
             headers: {
@@ -88,14 +162,14 @@ export const capture = (event: string, properties?: any) => {
                 'Content-Length': Buffer.byteLength(postData)
             }
         };
-        
+
         const req = https.request(GA_BASE_URL, options, (res) => {
             // Response handling (optional)
             let data = '';
             res.on('data', (chunk) => {
                 data += chunk;
             });
-            
+
             res.on('end', () => {
                 if (res.statusCode !== 200 && res.statusCode !== 204) {
                     // Optional debug logging
@@ -103,31 +177,30 @@ export const capture = (event: string, properties?: any) => {
                 }
             });
         });
-        
+
         req.on('error', () => {
             // Silently fail - we don't want analytics issues to break functionality
         });
-        
+
         // Set timeout to prevent blocking the app
         req.setTimeout(3000, () => {
             req.destroy();
         });
-        
+
         // Send data
         req.write(postData);
         req.end();
-        
+
     } catch {
         // Silently fail - we don't want analytics issues to break functionality
     }
-
 };
 
 
 /**
  * Executes a promise with a timeout. If the promise doesn't resolve or reject within
  * the specified timeout, returns the provided default value.
- * 
+ *
  * @param operation The promise to execute
  * @param timeoutMs Timeout in milliseconds
  * @param operationName Name of the operation (for logs)
@@ -135,45 +208,49 @@ export const capture = (event: string, properties?: any) => {
  * @returns Promise that resolves with the operation result or the default value on timeout
  */
 export function withTimeout<T>(
-  operation: Promise<T>, 
-  timeoutMs: number, 
-  operationName: string,
-  defaultValue: T
+    operation: Promise<T>,
+    timeoutMs: number,
+    operationName: string,
+    defaultValue: T
 ): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let isCompleted = false;
-    
-    // Set up timeout
-    const timeoutId = setTimeout(() => {
-      if (!isCompleted) {
-        isCompleted = true;
-        if(defaultValue !== null){
-            resolve(defaultValue);
-        } else {
-            reject(`__ERROR__: ${operationName} timed out after ${timeoutMs/1000} seconds`);
-        }
-      }
-    }, timeoutMs);
+    // Don't sanitize operation name for logs - only telemetry will sanitize if needed
+    return new Promise((resolve, reject) => {
+        let isCompleted = false;
 
-    // Execute the operation
-    operation
-      .then(result => {
-        if (!isCompleted) {
-          isCompleted = true;
-          clearTimeout(timeoutId);
-          resolve(result);
-        }
-      })
-      .catch(error => {
-        if (!isCompleted) {
-          isCompleted = true;
-          clearTimeout(timeoutId);
-          if(defaultValue !== null){
-            resolve(defaultValue);
-          } else {
-            reject(error);
-          }
-        }
-      });
-  });
+        // Set up timeout
+        const timeoutId = setTimeout(() => {
+            if (!isCompleted) {
+                isCompleted = true;
+                if (defaultValue !== null) {
+                    resolve(defaultValue);
+                } else {
+                    // Keep the original operation name in the error message
+                    // Telemetry sanitization happens at the capture level
+                    reject(`__ERROR__: ${operationName} timed out after ${timeoutMs / 1000} seconds`);
+                }
+            }
+        }, timeoutMs);
+
+        // Execute the operation
+        operation
+            .then(result => {
+                if (!isCompleted) {
+                    isCompleted = true;
+                    clearTimeout(timeoutId);
+                    resolve(result);
+                }
+            })
+            .catch(error => {
+                if (!isCompleted) {
+                    isCompleted = true;
+                    clearTimeout(timeoutId);
+                    if (defaultValue !== null) {
+                        resolve(defaultValue);
+                    } else {
+                        // Pass the original error unchanged - sanitization for telemetry happens in capture
+                        reject(error);
+                    }
+                }
+            });
+    });
 }
