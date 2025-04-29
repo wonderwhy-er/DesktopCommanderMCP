@@ -25,6 +25,11 @@ try {
     uniqueUserId = `random-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 }
 
+// Setup tracking
+let setupSteps = []; // Track setup progress
+let setupStartTime = Date.now();
+
+
 // Function to get npm version
 async function getNpmVersion() {
   try {
@@ -114,25 +119,6 @@ function getExecutionContext() {
 
 // Helper function to get standard environment properties for tracking
 let npmVersionCache = null;
-async function getTrackingProperties(additionalProps = {}) {
-  if (npmVersionCache === null) {
-    npmVersionCache = await getNpmVersion();
-  }
-
-  const context = getExecutionContext();
-  const version = await getVersion();
-  return {
-    platform: platform(),
-    node_version: nodeVersion,
-    npm_version: npmVersionCache,
-    execution_context: context.runMethod,
-    is_ci: context.isCI,
-    shell: context.shell,
-    app_version: version,
-    engagement_time_msec: "100",
-    ...additionalProps
-  };
-}
 
 // Enhanced version with step tracking - will replace the original after initialization
 async function enhancedGetTrackingProperties(additionalProps = {}) {
@@ -169,215 +155,9 @@ async function enhancedGetTrackingProperties(additionalProps = {}) {
   }
 }
 
-// Basic tracking implementation (kept to prevent breaking initial tracking)
-// The enhanced implementation with retries is further down in the file
-async function trackEvent(eventName, additionalProps = {}) {
-  if (!GA_MEASUREMENT_ID || !GA_API_SECRET) return; // Skip tracking if GA isn't configured
-
-  try {
-    // Get enriched properties
-    const eventProperties = await getTrackingProperties(additionalProps);
-
-    // Prepare GA4 payload
-    const payload = {
-      client_id: uniqueUserId,
-      non_personalized_ads: false,
-      timestamp_micros: Date.now() * 1000,
-      events: [{
-        name: eventName,
-        params: eventProperties
-      }]
-    };
-
-    // Send to Google Analytics
-    const postData = JSON.stringify(payload);
-
-    const options = {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(postData)
-      }
-    };
-
-    return new Promise((resolve) => {
-      const req = https.request(GA_BASE_URL, options, (res) => {
-        // Optional response handling
-        let data = '';
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        res.on('end', () => {
-          resolve(true);
-        });
-      });
-
-      req.on('error', (error) => {
-        // Silently fail - we don't want tracking issues to break functionality
-        resolve(false);
-      });
-
-      // Set timeout to prevent blocking
-      req.setTimeout(3000, () => {
-        req.destroy();
-        resolve(false);
-      });
-
-      req.write(postData);
-      req.end();
-
-      // read response from request
-      req.on('response', (res) => {
-        // Optional response handling
-        let data = '';
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-
-        //response status
-        res.on('error', (error) => {
-          resolve(false);
-        });
-
-        res.on('end', () => {
-          resolve(true);
-        });
-      });
-    });
-  } catch (error) {
-    logToFile(`Error tracking event ${eventName}: ${error}`, true);
-    // Silently fail if tracking fails - we don't want to break the application
-    return false;
-  }
-}
-// Initial tracking
-trackEvent('npx_setup_start');
-// Fix for Windows ESM path resolution
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Setup logging early to capture everything
-const LOG_FILE = join(__dirname, 'setup.log');
-
-function logToFile(message, isError = false) {
-    const timestamp = new Date().toISOString();
-    const logMessage = `${timestamp} - ${isError ? 'ERROR: ' : ''}${message}\n`;
-    try {
-        appendFileSync(LOG_FILE, logMessage);
-        // For setup script, we'll still output to console but in JSON forma
-        const jsonOutput = {
-            type: isError ? 'error' : 'info',
-            timestamp,
-            message
-        };
-        process.stdout.write(JSON.stringify(jsonOutput) + '\n');
-    } catch (err) {
-        // Last resort error handling
-        process.stderr.write(JSON.stringify({
-            type: 'error',
-            timestamp: new Date().toISOString(),
-            message: `Failed to write to log file: ${err.message}`
-        }) + '\n');
-    }
-}
-
-// Setup global error handlers
-process.on('uncaughtException', async (error) => {
-    logToFile(`Uncaught exception: ${error.stack || error.message}`, true);
-    await trackEvent('npx_setup_uncaught_exception', { error: error.message });
-    process.exit(1);
-});
-
-process.on('unhandledRejection', async (reason, promise) => {
-    logToFile(`Unhandled rejection at: ${promise}, reason: ${reason}`, true);
-    await trackEvent('npx_setup_unhandled_rejection', { error: String(reason) });
-    process.exit(1);
-});
-
-// Track when the process is about to exi
-let isExiting = false;
-process.on('exit', () => {
-    if (!isExiting) {
-        isExiting = true;
-        // Synchronous tracking for exit handler
-        logToFile('Process is exiting. Some tracking events may not be sent.');
-    }
-});
-
-// Determine OS and set appropriate config path
-const os = platform();
-const isWindows = os === 'win32';
-let claudeConfigPath;
-
-switch (os) {
-    case 'win32':
-        claudeConfigPath = join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json');
-        break;
-    case 'darwin':
-        claudeConfigPath = join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
-        break;
-    case 'linux':
-        claudeConfigPath = join(homedir(), '.config', 'Claude', 'claude_desktop_config.json');
-        break;
-    default:
-        // Fallback for other platforms
-        claudeConfigPath = join(homedir(), '.claude_desktop_config.json');
-}
-
-// Setup tracking
-let setupSteps = []; // Track setup progress
-let setupStartTime = Date.now();
-
-// Tracking step functions
-function addSetupStep(step, status = 'started', error = null) {
-    const timestamp = Date.now();
-    setupSteps.push({
-        step,
-        status,
-        timestamp,
-        timeFromStart: timestamp - setupStartTime,
-        error: error ? error.message || String(error) : null
-    });
-    return setupSteps.length - 1; // Return the index for later updates
-}
-
-function updateSetupStep(index, status, error = null) {
-    if (setupSteps[index]) {
-        const timestamp = Date.now();
-        setupSteps[index].status = status;
-        setupSteps[index].completionTime = timestamp;
-        setupSteps[index].timeFromStart = timestamp - setupStartTime;
-        if (error) {
-            setupSteps[index].error = error.message || String(error);
-        }
-    }
-}
-
-try {
-    // Only dependency is node-machine-id
-    const machineIdInitStep = addSetupStep('initialize_machine_id');
-    try {
-        const machineIdModule = await import('node-machine-id');
-        // Get a unique user ID
-        uniqueUserId = machineIdModule.machineIdSync();
-        updateSetupStep(machineIdInitStep, 'completed');
-    } catch (error) {
-        // Fall back to a semi-unique identifier if machine-id is not available
-        uniqueUserId = `${platform()}-${process.env.USER || process.env.USERNAME || 'unknown'}-${Date.now()}`;
-        updateSetupStep(machineIdInitStep, 'fallback', error);
-    }
-} catch (error) {
-    logToFile(`Error initializing user ID: ${error}`, true);
-    addSetupStep('initialize_machine_id', 'failed', error);
-}
-
-// Enhanced version of getTrackingProperties will be defined further down
-// The original simple version is kept for initial tracking
-
 // Enhanced tracking function with retries and better error handling
 // This replaces the basic implementation for all tracking after initialization
-async function enhancedTrackEvent(eventName, additionalProps = {}) {
+async function trackEvent(eventName, additionalProps = {}) {
     const trackingStep = addSetupStep(`track_event_${eventName}`);
 
     if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
@@ -395,7 +175,7 @@ async function enhancedTrackEvent(eventName, additionalProps = {}) {
             attempt++;
 
             // Get enriched properties
-            const eventProperties = await getTrackingProperties(additionalProps);
+            const eventProperties = await enhancedGetTrackingProperties(additionalProps);
 
             // Prepare GA4 payload
             const payload = {
@@ -410,7 +190,7 @@ async function enhancedTrackEvent(eventName, additionalProps = {}) {
 
             // Send to Google Analytics
             const postData = JSON.stringify(payload);
-
+            
             const options = {
                 method: 'POST',
                 headers: {
@@ -477,11 +257,6 @@ async function enhancedTrackEvent(eventName, additionalProps = {}) {
     return false;
 }
 
-// Replace the previous functions with the enhanced versions
-// after the initial tracking setup
-trackEvent = enhancedTrackEvent;
-getTrackingProperties = enhancedGetTrackingProperties;
-
 // Ensure tracking completes before process exits
 async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutMs = 6000) {
     return new Promise(async (resolve) => {
@@ -501,6 +276,139 @@ async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutM
         }
     });
 }
+
+
+// Fix for Windows ESM path resolution
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Setup logging early to capture everything
+const LOG_FILE = join(__dirname, 'setup.log');
+
+function logToFile(message, isError = false) {
+    const timestamp = new Date().toISOString();
+    const logMessage = `${timestamp} - ${isError ? 'ERROR: ' : ''}${message}\n`;
+    try {
+        appendFileSync(LOG_FILE, logMessage);
+        // For setup script, we'll still output to console but in JSON forma
+        const jsonOutput = {
+            type: isError ? 'error' : 'info',
+            timestamp,
+            message
+        };
+        process.stdout.write(JSON.stringify(jsonOutput) + '\n');
+    } catch (err) {
+        // Last resort error handling
+        process.stderr.write(JSON.stringify({
+            type: 'error',
+            timestamp: new Date().toISOString(),
+            message: `Failed to write to log file: ${err.message}`
+        }) + '\n');
+    }
+}
+
+// Setup global error handlers
+process.on('uncaughtException', async (error) => {
+    logToFile(`Uncaught exception: ${error.stack || error.message}`, true);
+    await trackEvent('npx_setup_uncaught_exception', { error: error.message });
+    process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+    logToFile(`Unhandled rejection at: ${promise}, reason: ${reason}`, true);
+    await trackEvent('npx_setup_unhandled_rejection', { error: String(reason) });
+    process.exit(1);
+});
+
+// Track when the process is about to exi
+let isExiting = false;
+process.on('exit', () => {
+    if (!isExiting) {
+        isExiting = true;
+        // Synchronous tracking for exit handler
+        logToFile('Process is exiting. Some tracking events may not be sent.');
+    }
+});
+
+
+// Function to check for debug mode argumen
+function isDebugMode() {
+    return process.argv.includes('--debug');
+}
+
+// Initial tracking - ensure it completes before continuing
+await ensureTrackingCompleted('npx_setup_start', {
+    argv: process.argv.join(' '),
+    start_time: new Date().toISOString()
+});
+
+// Determine OS and set appropriate config path
+const os = platform();
+const isWindows = os === 'win32';
+let claudeConfigPath;
+
+switch (os) {
+    case 'win32':
+        claudeConfigPath = join(process.env.APPDATA, 'Claude', 'claude_desktop_config.json');
+        break;
+    case 'darwin':
+        claudeConfigPath = join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json');
+        break;
+    case 'linux':
+        claudeConfigPath = join(homedir(), '.config', 'Claude', 'claude_desktop_config.json');
+        break;
+    default:
+        // Fallback for other platforms
+        claudeConfigPath = join(homedir(), '.claude_desktop_config.json');
+}
+
+
+
+// Tracking step functions
+function addSetupStep(step, status = 'started', error = null) {
+    const timestamp = Date.now();
+    setupSteps.push({
+        step,
+        status,
+        timestamp,
+        timeFromStart: timestamp - setupStartTime,
+        error: error ? error.message || String(error) : null
+    });
+    return setupSteps.length - 1; // Return the index for later updates
+}
+
+function updateSetupStep(index, status, error = null) {
+    if (setupSteps[index]) {
+        const timestamp = Date.now();
+        setupSteps[index].status = status;
+        setupSteps[index].completionTime = timestamp;
+        setupSteps[index].timeFromStart = timestamp - setupStartTime;
+        if (error) {
+            setupSteps[index].error = error.message || String(error);
+        }
+    }
+}
+
+try {
+    // Only dependency is node-machine-id
+    const machineIdInitStep = addSetupStep('initialize_machine_id');
+    try {
+        const machineIdModule = await import('node-machine-id');
+        // Get a unique user ID
+        uniqueUserId = machineIdModule.machineIdSync();
+        updateSetupStep(machineIdInitStep, 'completed');
+    } catch (error) {
+        // Fall back to a semi-unique identifier if machine-id is not available
+        uniqueUserId = `${platform()}-${process.env.USER || process.env.USERNAME || 'unknown'}-${Date.now()}`;
+        updateSetupStep(machineIdInitStep, 'fallback', error);
+    }
+} catch (error) {
+    logToFile(`Error initializing user ID: ${error}`, true);
+    addSetupStep('initialize_machine_id', 'failed', error);
+}
+
+
+
 
 async function execAsync(command) {
     const execStep = addSetupStep(`exec_${command.substring(0, 20)}...`);
@@ -597,16 +505,6 @@ async function restartClaude() {
     }
 }
 
-// Function to check for debug mode argumen
-function isDebugMode() {
-    return process.argv.includes('--debug');
-}
-
-// Initial tracking - ensure it completes before continuing
-await ensureTrackingCompleted('npx_setup_start', {
-    argv: process.argv.join(' '),
-    start_time: new Date().toISOString()
-});
 
 // Main function to export for ESM compatibility
 export default async function setup() {
