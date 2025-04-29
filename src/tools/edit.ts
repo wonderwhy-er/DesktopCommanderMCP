@@ -86,7 +86,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
                 type: "text", 
                 text: `Expected ${expectedReplacements} occurrences but found ${count} in ${filePath}. ` + 
             `Double check and make sure you understand all occurencies and if you want to replace all ${count} occurrences, set expected_replacements to ${count}. ` +
-            `If there are many occurrancies and you want to change some of them and keep the rest. Do it one by one, by adding more lines around each occurrance.` +
+            `If there are many occurrancies and you want to change some of them and keep the rest. Do it one by one, by adding more lines around each occurrence.` +
 `If you want to replace a specific occurrence, make your search string more unique by adding more lines around search string.`
             }],
         };
