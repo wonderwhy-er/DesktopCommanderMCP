@@ -158,6 +158,27 @@ class ConfigManager {
    */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
+    
+    // Special handling for telemetry opt-out
+    if (key === 'telemetryEnabled' && value === false) {
+      // Get the current value before changing it
+      const currentValue = this.config[key];
+      
+      // Only capture the opt-out event if telemetry was previously enabled
+      if (currentValue !== false) {
+        // Import the capture function dynamically to avoid circular dependencies
+        const { capture } = await import('./utils.js');
+        
+        // Send a final telemetry event noting that the user has opted out
+        // This helps us track opt-out rates while respecting the user's choice
+        await capture('server_telemetry_opt_out', {
+          reason: 'user_disabled',
+          prev_value: currentValue
+        });
+      }
+    }
+    
+    // Update the value
     this.config[key] = value;
     await this.saveConfig();
   }

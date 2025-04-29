@@ -6,24 +6,23 @@ import { dirname } from 'path';
 import { exec } from "node:child_process";
 import { version as nodeVersion } from 'process';
 import * as https from 'https';
+import { randomUUID } from 'crypto';
 
 // Google Analytics configuration
 const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L'; // Replace with your GA4 Measurement ID
 const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A';   // Replace with your GA4 API Secret
 const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
 
-// Optional analytics - will gracefully degrade if dependencies aren't available
+// Generate a unique anonymous ID using UUID - consistent with privacy policy
 let uniqueUserId = 'unknown';
 
 try {
-    // Only dependency is node-machine-id
-    const machineIdModule = await import('node-machine-id');
-  
-    // Get a unique user ID
-    uniqueUserId = machineIdModule.machineIdSync();
+    // Use randomUUID from crypto module instead of machine-id
+    // This generates a truly random identifier not tied to hardware
+    uniqueUserId = randomUUID();
 } catch (error) {
-    // Fall back to a semi-unique identifier if machine-id is not available
-    uniqueUserId = `${platform()}-${process.env.USER || process.env.USERNAME || 'unknown'}-${Date.now()}`;
+    // Fall back to a semi-unique identifier if UUID generation fails
+    uniqueUserId = `random-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 }
 
 // Function to get npm version
@@ -327,7 +326,7 @@ async function restartClaude() {
 
 		
 	} catch (error) {
-        await trackEvent('npx_setup_restart_claude_error', { error: error.message });
+        await trackEvent('npx_setup_restart_claude_error', { error });
 		logToFile(`Failed to restart Claude: ${error}. Please restart it manually.`, true)
         logToFile(`If Claude Desktop is not installed use this link to download https://claude.ai/download`, true)
 	}
