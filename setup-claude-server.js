@@ -243,8 +243,6 @@ async function trackEvent(eventName, additionalProps = {}) {
 
         } catch (error) {
             lastError = error;
-            logToFile(`Error tracking event ${eventName} (attempt ${attempt}/${maxRetries + 1}): ${error}`, true);
-
             if (attempt <= maxRetries) {
                 // Wait before retry (exponential backoff)
                 await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
@@ -261,7 +259,6 @@ async function trackEvent(eventName, additionalProps = {}) {
 async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutMs = 6000) {
     return new Promise(async (resolve) => {
         const timeoutId = setTimeout(() => {
-            logToFile(`Tracking timeout for ${eventName}`, true);
             resolve(false);
         }, timeoutMs);
 
@@ -271,7 +268,6 @@ async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutM
             resolve(true);
         } catch (error) {
             clearTimeout(timeoutId);
-            logToFile(`Failed to complete tracking for ${eventName}: ${error}`, true);
             resolve(false);
         }
     });
@@ -309,15 +305,17 @@ function logToFile(message, isError = false) {
 
 // Setup global error handlers
 process.on('uncaughtException', async (error) => {
-    logToFile(`Uncaught exception: ${error.stack || error.message}`, true);
     await trackEvent('npx_setup_uncaught_exception', { error: error.message });
-    process.exit(1);
+    setTimeout(() => {
+        process.exit(1);
+    }, 1000);
 });
 
 process.on('unhandledRejection', async (reason, promise) => {
-    logToFile(`Unhandled rejection at: ${promise}, reason: ${reason}`, true);
     await trackEvent('npx_setup_unhandled_rejection', { error: String(reason) });
-    process.exit(1);
+    setTimeout(() => {
+        process.exit(1);
+    }, 1000);
 });
 
 // Track when the process is about to exi
@@ -325,8 +323,6 @@ let isExiting = false;
 process.on('exit', () => {
     if (!isExiting) {
         isExiting = true;
-        // Synchronous tracking for exit handler
-        logToFile('Process is exiting. Some tracking events may not be sent.');
     }
 });
 
@@ -403,7 +399,6 @@ try {
         updateSetupStep(machineIdInitStep, 'fallback', error);
     }
 } catch (error) {
-    logToFile(`Error initializing user ID: ${error}`, true);
     addSetupStep('initialize_machine_id', 'failed', error);
 }
 
@@ -479,14 +474,15 @@ async function restartClaude() {
             } else if (platform === "darwin") {
                 await execAsync(`open -a "Claude"`);
                 updateSetupStep(startStep, 'completed');
+                logToFile(`Claude has been restarted.`);
                 await trackEvent('npx_setup_start_claude_success', { platform });
             } else if (platform === "linux") {
                 await execAsync(`claude`);
+                logToFile(`Claude has been restarted.`);
                 updateSetupStep(startStep, 'completed');
                 await trackEvent('npx_setup_start_claude_success', { platform });
             }
 
-            logToFile(`Claude has been restarted.`);
             updateSetupStep(restartStep, 'completed');
             await trackEvent('npx_setup_restart_claude_success', { platform });
         } catch (startError) {
@@ -684,7 +680,6 @@ export default async function setup() {
 
             // Check if the old "desktopCommander" exists and remove i
             if (config.mcpServers.desktopCommander) {
-                logToFile('Found old "desktopCommander" installation. Removing it...');
                 delete config.mcpServers.desktopCommander;
                 await trackEvent('npx_setup_remove_old_config');
             }
@@ -743,7 +738,9 @@ export default async function setup() {
 if (process.argv.length >= 2 && process.argv[1] === fileURLToPath(import.meta.url)) {
     setup().then(success => {
         if (!success) {
-            process.exit(1);
+            setTimeout(() => {
+                process.exit(1);
+            }, 1000);
         }
     }).catch(async error => {
         await ensureTrackingCompleted('npx_setup_fatal_error', {
@@ -751,6 +748,8 @@ if (process.argv.length >= 2 && process.argv[1] === fileURLToPath(import.meta.ur
             error_stack: error.stack
         });
         logToFile(`Fatal error: ${error}`, true);
-        process.exit(1);
+        setTimeout(() => {
+            process.exit(1);
+        }, 1000);
     });
 }
