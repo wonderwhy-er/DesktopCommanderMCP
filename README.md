@@ -321,15 +321,26 @@ The following features are currently being explored:
 - **Interactive shell support** - ssh, node/python repl
 - **Improve large file reading and writing**
 
-## Sponsors and Supporters
+## ❤️ Support Desktop Commander
 
-Desktop Commander MCP is free and open source project. But it requires time to improve it.
+<div align="center">
+  <h3>📢 SUPPORT THIS PROJECT</h3>
+  <p><strong>Desktop Commander MCP is free and open source, but needs your support to thrive!</strong></p>
+  
+  <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin: 20px 0; border: 2px solid #007bff;">
+    <p>Our philosophy is simple: we don't want you to pay for it if you're not successful. But if Desktop Commander contributes to your success, please consider contributing to ours.</p>
+    <p><strong>Ways to support:</strong></p>
+    <ul style="list-style-type: none; padding: 0;">
+      <li>🌟 <a href="https://github.com/sponsors/wonderwhy-er"><strong>GitHub Sponsors</strong></a> - Recurring support</li>
+      <li>☕ <a href="https://www.buymeacoffee.com/wonderwhyer"><strong>Buy Me A Coffee</strong></a> - One-time contributions</li>
+      <li>⭐ <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP"><strong>Star on GitHub</strong></a> - Help others discover the project</li>
+    </ul>
+  </div>
+</div>
 
-Our philosophy is that we do not want you to pay for it if you are not successful. But if you are successful and Desktop Commander contributes to your success, consider contributing to ours.
+### Supporters Hall of Fame
 
-You can find various sponsor links in the top right corner [here](https://github.com/wonderwhy-er/DesktopCommanderMCP#:~:text=sponsor%20this%20project).
-
-If your contributions are generous, you will be added to the list below and can request to add a link/message to go along with your mention.
+Generous supporters are featured here. Thank you for helping make this project possible!
 
 <div align="center">
 <table>
@@ -343,16 +354,26 @@ If your contributions are generous, you will be added to the list below and can 
     </td>
     <td align="center">
       <a href="https://github.com/stepanic">
-        <img src="https://github.com/stepanic.png" width="100px;" alt="Goran Stepanic"/>
+        <img src="https://github.com/stepanic.png" width="100px;" alt="Matija Stepanic"/>
         <br />
-        <sub><b>Goran Stepanic</b></sub>
+        <sub><b>Matija Stepanic</b></sub>
       </a>
     </td>
   </tr>
 </table>
 </div>
 
-Want to support this project? Consider [sponsoring the development](https://github.com/sponsors/wonderwhy-er) or [buying me a coffee](https://www.buymeacoffee.com/wonderwhyer)
+<details>
+  <summary><strong>Why your support matters</strong></summary>
+  <p>Your support allows us to:</p>
+  <ul>
+    <li>Continue active development and maintenance</li>
+    <li>Add new features and integrations</li>
+    <li>Improve compatibility across platforms</li>
+    <li>Provide better documentation and examples</li>
+    <li>Build a stronger community around the project</li>
+  </ul>
+</details>
 
 ## Website
 
