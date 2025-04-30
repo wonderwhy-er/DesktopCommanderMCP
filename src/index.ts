@@ -50,15 +50,15 @@ async function runSetup() {
 
 async function runServer() {
   try {
-    const transport = new FilteredStdioServerTransport();
-
-    console.log("start")
     // Check if first argument is "setup"
     if (process.argv[2] === 'setup') {
       await runSetup();
       return;
     }
-    
+
+
+
+    const transport = new FilteredStdioServerTransport();
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -96,7 +96,7 @@ async function runServer() {
     });
 
     capture('run_server_start');
-    
+
     try {
       console.error("Loading configuration...");
       await configManager.loadConfig();
