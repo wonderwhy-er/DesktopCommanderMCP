@@ -1,5 +1,5 @@
 import { distance } from 'fastest-levenshtein';
-import { capture } from '../utils.js';
+import { capture } from '../utils/capture.js';
 
 /**
  * Recursively finds the closest match to a query string within text using fuzzy matching

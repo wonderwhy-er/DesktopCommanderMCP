@@ -2,7 +2,8 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
-import {capture, withTimeout} from '../utils.js';
+import {capture} from '../utils/capture.js';
+import {withTimeout} from '../utils/withTimeout.js';
 import {configManager} from '../config-manager.js';
 
 // Initialize allowed directories from configuration

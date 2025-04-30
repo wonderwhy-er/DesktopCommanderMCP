@@ -1,5 +1,5 @@
 import { ServerResult } from './types.js';
-import {capture} from "./utils.js";
+import {capture} from "./utils/capture.js";
 
 /**
  * Creates a standard error response for tools

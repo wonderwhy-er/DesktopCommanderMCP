@@ -10,7 +10,8 @@ import {
 import { handleEditBlock } from '../tools/edit.js';
 
 import { ServerResult } from '../types.js';
-import { capture, withTimeout } from '../utils.js';
+import { capture } from '../utils/capture.js';
+import { withTimeout } from '../utils/withTimeout.js';
 
 /**
  * Handle edit_block command

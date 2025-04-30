@@ -2,10 +2,10 @@ import assert from 'assert';
 import path from 'path';
 
 // Local implementation of sanitizeError for testing
-// This mirrors the implementation in src/utils.ts but avoids import issues
+// This mirrors the implementation in src/utils/capture.ts but avoids import issues
 // when running tests. The actual sanitization logic is identical.
 // 
-// NOTE: If you update the sanitizeError function in src/utils.ts,
+// NOTE: If you update the sanitizeError function in src/utils/capture.ts,
 // be sure to update this implementation as well to keep tests accurate.
 function sanitizeError(error) {
   let errorMessage = '';

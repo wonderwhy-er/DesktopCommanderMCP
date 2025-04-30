@@ -4,6 +4,8 @@ import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import os from 'os';
 
+import { CONFIG_FILE } from './config.js';
+
 export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
@@ -22,10 +24,8 @@ class ConfigManager {
 
   constructor() {
     // Get user's home directory
-    const homeDir = os.homedir();
     // Define config directory and file paths
-    const configDir = path.join(homeDir, '.claude-server-commander');
-    this.configPath = path.join(configDir, 'config.json');
+    this.configPath = CONFIG_FILE;
   }
 
   /**
@@ -167,7 +167,7 @@ class ConfigManager {
       // Only capture the opt-out event if telemetry was previously enabled
       if (currentValue !== false) {
         // Import the capture function dynamically to avoid circular dependencies
-        const { capture } = await import('./utils.js');
+        const { capture } = await import('./utils/capture.js');
         
         // Send a final telemetry event noting that the user has opted out
         // This helps us track opt-out rates while respecting the user's choice
