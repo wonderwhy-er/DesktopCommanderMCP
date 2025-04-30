@@ -69,75 +69,71 @@ function openTab(evt, tabName) {
 
 // Make the openTab function available globally
 window.openTab = openTab;
+// Initialize first FAQ item as open if it exists
+const firstAccordionItem = document.querySelector('.accordion-item');
+if (firstAccordionItem) {
+    firstAccordionItem.classList.add('active');
+}
 
-// Initialize any elements that require it
-document.addEventListener('DOMContentLoaded', function() {
-    // Initialize first FAQ item as open if it exists
-    const firstAccordionItem = document.querySelector('.accordion-item');
-    if (firstAccordionItem) {
-        firstAccordionItem.classList.add('active');
-    }
-    
-    // Mobile menu toggle
-    const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
-    const mobileNav = document.querySelector('.mobile-nav');
-    
-    if (mobileMenuBtn) {
-        mobileMenuBtn.addEventListener('click', function() {
-            mobileNav.classList.toggle('active');
-            this.classList.toggle('active');
-        });
-    }
-    
-    // Dropdown toggle for both mobile and desktop
-    const dropdownToggles = document.querySelectorAll('.dropdown-toggle');
-    
-    dropdownToggles.forEach(toggle => {
-        toggle.addEventListener('click', function(e) {
-            // Only prevent default for mobile view
-            if (window.innerWidth <= 768) {
-                e.preventDefault();
-                const parentDropdown = this.parentElement;
-                
-                // Close other open dropdowns
-                document.querySelectorAll('.dropdown').forEach(dropdown => {
-                    if (dropdown !== parentDropdown) {
-                        dropdown.classList.remove('active');
-                    }
-                });
-                
-                // Toggle current dropdown
-                parentDropdown.classList.toggle('active');
-            } else {
-                // For desktop, still prevent default but don't toggle active class
-                // (hover will handle this instead)
-                e.preventDefault();
-            }
-        });
+// Mobile menu toggle
+const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+const mobileNav = document.querySelector('.mobile-nav');
+
+if (mobileMenuBtn) {
+    mobileMenuBtn.addEventListener('click', function() {
+        mobileNav.classList.toggle('active');
+        this.classList.toggle('active');
     });
-    
-    // Accordion functionality
-    const accordionHeaders = document.querySelectorAll('.accordion-header');
-    
-    accordionHeaders.forEach(header => {
-        header.addEventListener('click', function() {
-            const accordionItem = this.parentElement;
-            const accordionBody = this.nextElementSibling;
+}
+
+// Dropdown toggle for both mobile and desktop
+const dropdownToggles = document.querySelectorAll('.dropdown-toggle');
+
+dropdownToggles.forEach(toggle => {
+    toggle.addEventListener('click', function(e) {
+        // Only prevent default for mobile view
+        if (window.innerWidth <= 768) {
+            e.preventDefault();
+            const parentDropdown = this.parentElement;
             
-            accordionItem.classList.toggle('active');
+            // Close other open dropdowns
+            document.querySelectorAll('.dropdown').forEach(dropdown => {
+                if (dropdown !== parentDropdown) {
+                    dropdown.classList.remove('active');
+                }
+            });
             
-            // Toggle height 
-            if (accordionItem.classList.contains('active')) {
-                accordionBody.style.maxHeight = accordionBody.scrollHeight + 'px';
-            } else {
-                accordionBody.style.maxHeight = '0';
-            }
-        });
+            // Toggle current dropdown
+            parentDropdown.classList.toggle('active');
+        } else {
+            // For desktop, still prevent default but don't toggle active class
+            // (hover will handle this instead)
+            e.preventDefault();
+        }
     });
-    
-    // Initialize testimonial carousel
-    initTestimonialCarousel();
 });
+
+// Accordion functionality
+const accordionHeaders = document.querySelectorAll('.accordion-header');
+
+accordionHeaders.forEach(header => {
+    header.addEventListener('click', function() {
+        const accordionItem = this.parentElement;
+        const accordionBody = this.nextElementSibling;
+        
+        accordionItem.classList.toggle('active');
+        
+        // Toggle height 
+        if (accordionItem.classList.contains('active')) {
+            accordionBody.style.maxHeight = accordionBody.scrollHeight + 'px';
+        } else {
+            accordionBody.style.maxHeight = '0';
+        }
+    });
+});
+
+// Initialize testimonial carousel
+initTestimonialCarousel();
 
 // Testimonial Carousel Implementation
 function initTestimonialCarousel() {
@@ -417,7 +413,4 @@ function addCopyButtons() {
     });
 }
 
-// Initialize copy buttons when the DOM is loaded
-document.addEventListener('DOMContentLoaded', function() {
-    addCopyButtons();
-});
+addCopyButtons();
