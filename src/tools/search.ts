@@ -3,7 +3,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './filesystem.js';
 import { rgPath } from '@vscode/ripgrep';
-import {capture} from "../utils.js";
+import {capture} from "../utils/capture.js";
 
 // Type definition for search results
 export interface SearchResult {

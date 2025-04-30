@@ -1,5 +1,5 @@
 import {configManager} from './config-manager.js';
-import {capture} from "./utils.js";
+import {capture} from "./utils/capture.js";
 
 class CommandManager {
 

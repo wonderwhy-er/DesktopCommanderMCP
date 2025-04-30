@@ -1,7 +1,7 @@
 import { readFile, writeFile } from './filesystem.js';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
-import { capture } from '../utils.js';
+import { capture } from '../utils/capture.js';
 import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
 

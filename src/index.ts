@@ -7,7 +7,7 @@ import { configManager } from './config-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { platform } from 'os';
-import { capture } from './utils.js';
+import { capture } from './utils/capture.js';
 
 
 const __filename = fileURLToPath(import.meta.url);

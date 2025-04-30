@@ -12,7 +12,7 @@ import {
 } from '../tools/filesystem.js';
 
 import { ServerResult } from '../types.js';
-import { withTimeout } from '../utils.js';
+import { withTimeout } from '../utils/withTimeout.js';
 import { createErrorResponse } from '../error-handlers.js';
 
 import {

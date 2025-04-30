@@ -1,7 +1,7 @@
 import { terminalManager } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { ExecuteCommandArgsSchema, ReadOutputArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
-import { capture } from "../utils.js";
+import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 
 export async function executeCommand(args: unknown): Promise<ServerResult> {
