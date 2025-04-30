@@ -297,7 +297,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
-- **29-04-2025 Telemetry Opt Out trough configuraton** - There is now setting to disable telemetry in config, ask in chat
+- **29-04-2025 Telemetry Opt Out trought configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
 - **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
