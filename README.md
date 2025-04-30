@@ -318,7 +318,7 @@ The following features are currently being explored:
 - **Terminal sandboxing for Mac/Linux/Windows for better security**
 - **File reading modes** - For example, allow reading HTML as plain text or markdown
 - **Interactive shell support** - ssh, node/python repl
-- **Improve large file reading and writting**
+- **Improve large file reading and writing**
 
 ## Sponsors and Supporters
 
