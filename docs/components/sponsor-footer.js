@@ -11,7 +11,7 @@ class SponsorFooter extends HTMLElement {
         <h3>Sponsor Us</h3>
         <ul class="sponsor-links">
           <li><a href="https://github.com/sponsors/wonderwhy-er" target="_blank" rel="noopener noreferrer">GitHub Sponsors</a></li>
-          <li><a href="https://patreon.com/EduardsRuzga" target="_blank" rel="noopener noreferrer">Patreon</a></li>
+          <!--<li><a href="https://patreon.com/EduardsRuzga" target="_blank" rel="noopener noreferrer">Patreon</a></li>-->
           <li><a href="https://ko-fi.com/eduardsruzga" target="_blank" rel="noopener noreferrer">Ko-fi</a></li>
           <li><a href="https://www.buymeacoffee.com/wonderwhyer" target="_blank" rel="noopener noreferrer">Buy Me A Coffee</a></li>
           <li><a href="https://thanks.dev/u/gh/wonderwhy-er" target="_blank" rel="noopener noreferrer">thanks.dev</a></li>

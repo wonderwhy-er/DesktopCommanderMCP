@@ -327,7 +327,7 @@ Desktop Commander MCP is free and open source project. But it requires time to i
 
 Our philosophy is that we do not want you to pay for it if you are not successful. But if you are successful and Desktop Commander contributes to your success, consider contributing to ours.
 
-You can find various sponsor links in the top right corner [here](https://github.com/wonderwhy-er/DesktopCommanderMCP#:~:text=Sponsor%20this%20project).
+You can find various sponsor links in the top right corner [here](https://github.com/wonderwhy-er/DesktopCommanderMCP#:~:text=sponsor%20this%20project).
 
 If your contributions are generous, you will be added to the list below and can request to add a link/message to go along with your mention.
 
