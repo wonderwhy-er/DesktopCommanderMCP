@@ -13,10 +13,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const script = document.createElement('script');
     script.src = `components/${component}`;
     script.async = true;
+    script.onerror = () => console.error(`Failed to load component: ${component}`);
     document.head.appendChild(script);
   });
   
   // Function to check if all components are loaded and then add them to the DOM
+  const MAX_ATTEMPTS = 50; // 5 seconds maximum wait time
+  let attempts = 0;
   const checkComponentsLoaded = () => {
     // Check if all custom elements are defined
     const allDefined = [
@@ -58,8 +61,11 @@ document.addEventListener('DOMContentLoaded', function() {
       }
       
       console.log('Desktop Commander: All sponsorship components loaded and inserted into the DOM');
+    } else if (attempts >= MAX_ATTEMPTS) {
+      console.error('Desktop Commander: Failed to load all sponsorship components within timeout period');
     } else {
       // Not all components are loaded yet, check again in a moment
+      attempts++;
       setTimeout(checkComponentsLoaded, 100);
     }
   };

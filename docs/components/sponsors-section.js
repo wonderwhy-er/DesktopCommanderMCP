@@ -16,7 +16,7 @@ class SponsorsSection extends HTMLElement {
           
           <div class="sponsors-grid">
             <div class="sponsor-card">
-              <a href="https://github.com/jonrichards" target="_blank">
+              <a href="https://github.com/jonrichards" target="_blank" rel="noopener noreferrer">
                 <img src="https://github.com/jonrichards.png" alt="Jon Richards" class="sponsor-avatar">
                 <div class="sponsor-info">
                   <h3>Jon Richards</h3>
@@ -25,7 +25,7 @@ class SponsorsSection extends HTMLElement {
               </a>
             </div>
             <div class="sponsor-card">
-              <a href="https://github.com/stepanic" target="_blank">
+              <a href="https://github.com/stepanic" target="_blank" rel="noopener noreferrer">
                 <img src="https://github.com/stepanic.png" alt="Goran Stepanic" class="sponsor-avatar">
                 <div class="sponsor-info">
                   <h3>Goran Stepanic</h3>
@@ -38,24 +38,24 @@ class SponsorsSection extends HTMLElement {
           <div class="sponsor-cta">
             <p>If your contributions are generous, you'll be added to the sponsors list and can request to add a link/message to go along with your mention.</p>
             <div class="sponsor-buttons">
-              <a href="https://github.com/sponsors/wonderwhy-er" target="_blank" class="btn primary-btn sponsor-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+              <a href="https://github.com/sponsors/wonderwhy-er" target="_blank" rel="noopener noreferrer" class="btn primary-btn sponsor-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
                 Sponsor on GitHub
               </a>
-              <a href="https://patreon.com/EduardsRuzga" target="_blank" class="btn secondary-btn sponsor-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"></path><path d="M5 7.3l14 14"></path><circle cx="12" cy="17" r="3"></circle><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+              <a href="https://patreon.com/EduardsRuzga" target="_blank" rel="noopener noreferrer" class="btn secondary-btn sponsor-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v6"></path><path d="M5 7.3l14 14"></path><circle cx="12" cy="17" r="3"></circle><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
                 Sponsor on Patreon
               </a>
-              <a href="https://ko-fi.com/eduardsruzga" target="_blank" class="btn secondary-btn sponsor-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 0 1 2.83 2.83v.34a2.85 2.85 0 0 1-2.83 2.83H7a2.85 2.85 0 0 1-2.83-2.83v-.34A2.85 2.85 0 0 1 7 3h10ZM7 21a2.85 2.85 0 0 1-2.83-2.83v-.34A2.85 2.85 0 0 1 7 15h10a2.85 2.85 0 0 1 2.83 2.83v.34A2.85 2.85 0 0 1 17 21H7Z"></path><path d="M18 15v-2a2.85 2.85 0 0 0-2.83-2.83H8.83A2.85 2.85 0 0 0 6 13v2"></path><circle cx="12" cy="8" r="2"></circle></svg>
+              <a href="https://ko-fi.com/eduardsruzga" target="_blank" rel="noopener noreferrer" class="btn secondary-btn sponsor-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 0 1 2.83 2.83v.34a2.85 2.85 0 0 1-2.83 2.83H7a2.85 2.85 0 0 1-2.83-2.83v-.34A2.85 2.85 0 0 1 7 3h10ZM7 21a2.85 2.85 0 0 1-2.83-2.83v-.34A2.85 2.85 0 0 1 7 15h10a2.85 2.85 0 0 1 2.83 2.83v.34A2.85 2.85 0 0 1 17 21H7Z"></path><path d="M18 15v-2a2.85 2.85 0 0 0-2.83-2.83H8.83A2.85 2.85 0 0 0 6 13v2"></path><circle cx="12" cy="8" r="2"></circle></svg>
                 Support on Ko-fi
               </a>
-              <a href="https://www.buymeacoffee.com/wonderwhyer" target="_blank" class="btn secondary-btn sponsor-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 11h1a3 3 0 0 1 0 6h-1"></path><path d="M9 11h6a3 3 0 0 1 0 6H9a3 3 0 0 1 0-6Z"></path><path d="M3 11v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8"></path><path d="M10.3 7.7 11 4h2l.7 3.7a1.91 1.91 0 0 1-.5 1.7L12 11l-1.2-1.6a1.91 1.91 0 0 1-.5-1.7Z"></path><path d="M8 21v-2"></path><path d="M16 21v-2"></path></svg>
+              <a href="https://www.buymeacoffee.com/wonderwhyer" target="_blank" rel="noopener noreferrer" class="btn secondary-btn sponsor-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 11h1a3 3 0 0 1 0 6h-1"></path><path d="M9 11h6a3 3 0 0 1 0 6H9a3 3 0 0 1 0-6Z"></path><path d="M3 11v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8"></path><path d="M10.3 7.7 11 4h2l.7 3.7a1.91 1.91 0 0 1-.5 1.7L12 11l-1.2-1.6a1.91 1.91 0 0 1-.5-1.7Z"></path><path d="M8 21v-2"></path><path d="M16 21v-2"></path></svg>
                 Buy Me a Coffee
               </a>
-              <a href="https://thanks.dev/u/gh/wonderwhy-er" target="_blank" class="btn secondary-btn sponsor-btn">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+              <a href="https://thanks.dev/u/gh/wonderwhy-er" target="_blank" rel="noopener noreferrer" class="btn secondary-btn sponsor-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
                 Support via thanks.dev
               </a>
             </div>
