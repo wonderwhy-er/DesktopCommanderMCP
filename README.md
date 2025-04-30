@@ -24,7 +24,9 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Usage](#usage)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#work-in-progress-and-todos)
-- [Media Links](#media)
+- [Sponsors and Supporters](#sponsors-and-supporters)
+- [Website](#website)
+- [Media](#media)
 - [Testimonials](#testimonials)
 - [Frequently Asked Questions](#frequently-asked-questions)
 - [Contributing](#contributing)
@@ -306,7 +308,7 @@ Terminal still can access files ignoring allowed directories.
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
 - **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeServerCommander/pull/17)) - Enhanced code exploration with context-aware results
 
-## Work in Progress and TODOs
+## Work in Progress/TODOs/Roadmap
 
 The following features are currently being explored:
 
@@ -315,6 +317,41 @@ The following features are currently being explored:
 - **Better file support for formats like CSV/PDF**
 - **Terminal sandboxing for Mac/Linux/Windows for better security**
 - **File reading modes** - For example, allow reading HTML as plain text or markdown
+- **Interactive shell support** - ssh, node/python repl
+- **Improve large file reading and writing**
+
+## Sponsors and Supporters
+
+Desktop Commander MCP is free and open source project. But it requires time to improve it.
+
+Our philosophy is that we do not want you to pay for it if you are not successful. But if you are successful and Desktop Commander contributes to your success, consider contributing to ours.
+
+You can find various sponsor links in the top right corner [here](https://github.com/wonderwhy-er/DesktopCommanderMCP#:~:text=Sponsor%20this%20project).
+
+If your contributions are generous, you will be added to the list below and can request to add a link/message to go along with your mention.
+
+<div align="center">
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/jonrichards">
+        <img src="https://github.com/jonrichards.png" width="100px;" alt="Jon Richards"/>
+        <br />
+        <sub><b>Jon Richards</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/stepanic">
+        <img src="https://github.com/stepanic.png" width="100px;" alt="Goran Stepanic"/>
+        <br />
+        <sub><b>Goran Stepanic</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
+</div>
+
+Want to support this project? Consider [sponsoring the development](https://github.com/sponsors/wonderwhy-er) or [buying me a coffee](https://www.buymeacoffee.com/wonderwhyer)
 
 ## Website
 
@@ -359,8 +396,6 @@ Claude first to keep my sanity in check, then if necessary, engage with other ID
 33
 1](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/testemonials/img_4.png)
 https://medium.com/@pharmx/you-sir-are-my-hero-62cff5836a3e](https://medium.com/@pharmx/you-sir-are-my-hero-62cff5836a3e)
-
-## Contributing
 
 If you find this project useful, please consider giving it a ⭐ star on GitHub! This helps others discover the project and encourages further development.
 

@@ -51,10 +51,20 @@
     <!-- Original Logo Reference (keeping for backward compatibility) -->
     <link rel="icon" href="logo.png" type="image/png">
     
-    <!-- Google Fonts - Poppins and Roboto -->
+    <!-- DNS preconnect for external domains -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://i3.ytimg.com">
+    <link rel="preconnect" href="https://analyticsindiamag.com">
+    <link rel="preconnect" href="https://miro.medium.com">
+    <link rel="preconnect" href="https://img.shields.io">
+    <link rel="preconnect" href="https://www.googletagmanager.com">
+    
+    <!-- Google Fonts - Poppins and Roboto with font-display swap -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript>
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet">
+    </noscript>
     
     <!-- Structured Data / JSON-LD -->
     <script type="application/ld+json">
@@ -79,31 +89,50 @@
             }
         }
     </script>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-HXL4Y3Y62N"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
+    <!-- Web Components Loader - Dynamically loads all sponsorship components -->
+    <script src="components/component-loader.js" defer></script>
+    
+    <!-- Defer Google Analytics until page is loaded -->
+    <script>
+    // Defer Google Analytics loading
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            var analyticsScript = document.createElement('script');
+            analyticsScript.async = true;
+            analyticsScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-HXL4Y3Y62N';
+            document.head.appendChild(analyticsScript);
+            
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-HXL4Y3Y62N');
+        }, 3000); // 3 second delay
+    });
+    </script>
 
-  gtag('config', 'G-HXL4Y3Y62N');
-</script>
-
-
-        <!-- Preload critical CSS and images -->
-    <link rel="preload" href="css/main.css" as="style">
-    <link rel="preload" href="css/header.css" as="style">
-    <link rel="preload" href="css/hero.css" as="style">
-    <link rel="preload" href="css/base.css" as="style">
-    <link rel="preload" href="cropped_video.mp4" as="video" type="video/mp4" media="(min-width: 768px)">
-    <link rel="preload" href="vertical_video_mobile.mp4" as="video" type="video/mp4" media="(max-width: 767px)">
+        <!-- Preload critical resources -->
     <link rel="preload" href="optimized_images/logo.webp" as="image">
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" as="style">
     <!-- Preload critical fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
+    
     <!-- Critical CSS -->
-    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/critical.css">
+    <!-- Defer non-critical CSS -->
+    <link rel="stylesheet" href="css/media.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/installation.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/usage.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/community.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/testimonials.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/faq.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/footer.css" media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="css/responsive.css" media="print" onload="this.media='all'">
+    
+    <!-- Fallback for browsers that don't support JS -->
+    <noscript>
+        <link rel="stylesheet" href="css/main.css">
+    </noscript>
 
     <!-- Inline critical CSS for initial render -->
     <style>
@@ -351,16 +380,16 @@
         }
         /* Improve contrast for section text */
         .section-title p, .feature-card p, .how-it-works p,
-        .community p, .faq p, .tab-btn { color: var(--section-text-color); font-weight: 300; }
+        .community p, .faq p, .tab-btn { color: #000000; font-weight: 400; }
         /* Improve contrast for buttons and links */
-        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 300; }
+        .tab-btn.active, .tab-btn:hover { color: #0056b3; font-weight: 400; }
         /* Additional contrast improvements */
-        .feature-card h3, .community-card h3, .accordion-header span { color: #121212; font-weight: 300; }
-        .accordion-body p, .accordion-body li { color: #121212; font-weight: 300; }
-        .discord-community-container p { color: #121212; font-weight: 300; }
-        .footer-column p { color: #e6e6e6; font-weight: 300; }
-        .download-card h3 { color: #ffffff; font-weight: 300; }
-        .download-card p { color: #f8f9fa; font-weight: 300; }
+        .feature-card h3, .community-card h3, .accordion-header span { color: #000000; font-weight: 400; }
+        .accordion-body p, .accordion-body li { color: #000000; font-weight: 400; }
+        .discord-community-container p { color: #000000; font-weight: 400; }
+        .footer-column p { color: #ffffff; font-weight: 400; }
+        .download-card h3 { color: #ffffff; font-weight: 400; }
+        .download-card p { color: #ffffff; font-weight: 400; }
         
         /* Segments Section Styles */
         .segments-section {
@@ -800,53 +829,53 @@
     <header>
         <div class="container header-container">
             <a href="#" class="logo">
-                <img src="optimized_images/logo.webp" alt="Logo" width="35" height="35" /> 
+                <img src="optimized_images/logo.webp" alt="DesktopCommander Logo" width="35" height="35" fetchpriority="high" /> 
                 <span style="margin-left: 5px;">DesktopCommander</span>
             </a>
             
             <div class="header-right">
                 <!-- Desktop Navigation -->
-                <nav class="desktop-nav">
+                <nav class="desktop-nav" aria-label="Main Navigation">
                 <ul>
                     <li class="dropdown">
-                        <a href="#cases" class="dropdown-toggle">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
-                        <ul class="dropdown-menu">
-                            <li><a href="#cases-software">Software Engineer</a></li>
-                            <li><a href="#cases-devops">DevOps</a></li>
-                            <li><a href="#cases-writer">Technical Writer</a></li>
-                            <li><a href="#cases-uxui">UX/UI Designer</a></li>
+                        <a href="#cases" class="dropdown-toggle" aria-haspopup="true" aria-expanded="false">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
+                        <ul class="dropdown-menu" role="menu">
+                            <li><a href="#cases-software" role="menuitem">Software Engineer</a></li>
+                            <li><a href="#cases-devops" role="menuitem">DevOps</a></li>
+                            <li><a href="#cases-writer" role="menuitem">Technical Writer</a></li>
+                            <li><a href="#cases-uxui" role="menuitem">UX/UI Designer</a></li>
                         </ul>
                     </li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li class="dropdown">
-                        <a href="#" class="dropdown-toggle">Resources <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
-                        <ul class="dropdown-menu">
-                            <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank">Join Discord</a></li>
-                            <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GITHUB</a></li>
-                            <li><a href="#media">Media</a></li>
-                            <li><a href="#faq">FAQ</a></li>
+                        <a href="#" class="dropdown-toggle" aria-haspopup="true" aria-expanded="false">Resources <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
+                        <ul class="dropdown-menu" role="menu">
+                            <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener" role="menuitem">Join Discord</a></li>
+                            <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" rel="noopener" role="menuitem">GITHUB</a></li>
+                            <li><a href="#media" role="menuitem">Media</a></li>
+                            <li><a href="#faq" role="menuitem">FAQ</a></li>
                         </ul>
                     </li>
                 </ul>
                 </nav>
                 
                 <!-- Mobile Navigation (no dropdowns) -->
-                <nav class="mobile-nav">
+                <nav class="mobile-nav" aria-label="Mobile Navigation">
                 <ul>
                     <li><a href="#cases">Use Cases</a></li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
-                    <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank">Join Discord</a></li>
-                    <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GITHUB</a></li>
+                    <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener">Join Discord</a></li>
+                    <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" rel="noopener">GITHUB</a></li>
                     <li><a href="#media">Media</a></li>
                     <li><a href="#faq">FAQ</a></li>
                 </ul>
                 </nav>
                 
                 <a href="#installation" class="header-cta-btn">Install</a>
-                <div class="mobile-menu-btn">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                <div class="mobile-menu-btn" role="button" aria-expanded="false" aria-label="Toggle mobile menu" tabindex="0">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
             </div>
         </div>
@@ -905,11 +934,24 @@
                 </div>
                 <div class="hero-image-container">
                     <div class="video-glow-wrapper">
-                        <video autoplay loop muted playsinline class="hero-header-video">
-                            <source src="cropped_video.mp4" type="video/mp4" media="(min-width: 768px)">
-                            <source src="vertical_video_mobile.mp4" type="video/mp4" media="(max-width: 767px)">
+                        <video autoplay loop muted playsinline class="hero-header-video" width="960" height="540" poster="optimized_images/header.webp">
+                            <source data-src="cropped_video.mp4" type="video/mp4" media="(min-width: 768px)">
+                            <source data-src="vertical_video_mobile.mp4" type="video/mp4" media="(max-width: 767px)">
                             Your browser does not support the video tag.
                         </video>
+                        <script>
+                            // Load video after other critical content
+                            window.addEventListener('load', function() {
+                                setTimeout(function() {
+                                    const video = document.querySelector('.hero-header-video');
+                                    const sources = video.querySelectorAll('source');
+                                    sources.forEach(function(source) {
+                                        source.src = source.dataset.src;
+                                    });
+                                    video.load();
+                                }, 1000);
+                            });
+                        </script>
                     </div>
                 </div>
             </div>
@@ -1273,8 +1315,8 @@ npm run setup</pre>
             </div>
 
             <div class="responsive-testimonial-image">
-                <img src="testimonials.png" class="desktop-testimonial" alt="Desktop Commander MCP User Testimonials" />
-                <img src="testimonials_1080.png" class="mobile-testimonial" alt="Desktop Commander MCP User Testimonials" />
+                <img src="optimized_images/testimonials.webp" class="desktop-testimonial" alt="Desktop Commander MCP User Testimonials" width="1200" height="675" loading="lazy" />
+                <img src="optimized_images/testimonials_1080.webp" class="mobile-testimonial" alt="Desktop Commander MCP User Testimonials" width="900" height="506" loading="lazy" />
             </div>
             <style>
                 .responsive-testimonial-image {
@@ -1380,7 +1422,7 @@ npm run setup</pre>
                 <a href="https://analyticsindiamag.com/ai-features/this-developer-ditched-windsurf-cursor-using-claude-with-mcps/" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://analyticsindiamag.com/wp-content/uploads/2025/03/developer-ditched-cursor-windsurf-1300x731.jpg.webp" alt="Analytics India Magazine Article" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                            <img src="https://analyticsindiamag.com/wp-content/uploads/2025/03/developer-ditched-cursor-windsurf-1300x731.jpg.webp" alt="Analytics India Magazine Article" class="media-thumbnail" style="max-width: 100%; height: auto;" width="1300" height="731" loading="lazy">
                         </div>
                         <div class="media-content">
                             <h3>Featured Article</h3>
@@ -1396,7 +1438,7 @@ npm run setup</pre>
                 <a href="https://www.youtube.com/watch?v=ly3bed99Dy8" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://i3.ytimg.com/vi/ly3bed99Dy8/maxresdefault.jpg" alt="YouTube Tutorial Thumbnail" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                            <img src="https://i3.ytimg.com/vi/ly3bed99Dy8/maxresdefault.jpg" alt="YouTube Tutorial Thumbnail" class="media-thumbnail" style="max-width: 100%; height: auto;" width="1280" height="720" loading="lazy">
                             <div class="play-button">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                             </div>
@@ -1415,7 +1457,7 @@ npm run setup</pre>
                 <a href="https://medium.com/@wonderwhy-er/claude-with-mcps-replaced-cursor-windsurf-how-did-that-happen-c1d1e2795e96" class="media-card-link" target="_blank">
                     <div class="media-card">
                         <div class="media-image">
-                            <img src="https://miro.medium.com/v2/resize:fit:786/format:webp/1*RRZ4SJ_ceHnrVZpuaAxGig.png" alt="Medium Blog Post" class="media-thumbnail" style="max-width: 100%; height: auto;">
+                            <img src="https://miro.medium.com/v2/resize:fit:786/format:webp/1*RRZ4SJ_ceHnrVZpuaAxGig.png" alt="Medium Blog Post" class="media-thumbnail" style="max-width: 100%; height: auto;" width="786" height="442" loading="lazy">
                         </div>
                         <div class="media-content">
                             <h3>Medium Blog Post</h3>
@@ -1484,11 +1526,11 @@ npm run setup</pre>
             
             <div class="accordion">
                 <div class="accordion-item">
-                    <div class="accordion-header">
+                    <div class="accordion-header" role="button" aria-expanded="false" aria-controls="accordion-content-1" tabindex="0" id="accordion-header-1">
                         <span>What is Claude Desktop Commander?</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </div>
-                    <div class="accordion-body">
+                    <div class="accordion-body" id="accordion-content-1" role="region" aria-labelledby="accordion-header-1">
                         <div class="accordion-body-inner">
                             <p>Claude Desktop Commander is an MCP (Model Context Protocol) tool that allows Claude Desktop to access and control your computer's file system and terminal. It enables Claude to explore, read, and write files, execute commands, and manage processes - expanding Claude's capabilities beyond just conversation to become a comprehensive assistant that can work with your entire operating system.</p>
                         </div>
@@ -1867,19 +1909,19 @@ npm run setup</pre>
                     <p>Build products faster without coding skills.</p>
                     <br />
                     <div class="social-links">
-                        <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" aria-label="GitHub Repository">
+                        <a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" rel="noopener" aria-label="GitHub Repository">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-github" aria-hidden="true"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
                         </a>
-                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" aria-label="Discord Server">
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener" aria-label="Discord Server">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"/></svg>
                         </a>
-                        <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank" aria-label="NPM Package">
+                        <a href="https://www.npmjs.com/package/@wonderwhy-er/desktop-commander" target="_blank" rel="noopener" aria-label="NPM Package">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-package" aria-hidden="true"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
                         </a>
-                        <a href="https://bsky.app/profile/dcommandermcp.bsky.social" target="_blank" aria-label="Bluesky Profile">
+                        <a href="https://bsky.app/profile/dcommandermcp.bsky.social" target="_blank" rel="noopener" aria-label="Bluesky Profile">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
                         </a>
-                        <a href="https://x.com/DCommander_MCP" target="_blank" aria-label="X (Twitter) Profile">
+                        <a href="https://x.com/DCommander_MCP" target="_blank" rel="noopener" aria-label="X (Twitter) Profile">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 4s-.7 2.1-2 3.4c1.6 10-9.4 17.3-18 11.6 2.2.1 4.4-.6 6-2C3 15.5.5 9.6 3 5c2.2 2.6 5.6 4.1 9 4-.9-4.2 4-6.6 7-3.8 1.1 0 3-1.2 3-1.2z"></path></svg>
                         </a>
                     </div>
@@ -1963,8 +2005,12 @@ npm run setup</pre>
         }
     </style>
 
-        <!-- JavaScript - Load asynchronously -->
-    <script src="js/main.js" defer></script>
+        <!-- Preload script to handle resource loading -->
+    <script src="js/preload.js" async></script>
+    <!-- Handle WebSocket connections for back/forward cache -->
+    <script src="js/websocket-handler.js" async></script>
+    <!-- Accessibility improvements -->
+    <script src="js/accessibility.js" defer></script>
 
     <!-- JavaScript for command counter and typing effect -->
     <script>
