@@ -739,40 +739,43 @@
             }
             
             .mobile-nav {
-                display: none; /* Still hidden until toggled */
+                display: none; /* Hidden until toggled */
+            }
+            
+            /* Mobile menu button styling */
+            .mobile-menu-btn {
+                display: block;
+                cursor: pointer;
+                color: white;
             }
             
             /* Switch title display on mobile */
             .desktop-title {
-                display: none; /* Hide dynamic title on mobile */
+                display: none;
             }
             
             .mobile-title {
-                display: block; /* Show static title on mobile */
-                text-align: center; /* Center align title on mobile */
-                margin-top: 40px; /* Add space at top to show "Your personal" text */
+                display: block;
+                text-align: center;
+                margin-top: 40px;
             }
             
             .mobile-title .dynamic-title {
-                text-align: center; /* Ensure heading is centered */
-                margin-top: 0; /* Reset margin */
-                padding-top: 30px; /* Additional padding at top */
-                font-size: 2.2rem; /* Larger text for better readability */
-                line-height: 1.4; /* Improved line spacing */
+                text-align: center;
+                margin-top: 0;
+                padding-top: 30px;
+                font-size: 2.2rem;
+                line-height: 1.4;
             }
             
             .hero-content {
-                width: 100%; /* Full width on mobile */
-                text-align: center; /* Center all content */
-                padding: 0 15px; /* Add side padding */
-                margin-top: 30px; /* Push content down from menu */
+                width: 100%;
+                text-align: center;
+                padding: 0 15px;
+                margin-top: 30px;
             }
             
-            .hero-content .badges {
-                display: flex;
-                justify-content: center;
-            }
-            
+            .hero-content .badges,
             .hero-content .badge-row {
                 justify-content: center;
             }
@@ -784,43 +787,51 @@
                 gap: 15px;
             }
             
+            /* Mobile menu when active */
             .mobile-nav.active {
-                display: block; /* Show when active */
+                display: block;
                 position: fixed;
                 top: 80px;
                 left: 0;
                 width: 100%;
-                background: var(--dark-color);
+                background: #0A0A0A;
                 padding: 20px 0;
                 box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
                 z-index: 1000;
             }
             
-            .mobile-nav ul {
-                flex-direction: column;
-                align-items: center;
-                padding: 0;
-                margin: 0;
-            }
-            
-            .mobile-nav ul li {
-                margin: 12px 0;
-                width: 100%;
-                text-align: center;
-            }
-            
+            /* Style mobile nav links */
             .mobile-nav ul li a {
                 display: block;
-                padding: 8px 0;
-                color: var(--light-text);
-                text-decoration: none;
-                font-weight: 500;
-                width: 100%;
+                padding: 12px 20px;
+                color: white;
             }
+        }
             
-            .mobile-nav ul li a:hover {
-                color: var(--secondary-color);
-            }
+        .mobile-nav ul {
+            flex-direction: column;
+            align-items: center;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .mobile-nav ul li {
+            margin: 12px 0;
+            width: 100%;
+            text-align: center;
+        }
+        
+        .mobile-nav ul li a {
+            display: block;
+            padding: 8px 0;
+            color: var(--light-text);
+            text-decoration: none;
+            font-weight: 500;
+            width: 100%;
+        }
+        
+        .mobile-nav ul li a:hover {
+            color: var(--secondary-color);
         }
     </style>
 </head>
@@ -857,9 +868,13 @@
                             <li><a href="#faq" role="menuitem">FAQ</a></li>
                         </ul>
                     </li>
+                    <li><a href="#sponsors">
+                        <svg xmlns="http://www.w3.org/2000/svg" style="margin-right:8px" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                        Sponsor
+                      </a></li>
                 </ul>
                 </nav>
-                
+
                 <!-- Mobile Navigation (no dropdowns) -->
                 <nav class="mobile-nav" aria-label="Mobile Navigation">
                 <ul>
@@ -867,6 +882,9 @@
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener">Join Discord</a></li>
+                    <li><a href="#sponsors">
+                        Sponsor
+                      </a></li>
                     <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank" rel="noopener">GITHUB</a></li>
                     <li><a href="#media">Media</a></li>
                     <li><a href="#faq">FAQ</a></li>
