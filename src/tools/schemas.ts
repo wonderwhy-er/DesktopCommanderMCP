@@ -22,6 +22,7 @@ export const ExecuteCommandArgsSchema = z.object({
 
 export const ReadOutputArgsSchema = z.object({
   pid: z.number(),
+  timeout_ms: z.number().optional(),
 });
 
 export const ForceTerminateArgsSchema = z.object({
@@ -90,4 +91,12 @@ export const EditBlockArgsSchema = z.object({
   old_string: z.string(),
   new_string: z.string(),
   expected_replacements: z.number().optional().default(1),
+});
+
+// Send input to process schema
+export const SendInputArgsSchema = z.object({
+  pid: z.number(),
+  input: z.string(),
+  timeout_ms: z.number().optional(),
+  wait_for_prompt: z.boolean().optional(),
 });

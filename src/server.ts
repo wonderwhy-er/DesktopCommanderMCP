@@ -30,6 +30,7 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    SendInputArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 
@@ -193,6 +194,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
                 },
                 {
+                    name: "send_input",
+                    description: "Send input to a running terminal session. Ideal for interactive REPL environments like Python, Node.js, or any other shell that expects user input.",
+                    inputSchema: zodToJsonSchema(SendInputArgsSchema),
+                },
+                {
                     name: "force_terminate",
                     description: "Force terminate a running terminal session.",
                     inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
@@ -212,6 +218,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: "Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process.",
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
+                
+                // Note: For interactive programming environments (REPLs) like Python or Node.js,
+                // use execute_command to start the session, send_input to send code,
+                // and read_output to get the results. For example:
+                // execute_command("python") to start Python
+                // send_input(pid, "print('Hello world')") to run code
+                // read_output(pid) to see the results
             ],
         };
     } catch (error) {
@@ -260,6 +273,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "read_output":
                 return await handlers.handleReadOutput(args);
+                
+            case "send_input":
+                return await handlers.handleSendInput(args);
 
             case "force_terminate":
                 return await handlers.handleForceTerminate(args);
@@ -273,6 +289,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "kill_process":
                 return await handlers.handleKillProcess(args);
+
+            // Note: REPL functionality removed in favor of using general terminal commands
 
             // Filesystem tools
             case "read_file":
