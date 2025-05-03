@@ -27,26 +27,72 @@ async function testEnhancedREPL() {
   
   console.log(`Started Python session with PID: ${pid}`);
   
-  // We'll stick to using the existing tools for now to test the basic functionality
+  // Test read_process_output with timeout
+  console.log('Testing read_process_output with timeout...');
+  const initialOutput = await readProcessOutput({ 
+    pid, 
+    timeout_ms: 2000 
+  });
+  console.log('Initial Python prompt:', initialOutput.content[0].text);
   
-  // Send a simple Python command
-  console.log("Sending simple command...");
+  // Test interact_with_process with wait_for_prompt
+  console.log('Testing interact_with_process with wait_for_prompt...');
+  const inputResult = await interactWithProcess({
+    pid,
+    input: 'print("Hello from Python with wait!")',
+    wait_for_prompt: true,
+    timeout_ms: 5000
+  });
+  console.log('Python output with wait_for_prompt:', inputResult.content[0].text);
+  
+  // Check that the output contains the expected text
+  assert(inputResult.content[0].text.includes('Hello from Python with wait!'), 
+    'Output should contain the printed message');
+  
+  // Test interact_with_process without wait_for_prompt
+  console.log('Testing interact_with_process without wait_for_prompt...');
   await interactWithProcess({
     pid,
-    input: 'print("Hello from Python!")\n'
+    input: 'print("Hello from Python without wait!")',
+    wait_for_prompt: false
   });
   
   // Wait a moment for Python to process
-  console.log("Waiting for output...");
   await new Promise(resolve => setTimeout(resolve, 1000));
   
   // Read the output
-  console.log("Reading output...");
   const output = await readProcessOutput({ pid });
-  console.log('Python output:', output.content[0].text);
+  console.log('Python output without wait_for_prompt:', output.content[0].text);
+  
+  // Check that the output contains the expected text
+  assert(output.content[0].text.includes('Hello from Python without wait!'), 
+    'Output should contain the printed message');
+  
+  // Test multi-line code with wait_for_prompt
+  console.log('Testing multi-line code with wait_for_prompt...');
+  const multilineCode = `def greet(name):
+    return f"Hello, {name}!"
+
+for i in range(3):
+    print(greet(f"Guest {i+1}"))`;
+  
+  const multilineResult = await interactWithProcess({
+    pid,
+    input: multilineCode,
+    wait_for_prompt: true,
+    timeout_ms: 5000
+  });
+  console.log('Python multi-line output with wait_for_prompt:', multilineResult.content[0].text);
+  
+  // Check that the output contains all three greetings
+  assert(multilineResult.content[0].text.includes('Hello, Guest 1!'), 
+    'Output should contain greeting for Guest 1');
+  assert(multilineResult.content[0].text.includes('Hello, Guest 2!'), 
+    'Output should contain greeting for Guest 2');
+  assert(multilineResult.content[0].text.includes('Hello, Guest 3!'), 
+    'Output should contain greeting for Guest 3');
   
   // Terminate the session
-  console.log("Terminating session...");
   await forceTerminate({ pid });
   console.log('Python session terminated');
   
