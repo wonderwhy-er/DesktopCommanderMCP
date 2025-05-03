@@ -33,6 +33,7 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    SendInputArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {trackToolCall} from './utils/trackTools.js';
@@ -477,6 +478,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                 },
                 {
+                    name: "send_input",
+                    description: "Send input to a running terminal session. Ideal for interactive REPL environments like Python, Node.js, or any other shell that expects user input.",
+                    inputSchema: zodToJsonSchema(SendInputArgsSchema),
+                },
+                {
                     name: "force_terminate",
                     description: `
                         Force terminate a running terminal session.
@@ -603,6 +609,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 
             case "interact_with_process":
                 return await handlers.handleInteractWithProcess(args);
+                
+            case "send_input":
+                return await handlers.handleSendInput(args);
 
             case "force_terminate":
                 return await handlers.handleForceTerminate(args);

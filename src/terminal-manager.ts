@@ -198,6 +198,15 @@ export class TerminalManager {
   listCompletedSessions(): CompletedSession[] {
     return Array.from(this.completedSessions.values());
   }
+
+  /**
+   * Get a session by PID
+   * @param pid Process ID
+   * @returns The session or undefined if not found
+   */
+  getSession(pid: number): TerminalSession | undefined {
+    return this.sessions.get(pid);
+  }
 }
 
 export const terminalManager = new TerminalManager();

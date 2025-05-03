@@ -101,3 +101,11 @@ export const InteractWithProcessArgsSchema = z.object({
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
+
+// Legacy send input schema (for backward compatibility)
+export const SendInputArgsSchema = z.object({
+  pid: z.number(),
+  input: z.string(),
+  timeout_ms: z.number().optional(),
+  wait_for_prompt: z.boolean().optional(),
+});
