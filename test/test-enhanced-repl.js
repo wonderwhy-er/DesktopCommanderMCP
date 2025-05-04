@@ -93,6 +93,7 @@ for i in range(3):
     'Output should contain greeting for Guest 3');
   
   // Terminate the session
+  console.log("Terminating session...");
   await forceTerminate({ pid });
   console.log('Python session terminated');
   
