@@ -306,7 +306,8 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
         } else {
             // For all other files, try to read as UTF-8 text
             try {
-                const content = await fs.readFile(validPath, "utf-8");
+                const buffer = await fs.readFile(validPath);
+                const content = buffer.toString('utf-8');
                 
                 return { content, mimeType, isImage };
             } catch (error) {
@@ -355,7 +356,7 @@ export async function writeFile(filePath: string, content: string): Promise<void
     // Capture file extension in telemetry without capturing the file path
     capture('server_write_file', {fileExtension: fileExtension});
 
-    await fs.writeFile(validPath, content, "utf-8");
+    await fs.writeFile(validPath, content);
 }
 
 export interface MultiFileResult {

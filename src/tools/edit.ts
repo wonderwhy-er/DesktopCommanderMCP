@@ -4,6 +4,7 @@ import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
 import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
+import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 
 interface SearchReplace {
     search: string;
@@ -49,14 +50,20 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         throw new Error('Wrong content for file ' + filePath);
     }
     
+    // Detect file's line ending style
+    const fileLineEnding = detectLineEnding(content);
+    
+    // Normalize search string to match file's line endings
+    const normalizedSearch = normalizeLineEndings(block.search, fileLineEnding);
+    
     // First try exact match
     let tempContent = content;
     let count = 0;
-    let pos = tempContent.indexOf(block.search);
+    let pos = tempContent.indexOf(normalizedSearch);
     
     while (pos !== -1) {
         count++;
-        pos = tempContent.indexOf(block.search, pos + 1);
+        pos = tempContent.indexOf(normalizedSearch, pos + 1);
     }
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
@@ -66,14 +73,14 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         
         // If we're only replacing one occurrence, replace it directly
         if (expectedReplacements === 1) {
-            const searchIndex = newContent.indexOf(block.search);
+            const searchIndex = newContent.indexOf(normalizedSearch);
             newContent = 
                 newContent.substring(0, searchIndex) + 
-                block.replace + 
-                newContent.substring(searchIndex + block.search.length);
+                normalizeLineEndings(block.replace, fileLineEnding) + 
+                newContent.substring(searchIndex + normalizedSearch.length);
         } else {
             // Replace all occurrences using split and join for multiple replacements
-            newContent = newContent.split(block.search).join(block.replace);
+            newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
         }
         
         await writeFile(filePath, newContent);
