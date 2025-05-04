@@ -4,22 +4,20 @@
 export type LineEndingStyle = '\r\n' | '\n' | '\r';
 
 /**
- * Detect the line ending style used in a file
+ * Detect the line ending style used in a file - Optimized version
+ * This algorithm uses early termination for maximum performance
  */
 export function detectLineEnding(content: string): LineEndingStyle {
-    // Check for CRLF first
-    if (content.includes('\r\n')) {
-        return '\r\n';
-    }
-    
-    // Check for lone LF
-    if (content.includes('\n')) {
-        return '\n';
-    }
-    
-    // Check for lone CR (old Mac style)
-    if (content.includes('\r')) {
-        return '\r';
+    for (let i = 0; i < content.length; i++) {
+        if (content[i] === '\r') {
+            if (i + 1 < content.length && content[i + 1] === '\n') {
+                return '\r\n';
+            }
+            return '\r';
+        }
+        if (content[i] === '\n') {
+            return '\n';
+        }
     }
     
     // Default to system line ending if no line endings found
