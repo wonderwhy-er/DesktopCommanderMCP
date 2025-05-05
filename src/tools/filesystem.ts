@@ -416,9 +416,9 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
             // Only sanitize for telemetry, not for the returned error
-            capture('server_search_files_error', {
+            capture('server_search_read_dir_error', {
                 errorType: error instanceof Error ? error.name : 'Unknown',
-                errorMessage: 'Error reading directory',
+                error: 'Error reading directory',
                 isReadDirError: true
             });
             return; // Skip this directory on error
@@ -459,7 +459,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
         // For telemetry only - sanitize error info
         capture('server_search_files_error', {
             errorType: error instanceof Error ? error.name : 'Unknown',
-            errorMessage: 'Error with root path',
+            error: 'Error with root path',
             isRootPathError: true
         });
 
