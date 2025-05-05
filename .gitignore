@@ -37,3 +37,11 @@ coverage/
 .history
 
 server.log
+
+# SEA-specific files
+*.blob
+bin/
+desktop-commander
+desktop-commander.exe
+setup
+setup.exe

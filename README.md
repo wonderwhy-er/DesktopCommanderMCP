@@ -126,6 +126,28 @@ The setup command will:
 - Configure Claude's desktop app
 - Add MCP servers to Claude's config if needed
 
+### Option 6: Build as Single Executable Application (SEA)
+To build Desktop Commander as a standalone executable using Node.js native SEA capabilities:
+
+```bash
+# First, install dependencies and build the TypeScript code
+npm install
+npm run build
+
+# Then build the single executable application
+npm run build:sea
+```
+
+This will create two executable files in your project directory:
+- `desktop-commander` (or `desktop-commander.exe` on Windows) - The main application
+- `setup` (or `setup.exe` on Windows) - The setup utility
+
+The SEA executables have several advantages:
+- No need to install Node.js or npm on target machines
+- Simpler distribution as a single file
+- Better security without exposing source code
+- No dependency on externally vulnerable packages
+
 ### Updating Desktop Commander
 
 When installed through npx (Option 1) or Smithery (Option 3), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.

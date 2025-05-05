@@ -34,6 +34,8 @@
     "test": "node test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
+    "bundle": "node scripts/bundle.js",
+    "build:sea": "node scripts/build-sea.js",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js"
   },
   "publishConfig": {
@@ -69,8 +71,9 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.24",
-    "nexe": "^5.0.0-beta.4",
+    "esbuild": "^0.22.1",
     "nodemon": "^3.0.2",
+    "postject": "^1.0.0-alpha.6",
     "shx": "^0.3.4",
     "typescript": "^5.3.3"
   }

@@ -1,0 +1,5 @@
+{
+  "main": "dist/setup-bundle.js",
+  "output": "setup-sea.blob",
+  "disableExperimentalSEAWarning": true
+}
