@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/wonderwhy-er-desktopcommandermcp-badge.png)](https://mseep.ai/app/wonderwhy-er-desktopcommandermcp)
+
 # Desktop Commander MCP
 ### Search, update, manage files and run terminal commands with AI
 
