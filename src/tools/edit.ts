@@ -4,6 +4,7 @@ import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
 import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
+import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 
 interface SearchReplace {
     search: string;
@@ -23,6 +24,71 @@ interface FuzzyMatch {
  * (0-1 scale where 1 is perfect match and 0 is completely different)
  */
 const FUZZY_THRESHOLD = 0.7;
+
+/**
+ * Extract character code data from diff
+ * @param expected The string that was searched for
+ * @param actual The string that was found
+ * @returns Character code statistics
+ */
+function getCharacterCodeData(expected: string, actual: string): {
+    report: string;
+    uniqueCount: number;
+    diffLength: number;
+} {
+    // Find common prefix and suffix
+    let prefixLength = 0;
+    const minLength = Math.min(expected.length, actual.length);
+
+    // Determine common prefix length
+    while (prefixLength < minLength &&
+           expected[prefixLength] === actual[prefixLength]) {
+        prefixLength++;
+    }
+
+    // Determine common suffix length
+    let suffixLength = 0;
+    while (suffixLength < minLength - prefixLength &&
+           expected[expected.length - 1 - suffixLength] === actual[actual.length - 1 - suffixLength]) {
+        suffixLength++;
+    }
+    
+    // Extract the different parts
+    const expectedDiff = expected.substring(prefixLength, expected.length - suffixLength);
+    const actualDiff = actual.substring(prefixLength, actual.length - suffixLength);
+    
+    // Count unique character codes in the diff
+    const characterCodes = new Map<number, number>();
+    const fullDiff = expectedDiff + actualDiff;
+    
+    for (let i = 0; i < fullDiff.length; i++) {
+        const charCode = fullDiff.charCodeAt(i);
+        characterCodes.set(charCode, (characterCodes.get(charCode) || 0) + 1);
+    }
+    
+    // Create character codes string report
+    const charCodeReport: string[] = [];
+    characterCodes.forEach((count, code) => {
+        // Include character representation for better readability
+        const char = String.fromCharCode(code);
+        // Make special characters more readable
+        const charDisplay = code < 32 || code > 126 ? `\\x${code.toString(16).padStart(2, '0')}` : char;
+        charCodeReport.push(`${code}:${count}[${charDisplay}]`);
+    });
+    
+    // Sort by character code for consistency
+    charCodeReport.sort((a, b) => {
+        const codeA = parseInt(a.split(':')[0]);
+        const codeB = parseInt(b.split(':')[0]);
+        return codeA - codeB;
+    });
+    
+    return {
+        report: charCodeReport.join(','),
+        uniqueCount: characterCodes.size,
+        diffLength: fullDiff.length
+    };
+}
 
 export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
     // Check for empty search string to prevent infinite loops
@@ -49,14 +115,20 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         throw new Error('Wrong content for file ' + filePath);
     }
     
+    // Detect file's line ending style
+    const fileLineEnding = detectLineEnding(content);
+    
+    // Normalize search string to match file's line endings
+    const normalizedSearch = normalizeLineEndings(block.search, fileLineEnding);
+    
     // First try exact match
     let tempContent = content;
     let count = 0;
-    let pos = tempContent.indexOf(block.search);
+    let pos = tempContent.indexOf(normalizedSearch);
     
     while (pos !== -1) {
         count++;
-        pos = tempContent.indexOf(block.search, pos + 1);
+        pos = tempContent.indexOf(normalizedSearch, pos + 1);
     }
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
@@ -66,14 +138,14 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         
         // If we're only replacing one occurrence, replace it directly
         if (expectedReplacements === 1) {
-            const searchIndex = newContent.indexOf(block.search);
+            const searchIndex = newContent.indexOf(normalizedSearch);
             newContent = 
                 newContent.substring(0, searchIndex) + 
-                block.replace + 
-                newContent.substring(searchIndex + block.search.length);
+                normalizeLineEndings(block.replace, fileLineEnding) + 
+                newContent.substring(searchIndex + normalizedSearch.length);
         } else {
             // Replace all occurrences using split and join for multiple replacements
-            newContent = newContent.split(block.search).join(block.replace);
+            newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
         }
         
         await writeFile(filePath, newContent);
@@ -111,20 +183,29 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         // Calculate execution time in milliseconds
         const executionTime = performance.now() - startTime;
         
+        // Generate diff and gather character code data
+        const diff = highlightDifferences(block.search, fuzzyResult.value);
+        
+        // Count character codes in diff
+        const characterCodeData = getCharacterCodeData(block.search, fuzzyResult.value);
+        
+        // Combine all fuzzy search data for single capture
+        const fuzzySearchData = {
+            similarity: similarity,
+            execution_time_ms: executionTime,
+            search_length: block.search.length,
+            file_size: content.length,
+            threshold: FUZZY_THRESHOLD,
+            found_text_length: fuzzyResult.value.length,
+            character_codes: characterCodeData.report,
+            unique_character_count: characterCodeData.uniqueCount,
+            total_diff_length: characterCodeData.diffLength
+        };
+        
         // Check if the fuzzy match is "close enough"
         if (similarity >= FUZZY_THRESHOLD) {
-            // Format differences for clearer output
-            const diff = highlightDifferences(block.search, fuzzyResult.value);
-            
-            // Capture the fuzzy search event
-            capture('server_fuzzy_search_performed', {
-                similarity: similarity,
-                execution_time_ms: executionTime,
-                search_length: block.search.length,
-                file_size: content.length,
-                threshold: FUZZY_THRESHOLD,
-                found_text_length: fuzzyResult.value.length
-            });
+            // Capture the fuzzy search event with all data
+            capture('server_fuzzy_search_performed', fuzzySearchData);
             
             // If we allow fuzzy matches, we would make the replacement here
             // For now, we'll return a detailed message about the fuzzy match
@@ -138,14 +219,9 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
             };
         } else {
             // If the fuzzy match isn't close enough
-            // Still capture the fuzzy search event even for unsuccessful matches
+            // Still capture the fuzzy search event with all data
             capture('server_fuzzy_search_performed', {
-                similarity: similarity,
-                execution_time_ms: executionTime,
-                search_length: block.search.length,
-                file_size: content.length,
-                threshold: FUZZY_THRESHOLD,
-                found_text_length: fuzzyResult.value.length,
+                ...fuzzySearchData,
                 below_threshold: true
             });
             
