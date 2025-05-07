@@ -105,7 +105,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "write_file",
                     description:
-                        `Completely replace file contents. Best for large changes (>20% of file) or when edit_block fails. Use with caution as it will overwrite existing files. Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        `Write or append to file contents with a configurable line limit per call (default: 50 lines). THIS IS A STRICT REQUIREMENT. ANY file with more than the configured limit MUST BE written in chunks or IT WILL FAIL.
+
+                        NEVER attempt to write more than the configured line limit at once.
+
+                        REQUIRED PROCESS FOR LARGE FILES:
+                        1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})
+                        2. THEN → write_file(filePath, secondChunk, {mode: 'append'})
+                        3. THEN → write_file(filePath, thirdChunk, {mode: 'append'})
+                        ... and so on for each chunk
+                        
+                        If asked to continue writing do not restart from beginning, read end of file to see where you stopped and continue from there
+
+                        Files over the line limit (configurable via 'fileWriteLineLimit' setting) WILL BE REJECTED if not broken into chunks as described above.
+                        Only works within allowed directories. ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(WriteFileArgsSchema),
                 },
                 {
@@ -172,7 +185,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         To replace multiple occurrences, provide the expected_replacements parameter with the exact number of matches expected. 
                         UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), include the minimal amount of context necessary (typically 1-3 lines) before and after the change point, with exact whitespace and indentation. 
                         When editing multiple sections, make separate edit_block calls for each distinct change rather than one large replacement. 
-                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different. 
+                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
+                        Similar to write_file, there is a configurable line limit (fileWriteLineLimit) that warns if the edited file exceeds this limit. If this happens, consider breaking your edits into smaller, more focused changes.
                         ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },

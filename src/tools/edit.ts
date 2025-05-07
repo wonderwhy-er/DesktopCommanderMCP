@@ -5,6 +5,7 @@ import { capture } from '../utils/capture.js';
 import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
+import { configManager } from '../config-manager.js';
 
 interface SearchReplace {
     search: string;
@@ -115,6 +116,10 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         throw new Error('Wrong content for file ' + filePath);
     }
     
+    // Get the line limit from configuration
+    const config = await configManager.getConfig();
+    const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
+    
     // Detect file's line ending style
     const fileLineEnding = detectLineEnding(content);
     
@@ -148,12 +153,23 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
             newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
         }
         
+        // Check if replacement text has too many lines
+        const newContentLines = newContent.split('\n');
+        const lineCount = newContentLines.length;
+        let warningMessage = "";
+        
+        if (lineCount > MAX_LINES) {
+            warningMessage = `\n\nWARNING: File edited, but exceeds line count limit: ${lineCount} lines (maximum: ${MAX_LINES}).
+            
+RECOMMENDATION: For future edits on large files, consider making multiple smaller edits instead of one large edit. Breaking edits into smaller chunks makes them more focused and ensures they stay within the line limit.`;
+        }
+        
         await writeFile(filePath, newContent);
         
         return {
             content: [{ 
                 type: "text", 
-                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}` 
+                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}${warningMessage}` 
             }],
         };
     }

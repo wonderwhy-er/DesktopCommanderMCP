@@ -14,6 +14,7 @@ import {
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { createErrorResponse } from '../error-handlers.js';
+import { configManager } from '../config-manager.js';
 
 import {
     ReadFileArgsSchema,
@@ -140,10 +141,34 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteFileArgsSchema.parse(args);
-        await writeFile(parsed.path, parsed.content);
+
+        // Get the line limit from configuration
+        const config = await configManager.getConfig();
+        const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
+        
+        // Strictly enforce line count limit
+        const lines = parsed.content.split('\n');
+        const lineCount = lines.length;
+        let errorMessage = "";
+        if (lineCount > MAX_LINES) {
+            errorMessage = `File was written with warning: Line count limit exceeded: ${lineCount} lines (maximum: ${MAX_LINES}).
+            
+SOLUTION: Split your content into smaller chunks:
+1. First chunk: write_file(path, firstChunk, {mode: 'rewrite'})
+2. Additional chunks: write_file(path, nextChunk, {mode: 'append'})`;
+        }
+
+        // Pass the mode parameter to writeFile
+        await writeFile(parsed.path, parsed.content, parsed.mode);
+        
+        // Provide more informative message based on mode
+        const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
         
         return {
-            content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
+            content: [{ 
+                type: "text", 
+                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
+            }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

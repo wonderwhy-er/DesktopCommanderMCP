@@ -347,16 +347,25 @@ export async function readFile(filePath: string, isUrl?: boolean): Promise<FileR
         : readFileFromDisk(filePath);
 }
 
-export async function writeFile(filePath: string, content: string): Promise<void> {
+export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
     const validPath = await validatePath(filePath);
 
     // Get file extension for telemetry
     const fileExtension = path.extname(validPath).toLowerCase();
 
-    // Capture file extension in telemetry without capturing the file path
-    capture('server_write_file', {fileExtension: fileExtension});
 
-    await fs.writeFile(validPath, content);
+    // Capture file extension and operation details in telemetry without capturing the file path
+    capture('server_write_file', {
+        fileExtension: fileExtension,
+        mode: mode,
+    });
+
+    // Use different fs methods based on mode
+    if (mode === 'append') {
+        await fs.appendFile(validPath, content);
+    } else {
+        await fs.writeFile(validPath, content);
+    }
 }
 
 export interface MultiFileResult {
