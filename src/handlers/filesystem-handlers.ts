@@ -49,7 +49,16 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
     
     const readFileOperation = async () => {
         const parsed = ReadFileArgsSchema.parse(args);
-        const fileResult = await readFile(parsed.path, parsed.isUrl);
+        
+        // Get the configuration for file read limits
+        const config = await configManager.getConfig();
+        const defaultLimit = config.fileReadLengthLimit ?? 100000;
+        
+        // Use the provided limits or defaults
+        const offset = parsed.offset ?? 0;
+        const length = parsed.length ?? defaultLimit;
+        
+        const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
         
         if (fileResult.isImage) {
             // For image files, return as an image content type

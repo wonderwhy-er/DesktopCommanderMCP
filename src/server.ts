@@ -93,7 +93,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "read_file",
                     description:
-                        `Read the complete contents of a file from the file system or a URL. Prefer this over 'execute_command' with cat/type for viewing files. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
+                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start position, default: 0) and 'length' (max characters to read, default: configurable via 'fileReadLengthLimit' setting, initially 100000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {

@@ -250,12 +250,19 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 /**
  * Read file content from the local filesystem
  * @param filePath Path to the file
- * @param returnMetadata Whether to return metadata with the content
+ * @param offset Starting position to read from (default: 0)
+ * @param length Maximum number of characters to read (default: from config or 100000)
  * @returns File content or file result with metadata
  */
-export async function readFileFromDisk(filePath: string): Promise<FileResult> {
+export async function readFileFromDisk(filePath: string, offset: number = 0, length?: number): Promise<FileResult> {
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
+    
+    // Get default length from config if not provided
+    if (length === undefined) {
+        const config = await configManager.getConfig();
+        length = config.fileReadLengthLimit ?? 100000; // Default to 100000 if not set
+    }
 
     const validPath = await validatePath(filePath);
     
@@ -265,28 +272,19 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     // Check file size before attempting to read
     try {
         const stats = await fs.stat(validPath);
-        const MAX_SIZE = 100 * 1024; // 100KB limit
         
-        if (stats.size > MAX_SIZE) {
-            const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
-            // Capture file extension in telemetry without capturing the file path
-            capture('server_read_file_large', {fileExtension: fileExtension});
-
-            return {
-                content: message, 
-                mimeType: 'text/plain', 
-                isImage: false 
-            };
-        }
-
         // Capture file extension in telemetry without capturing the file path
-        capture('server_read_file', {fileExtension: fileExtension});
+        capture('server_read_file', {
+            fileExtension: fileExtension,
+            offset: offset,
+            length: length,
+            fileSize: stats.size
+        });
     } catch (error) {
         console.error('error catch ' + error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         capture('server_read_file_error', {error: errorMessage, fileExtension: fileExtension});
         // If we can't stat the file, continue anyway and let the read operation handle errors
-        //console.error(`Failed to stat file ${validPath}:`, error);
     }
     
     // Detect the MIME type based on file extension
@@ -299,15 +297,29 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     const readOperation = async () => {
         if (isImage) {
             // For image files, read as Buffer and convert to base64
+            // Images are always read in full, ignoring offset and length
             const buffer = await fs.readFile(validPath);
             const content = buffer.toString('base64');
             
             return { content, mimeType, isImage };
         } else {
-            // For all other files, try to read as UTF-8 text
+            // For all other files, try to read as UTF-8 text with offset and length
             try {
+                // Read the entire file first
                 const buffer = await fs.readFile(validPath);
-                const content = buffer.toString('utf-8');
+                const fullContent = buffer.toString('utf-8');
+                
+                // Apply offset and length
+                const startPos = Math.min(offset, fullContent.length);
+                const endPos = Math.min(startPos + length, fullContent.length);
+                const truncatedContent = fullContent.substring(startPos, endPos);
+                
+                // Add an informational message if truncated
+                let content = truncatedContent;
+                if (offset > 0 || endPos < fullContent.length) {
+                    const totalLength = fullContent.length;
+                    content = `[Reading ${endPos - startPos} characters from offset ${offset} of ${totalLength} total characters]\n\n${truncatedContent}`;
+                }
                 
                 return { content, mimeType, isImage };
             } catch (error) {
@@ -337,14 +349,15 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
 /**
  * Read a file from either the local filesystem or a URL
  * @param filePath Path to the file or URL
- * @param returnMetadata Whether to return metadata with the content
  * @param isUrl Whether the path is a URL
+ * @param offset Starting position to read from (default: 0)
+ * @param length Maximum number of characters to read (default: from config or 100000)
  * @returns File content or file result with metadata
  */
-export async function readFile(filePath: string, isUrl?: boolean): Promise<FileResult> {
+export async function readFile(filePath: string, isUrl?: boolean, offset?: number, length?: number): Promise<FileResult> {
     return isUrl 
         ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath);
+        : readFileFromDisk(filePath, offset, length);
 }
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
