@@ -250,10 +250,11 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 /**
  * Read file content from the local filesystem
  * @param filePath Path to the file
- * @param returnMetadata Whether to return metadata with the content
+ * @param size Maximum size in bytes to read (default 100KB)
+ * @param page Page number to read (default 0)
  * @returns File content or file result with metadata
  */
-export async function readFileFromDisk(filePath: string): Promise<FileResult> {
+export async function readFileFromDisk(filePath: string, size: number = 100 * 1024, page: number = 0): Promise<FileResult> {
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
 
@@ -265,86 +266,143 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     // Check file size before attempting to read
     try {
         const stats = await fs.stat(validPath);
-        const MAX_SIZE = 100 * 1024; // 100KB limit
+        // Capture file extension in telemetry without capturing the file path
+        capture('server_read_file', {fileExtension: fileExtension});
         
-        if (stats.size > MAX_SIZE) {
-            const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
-            // Capture file extension in telemetry without capturing the file path
-            capture('server_read_file_large', {fileExtension: fileExtension});
-
+        const totalSize = stats.size;
+        const totalPages = Math.ceil(totalSize / size);
+        const startPos = page * size;
+        
+        // Check if we're trying to read beyond the file size
+        if (startPos >= totalSize) {
             return {
-                content: message, 
+                content: `Error: Page ${page} is beyond file bounds. File has ${totalPages} pages of ${size / 1024}KB each.`, 
+                mimeType: 'text/plain', 
+                isImage: false 
+            };
+        }
+        
+        // Detect the MIME type based on file extension
+        const mimeType = getMimeType(validPath);
+        const isImage = isImageFile(mimeType);
+        
+        // If the file is an image and we're requesting any page other than 0, return error
+        if (isImage && page > 0) {
+            return {
+                content: `Error: Cannot paginate through image files. Please use page=0 to read the entire image.`, 
                 mimeType: 'text/plain', 
                 isImage: false 
             };
         }
 
-        // Capture file extension in telemetry without capturing the file path
-        capture('server_read_file', {fileExtension: fileExtension});
+        const FILE_READ_TIMEOUT = 30000; // 30 seconds timeout for file operations
+        
+        // Use withTimeout to handle potential hangs
+        const readOperation = async () => {
+            // For image files, we read the whole file regardless of size/page
+            if (isImage) {
+                // For image files, read as Buffer and convert to base64
+                const buffer = await fs.readFile(validPath);
+                const content = buffer.toString('base64');
+                
+                return { content, mimeType, isImage };
+            } else {
+                // Use file handle to read specific portion of the file
+                const fileHandle = await fs.open(validPath, 'r');
+                try {
+                    // Calculate how much to read
+                    const readSize = Math.min(size, totalSize - startPos);
+                    const buffer = Buffer.alloc(readSize);
+                    
+                    // Read the specific chunk of the file
+                    const { bytesRead } = await fileHandle.read(buffer, 0, readSize, startPos);
+                    
+                    // Convert buffer to string
+                    let content = buffer.toString('utf-8');
+                    
+                    // Add pagination info if file is larger than our chunk
+                    if (totalSize > size) {
+                        const pageInfo = `\n--- Page ${page + 1} of ${totalPages} (${bytesRead / 1024}KB of ${totalSize / 1024}KB total) ---\n`;
+                        content = pageInfo + content;
+                        
+                        // Add info about next/previous pages
+                        let navInfo = '\n--- ';
+                        if (page > 0) {
+                            navInfo += `Use page=${page - 1} for previous page. `;
+                        }
+                        if (startPos + bytesRead < totalSize) {
+                            navInfo += `Use page=${page + 1} for next page.`;
+                        }
+                        navInfo += ' ---';
+                        content += navInfo;
+                    }
+                    
+                    return { content, mimeType, isImage: false };
+                } catch (error) {
+                    // If UTF-8 reading fails, treat as binary and return base64 but still as text
+                    // Fall back to reading the chunk as binary data
+                    const readSize = Math.min(size, totalSize - startPos);
+                    const buffer = Buffer.alloc(readSize);
+                    
+                    await fileHandle.read(buffer, 0, readSize, startPos);
+                    
+                    const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
+                    
+                    // Add pagination info
+                    if (totalSize > size) {
+                        const pageInfo = `\n--- Page ${page + 1} of ${totalPages} (${readSize / 1024}KB of ${totalSize / 1024}KB total) ---\n`;
+                        return { 
+                            content: pageInfo + content, 
+                            mimeType: 'text/plain', 
+                            isImage: false 
+                        };
+                    }
+                    
+                    return { content, mimeType: 'text/plain', isImage: false };
+                } finally {
+                    await fileHandle.close();
+                }
+            }
+        };
+        
+        // Execute with timeout
+        const result = await withTimeout(
+            readOperation(),
+            FILE_READ_TIMEOUT,
+            `Read file operation for ${filePath}`,
+            null
+        );
+        if (result == null) {
+            // Handles the impossible case where withTimeout resolves to null instead of throwing
+            throw new Error('Failed to read the file');
+        }
+        
+        return result;
     } catch (error) {
         console.error('error catch ' + error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         capture('server_read_file_error', {error: errorMessage, fileExtension: fileExtension});
-        // If we can't stat the file, continue anyway and let the read operation handle errors
-        //console.error(`Failed to stat file ${validPath}:`, error);
+        throw error;
     }
-    
-    // Detect the MIME type based on file extension
-    const mimeType = getMimeType(validPath);
-    const isImage = isImageFile(mimeType);
-    
-    const FILE_READ_TIMEOUT = 30000; // 30 seconds timeout for file operations
-    
-    // Use withTimeout to handle potential hangs
-    const readOperation = async () => {
-        if (isImage) {
-            // For image files, read as Buffer and convert to base64
-            const buffer = await fs.readFile(validPath);
-            const content = buffer.toString('base64');
-            
-            return { content, mimeType, isImage };
-        } else {
-            // For all other files, try to read as UTF-8 text
-            try {
-                const buffer = await fs.readFile(validPath);
-                const content = buffer.toString('utf-8');
-                
-                return { content, mimeType, isImage };
-            } catch (error) {
-                // If UTF-8 reading fails, treat as binary and return base64 but still as text
-                const buffer = await fs.readFile(validPath);
-                const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
-
-                return { content, mimeType: 'text/plain', isImage: false };
-            }
-        }
-    };
-    // Execute with timeout
-    const result = await withTimeout(
-        readOperation(),
-        FILE_READ_TIMEOUT,
-        `Read file operation for ${filePath}`,
-        null
-    );
-    if (result == null) {
-        // Handles the impossible case where withTimeout resolves to null instead of throwing
-        throw new Error('Failed to read the file');
-    }
-    
-    return result;
 }
 
 /**
  * Read a file from either the local filesystem or a URL
  * @param filePath Path to the file or URL
- * @param returnMetadata Whether to return metadata with the content
  * @param isUrl Whether the path is a URL
+ * @param size Maximum size in bytes to read (default 100KB)
+ * @param page Page number to read (default 0)
  * @returns File content or file result with metadata
  */
-export async function readFile(filePath: string, isUrl?: boolean): Promise<FileResult> {
+export async function readFile(
+    filePath: string, 
+    isUrl?: boolean, 
+    size?: number, 
+    page?: number
+): Promise<FileResult> {
     return isUrl 
         ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath);
+        : readFileFromDisk(filePath, size, page);
 }
 
 export async function writeFile(filePath: string, content: string): Promise<void> {

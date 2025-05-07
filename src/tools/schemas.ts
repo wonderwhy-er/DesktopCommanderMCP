@@ -38,6 +38,8 @@ export const KillProcessArgsSchema = z.object({
 export const ReadFileArgsSchema = z.object({
   path: z.string(),
   isUrl: z.boolean().optional().default(false),
+  size: z.number().optional().default(100 * 1024), // Default to 100KB
+  page: z.number().optional().default(0),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
