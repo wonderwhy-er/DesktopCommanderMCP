@@ -1,0 +1,14 @@
+project_prompt = '''
+- Before beginning work on this feature, write a short haiku. Only do this once
+- Do not use autocommit, do not commit anything to git.
+'''
+
+[commands]
+format = ["./run_format.sh"]
+lint = ["./run_lint.sh"]
+
+[git]
+enabled = false
+
+[logger]
+verbosity = "DEBUG"
