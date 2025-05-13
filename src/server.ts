@@ -33,7 +33,9 @@ import {
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
 } from './tools/schemas.js';
+import { SSEConfigArgsSchema } from './tools/sse-config.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {configureSSE} from './tools/sse-tools.js';
 
 import {VERSION} from './version.js';
 import {capture} from "./utils/capture.js";
@@ -81,14 +83,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access). ${CMD_PREFIX_DESCRIPTION}`,
+                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), sseEnabled (whether SSE transport is enabled), ssePort (port for SSE server), ssePath (path for SSE endpoint). ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {
                     name: "set_config_value",
                     description:
-                        `Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system. ${CMD_PREFIX_DESCRIPTION}`,
+                        `Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths), sseEnabled (boolean), ssePort (number), ssePath (string). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
+                },
+                {
+                    name: "sse_config",
+                    description:
+                        `Configure the SSE transport for remote clients. Supports actions: 'status' (view current configuration), 'enable' (turn on SSE), 'disable' (turn off SSE), 'restart' (apply configuration changes). Use with port and path parameters to customize the SSE server. For example: sse_config({ "action": "enable", "port": 8080, "path": "/sse" }). ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(SSEConfigArgsSchema),
                 },
 
                 // Filesystem tools
@@ -125,38 +133,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "move_file",
                     description:
-                        `Move or rename files and directories. 
-                        Can move files between directories and rename them in a single operation. 
+                        `Move or rename files and directories.
+                        Can move files between directories and rename them in a single operation.
                         Both source and destination must be within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
                 },
                 {
                     name: "search_files",
                     description:
-                        `Finds files by name using a case-insensitive substring matching. 
+                        `Finds files by name using a case-insensitive substring matching.
                         Use this instead of 'execute_command' with find/dir/ls for locating files.
-                        Searches through all subdirectories from the starting path. 
-                        Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. 
+                        Searches through all subdirectories from the starting path.
+                        Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter.
                         Only searches within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
                 },
                 {
                     name: "search_code",
                     description:
-                        `Search for text/code patterns within file contents using ripgrep. 
+                        `Search for text/code patterns within file contents using ripgrep.
                         Use this instead of 'execute_command' with grep/find for searching code content.
-                        Fast and powerful search similar to VS Code search functionality. 
-                        Supports regular expressions, file pattern filtering, and context lines. 
-                        Has a default timeout of 30 seconds which can be customized. 
-                        Only searches within allowed directories. 
+                        Fast and powerful search similar to VS Code search functionality.
+                        Supports regular expressions, file pattern filtering, and context lines.
+                        Has a default timeout of 30 seconds which can be customized.
+                        Only searches within allowed directories.
                         ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
                 },
                 {
                     name: "get_file_info",
                     description:
-                        `Retrieve detailed metadata about a file or directory including size, creation time, last modified time, 
-                        permissions, and type. 
+                        `Retrieve detailed metadata about a file or directory including size, creation time, last modified time,
+                        permissions, and type.
                         Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
                 },
@@ -166,25 +174,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "edit_block",
                     description:
-                        `Apply surgical text replacements to files. 
-                        BEST PRACTICE: Make multiple small, focused edits rather than one large edit. 
-                        Each edit_block call should change only what needs to be changed - include just enough context to uniquely identify the text being modified. 
-                        Takes file_path, old_string (text to replace), new_string (replacement text), and optional expected_replacements parameter. 
-                        By default, replaces only ONE occurrence of the search text. 
-                        To replace multiple occurrences, provide the expected_replacements parameter with the exact number of matches expected. 
-                        UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), include the minimal amount of context necessary (typically 1-3 lines) before and after the change point, with exact whitespace and indentation. 
-                        When editing multiple sections, make separate edit_block calls for each distinct change rather than one large replacement. 
-                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different. 
+                        `Apply surgical text replacements to files.
+                        BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
+                        Each edit_block call should change only what needs to be changed - include just enough context to uniquely identify the text being modified.
+                        Takes file_path, old_string (text to replace), new_string (replacement text), and optional expected_replacements parameter.
+                        By default, replaces only ONE occurrence of the search text.
+                        To replace multiple occurrences, provide the expected_replacements parameter with the exact number of matches expected.
+                        UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), include the minimal amount of context necessary (typically 1-3 lines) before and after the change point, with exact whitespace and indentation.
+                        When editing multiple sections, make separate edit_block calls for each distinct change rather than one large replacement.
+                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
                         ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },
-                
+
                 // Terminal tools
                 {
                     name: "execute_command",
                     description:
-                        `Execute a terminal command with timeout. 
-                        Command will continue running in background if it doesn't complete within timeout. 
+                        `Execute a terminal command with timeout.
+                        Command will continue running in background if it doesn't complete within timeout.
                         NOTE: For file operations, prefer specialized tools like read_file, search_code, list_directory instead of cat, grep, or ls commands.
                         ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
@@ -252,6 +260,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
                     return {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                        isError: true,
+                    };
+                }
+
+            case "sse_config":
+                try {
+                    const parsedArgs = SSEConfigArgsSchema.parse(args);
+                    return await configureSSE(parsedArgs);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in sse_config handler: ${error}`});
+                    return {
+                        content: [{type: "text", text: `Error: Failed to configure SSE transport`}],
                         isError: true,
                     };
                 }

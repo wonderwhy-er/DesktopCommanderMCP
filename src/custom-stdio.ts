@@ -1,5 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import process from "node:process";
+import { ServerTransport } from "./transport-interface.js";
 
 /**
  * Extended StdioServerTransport that filters out non-JSON messages.
@@ -18,8 +19,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     };
 
     super();
-    
+
     // Log initialization to stderr to avoid polluting the JSON stream
     process.stderr.write(`[desktop-commander] Initialized FilteredStdioServerTransport\n`);
   }
+
+  // We don't need to implement ServerTransport methods since StdioServerTransport
+  // already handles the messaging functionality through the MCP SDK
 }

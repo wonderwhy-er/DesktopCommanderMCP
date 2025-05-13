@@ -11,6 +11,9 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
+  sseEnabled?: boolean; // Whether to enable SSE transport
+  ssePort?: number; // Port for SSE server
+  ssePath?: string; // Path for SSE endpoint
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -85,7 +88,7 @@ class ConfigManager {
         "dd",        // Convert and copy files, can write directly to disks
         "parted",    // Disk partition manipulator
         "diskpart",  // Windows disk partitioning utility
-        
+
         // System administration and user management
         "sudo",      // Execute command as superuser
         "su",        // Substitute user identity
@@ -96,19 +99,19 @@ class ConfigManager {
         "groupadd",  // Create a new group
         "chsh",      // Change login shell
         "visudo",    // Edit the sudoers file
-        
+
         // System control
         "shutdown",  // Shutdown the system
         "reboot",    // Restart the system
         "halt",      // Stop the system
         "poweroff",  // Power off the system
         "init",      // Change system runlevel
-        
+
         // Network and security
         "iptables",  // Linux firewall administration
         "firewall",  // Generic firewall command
         "netsh",     // Windows network configuration
-        
+
         // Windows system commands
         "sfc",       // System File Checker
         "bcdedit",   // Boot Configuration Data editor
@@ -121,7 +124,10 @@ class ConfigManager {
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
       allowedDirectories: [],
-      telemetryEnabled: true // Default to opt-out approach (telemetry on by default)
+      telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+      sseEnabled: false,      // SSE transport disabled by default
+      ssePort: 5000,          // Default SSE port
+      ssePath: '/sse'         // Default SSE endpoint path
     };
   }
 
@@ -158,17 +164,17 @@ class ConfigManager {
    */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
-    
+
     // Special handling for telemetry opt-out
     if (key === 'telemetryEnabled' && value === false) {
       // Get the current value before changing it
       const currentValue = this.config[key];
-      
+
       // Only capture the opt-out event if telemetry was previously enabled
       if (currentValue !== false) {
         // Import the capture function dynamically to avoid circular dependencies
         const { capture } = await import('./utils/capture.js');
-        
+
         // Send a final telemetry event noting that the user has opted out
         // This helps us track opt-out rates while respecting the user's choice
         await capture('server_telemetry_opt_out', {
@@ -177,7 +183,7 @@ class ConfigManager {
         });
       }
     }
-    
+
     // Update the value
     this.config[key] = value;
     await this.saveConfig();

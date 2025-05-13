@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 
-import { FilteredStdioServerTransport } from './custom-stdio.js';
-import { server } from './server.js';
-import { commandManager } from './command-manager.js';
-import { configManager } from './config-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { platform } from 'os';
+import { server } from './server.js';
+import { configManager } from './config-manager.js';
+import { createTransport, shutdownTransport } from './transport-factory.js';
 import { capture } from './utils/capture.js';
-
+import { Transport } from './transport-interface.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,9 +55,8 @@ async function runServer() {
       return;
     }
 
+    let transport: Transport | null = null;
 
-
-    const transport = new FilteredStdioServerTransport();
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -74,6 +72,16 @@ async function runServer() {
       });
 
       process.stderr.write(`[desktop-commander] Uncaught exception: ${errorMessage}\n`);
+
+      // Try to gracefully shutdown if possible
+      if (transport) {
+        try {
+          await shutdownTransport(transport);
+        } catch (shutdownError) {
+          console.error('Error during shutdown:', shutdownError);
+        }
+      }
+
       process.exit(1);
     });
 
@@ -92,7 +100,42 @@ async function runServer() {
       });
 
       process.stderr.write(`[desktop-commander] Unhandled rejection: ${errorMessage}\n`);
+
+      // Try to gracefully shutdown if possible
+      if (transport) {
+        try {
+          await shutdownTransport(transport);
+        } catch (shutdownError) {
+          console.error('Error during shutdown:', shutdownError);
+        }
+      }
+
       process.exit(1);
+    });
+
+    // Handle process termination signals
+    process.on('SIGINT', async () => {
+      console.log('Received SIGINT, shutting down...');
+      if (transport) {
+        try {
+          await shutdownTransport(transport);
+        } catch (error) {
+          console.error('Error during shutdown:', error);
+        }
+      }
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+      console.log('Received SIGTERM, shutting down...');
+      if (transport) {
+        try {
+          await shutdownTransport(transport);
+        } catch (error) {
+          console.error('Error during shutdown:', error);
+        }
+      }
+      process.exit(0);
     });
 
     capture('run_server_start');
@@ -108,6 +151,10 @@ async function runServer() {
       // Continue anyway - we'll use an in-memory config
     }
 
+    // Create transport based on configuration/command-line args
+    console.error("Creating transport...");
+    transport = await createTransport();
+    console.error("Transport created successfully");
 
     console.error("Connecting server...");
     await server.connect(transport);

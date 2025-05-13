@@ -52,6 +52,9 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Move files/directories
   - Search files
   - Get file metadata
+- Transport protocols:
+  - Standard stdio for local processes
+  - Server-Sent Events (SSE) for remote HTTP connections
 - Code editing capabilities:
   - Surgical text replacements for small changes
   - Full file rewrites for major changes
@@ -299,6 +302,7 @@ Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 ## DONE
 - **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
+- **19-04-2025 Added SSE transport support** - Server-Sent Events (SSE) transport for remote clients
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
 - **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
 - **14-04-2025 Linux improvements** - Enhanced compatibility with various Linux distributions
@@ -309,12 +313,100 @@ Terminal still can access files ignoring allowed directories.
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
 - **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeServerCommander/pull/17)) - Enhanced code exploration with context-aware results
 
+## SSE Transport Support
+
+Desktop Commander now supports the Server-Sent Events (SSE) transport protocol for Model Context Protocol, allowing you to connect to the server remotely over HTTP.
+
+### Using SSE Transport
+
+The SSE transport provides several benefits:
+
+- Remote access to the MCP server over HTTP
+- Support for multiple clients connecting simultaneously
+- Compatible with web-based MCP clients
+- Works through firewalls that allow HTTP traffic
+
+To enable and configure the SSE transport, you can use the `sse_config` tool:
+
+```javascript
+// Check current SSE transport status
+sse_config({ "action": "status" })
+
+// Enable SSE transport on default port 5000
+sse_config({ "action": "enable" })
+
+// Enable SSE transport with custom port and path
+sse_config({ "action": "enable", "port": 8080, "path": "/api/sse" })
+
+// Disable SSE transport
+sse_config({ "action": "disable" })
+
+// Apply configuration changes (requires server restart)
+sse_config({ "action": "restart" })
+```
+
+### Connecting to SSE Transport
+
+Once enabled, you can connect to the SSE transport using any MCP client that supports SSE. The default SSE URL is:
+
+```
+http://localhost:5000/sse
+```
+
+The server will automatically set up a messaging endpoint at:
+
+```
+http://localhost:5000/messages
+```
+
+This follows the standard MCP protocol for SSE transport, where clients connect to the SSE endpoint for streaming and use the messages endpoint for client-to-server communications.
+
+If you've configured a custom port and path, use that instead:
+
+```
+http://your-server-address:custom-port/custom-path
+```
+
+### Auto Port Fallback
+
+If the specified port (default: 5000) is already in use, Desktop Commander will automatically try alternative ports (5001, 5002, etc.) until it finds an available one or reaches the maximum retry limit. This feature helps avoid port conflicts on your system.
+
+You can control this behavior with command-line options:
+
+```bash
+# Disable automatic port fallback
+node dist/index.js --transport sse --sse-no-port-fallback
+
+# Set maximum number of alternative ports to try
+node dist/index.js --transport sse --sse-max-port-retries 10
+```
+
+Check the console output when starting the server to see the actual URL being used, especially if auto port fallback is active.
+
+### Security Considerations
+
+When enabling the SSE transport, please consider these security implications:
+
+1. **Network Exposure**: The SSE server listens on a network port, which could potentially be accessed by other devices on your network.
+
+2. **Authentication**: Currently, the SSE transport does not include authentication. Do not expose the server to the public internet without implementing proper authentication and authorization.
+
+3. **CORS**: Cross-Origin Resource Sharing is enabled by default to allow web clients to connect. This is necessary for web-based MCP clients but does introduce some security considerations.
+
+For secure usage in a multi-user environment, we recommend:
+
+- Binding only to localhost (the default)
+- Using a reverse proxy like Nginx with proper authentication if public access is needed
+- Setting up HTTPS for encrypted communications
+
 ## Work in Progress/TODOs/Roadmap
 
 The following features are currently being explored:
 
 - **Support for WSL** - Windows Subsystem for Linux integration
 - **Support for SSH** - Remote server command execution
+- **SSE transport authentication** - Add security for remote connections
+- **Support for Streamable HTTP transport** - Update to the newer MCP transport standard
 - **Better file support for formats like CSV/PDF**
 - **Terminal sandboxing for Mac/Linux/Windows for better security**
 - **File reading modes** - For example, allow reading HTML as plain text or markdown
@@ -326,7 +418,7 @@ The following features are currently being explored:
 <div align="center">
   <h3>📢 SUPPORT THIS PROJECT</h3>
   <p><strong>Desktop Commander MCP is free and open source, but needs your support to thrive!</strong></p>
-  
+
   <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin: 20px 0; border: 2px solid #007bff;">
     <p>Our philosophy is simple: we don't want you to pay for it if you're not successful. But if Desktop Commander contributes to your success, please consider contributing to ours.</p>
     <p><strong>Ways to support:</strong></p>
@@ -440,6 +532,9 @@ Here are answers to some common questions. For a more comprehensive FAQ, see our
 
 ### What is Desktop Commander?
 It's an MCP tool that enables Claude Desktop to access your file system and terminal, turning Claude into a versatile assistant for coding, automation, codebase exploration, and more.
+
+### How do I connect to Desktop Commander from a web client?
+Desktop Commander supports the Server-Sent Events (SSE) transport protocol, allowing web clients to connect. Enable SSE with the `sse_config({ "action": "enable" })` command, then connect your client to `http://localhost:5000/sse` (or your custom port/path if configured).
 
 ### How is this different from Cursor/Windsurf?
 Unlike IDE-focused tools, Claude Desktop Commander provides a solution-centric approach that works with your entire OS, not just within a coding environment. Claude reads files in full rather than chunking them, can work across multiple projects simultaneously, and executes changes in one go rather than requiring constant review.
