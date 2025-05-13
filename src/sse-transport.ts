@@ -1,4 +1,4 @@
-import { Transport } from "./transport-interface.js";
+import { Transport, JSONRPCMessage } from "./transport-interface.js";
 import express from "express";
 import { Express, Request, Response } from "express";
 import cors from "cors";
@@ -246,6 +246,26 @@ export class SSEServerTransport implements Transport {
    */
   setOnMessage(callback: (message: string) => Promise<void>): void {
     this.onMessage = callback;
+  }
+
+  /**
+   * Send a JSON-RPC message to all connected clients
+   * Implements the Transport interface required by MCP SDK
+   */
+  async send(message: JSONRPCMessage): Promise<void> {
+    // Convert to string for SSE
+    const messageStr = JSON.stringify(message);
+
+    // Send to all clients
+    return this.sendMessage(messageStr);
+  }
+
+  /**
+   * Close the transport - alias for stop()
+   * Implements the Transport interface required by MCP SDK
+   */
+  async close(): Promise<void> {
+    return this.stop();
   }
 
   /**
