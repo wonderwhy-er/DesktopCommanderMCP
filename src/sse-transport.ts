@@ -1,4 +1,4 @@
-import { Transport } from "./transport-interface.js";
+import { Transport, JSONRPCMessage } from "./transport-interface.js";
 import express from "express";
 import { Express, Request, Response } from "express";
 import cors from "cors";
@@ -6,6 +6,7 @@ import bodyParser from "body-parser";
 import { configManager } from "./config-manager.js";
 import { capture } from "./utils/capture.js";
 import { findAvailablePort } from "./utils/port-utils.js";
+import { VERSION } from "./version.js";
 
 /**
  * SSEServerTransport implementation for Desktop Commander MCP
@@ -24,6 +25,10 @@ export class SSEServerTransport implements Transport {
   private ssePath: string;
   private _isRunning: boolean = false;
   private messagesPath: string;
+
+  // Store MCP protocol information
+  private protocolVersion: string = "2024-11-05"; // Latest MCP protocol version
+  private supportedClientCapabilities: any = {};
 
   /**
    * Create a new SSE transport
@@ -214,15 +219,25 @@ export class SSEServerTransport implements Transport {
         return;
       }
 
-      // Process the message
+      // Process the message - should be a JSON-RPC message
       const message = req.body;
+      console.log('Received message:', JSON.stringify(message, null, 2));
 
+      // Check if this is an initialize request
+      if (message.method === 'initialize' && message.jsonrpc === '2.0') {
+        // Handle initialization directly
+        await this.handleInitializeRequest(sessionId, message, res);
+        return;
+      }
+
+      // Forward other messages to the onMessage handler
       if (this.onMessage) {
         const messageStr = JSON.stringify(message);
         await this.onMessage(messageStr);
         res.status(200).json({ status: 'ok' });
         capture('sse_message_received');
       } else {
+        // This should rarely happen once we're properly initialized
         res.status(500).json({ error: 'Server not ready to receive messages' });
         capture('sse_server_not_ready');
       }
@@ -230,6 +245,82 @@ export class SSEServerTransport implements Transport {
       console.error('Error handling POST message:', error);
       res.status(500).json({ error: 'Internal server error' });
       capture('sse_message_error', { error: String(error) });
+    }
+  }
+
+  /**
+   * Handle MCP initialize request
+   */
+  private async handleInitializeRequest(sessionId: string, message: any, res: Response): Promise<void> {
+    try {
+      // Extract client capabilities and protocol version
+      const { protocolVersion, capabilities, clientInfo } = message.params || {};
+
+      // Log initialization info
+      console.log(`Client ${sessionId} initializing:`);
+      console.log(`- Protocol Version: ${protocolVersion}`);
+      console.log(`- Client: ${clientInfo?.name} v${clientInfo?.version}`);
+
+      // Store this information
+      this.protocolVersion = protocolVersion || this.protocolVersion;
+      this.supportedClientCapabilities = capabilities || {};
+
+      // Prepare server info to send back
+      const serverInfo = {
+        name: "Desktop Commander MCP",
+        version: VERSION
+      };
+
+      // Prepare server capabilities
+      const serverCapabilities = {
+        tools: {
+          listChanged: true
+        },
+        resources: {
+          listChanged: true
+        }
+      };
+
+      // Create JSON-RPC response
+      const initResponse = {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          serverInfo,
+          capabilities: serverCapabilities,
+          protocolVersion: this.protocolVersion
+        }
+      };
+
+      // Send the response
+      res.status(200).json(initResponse);
+
+      // Log success
+      console.log(`Client ${sessionId} initialized successfully`);
+      capture('sse_client_initialized', {
+        sessionId,
+        protocolVersion,
+        clientName: clientInfo?.name,
+        clientVersion: clientInfo?.version
+      });
+    } catch (error) {
+      console.error('Error handling initialize request:', error);
+
+      // Send error response in JSON-RPC format
+      const errorResponse = {
+        jsonrpc: "2.0",
+        id: message.id,
+        error: {
+          code: -32603, // Internal error code
+          message: `Failed to initialize: ${error}`
+        }
+      };
+
+      res.status(500).json(errorResponse);
+      capture('sse_initialize_error', {
+        sessionId,
+        error: String(error)
+      });
     }
   }
 
@@ -246,6 +337,26 @@ export class SSEServerTransport implements Transport {
    */
   setOnMessage(callback: (message: string) => Promise<void>): void {
     this.onMessage = callback;
+  }
+
+  /**
+   * Send a JSON-RPC message to all connected clients
+   * Implements the Transport interface required by MCP SDK
+   */
+  async send(message: JSONRPCMessage): Promise<void> {
+    // Convert to string for SSE
+    const messageStr = JSON.stringify(message);
+
+    // Send to all clients
+    return this.sendMessage(messageStr);
+  }
+
+  /**
+   * Close the transport - alias for stop()
+   * Implements the Transport interface required by MCP SDK
+   */
+  async close(): Promise<void> {
+    return this.stop();
   }
 
   /**

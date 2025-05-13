@@ -1,12 +1,12 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import process from "node:process";
-import { ServerTransport } from "./transport-interface.js";
+import { Transport, JSONRPCMessage } from "./transport-interface.js";
 
 /**
  * Extended StdioServerTransport that filters out non-JSON messages.
  * This prevents the "Watching /" error from crashing the server.
  */
-export class FilteredStdioServerTransport extends StdioServerTransport {
+export class FilteredStdioServerTransport extends StdioServerTransport implements Transport {
   constructor() {
     // Create a proxy for stdout that only allows valid JSON to pass through
     const originalStdoutWrite = process.stdout.write;
@@ -24,6 +24,20 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     process.stderr.write(`[desktop-commander] Initialized FilteredStdioServerTransport\n`);
   }
 
-  // We don't need to implement ServerTransport methods since StdioServerTransport
-  // already handles the messaging functionality through the MCP SDK
+  // Implement Transport interface
+  async start(): Promise<void> {
+    // StdioServerTransport doesn't need starting
+    return Promise.resolve();
+  }
+
+  // Use the existing send method from StdioServerTransport
+
+  // Map the close method to the underlying dispose method in StdioServerTransport
+  async close(): Promise<void> {
+    // Call the dispose method if it exists
+    if (typeof (this as any).dispose === 'function') {
+      return (this as any).dispose();
+    }
+    return Promise.resolve();
+  }
 }
