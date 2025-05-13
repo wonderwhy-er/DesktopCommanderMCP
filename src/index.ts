@@ -8,6 +8,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { platform } from 'os';
 import { capture } from './utils/capture.js';
+import { startHttpServer } from './http-server.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -56,6 +57,20 @@ async function runServer() {
       return;
     }
 
+    // Parse command-line arguments
+    const args = process.argv.slice(2);
+    const httpServerEnabled = args.includes('--http') || args.includes('--sse');
+    const httpServerPort = getArgValue(args, '--port') || 3000;
+    
+    // Function to extract value after an argument
+    function getArgValue(args: string[], flag: string): number | null {
+      const index = args.indexOf(flag);
+      if (index !== -1 && index + 1 < args.length) {
+        const value = parseInt(args[index + 1], 10);
+        return isNaN(value) ? null : value;
+      }
+      return null;
+    }
 
 
     const transport = new FilteredStdioServerTransport();
@@ -108,6 +123,32 @@ async function runServer() {
       // Continue anyway - we'll use an in-memory config
     }
 
+    // Start HTTP/SSE server if requested
+    if (httpServerEnabled) {
+      try {
+        console.error(`Starting HTTP/SSE server on port ${httpServerPort}...`);
+        const stopHttpServer = await startHttpServer(server, httpServerPort);
+        
+        // Clean up HTTP server on exit
+        process.on('exit', () => {
+          try {
+            stopHttpServer();
+          } catch (error) {
+            // Ignore errors during shutdown
+          }
+        });
+        
+        // If running in HTTP-only mode, don't start STDIO transport
+        if (args.includes('--http-only') || args.includes('--sse-only')) {
+          console.error("Running in HTTP/SSE-only mode, skipping STDIO transport");
+          return;
+        }
+      } catch (httpError) {
+        console.error(`Failed to start HTTP/SSE server: ${httpError instanceof Error ? httpError.message : String(httpError)}`);
+        console.error(httpError instanceof Error && httpError.stack ? httpError.stack : 'No stack trace available');
+        console.error("Continuing with STDIO transport only");
+      }
+    }
 
     console.error("Connecting server...");
     await server.connect(transport);

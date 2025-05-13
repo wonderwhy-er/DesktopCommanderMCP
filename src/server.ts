@@ -55,7 +55,8 @@ export const server = new Server(
 );
 
 // Add handler for resources/list method
-server.setRequestHandler(ListResourcesRequestSchema, async () => {
+server.setRequestHandler(ListResourcesRequestSchema, async (request) => {
+    console.log('Handling resources/list request in server:', request);
     // Return an empty list of resources
     return {
         resources: [],
@@ -63,7 +64,8 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 });
 
 // Add handler for prompts/list method
-server.setRequestHandler(ListPromptsRequestSchema, async () => {
+server.setRequestHandler(ListPromptsRequestSchema, async (request) => {
+    console.log('Handling prompts/list request in server:', request);
     // Return an empty list of prompts
     return {
         prompts: [],
