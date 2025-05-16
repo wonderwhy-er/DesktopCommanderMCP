@@ -79,21 +79,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        "Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access).",
+                        "Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out).",
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {
                     name: "set_config_value",
                     description:
-                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system.",
+                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths), fileReadLineLimit (number, max lines for read_file), fileWriteLineLimit (number, max lines per write_file call), telemetryEnabled (boolean). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system.",
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
                 // Filesystem tools
                 {
                     name: "read_file",
-                    description:
-                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start position, default: 0) and 'length' (max characters to read, default: configurable via 'fileReadLengthLimit' setting, initially 100000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
+                        description:
+                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start line, default: 0) and 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {

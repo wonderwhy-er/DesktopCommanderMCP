@@ -12,7 +12,7 @@ export interface ServerConfig {
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
-  fileReadLengthLimit?: number; // Default character limit for file read operations
+  fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -125,7 +125,7 @@ class ConfigManager {
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
-      fileReadLengthLimit: 100000  // Default character limit for file read operations (100KB)
+      fileReadLineLimit: 1000  // Default line limit for file read operations (changed from character-based)
     };
   }
 

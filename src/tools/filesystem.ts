@@ -250,18 +250,23 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 /**
  * Read file content from the local filesystem
  * @param filePath Path to the file
- * @param offset Starting position to read from (default: 0)
- * @param length Maximum number of characters to read (default: from config or 100000)
+ * @param offset Starting line number to read from (default: 0)
+ * @param length Maximum number of lines to read (default: from config or 1000)
  * @returns File content or file result with metadata
  */
 export async function readFileFromDisk(filePath: string, offset: number = 0, length?: number): Promise<FileResult> {
+    // Add validation for required parameters
+    if (!filePath || typeof filePath !== 'string') {
+        throw new Error('Invalid file path provided');
+    }
+    
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
     
     // Get default length from config if not provided
     if (length === undefined) {
         const config = await configManager.getConfig();
-        length = config.fileReadLengthLimit ?? 100000; // Default to 100000 if not set
+        length = config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
     }
 
     const validPath = await validatePath(filePath);
@@ -303,22 +308,26 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
             
             return { content, mimeType, isImage };
         } else {
-            // For all other files, try to read as UTF-8 text with offset and length
+            // For all other files, try to read as UTF-8 text with line-based offset and length
             try {
                 // Read the entire file first
                 const buffer = await fs.readFile(validPath);
                 const fullContent = buffer.toString('utf-8');
                 
-                // Apply offset and length
-                const startPos = Math.min(offset, fullContent.length);
-                const endPos = Math.min(startPos + length, fullContent.length);
-                const truncatedContent = fullContent.substring(startPos, endPos);
+                // Split into lines for line-based access
+                const lines = fullContent.split('\n');
+                const totalLines = lines.length;
+                
+                // Apply line-based offset and length
+                const startLine = Math.min(offset, totalLines);
+                const endLine = Math.min(startLine + length, totalLines);
+                const selectedLines = lines.slice(startLine, endLine);
+                const truncatedContent = selectedLines.join('\n');
                 
                 // Add an informational message if truncated
                 let content = truncatedContent;
-                if (offset > 0 || endPos < fullContent.length) {
-                    const totalLength = fullContent.length;
-                    content = `[Reading ${endPos - startPos} characters from offset ${offset} of ${totalLength} total characters]\n\n${truncatedContent}`;
+                if (offset > 0 || endLine < totalLines) {
+                    content = `[Reading ${endLine - startLine} lines from line ${offset} of ${totalLines} total lines]\n\n${truncatedContent}`;
                 }
                 
                 return { content, mimeType, isImage };
@@ -350,8 +359,8 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
  * Read a file from either the local filesystem or a URL
  * @param filePath Path to the file or URL
  * @param isUrl Whether the path is a URL
- * @param offset Starting position to read from (default: 0)
- * @param length Maximum number of characters to read (default: from config or 100000)
+ * @param offset Starting line number to read from (default: 0)
+ * @param length Maximum number of lines to read (default: from config or 1000)
  * @returns File content or file result with metadata
  */
 export async function readFile(filePath: string, isUrl?: boolean, offset?: number, length?: number): Promise<FileResult> {

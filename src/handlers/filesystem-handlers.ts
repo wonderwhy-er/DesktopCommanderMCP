@@ -11,10 +11,10 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 
-import { ServerResult } from '../types.js';
-import { withTimeout } from '../utils/withTimeout.js';
-import { createErrorResponse } from '../error-handlers.js';
-import { configManager } from '../config-manager.js';
+import {ServerResult} from '../types.js';
+import {withTimeout} from '../utils/withTimeout.js';
+import {createErrorResponse} from '../error-handlers.js';
+import {configManager} from '../config-manager.js';
 
 import {
     ReadFileArgsSchema,
@@ -46,14 +46,21 @@ function getErrorFromPath(path: string): string {
  */
 export async function handleReadFile(args: unknown): Promise<ServerResult> {
     const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
-    
+    // Add input validation
+    if (args === null || args === undefined) {
+        return createErrorResponse('No arguments provided for read_file command');
+    }
     const readFileOperation = async () => {
         const parsed = ReadFileArgsSchema.parse(args);
-        
+
         // Get the configuration for file read limits
         const config = await configManager.getConfig();
-        const defaultLimit = config.fileReadLengthLimit ?? 100000;
-        
+        if (!config) {
+            return createErrorResponse('Configuration not available');
+        }
+
+        const defaultLimit = config.fileReadLineLimit ?? 1000;
+
         // Use the provided limits or defaults
         const offset = parsed.offset ?? 0;
         const length = parsed.length ?? defaultLimit;

@@ -6,6 +6,7 @@ import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 import { configManager } from '../config-manager.js';
+import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
 
 interface SearchReplace {
     search: string;
@@ -153,15 +154,17 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
             newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
         }
         
-        // Check if replacement text has too many lines
-        const newContentLines = newContent.split('\n');
-        const lineCount = newContentLines.length;
+        // Check if search or replace text has too many lines
+        const searchLines = block.search.split('\n').length;
+        const replaceLines = block.replace.split('\n').length;
+        const maxLines = Math.max(searchLines, replaceLines);
         let warningMessage = "";
         
-        if (lineCount > MAX_LINES) {
-            warningMessage = `\n\nWARNING: File edited, but exceeds line count limit: ${lineCount} lines (maximum: ${MAX_LINES}).
+        if (maxLines > MAX_LINES) {
+            const problemText = searchLines > replaceLines ? 'search text' : 'replacement text';
+            warningMessage = `\n\nWARNING: The ${problemText} has ${maxLines} lines (maximum: ${MAX_LINES}).
             
-RECOMMENDATION: For future edits on large files, consider making multiple smaller edits instead of one large edit. Breaking edits into smaller chunks makes them more focused and ensures they stay within the line limit.`;
+RECOMMENDATION: For large search/replace operations, consider breaking them into smaller chunks with fewer lines.`;
         }
         
         await writeFile(filePath, newContent);
@@ -205,6 +208,29 @@ RECOMMENDATION: For future edits on large files, consider making multiple smalle
         // Count character codes in diff
         const characterCodeData = getCharacterCodeData(block.search, fuzzyResult.value);
         
+        // Create comprehensive log entry
+        const logEntry: FuzzySearchLogEntry = {
+            timestamp: new Date(),
+            searchText: block.search,
+            foundText: fuzzyResult.value,
+            similarity: similarity,
+            executionTime: executionTime,
+            exactMatchCount: count,
+            expectedReplacements: expectedReplacements,
+            fuzzyThreshold: FUZZY_THRESHOLD,
+            belowThreshold: similarity < FUZZY_THRESHOLD,
+            diff: diff,
+            searchLength: block.search.length,
+            foundLength: fuzzyResult.value.length,
+            fileExtension: fileExtension,
+            characterCodes: characterCodeData.report,
+            uniqueCharacterCount: characterCodeData.uniqueCount,
+            diffLength: characterCodeData.diffLength
+        };
+        
+        // Log to file
+        await fuzzySearchLogger.log(logEntry);
+        
         // Combine all fuzzy search data for single capture
         const fuzzySearchData = {
             similarity: similarity,
@@ -230,8 +256,10 @@ RECOMMENDATION: For future edits on large files, consider making multiple smalle
                     type: "text", 
                     text: `Exact match not found, but found a similar text with ${Math.round(similarity * 100)}% similarity (found in ${executionTime.toFixed(2)}ms):\n\n` +
                           `Differences:\n${diff}\n\n` +
-                          `To replace this text, use the exact text found in the file.`
-                }],
+                          `To replace this text, use the exact text found in the file.\n\n` +
+                          `Log entry saved for analysis. Use the following command to check the log:\n` +
+                          `Check log: ${await fuzzySearchLogger.getLogPath()}`
+                }],// TODO
             };
         } else {
             // If the fuzzy match isn't close enough
@@ -246,7 +274,9 @@ RECOMMENDATION: For future edits on large files, consider making multiple smalle
                     type: "text", 
                     text: `Search content not found in ${filePath}. The closest match was "${fuzzyResult.value}" ` +
                           `with only ${Math.round(similarity * 100)}% similarity, which is below the ${Math.round(FUZZY_THRESHOLD * 100)}% threshold. ` +
-                          `(Fuzzy search completed in ${executionTime.toFixed(2)}ms)`
+                          `(Fuzzy search completed in ${executionTime.toFixed(2)}ms)\n\n` +
+                          `Log entry saved for analysis. Use the following command to check the log:\n` +
+                          `Check log: ${await fuzzySearchLogger.getLogPath()}`
                 }],
             };
         }
