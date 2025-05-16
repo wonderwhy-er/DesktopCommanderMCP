@@ -2,6 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
 
+// Ensure the directory for the log file exists
+const logDir = path.dirname(TOOL_CALL_FILE);
+await fs.promises.mkdir(logDir, { recursive: true });
+
 /**
  * Track tool calls and save them to a log file
  * @param toolName Name of the tool being called
@@ -14,7 +18,7 @@ export async function trackToolCall(toolName: string, args?: unknown): Promise<v
     
     // Format the log entry
     const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${args ? `\t| Arguments: ${JSON.stringify(args)}` : ''}\n`;
-    
+
     // Check if file exists and get its size
     let fileSize = 0;
     
@@ -33,8 +37,8 @@ export async function trackToolCall(toolName: string, args?: unknown): Promise<v
       
       // Create a timestamp-based filename for the old log
       const date = new Date();
-      const timestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}_${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}-${String(date.getSeconds()).padStart(2, '0')}`;
-      const newFileName = path.join(dirName, `${fileBase}_${timestamp}${fileExt}`);
+      const rotateTimestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}_${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}-${String(date.getSeconds()).padStart(2, '0')}`;
+      const newFileName = path.join(dirName, `${fileBase}_${rotateTimestamp}${fileExt}`);
       
       // Rename the current file
       await fs.promises.rename(TOOL_CALL_FILE, newFileName);

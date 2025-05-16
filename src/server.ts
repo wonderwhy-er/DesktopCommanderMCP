@@ -234,7 +234,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         });
         
         // Track tool call
-        await trackToolCall(name, args);
+        trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
         switch (name) {
