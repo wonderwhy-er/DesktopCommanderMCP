@@ -1,5 +1,5 @@
 # Desktop Commander MCP
-### Search, update, manage files and run terminal commands with AI
+### Search, update, manage files and run terminal commands with AI (now with SSE support)
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
@@ -9,7 +9,7 @@
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
 
-Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.
+Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs. Now with Server-Sent Events (SSE) support for remote connections!
 
 
 ![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/docs/vertical_video_mobile.mp4)
@@ -58,6 +58,12 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Multiple file support
   - Pattern-based replacements
   - vscode-ripgrep based recursive code or text search in folders
+- **NEW: Server-Sent Events (SSE) support**:
+  - Run as an HTTP server for remote connections
+  - Support for the latest MCP Streamable HTTP Transport
+  - Compatible with various MCP clients
+  - Session management for multiple concurrent connections
+  - Cross-origin request support for web clients
 
 ## Installation
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
@@ -131,6 +137,31 @@ The setup command will:
 When installed through npx (Option 1) or Smithery (Option 3), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.
 
 For manual installations, you can update by running the setup command again.
+
+### Using Server-Sent Events (SSE)
+
+Desktop Commander can also be run as an HTTP server with Server-Sent Events (SSE) support, allowing remote connections from MCP clients:
+
+```bash
+# Install and run with SSE enabled (dual mode - both STDIO and HTTP)
+npx @wonderwhy-er/desktop-commander-sse start:sse
+
+# Run in SSE-only mode (HTTP server only, no STDIO)
+npx @wonderwhy-er/desktop-commander-sse start:sse-only
+
+# Specify a custom port (default is 3000)
+npx @wonderwhy-er/desktop-commander-sse start:sse --port 8080
+```
+
+When running in SSE mode, the server provides an HTTP endpoint at `/mcp` that implements the MCP Streamable HTTP transport protocol. This allows you to connect to the server remotely using any MCP client that supports this protocol.
+
+The server supports:
+- GET requests for establishing Server-Sent Events connections
+- POST requests for sending commands to the server
+- Session management for multiple concurrent connections
+- CORS headers for cross-origin requests from web clients (including claude.ai, cursor.sh, etc.)
+
+The HTTP server is accessible at `http://localhost:3000/mcp` by default.
 
 ## Usage
 
@@ -297,6 +328,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **13-05-2025 Added Server-Sent Events (SSE) support** - Implemented Streamable HTTP transport protocol for remote connections
 - **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
@@ -313,6 +345,8 @@ Terminal still can access files ignoring allowed directories.
 
 The following features are currently being explored:
 
+- **Advanced SSE authentication** - Secure token-based authentication for remote connections
+- **Remote collaborative sessions** - Allow multiple clients to connect to the same server session
 - **Support for WSL** - Windows Subsystem for Linux integration
 - **Support for SSH** - Remote server command execution
 - **Better file support for formats like CSV/PDF**
