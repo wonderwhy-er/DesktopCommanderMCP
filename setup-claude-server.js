@@ -385,26 +385,6 @@ function updateSetupStep(index, status, error = null) {
     }
 }
 
-try {
-    // Only dependency is node-machine-id
-    const machineIdInitStep = addSetupStep('initialize_machine_id');
-    try {
-        const machineIdModule = await import('node-machine-id');
-        // Get a unique user ID
-        uniqueUserId = machineIdModule.machineIdSync();
-        updateSetupStep(machineIdInitStep, 'completed');
-    } catch (error) {
-        // Fall back to a semi-unique identifier if machine-id is not available
-        uniqueUserId = `${platform()}-${process.env.USER || process.env.USERNAME || 'unknown'}-${Date.now()}`;
-        updateSetupStep(machineIdInitStep, 'fallback', error);
-    }
-} catch (error) {
-    addSetupStep('initialize_machine_id', 'failed', error);
-}
-
-
-
-
 async function execAsync(command) {
     const execStep = addSetupStep(`exec_${command.substring(0, 20)}...`);
     return new Promise((resolve, reject) => {
