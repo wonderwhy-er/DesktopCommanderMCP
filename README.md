@@ -58,6 +58,10 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Multiple file support
   - Pattern-based replacements
   - vscode-ripgrep based recursive code or text search in folders
+- Comprehensive audit logging:
+  - All tool calls are automatically logged
+  - Log rotation with 10MB size limit
+  - Detailed timestamps and arguments
 
 ## Installation
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
@@ -140,24 +144,24 @@ The server provides a comprehensive set of tools organized into several categori
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories) |
-| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories) |
+| **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories, fileReadLineLimit, fileWriteLineLimit, telemetryEnabled) |
+| | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Maximum lines to write at once (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean) |
 | **Terminal** | `execute_command` | Execute a terminal command with configurable timeout and shell selection |
 | | `read_output` | Read new output from a running terminal session |
 | | `force_terminate` | Force terminate a running terminal session |
 | | `list_sessions` | List all active terminal sessions |
 | | `list_processes` | List all running processes with detailed information |
 | | `kill_process` | Terminate a running process by PID |
-| **Filesystem** | `read_file` | Read contents from local filesystem or URLs (supports text and images) |
+| **Filesystem** | `read_file` | Read contents from local filesystem or URLs with line-based pagination (supports offset and length parameters) |
 | | `read_multiple_files` | Read multiple files simultaneously |
-| | `write_file` | Completely replace file contents (best for large changes) |
+| | `write_file` | Write file contents with options for rewrite or append mode (uses configurable line limits) |
 | | `create_directory` | Create a new directory or ensure it exists |
 | | `list_directory` | Get detailed listing of files and directories |
 | | `move_file` | Move or rename files and directories |
 | | `search_files` | Find files by name using case-insensitive substring matching |
 | | `search_code` | Search for text/code patterns within file contents using ripgrep |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
-| **Text Editing** | `edit_block` | Apply surgical text replacements (best for changes <20% of file size) |
+| **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
 
 ### Tool Usage Examples
 
@@ -185,10 +189,11 @@ console.log("new message");
 
 The `edit_block` tool includes several enhancements for better reliability:
 
-1. **Fuzzy Search Fallback**: When exact matches fail, it performs fuzzy search and provides detailed feedback
-2. **Character-level Diffs**: Shows exactly what's different using `{-removed-}{+added+}` format
-3. **Multiple Occurrence Support**: Can replace multiple instances with `expected_replacements` parameter
-4. **Comprehensive Logging**: All fuzzy searches are logged for analysis and debugging
+1. **Improved Prompting**: Tool descriptions now emphasize making multiple small, focused edits rather than one large change
+2. **Fuzzy Search Fallback**: When exact matches fail, it performs fuzzy search and provides detailed feedback
+3. **Character-level Diffs**: Shows exactly what's different using `{-removed-}{+added+}` format
+4. **Multiple Occurrence Support**: Can replace multiple instances with `expected_replacements` parameter
+5. **Comprehensive Logging**: All fuzzy searches are logged for analysis and debugging
 
 When a search fails, you'll see detailed information about the closest match found, including similarity percentage, execution time, and character differences. All these details are automatically logged for later analysis using the fuzzy search log tools.
 
@@ -247,6 +252,22 @@ The fuzzy search logs help you understand:
 2. **Performance patterns**: How search complexity affects execution time
 3. **File type issues**: Which file extensions commonly have matching problems
 4. **Character encoding problems**: Specific character codes that cause diffs
+
+## Audit Logging
+
+Desktop Commander now includes comprehensive logging for all tool calls:
+
+### What Gets Logged
+- Every tool call is logged with timestamp, tool name, and arguments (sanitized for privacy)
+- Logs are rotated automatically when they reach 10MB in size
+
+### Log Location
+Logs are saved to:
+- **macOS/Linux**: `~/.claude-server-commander/claude_tool_call.log`
+- **Windows**: `%USERPROFILE%\.claude-server-commander\claude_tool_call.log`
+
+This audit trail helps with debugging, security monitoring, and understanding how Claude is interacting with your system.
+
 ## Handling Long-Running Commands
 
 For commands that may take a while:
@@ -355,6 +376,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **20-05-2025 v0.1.40 Release** - Added audit logging for all tool calls, improved line-based file operations, enhanced edit_block with better prompting for smaller edits, added explicit telemetry opt-out prompting 
 - **05-05-2025 Fuzzy Search Logging** - Added comprehensive logging system for fuzzy search operations with detailed analysis tools, character-level diffs, and performance metrics to help debug edit_block failures
 - **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
