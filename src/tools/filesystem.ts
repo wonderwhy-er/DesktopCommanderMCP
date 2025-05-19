@@ -250,12 +250,24 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 /**
  * Read file content from the local filesystem
  * @param filePath Path to the file
- * @param returnMetadata Whether to return metadata with the content
+ * @param offset Starting line number to read from (default: 0)
+ * @param length Maximum number of lines to read (default: from config or 1000)
  * @returns File content or file result with metadata
  */
-export async function readFileFromDisk(filePath: string): Promise<FileResult> {
+export async function readFileFromDisk(filePath: string, offset: number = 0, length?: number): Promise<FileResult> {
+    // Add validation for required parameters
+    if (!filePath || typeof filePath !== 'string') {
+        throw new Error('Invalid file path provided');
+    }
+    
     // Import the MIME type utilities
     const { getMimeType, isImageFile } = await import('./mime-types.js');
+    
+    // Get default length from config if not provided
+    if (length === undefined) {
+        const config = await configManager.getConfig();
+        length = config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
+    }
 
     const validPath = await validatePath(filePath);
     
@@ -265,28 +277,19 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     // Check file size before attempting to read
     try {
         const stats = await fs.stat(validPath);
-        const MAX_SIZE = 100 * 1024; // 100KB limit
         
-        if (stats.size > MAX_SIZE) {
-            const message = `File too large (${(stats.size / 1024).toFixed(2)}KB > ${MAX_SIZE / 1024}KB limit)`;
-            // Capture file extension in telemetry without capturing the file path
-            capture('server_read_file_large', {fileExtension: fileExtension});
-
-            return {
-                content: message, 
-                mimeType: 'text/plain', 
-                isImage: false 
-            };
-        }
-
         // Capture file extension in telemetry without capturing the file path
-        capture('server_read_file', {fileExtension: fileExtension});
+        capture('server_read_file', {
+            fileExtension: fileExtension,
+            offset: offset,
+            length: length,
+            fileSize: stats.size
+        });
     } catch (error) {
         console.error('error catch ' + error);
         const errorMessage = error instanceof Error ? error.message : String(error);
         capture('server_read_file_error', {error: errorMessage, fileExtension: fileExtension});
         // If we can't stat the file, continue anyway and let the read operation handle errors
-        //console.error(`Failed to stat file ${validPath}:`, error);
     }
     
     // Detect the MIME type based on file extension
@@ -299,15 +302,33 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
     const readOperation = async () => {
         if (isImage) {
             // For image files, read as Buffer and convert to base64
+            // Images are always read in full, ignoring offset and length
             const buffer = await fs.readFile(validPath);
             const content = buffer.toString('base64');
             
             return { content, mimeType, isImage };
         } else {
-            // For all other files, try to read as UTF-8 text
+            // For all other files, try to read as UTF-8 text with line-based offset and length
             try {
+                // Read the entire file first
                 const buffer = await fs.readFile(validPath);
-                const content = buffer.toString('utf-8');
+                const fullContent = buffer.toString('utf-8');
+                
+                // Split into lines for line-based access
+                const lines = fullContent.split('\n');
+                const totalLines = lines.length;
+                
+                // Apply line-based offset and length
+                const startLine = Math.min(offset, totalLines);
+                const endLine = Math.min(startLine + length, totalLines);
+                const selectedLines = lines.slice(startLine, endLine);
+                const truncatedContent = selectedLines.join('\n');
+                
+                // Add an informational message if truncated
+                let content = truncatedContent;
+                if (offset > 0 || endLine < totalLines) {
+                    content = `[Reading ${endLine - startLine} lines from line ${offset} of ${totalLines} total lines]\n\n${truncatedContent}`;
+                }
                 
                 return { content, mimeType, isImage };
             } catch (error) {
@@ -337,26 +358,36 @@ export async function readFileFromDisk(filePath: string): Promise<FileResult> {
 /**
  * Read a file from either the local filesystem or a URL
  * @param filePath Path to the file or URL
- * @param returnMetadata Whether to return metadata with the content
  * @param isUrl Whether the path is a URL
+ * @param offset Starting line number to read from (default: 0)
+ * @param length Maximum number of lines to read (default: from config or 1000)
  * @returns File content or file result with metadata
  */
-export async function readFile(filePath: string, isUrl?: boolean): Promise<FileResult> {
+export async function readFile(filePath: string, isUrl?: boolean, offset?: number, length?: number): Promise<FileResult> {
     return isUrl 
         ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath);
+        : readFileFromDisk(filePath, offset, length);
 }
 
-export async function writeFile(filePath: string, content: string): Promise<void> {
+export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
     const validPath = await validatePath(filePath);
 
     // Get file extension for telemetry
     const fileExtension = path.extname(validPath).toLowerCase();
 
-    // Capture file extension in telemetry without capturing the file path
-    capture('server_write_file', {fileExtension: fileExtension});
 
-    await fs.writeFile(validPath, content);
+    // Capture file extension and operation details in telemetry without capturing the file path
+    capture('server_write_file', {
+        fileExtension: fileExtension,
+        mode: mode,
+    });
+
+    // Use different fs methods based on mode
+    if (mode === 'append') {
+        await fs.appendFile(validPath, content);
+    } else {
+        await fs.writeFile(validPath, content);
+    }
 }
 
 export interface MultiFileResult {

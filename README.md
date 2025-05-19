@@ -181,6 +181,17 @@ console.log("new message");
 >>>>>>> REPLACE
 ```
 
+### Enhanced Edit Block Features
+
+The `edit_block` tool includes several enhancements for better reliability:
+
+1. **Fuzzy Search Fallback**: When exact matches fail, it performs fuzzy search and provides detailed feedback
+2. **Character-level Diffs**: Shows exactly what's different using `{-removed-}{+added+}` format
+3. **Multiple Occurrence Support**: Can replace multiple instances with `expected_replacements` parameter
+4. **Comprehensive Logging**: All fuzzy searches are logged for analysis and debugging
+
+When a search fails, you'll see detailed information about the closest match found, including similarity percentage, execution time, and character differences. All these details are automatically logged for later analysis using the fuzzy search log tools.
+
 ### URL Support
 - `read_file` can now fetch content from both local files and URLs
 - Example: `read_file` with `isUrl: true` parameter to read from web resources
@@ -189,6 +200,53 @@ console.log("new message");
 - Claude can see and analyze the actual image content
 - Default 30-second timeout for URL requests
 
+## Fuzzy Search Log Analysis (npm scripts)
+
+The fuzzy search logging system includes convenient npm scripts for analyzing logs outside of the MCP environment:
+
+```bash
+# View recent fuzzy search logs
+npm run logs:view -- --count 20
+
+# Analyze patterns and performance
+npm run logs:analyze -- --threshold 0.8
+
+# Export logs to CSV or JSON
+npm run logs:export -- --format json --output analysis.json
+
+# Clear all logs (with confirmation)
+npm run logs:clear
+```
+
+For detailed documentation on these scripts, see [scripts/README.md](scripts/README.md).
+
+## Fuzzy Search Logs
+
+Desktop Commander includes comprehensive logging for fuzzy search operations in the `edit_block` tool. When an exact match isn't found, the system performs a fuzzy search and logs detailed information for analysis.
+
+### What Gets Logged
+
+Every fuzzy search operation logs:
+- **Search and found text**: The text you're looking for vs. what was found
+- **Similarity score**: How close the match is (0-100%)
+- **Execution time**: How long the search took
+- **Character differences**: Detailed diff showing exactly what's different
+- **File metadata**: Extension, search/found text lengths
+- **Character codes**: Specific character codes causing differences
+
+### Log Location
+
+Logs are automatically saved to:
+- **macOS/Linux**: `~/.claude-server-commander-logs/fuzzy-search.log`
+- **Windows**: `%USERPROFILE%\.claude-server-commander-logs\fuzzy-search.log`
+
+### What You'll Learn
+
+The fuzzy search logs help you understand:
+1. **Why exact matches fail**: Common issues like whitespace differences, line endings, or character encoding
+2. **Performance patterns**: How search complexity affects execution time
+3. **File type issues**: Which file extensions commonly have matching problems
+4. **Character encoding problems**: Specific character codes that cause diffs
 ## Handling Long-Running Commands
 
 For commands that may take a while:
@@ -297,6 +355,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
+- **05-05-2025 Fuzzy Search Logging** - Added comprehensive logging system for fuzzy search operations with detailed analysis tools, character-level diffs, and performance metrics to help debug edit_block failures
 - **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
 - **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments

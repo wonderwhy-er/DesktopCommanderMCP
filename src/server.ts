@@ -81,21 +81,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access). ${CMD_PREFIX_DESCRIPTION}`,
+                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out). ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {
                     name: "set_config_value",
                     description:
-                        `Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system. ${CMD_PREFIX_DESCRIPTION}`,
+                        `Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths), fileReadLineLimit (number, max lines for read_file), fileWriteLineLimit (number, max lines per write_file call), telemetryEnabled (boolean). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
                 // Filesystem tools
                 {
                     name: "read_file",
-                    description:
-                        `Read the complete contents of a file from the file system or a URL. Prefer this over 'execute_command' with cat/type for viewing files. When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true. Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
+                        description:
+                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start line, default: 0) and 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {
@@ -107,7 +107,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "write_file",
                     description:
-                        `Completely replace file contents. Best for large changes (>20% of file) or when edit_block fails. Use with caution as it will overwrite existing files. Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
+                        `Write or append to file contents with a configurable line limit per call (default: 50 lines). THIS IS A STRICT REQUIREMENT. ANY file with more than the configured limit MUST BE written in chunks or IT WILL FAIL.
+
+                        NEVER attempt to write more than the configured line limit at once.
+
+                        REQUIRED PROCESS FOR LARGE FILES:
+                        1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})
+                        2. THEN → write_file(filePath, secondChunk, {mode: 'append'})
+                        3. THEN → write_file(filePath, thirdChunk, {mode: 'append'})
+                        ... and so on for each chunk
+                        
+                        If asked to continue writing do not restart from beginning, read end of file to see where you stopped and continue from there
+
+                        Files over the line limit (configurable via 'fileWriteLineLimit' setting) WILL BE REJECTED if not broken into chunks as described above.
+                        Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(WriteFileArgsSchema),
                 },
                 {
@@ -174,7 +187,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         To replace multiple occurrences, provide the expected_replacements parameter with the exact number of matches expected. 
                         UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), include the minimal amount of context necessary (typically 1-3 lines) before and after the change point, with exact whitespace and indentation. 
                         When editing multiple sections, make separate edit_block calls for each distinct change rather than one large replacement. 
-                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different. 
+                        When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
+                        Similar to write_file, there is a configurable line limit (fileWriteLineLimit) that warns if the edited file exceeds this limit. If this happens, consider breaking your edits into smaller, more focused changes.
                         ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },

@@ -11,9 +11,10 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 
-import { ServerResult } from '../types.js';
-import { withTimeout } from '../utils/withTimeout.js';
-import { createErrorResponse } from '../error-handlers.js';
+import {ServerResult} from '../types.js';
+import {withTimeout} from '../utils/withTimeout.js';
+import {createErrorResponse} from '../error-handlers.js';
+import {configManager} from '../config-manager.js';
 
 import {
     ReadFileArgsSchema,
@@ -45,10 +46,26 @@ function getErrorFromPath(path: string): string {
  */
 export async function handleReadFile(args: unknown): Promise<ServerResult> {
     const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
-    
+    // Add input validation
+    if (args === null || args === undefined) {
+        return createErrorResponse('No arguments provided for read_file command');
+    }
     const readFileOperation = async () => {
         const parsed = ReadFileArgsSchema.parse(args);
-        const fileResult = await readFile(parsed.path, parsed.isUrl);
+
+        // Get the configuration for file read limits
+        const config = await configManager.getConfig();
+        if (!config) {
+            return createErrorResponse('Configuration not available');
+        }
+
+        const defaultLimit = config.fileReadLineLimit ?? 1000;
+
+        // Use the provided limits or defaults
+        const offset = parsed.offset ?? 0;
+        const length = parsed.length ?? defaultLimit;
+        
+        const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
         
         if (fileResult.isImage) {
             // For image files, return as an image content type
@@ -140,10 +157,34 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteFileArgsSchema.parse(args);
-        await writeFile(parsed.path, parsed.content);
+
+        // Get the line limit from configuration
+        const config = await configManager.getConfig();
+        const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
+        
+        // Strictly enforce line count limit
+        const lines = parsed.content.split('\n');
+        const lineCount = lines.length;
+        let errorMessage = "";
+        if (lineCount > MAX_LINES) {
+            errorMessage = `File was written with warning: Line count limit exceeded: ${lineCount} lines (maximum: ${MAX_LINES}).
+            
+SOLUTION: Split your content into smaller chunks:
+1. First chunk: write_file(path, firstChunk, {mode: 'rewrite'})
+2. Additional chunks: write_file(path, nextChunk, {mode: 'append'})`;
+        }
+
+        // Pass the mode parameter to writeFile
+        await writeFile(parsed.path, parsed.content, parsed.mode);
+        
+        // Provide more informative message based on mode
+        const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
         
         return {
-            content: [{ type: "text", text: `Successfully wrote to ${parsed.path}` }],
+            content: [{ 
+                type: "text", 
+                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
+            }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

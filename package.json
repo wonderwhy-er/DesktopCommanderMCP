@@ -34,7 +34,11 @@
     "test": "node test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
-    "inspector": "npx @modelcontextprotocol/inspector dist/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
+    "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
+    "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
+    "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
+    "logs:export": "npm run build && node scripts/export-fuzzy-logs.js"
   },
   "publishConfig": {
     "access": "public"
@@ -69,6 +73,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.24",
+    "commander": "^13.1.0",
     "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",

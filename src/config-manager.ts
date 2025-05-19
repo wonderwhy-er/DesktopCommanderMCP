@@ -11,6 +11,8 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
+  fileWriteLineLimit?: number; // Line limit for file write operations
+  fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -121,7 +123,9 @@ class ConfigManager {
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
       allowedDirectories: [],
-      telemetryEnabled: true // Default to opt-out approach (telemetry on by default)
+      telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+      fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
+      fileReadLineLimit: 1000  // Default line limit for file read operations (changed from character-based)
     };
   }
 
