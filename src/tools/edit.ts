@@ -110,7 +110,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     capture('server_edit_block', {fileExtension: fileExtension});
 
     // Read file as plain string
-    const {content} = await readFile(filePath);
+    const {content} = await readFile(filePath, false, 0, Number.MAX_SAFE_INTEGER);
     
     // Make sure content is a string
     if (typeof content !== 'string') {
