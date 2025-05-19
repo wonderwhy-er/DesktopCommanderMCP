@@ -11,6 +11,8 @@ import {zodToJsonSchema} from "zod-to-json-schema";
 // Shared constants for tool descriptions
 const PATH_GUIDANCE = `IMPORTANT: Always use absolute paths (starting with '/' or drive letter like 'C:\\') for reliability. Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
+const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
+
 import {
     ExecuteCommandArgsSchema,
     ReadOutputArgsSchema,
@@ -79,13 +81,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        "Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out).",
+                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out). ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {
                     name: "set_config_value",
                     description:
-                        "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths), fileReadLineLimit (number, max lines for read_file), fileWriteLineLimit (number, max lines per write_file call), telemetryEnabled (boolean). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system.",
+                        `Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations and command execution to prevent security issues. Config keys include: blockedCommands (array), defaultShell (string), allowedDirectories (array of paths), fileReadLineLimit (number, max lines for read_file), fileWriteLineLimit (number, max lines per write_file call), telemetryEnabled (boolean). IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access to the entire file system, regardless of the operating system. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 },
 
@@ -93,13 +95,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "read_file",
                         description:
-                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start line, default: 0) and 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE}`,
+                        `Read the contents of a file from the file system or a URL with optional offset and length parameters. Prefer this over 'execute_command' with cat/type for viewing files. Supports partial file reading with 'offset' (start line, default: 0) and 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000). When reading from the file system, only works within allowed directories. Can fetch content from URLs when isUrl parameter is set to true (URLs are always read in full regardless of offset/length). Handles text files normally and image files are returned as viewable images. Recognized image types: PNG, JPEG, GIF, WebP. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 },
                 {
                     name: "read_multiple_files",
                     description:
-                        `Read the contents of multiple files simultaneously. Each file's content is returned with its path as a reference. Handles text files normally and renders images as viewable content. Recognized image types: PNG, JPEG, GIF, WebP. Failed reads for individual files won't stop the entire operation. Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        `Read the contents of multiple files simultaneously. Each file's content is returned with its path as a reference. Handles text files normally and renders images as viewable content. Recognized image types: PNG, JPEG, GIF, WebP. Failed reads for individual files won't stop the entire operation. Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
                 },
                 {
@@ -118,19 +120,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         If asked to continue writing do not restart from beginning, read end of file to see where you stopped and continue from there
 
                         Files over the line limit (configurable via 'fileWriteLineLimit' setting) WILL BE REJECTED if not broken into chunks as described above.
-                        Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(WriteFileArgsSchema),
                 },
                 {
                     name: "create_directory",
                     description:
-                        `Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        `Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation. Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
                 },
                 {
                     name: "list_directory",
                     description:
-                        `Get a detailed listing of all files and directories in a specified path. Use this instead of 'execute_command' with ls/dir commands. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        `Get a detailed listing of all files and directories in a specified path. Use this instead of 'execute_command' with ls/dir commands. Results distinguish between files and directories with [FILE] and [DIR] prefixes. Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
                 },
                 {
@@ -138,7 +140,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description:
                         `Move or rename files and directories. 
                         Can move files between directories and rename them in a single operation. 
-                        Both source and destination must be within allowed directories. ${PATH_GUIDANCE}`,
+                        Both source and destination must be within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
                 },
                 {
@@ -148,7 +150,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Use this instead of 'execute_command' with find/dir/ls for locating files.
                         Searches through all subdirectories from the starting path. 
                         Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter. 
-                        Only searches within allowed directories. ${PATH_GUIDANCE}`,
+                        Only searches within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
                 },
                 {
@@ -160,7 +162,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Supports regular expressions, file pattern filtering, and context lines. 
                         Has a default timeout of 30 seconds which can be customized. 
                         Only searches within allowed directories. 
-                        ${PATH_GUIDANCE}`,
+                        ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
                 },
                 {
@@ -168,7 +170,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description:
                         `Retrieve detailed metadata about a file or directory including size, creation time, last modified time, 
                         permissions, and type. 
-                        Only works within allowed directories. ${PATH_GUIDANCE}`,
+                        Only works within allowed directories. ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
                 },
                 // Note: list_allowed_directories removed - use get_config to check allowedDirectories
@@ -187,7 +189,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         When editing multiple sections, make separate edit_block calls for each distinct change rather than one large replacement. 
                         When a close but non-exact match is found, a character-level diff is shown in the format: common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
                         Similar to write_file, there is a configurable line limit (fileWriteLineLimit) that warns if the edited file exceeds this limit. If this happens, consider breaking your edits into smaller, more focused changes.
-                        ${PATH_GUIDANCE}`,
+                        ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },
                 
@@ -198,32 +200,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         `Execute a terminal command with timeout. 
                         Command will continue running in background if it doesn't complete within timeout. 
                         NOTE: For file operations, prefer specialized tools like read_file, search_code, list_directory instead of cat, grep, or ls commands.
-                        ${PATH_GUIDANCE}`,
+                        ${PATH_GUIDANCE} ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
                 },
                 {
                     name: "read_output",
-                    description: "Read new output from a running terminal session.",
+                    description: `Read new output from a running terminal session. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
                 },
                 {
                     name: "force_terminate",
-                    description: "Force terminate a running terminal session.",
+                    description: `Force terminate a running terminal session. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
                 },
                 {
                     name: "list_sessions",
-                    description: "List all active terminal sessions.",
+                    description: `List all active terminal sessions. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
                 },
                 {
                     name: "list_processes",
-                    description: "List all running processes. Returns process information including PID, command name, CPU usage, and memory usage.",
+                    description: `List all running processes. Returns process information including PID, command name, CPU usage, and memory usage. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
                 },
                 {
                     name: "kill_process",
-                    description: "Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process.",
+                    description: `Terminate a running process by PID. Use with caution as this will forcefully terminate the specified process. ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
             ],
