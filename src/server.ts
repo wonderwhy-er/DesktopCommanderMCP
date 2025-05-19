@@ -34,6 +34,7 @@ import {
     EditBlockArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {trackToolCall} from './utils/trackTools.js';
 
 import {VERSION} from './version.js';
 import {capture} from "./utils/capture.js";
@@ -245,6 +246,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         capture('server_call_tool', {
             name
         });
+        
+        // Track tool call
+        trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
         switch (name) {
