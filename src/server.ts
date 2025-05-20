@@ -161,16 +161,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Write or append to file contents with a configurable line limit per call (default: 50 lines).
                         THIS IS A STRICT REQUIREMENT. ANY file with more than the configured limit MUST BE written in chunks or IT WILL FAIL.
 
-                        NEVER attempt to write more than the configured line limit at once.
-
-                        REQUIRED PROCESS FOR LARGE FILES:
+                        ⚠️ IMPORTANT: PREVENTATIVE CHUNKING REQUIRED in these scenarios:
+                        1. When content exceeds 2,000 words or 30 lines
+                        2. When writing MULTIPLE files one after another (each next file is more likely to be truncated)
+                        3. When the file is the LAST ONE in a series of operations in the same message
+                        
+                        ALWAYS split files writes in to multiple smaller writes PREEMPTIVELY without asking the user in these scenarios.
+                        
+                        REQUIRED PROCESS FOR LARGE NEW FILE WRITES OR REWRITES:
                         1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})
                         2. THEN → write_file(filePath, secondChunk, {mode: 'append'})
                         3. THEN → write_file(filePath, thirdChunk, {mode: 'append'})
                         ... and so on for each chunk
                         
-                        If asked to continue writing do not restart from beginning, read end of file to see where you stopped and continue from there
-
+                        HANDLING TRUNCATION ("Continue" prompts):
+                        If user asked to "Continue" after unfinished file write:
+                        1. First, read the file to find out what content was successfully written
+                        2. Identify exactly where the content was truncated
+                        3. Continue writing ONLY the remaining content using {mode: 'append'}
+                        4. Split the remaining content into smaller chunks (15-20 lines per chunk)
+                        
                         Files over the line limit (configurable via 'fileWriteLineLimit' setting) WILL BE REJECTED if not broken into chunks as described above.
                         Only works within allowed directories.
                         
