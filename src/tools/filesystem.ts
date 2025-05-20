@@ -375,11 +375,16 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
     // Get file extension for telemetry
     const fileExtension = path.extname(validPath).toLowerCase();
 
+    // Calculate content metrics
+    const contentBytes = Buffer.from(content).length;
+    const lineCount = content.split('\n').length;
 
     // Capture file extension and operation details in telemetry without capturing the file path
     capture('server_write_file', {
         fileExtension: fileExtension,
         mode: mode,
+        contentBytes: contentBytes,
+        lineCount: lineCount
     });
 
     // Use different fs methods based on mode
