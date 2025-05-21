@@ -319,15 +319,25 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
                 const totalLines = lines.length;
                 
                 // Apply line-based offset and length
-                const startLine = Math.min(offset, totalLines);
+                let startLine = offset;
+                let offsetBeyondFile = false;
+                if (offset >= totalLines) {
+                    // If offset goes beyond file end, show last lines
+                    offsetBeyondFile = true;
+                    startLine = Math.max(totalLines - length, 0);
+                }
                 const endLine = Math.min(startLine + length, totalLines);
                 const selectedLines = lines.slice(startLine, endLine);
                 const truncatedContent = selectedLines.join('\n');
-                
+
                 // Add an informational message if truncated
                 let content = truncatedContent;
                 if (offset > 0 || endLine < totalLines) {
-                    content = `[Reading ${endLine - startLine} lines from line ${offset} of ${totalLines} total lines]\n\n${truncatedContent}`;
+                    let info = `[Reading ${endLine - startLine} lines from line ${offset} of ${totalLines} total lines]`;
+                    if (offsetBeyondFile) {
+                        info += `\n[Offset beyond file, showing last ${endLine - startLine} lines]`;
+                    }
+                    content = `${info}\n\n${truncatedContent}`;
                 }
                 
                 return { content, mimeType, isImage };
