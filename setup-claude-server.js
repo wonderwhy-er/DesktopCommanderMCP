@@ -49,10 +49,38 @@ async function getNpmVersion() {
 
 const getVersion = async () => {
     try {
-        const packageJson = await import('./package.json', { assert: { type: 'json' } });
-        return packageJson.default.version;
-    } catch {
-        return 'unknown'
+        if (process.env.npm_package_version) {
+            return process.env.npm_package_version;
+        } else {
+            const packageJsonPath = join(__dirname, 'package.json');
+            if (existsSync(packageJsonPath)) {
+                const packageJsonContent = readFileSync(packageJsonPath, 'utf8');
+                const packageJson = JSON.parse(packageJsonContent);
+                if (packageJson.version) {
+                    return packageJson.version;
+                }
+            }
+        }
+        
+        throw new Error('Version not found in environment variable or package.json');
+    } catch (error) {
+        try {
+            const packageJson = await import('./package.json', { with: { type: 'json' } });
+            if (packageJson.default?.version) {
+                return packageJson.default.version;
+            }
+        } catch (importError) {
+            // Try older syntax as fallback
+            try {
+                const packageJson = await import('./package.json', { assert: { type: 'json' } });
+                if (packageJson.default?.version) {
+                    return packageJson.default.version;
+                }
+            } catch (legacyImportError) {
+                // Log the error for debugging
+                logToFile(`Failed to import package.json: ${legacyImportError.message}`, true);
+            }
+        }
     }
 };
 
@@ -676,8 +704,8 @@ export default async function setup() {
             await trackEvent('npx_setup_update_config_error', { error: updateError.message });
             throw new Error(`Failed to update config: ${updateError.message}`);
         }
-
-        logToFile('Successfully added MCP server to Claude configuration!');
+        const appVersion = await getVersion()
+        logToFile(`Successfully added Desktop Commander MCP v${appVersion} server to Claude configuration!`);
         logToFile(`Configuration location: ${claudeConfigPath}`);
 
         if (debugMode) {
