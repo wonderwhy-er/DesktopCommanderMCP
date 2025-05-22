@@ -93,16 +93,6 @@ function getCharacterCodeData(expected: string, actual: string): {
 }
 
 export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
-    // Check for empty search string to prevent infinite loops
-    if (block.search === "") {
-        return {
-            content: [{ 
-                type: "text", 
-                text: "Empty search strings are not allowed. Please provide a non-empty string to search for."
-            }],
-        };
-    }
-    
     // Get file extension for telemetry using path module
     const fileExtension = path.extname(filePath).toLowerCase();
     
@@ -115,12 +105,28 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         newStringLines: block.replace.split('\n').length,
         expectedReplacements: expectedReplacements
     });
+    // Check for empty search string to prevent infinite loops
+    if (block.search === "") {
+    
+        // Capture file extension in telemetry without capturing the file path
+        capture('server_edit_block_empty_search', {fileExtension: fileExtension, expectedReplacements});
+        
+        return {
+            content: [{ 
+                type: "text", 
+                text: "Empty search strings are not allowed. Please provide a non-empty string to search for."
+            }],
+        };
+    }
+    
+
 
     // Read file as plain string
     const {content} = await readFile(filePath, false, 0, Number.MAX_SAFE_INTEGER);
     
     // Make sure content is a string
     if (typeof content !== 'string') {
+        capture('server_edit_block_content_not_string', {fileExtension: fileExtension, expectedReplacements});
         throw new Error('Wrong content for file ' + filePath);
     }
     
@@ -175,7 +181,7 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         }
         
         await writeFile(filePath, newContent);
-        
+        capture('server_edit_block_exact_success', {fileExtension: fileExtension, expectedReplacements, hasWarning: warningMessage !== ""});
         return {
             content: [{ 
                 type: "text", 
@@ -186,6 +192,7 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
     
     // If exact match found but count doesn't match expected, inform the user
     if (count > 0 && count !== expectedReplacements) {
+        capture('server_edit_block_unexpected_count', {fileExtension: fileExtension, expectedReplacements, expectedReplacementsCount: count});
         return {
             content: [{ 
                 type: "text", 
