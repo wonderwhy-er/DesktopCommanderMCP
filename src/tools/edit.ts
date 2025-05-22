@@ -7,6 +7,7 @@ import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 import { configManager } from '../config-manager.js';
 import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
+import * as Diff from 'diff';
 
 interface SearchReplace {
     search: string;
@@ -28,7 +29,7 @@ interface FuzzyMatch {
 const FUZZY_THRESHOLD = 0.7;
 
 /**
- * Extract character code data from diff
+ * Extract character code data from diff using the diff library
  * @param expected The string that was searched for
  * @param actual The string that was found
  * @returns Character code statistics
@@ -38,34 +39,21 @@ function getCharacterCodeData(expected: string, actual: string): {
     uniqueCount: number;
     diffLength: number;
 } {
-    // Find common prefix and suffix
-    let prefixLength = 0;
-    const minLength = Math.min(expected.length, actual.length);
-
-    // Determine common prefix length
-    while (prefixLength < minLength &&
-           expected[prefixLength] === actual[prefixLength]) {
-        prefixLength++;
-    }
-
-    // Determine common suffix length
-    let suffixLength = 0;
-    while (suffixLength < minLength - prefixLength &&
-           expected[expected.length - 1 - suffixLength] === actual[actual.length - 1 - suffixLength]) {
-        suffixLength++;
-    }
+    // Use the diff library to get precise differences
+    const diffResult = Diff.diffChars(expected, actual);
     
-    // Extract the different parts
-    const expectedDiff = expected.substring(prefixLength, expected.length - suffixLength);
-    const actualDiff = actual.substring(prefixLength, actual.length - suffixLength);
-    
-    // Count unique character codes in the diff
+    // Count unique character codes in the differences only
     const characterCodes = new Map<number, number>();
-    const fullDiff = expectedDiff + actualDiff;
+    let totalDiffLength = 0;
     
-    for (let i = 0; i < fullDiff.length; i++) {
-        const charCode = fullDiff.charCodeAt(i);
-        characterCodes.set(charCode, (characterCodes.get(charCode) || 0) + 1);
+    for (const part of diffResult) {
+        if (part.added || part.removed) {
+            totalDiffLength += part.value.length;
+            for (let i = 0; i < part.value.length; i++) {
+                const charCode = part.value.charCodeAt(i);
+                characterCodes.set(charCode, (characterCodes.get(charCode) || 0) + 1);
+            }
+        }
     }
     
     // Create character codes string report
@@ -88,7 +76,7 @@ function getCharacterCodeData(expected: string, actual: string): {
     return {
         report: charCodeReport.join(','),
         uniqueCount: characterCodes.size,
-        diffLength: fullDiff.length
+        diffLength: totalDiffLength
     };
 }
 
@@ -293,40 +281,27 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
 }
 
 /**
- * Generates a character-level diff using standard {-removed-}{+added+} format
+ * Generates a character-level diff using the 'diff' library for accurate results
  * @param expected The string that was searched for
  * @param actual The string that was found
- * @returns A formatted string showing character-level differences
+ * @returns A formatted string showing precise character-level differences
  */
 function highlightDifferences(expected: string, actual: string): string {
-    // Implementation of a simplified character-level diff
+    // Use the diff library for professional-grade character-level diffing
+    const diffResult = Diff.diffChars(expected, actual);
     
-    // Find common prefix and suffix
-    let prefixLength = 0;
-    const minLength = Math.min(expected.length, actual.length);
-
-    // Determine common prefix length
-    while (prefixLength < minLength &&
-           expected[prefixLength] === actual[prefixLength]) {
-        prefixLength++;
-    }
-
-    // Determine common suffix length
-    let suffixLength = 0;
-    while (suffixLength < minLength - prefixLength &&
-           expected[expected.length - 1 - suffixLength] === actual[actual.length - 1 - suffixLength]) {
-        suffixLength++;
+    let result = '';
+    for (const part of diffResult) {
+        if (part.added) {
+            result += `{+${part.value}+}`;
+        } else if (part.removed) {
+            result += `{-${part.value}-}`;
+        } else {
+            result += part.value;
+        }
     }
     
-    // Extract the common and different parts
-    const commonPrefix = expected.substring(0, prefixLength);
-    const commonSuffix = expected.substring(expected.length - suffixLength);
-
-    const expectedDiff = expected.substring(prefixLength, expected.length - suffixLength);
-    const actualDiff = actual.substring(prefixLength, actual.length - suffixLength);
-
-    // Format the output as a character-level diff
-    return `${commonPrefix}{-${expectedDiff}-}{+${actualDiff}+}${commonSuffix}`;
+    return result;
 }
 
 /**
