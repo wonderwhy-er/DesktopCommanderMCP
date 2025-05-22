@@ -9,6 +9,7 @@
 
 // Import the filesystem module and assert for testing
 import { createDirectory } from '../dist/tools/filesystem.js';
+import { configManager } from '../dist/config-manager.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -50,12 +51,26 @@ async function setup() {
   // Create base test directory
   await fs.mkdir(BASE_TEST_DIR, { recursive: true });
   console.log(`✓ Setup: created base test directory: ${BASE_TEST_DIR}`);
+  
+  // Save original config to restore later
+  const originalConfig = await configManager.getConfig();
+  
+  // Set allowed directories to include our test directory
+  await configManager.setValue('allowedDirectories', [BASE_TEST_DIR]);
+  console.log(`✓ Setup: set allowed directories to include: ${BASE_TEST_DIR}`);
+  
+  return originalConfig;
 }
 
 /**
  * Teardown function to clean up after tests
  */
-async function teardown() {
+async function teardown(originalConfig) {
+  if (originalConfig) {
+    // Restore original config
+    await configManager.updateConfig(originalConfig);
+  }
+  
   await cleanupTestDirectories();
   console.log('✓ Teardown: test directories cleaned up');
 }
@@ -92,14 +107,17 @@ async function testDirectoryCreation() {
 
 // Export the main test function
 export default async function runTests() {
+  let originalConfig;
   try {
-    await setup();
+    originalConfig = await setup();
     await testDirectoryCreation();
   } catch (error) {
     console.error('❌ Test failed:', error.message);
     return false;
   } finally {
-    await teardown();
+    if (originalConfig) {
+      await teardown(originalConfig);
+    }
   }
   return true;
 }

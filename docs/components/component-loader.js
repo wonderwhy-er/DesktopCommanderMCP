@@ -5,7 +5,6 @@ document.addEventListener('DOMContentLoaded', function() {
   const components = [
     'sponsors-section.js',
     'sponsor-footer.js',
-    'sponsor-header.js'
   ];
   
   // Create script tags to load all components
@@ -25,7 +24,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const allDefined = [
       'sponsors-section',
       'sponsor-footer',
-      'sponsor-header'
     ].every(component => customElements.get(component));
     
     if (allDefined) {
@@ -45,22 +43,6 @@ document.addEventListener('DOMContentLoaded', function() {
         footerContent.appendChild(sponsorFooter);
       }
       
-      // 3. Add sponsor header button next to the install button
-      const headerCtaBtn = document.querySelector('.header-cta-btn');
-      if (headerCtaBtn) {
-        const sponsorHeader = document.createElement('sponsor-header');
-        headerCtaBtn.before(sponsorHeader);
-      }
-      
-      // 4. Add sponsor link to Use Cases dropdown menu
-      const useCasesDropdown = document.querySelector('.dropdown-menu');
-      if (useCasesDropdown) {
-        const sponsorLink = document.createElement('li');
-        sponsorLink.innerHTML = '<a href="#sponsors">Our Sponsors</a>';
-        useCasesDropdown.appendChild(sponsorLink);
-      }
-      
-      console.log('Desktop Commander: All sponsorship components loaded and inserted into the DOM');
     } else if (attempts >= MAX_ATTEMPTS) {
       console.error('Desktop Commander: Failed to load all sponsorship components within timeout period');
     } else {

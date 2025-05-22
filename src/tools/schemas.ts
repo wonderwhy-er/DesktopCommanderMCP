@@ -39,6 +39,8 @@ export const KillProcessArgsSchema = z.object({
 export const ReadFileArgsSchema = z.object({
   path: z.string(),
   isUrl: z.boolean().optional().default(false),
+  offset: z.number().optional().default(0),
+  length: z.number().optional().default(1000),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -48,6 +50,7 @@ export const ReadMultipleFilesArgsSchema = z.object({
 export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
+  mode: z.enum(['rewrite', 'append']).default('rewrite'),
 });
 
 export const CreateDirectoryArgsSchema = z.object({

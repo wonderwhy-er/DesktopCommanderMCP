@@ -79,10 +79,10 @@ if (firstAccordionItem) {
 const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
 const mobileNav = document.querySelector('.mobile-nav');
 
-if (mobileMenuBtn) {
+if (mobileMenuBtn && mobileNav) {
     mobileMenuBtn.addEventListener('click', function() {
         mobileNav.classList.toggle('active');
-        this.classList.toggle('active');
+        this.setAttribute('aria-expanded', mobileNav.classList.contains('active'));
     });
 }
 
@@ -344,6 +344,16 @@ window.addEventListener('scroll', () => {
     const header = document.querySelector('header');
     if (header) {
         header.classList.toggle('sticky', window.scrollY > 0);
+    }
+});
+
+// Close mobile menu when window resizes to desktop width
+window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) {
+        const mobileNav = document.querySelector('.mobile-nav');
+        if (mobileNav && mobileNav.classList.contains('active')) {
+            mobileNav.classList.remove('active');
+        }
     }
 });
 
