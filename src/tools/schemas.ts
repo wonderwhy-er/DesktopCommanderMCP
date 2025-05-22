@@ -22,6 +22,7 @@ export const ExecuteCommandArgsSchema = z.object({
 
 export const ReadOutputArgsSchema = z.object({
   pid: z.number(),
+  timeout_ms: z.number().optional(),
 });
 
 export const ForceTerminateArgsSchema = z.object({

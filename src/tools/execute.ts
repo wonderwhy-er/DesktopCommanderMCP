@@ -62,21 +62,66 @@ export async function executeCommand(args: unknown): Promise<ServerResult> {
 }
 
 export async function readOutput(args: unknown): Promise<ServerResult> {
-  const parsed = ReadOutputArgsSchema.safeParse(args);
-  if (!parsed.success) {
-    return {
-      content: [{ type: "text", text: `Error: Invalid arguments for read_output: ${parsed.error}` }],
-      isError: true,
-    };
-  }
+    const parsed = ReadOutputArgsSchema.safeParse(args);
+    if (!parsed.success) {
+        return {
+            content: [{ type: "text", text: `Error: Invalid arguments for read_output: ${parsed.error}` }],
+            isError: true,
+        };
+    }
 
-  const output = terminalManager.getNewOutput(parsed.data.pid);
+    const { pid, timeout_ms = 5000 } = parsed.data;
+
+    // Check if the process exists
+    const session = terminalManager.getSession(pid);
+    if (!session) {
+        return {
+            content: [{ type: "text", text: `No session found for PID ${pid}` }],
+            isError: true,
+        };
+    }
+    // Wait for output with timeout
+    let output = "";
+    let timeoutReached = false;
+    try {
+        // Create a promise that resolves when new output is available or when timeout is reached
+        const outputPromise:Promise<string> = new Promise<string>((resolve) => {
+            // Check for initial output
+            const initialOutput = terminalManager.getNewOutput(pid);
+            if (initialOutput && initialOutput.length > 0) {
+                resolve(initialOutput);
+                return;
+            }
+
+            // Setup an interval to poll for output
+            const interval = setInterval(() => {
+                const newOutput = terminalManager.getNewOutput(pid);
+                if (newOutput && newOutput.length > 0) {
+                    clearInterval(interval);
+                    resolve(newOutput);
+                }
+            }, 300); // Check every 300ms
+
+        // Set a timeout to stop waiting
+            setTimeout(() => {
+                clearInterval(interval);
+                timeoutReached = true;
+                resolve(terminalManager.getNewOutput(pid) || "");
+            }, timeout_ms);
+        });
+
+        output = await outputPromise;
+    } catch (error) {
+        return {
+            content: [{ type: "text", text: `Error reading output: ${error}` }],
+            isError: true,
+        };
+    }
+
   return {
     content: [{
       type: "text",
-      text: output === null
-        ? `No session found for PID ${parsed.data.pid}`
-        : output || 'No new output available'
+      text: output || 'No new output available' + (timeoutReached ? ' (timeout reached)' : '')
     }],
   };
 }
