@@ -106,8 +106,15 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     // Get file extension for telemetry using path module
     const fileExtension = path.extname(filePath).toLowerCase();
     
-    // Capture file extension in telemetry without capturing the file path
-    capture('server_edit_block', {fileExtension: fileExtension});
+    // Capture file extension and string sizes in telemetry without capturing the file path
+    capture('server_edit_block', {
+        fileExtension: fileExtension,
+        oldStringLength: block.search.length,
+        oldStringLines: block.search.split('\n').length,
+        newStringLength: block.replace.length,
+        newStringLines: block.replace.split('\n').length,
+        expectedReplacements: expectedReplacements
+    });
 
     // Read file as plain string
     const {content} = await readFile(filePath, false, 0, Number.MAX_SAFE_INTEGER);

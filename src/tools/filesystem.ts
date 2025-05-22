@@ -318,16 +318,36 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
                 const lines = fullContent.split('\n');
                 const totalLines = lines.length;
                 
-                // Apply line-based offset and length
-                const startLine = Math.min(offset, totalLines);
-                const endLine = Math.min(startLine + length, totalLines);
+                // Apply line-based offset and length - handle beyond-file-size scenario
+                let startLine = Math.min(offset, totalLines);
+                let endLine = Math.min(startLine + length, totalLines);
+                
+                // If startLine equals totalLines (reading beyond end), adjust to show some content
+                // Only do this if we're not trying to read the whole file
+                if (startLine === totalLines && offset > 0 && length < Number.MAX_SAFE_INTEGER) {
+                    // Show last few lines instead of nothing
+                    const lastLinesCount = Math.min(10, totalLines); // Show last 10 lines or fewer if file is smaller
+                    startLine = Math.max(0, totalLines - lastLinesCount);
+                    endLine = totalLines;
+                }
+                
                 const selectedLines = lines.slice(startLine, endLine);
                 const truncatedContent = selectedLines.join('\n');
                 
-                // Add an informational message if truncated
+                // Add an informational message if truncated or adjusted
                 let content = truncatedContent;
-                if (offset > 0 || endLine < totalLines) {
-                    content = `[Reading ${endLine - startLine} lines from line ${offset} of ${totalLines} total lines]\n\n${truncatedContent}`;
+                
+                // Only add informational message for normal reads (not when reading entire file)
+                const isEntireFileRead = offset === 0 && length >= Number.MAX_SAFE_INTEGER;
+                
+                if (!isEntireFileRead) {
+                    if (offset >= totalLines && totalLines > 0) {
+                        // Reading beyond end of file case
+                        content = `[NOTICE: Offset ${offset} exceeds file length (${totalLines} lines). Showing last ${endLine - startLine} lines instead.]\n\n${truncatedContent}`;
+                    } else if (offset > 0 || endLine < totalLines) {
+                        // Normal partial read case
+                        content = `[Reading ${endLine - startLine} lines from line ${startLine} of ${totalLines} total lines]\n\n${truncatedContent}`;
+                    }
                 }
                 
                 return { content, mimeType, isImage };
@@ -375,11 +395,16 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
     // Get file extension for telemetry
     const fileExtension = path.extname(validPath).toLowerCase();
 
+    // Calculate content metrics
+    const contentBytes = Buffer.from(content).length;
+    const lineCount = content.split('\n').length;
 
     // Capture file extension and operation details in telemetry without capturing the file path
     capture('server_write_file', {
         fileExtension: fileExtension,
         mode: mode,
+        contentBytes: contentBytes,
+        lineCount: lineCount
     });
 
     // Use different fs methods based on mode
@@ -504,7 +529,8 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
     const validPath = await validatePath(filePath);
     const stats = await fs.stat(validPath);
     
-    return {
+    // Basic file info
+    const info: Record<string, any> = {
         size: stats.size,
         created: stats.birthtime,
         modified: stats.mtime,
@@ -513,6 +539,29 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         isFile: stats.isFile(),
         permissions: stats.mode.toString(8).slice(-3),
     };
+    
+    // For text files that aren't too large, also count lines
+    if (stats.isFile() && stats.size < 10 * 1024 * 1024) { // Limit to 10MB files
+        try {
+            // Import the MIME type utilities
+            const { getMimeType, isImageFile } = await import('./mime-types.js');
+            const mimeType = getMimeType(validPath);
+            
+            // Only count lines for non-image, likely text files
+            if (!isImageFile(mimeType)) {
+                const content = await fs.readFile(validPath, 'utf8');
+                const lineCount = content.split('\n').length;
+                info.lineCount = lineCount;
+                info.lastLine = lineCount - 1; // Zero-indexed last line
+                info.appendPosition = lineCount; // Position to append at end
+            }
+        } catch (error) {
+            // If reading fails, just skip the line count
+            // This could happen for binary files or very large files
+        }
+    }
+    
+    return info;
 }
 
 // This function has been replaced with configManager.getConfig()
