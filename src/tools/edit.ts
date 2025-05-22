@@ -110,7 +110,6 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     
         // Capture file extension in telemetry without capturing the file path
         capture('server_edit_block_empty_search', {fileExtension: fileExtension, expectedReplacements});
-        
         return {
             content: [{ 
                 type: "text", 
@@ -119,7 +118,6 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         };
     }
     
-
 
     // Read file as plain string
     const {content} = await readFile(filePath, false, 0, Number.MAX_SAFE_INTEGER);
