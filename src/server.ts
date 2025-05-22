@@ -265,6 +265,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - last modified time 
                         - permissions
                         - type
+                        - lineCount (for text files)
+                        - lastLine (zero-indexed number of last line, for text files)
+                        - appendPosition (line number for appending, for text files)
                         
                         Only works within allowed directories.
                         
