@@ -82,7 +82,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_config",
                     description:
-                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out). ${CMD_PREFIX_DESCRIPTION}`,
+                        `Get the complete server configuration as JSON. Config includes fields for: blockedCommands (array of blocked shell commands), defaultShell (shell to use for commands), allowedDirectories (paths the server can access), fileReadLineLimit (max lines for read_file, default 1000), fileWriteLineLimit (max lines per write_file call, default 50), telemetryEnabled (boolean for telemetry opt-in/out), version (version of the DesktopCommander). ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
                 {

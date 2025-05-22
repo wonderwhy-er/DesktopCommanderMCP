@@ -3,7 +3,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import os from 'os';
-
+import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 
 export interface ServerConfig {
@@ -54,6 +54,7 @@ class ConfigManager {
         this.config = this.getDefaultConfig();
         await this.saveConfig();
       }
+      this.config['version'] = VERSION;
 
       this.initialized = true;
     } catch (error) {
