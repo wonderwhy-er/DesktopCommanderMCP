@@ -85,7 +85,7 @@ export async function readOutput(args: unknown): Promise<ServerResult> {
     let timeoutReached = false;
     try {
         // Create a promise that resolves when new output is available or when timeout is reached
-        const outputPromise:Promise<string> = new Promise<string>((resolve) => {
+        const outputPromise: Promise<string> = new Promise<string>((resolve) => {
             // Check for initial output
             const initialOutput = terminalManager.getNewOutput(pid);
             if (initialOutput && initialOutput.length > 0) {
@@ -93,20 +93,41 @@ export async function readOutput(args: unknown): Promise<ServerResult> {
                 return;
             }
 
+            let resolved = false;
+            let interval: NodeJS.Timeout | null = null;
+            let timeout: NodeJS.Timeout | null = null;
+
+            const cleanup = () => {
+                if (interval) {
+                    clearInterval(interval);
+                    interval = null;
+                }
+                if (timeout) {
+                    clearTimeout(timeout);
+                    timeout = null;
+                }
+            };
+
+            const resolveOnce = (value: string, isTimeout = false) => {
+                if (resolved) return;
+                resolved = true;
+                cleanup();
+                if (isTimeout) timeoutReached = true;
+                resolve(value);
+            };
+
             // Setup an interval to poll for output
-            const interval = setInterval(() => {
+            interval = setInterval(() => {
                 const newOutput = terminalManager.getNewOutput(pid);
                 if (newOutput && newOutput.length > 0) {
-                    clearInterval(interval);
-                    resolve(newOutput);
+                    resolveOnce(newOutput);
                 }
             }, 300); // Check every 300ms
 
-        // Set a timeout to stop waiting
-            setTimeout(() => {
-                clearInterval(interval);
-                timeoutReached = true;
-                resolve(terminalManager.getNewOutput(pid) || "");
+            // Set a timeout to stop waiting
+            timeout = setTimeout(() => {
+                const finalOutput = terminalManager.getNewOutput(pid) || "";
+                resolveOnce(finalOutput, true);
             }, timeout_ms);
         });
 
