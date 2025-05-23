@@ -467,17 +467,11 @@ export async function moveFile(sourcePath: string, destinationPath: string): Pro
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
     const results: string[] = [];
 
-    async function search(currentPath: string) {
+    async function search(currentPath: string): Promise<void> {
         let entries;
         try {
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
-            // Only sanitize for telemetry, not for the returned error
-            capture('server_search_read_dir_error', {
-                errorType: error instanceof Error ? error.name : 'Unknown',
-                error: 'Error reading directory',
-                isReadDirError: true
-            });
             return; // Skip this directory on error
         }
 
