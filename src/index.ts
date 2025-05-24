@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { FilteredStdioServerTransport } from './custom-stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import express from "express";
+import { Request, Response } from "express";
 import { server } from './server.js';
-import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -50,15 +52,6 @@ async function runSetup() {
 
 async function runServer() {
   try {
-    // Check if first argument is "setup"
-    if (process.argv[2] === 'setup') {
-      await runSetup();
-      return;
-    }
-
-
-
-    const transport = new FilteredStdioServerTransport();
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -95,8 +88,13 @@ async function runServer() {
       process.exit(1);
     });
 
-    capture('run_server_start');
+    // Check if first argument is "setup"
+    if (process.argv[2] === 'setup') {
+      await runSetup();
+      return;
+    }
 
+    // Load the configuration.
     try {
       console.error("Loading configuration...");
       await configManager.loadConfig();
@@ -108,10 +106,23 @@ async function runServer() {
       // Continue anyway - we'll use an in-memory config
     }
 
+    // Parse --port flag
+    let port: number | undefined;
+    const portFlagIndex = process.argv.findIndex(arg => arg === '--port');
+    if (portFlagIndex !== -1 && process.argv[portFlagIndex + 1]) {
+      port = parseInt(process.argv[portFlagIndex + 1], 10);
+      if (isNaN(port)) {
+        console.error('Invalid port specified after --port');
+        process.exit(1);
+      }
+    }
 
-    console.error("Connecting server...");
-    await server.connect(transport);
-    console.error("Server connected successfully");
+    capture('run_server_start');
+    if (port !== undefined) {
+      await runHttpServer(port);
+    } else {
+      await runStdioServer();
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`FATAL ERROR: ${errorMessage}`);
@@ -127,6 +138,62 @@ async function runServer() {
     });
     process.exit(1);
   }
+}
+
+async function runHttpServer(port: number) {
+  // We return a new promise that never resolves to keep the server alive.
+  return new Promise((resolve, reject) => {
+    // Start a server based on the official @modelcontextprotocol/sdk documentation.
+    const app = express();
+    app.use(express.json());
+
+    app.post('/', async (req: Request, res: Response) => {
+      // In stateless mode, create a new instance of transport and server for each request
+      // to ensure complete isolation. A single instance would cause request ID collisions
+      // when multiple clients connect concurrently.
+
+      try {
+        const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        res.on('close', () => {
+          transport.close();
+          server.close();
+        });
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (error) {
+        console.error('Error handling MCP request:', error);
+        if (!res.headersSent) {
+          res.status(500).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal server error',
+            },
+            id: null,
+          });
+        }
+      }
+    });
+
+    // Start the server
+    const httpServerInstance = app.listen(port, () => {
+      console.log(`MCP Stateless Streamable HTTP Server listening on port ${port}`);
+    });
+
+    httpServerInstance.on('error', (err) => {
+      console.error(`HTTP Server failed to start or encountered an error: ${err.message}`);
+      reject(err);
+    });
+  });
+}
+
+async function runStdioServer() {
+  console.error("Connecting server through stdio transport ...");
+  const transport = new FilteredStdioServerTransport();
+  await server.connect(transport);
+  console.error("Server connected successfully");
 }
 
 runServer().catch(async (error) => {

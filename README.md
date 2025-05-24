@@ -81,8 +81,8 @@ npx @wonderwhy-er/desktop-commander@latest setup --debug
 ```
 Restart Claude if running.
 
-**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Run the setup command again  
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude
+**🔄 Manual Update:** Run the setup command again
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
 
 ### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates**
@@ -92,8 +92,8 @@ curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/re
 ```
 This script handles all dependencies and configuration automatically for a seamless setup experience.
 
-**✅ Auto-Updates:** Yes - requires manual updates  
-**🔄 Manual Update:** Re-run the bash installer command above  
+**✅ Auto-Updates:** Yes - requires manual updates
+**🔄 Manual Update:** Re-run the bash installer command above
 **🗑️ Uninstall:** Remove the MCP server entry from your Claude config file and delete the cloned repository if it exists
 
 ### Option 3: Installing via Smithery ⭐ **Auto-Updates**
@@ -104,8 +104,8 @@ To install Desktop Commander for Claude Desktop automatically via [Smithery](htt
 npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 ```
 
-**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Re-run the Smithery install command  
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude
+**🔄 Manual Update:** Re-run the Smithery install command
 **🗑️ Uninstall:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
 
 ### Option 4: Add to claude_desktop_config manually ❌ **Manual Updates**
@@ -130,8 +130,8 @@ Add this entry to your claude_desktop_config.json:
 ```
 Restart Claude if running.
 
-**❌ Auto-Updates:** No - uses npx but config might not update automatically  
-**🔄 Manual Update:** Usually automatic via npx, but if issues occur, update your config file or re-add the entry  
+**❌ Auto-Updates:** No - uses npx but config might not update automatically
+**🔄 Manual Update:** Usually automatic via npx, but if issues occur, update your config file or re-add the entry
 **🗑️ Uninstall:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
 
 ### Option 5: Checkout locally ❌ **Manual Updates**
@@ -149,9 +149,16 @@ The setup command will:
 - Configure Claude's desktop app
 - Add MCP servers to Claude's config if needed
 
-**❌ Auto-Updates:** No - requires manual git updates  
-**🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
+**❌ Auto-Updates:** No - requires manual git updates
+**🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`
 **🗑️ Uninstall:** Remove the cloned directory and remove MCP server entry from Claude config
+
+### Option 6: Running as a http server
+
+1. Clone the repository using `git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git`.
+2. Run the server using `npx . --port 7777` (or whichever port number you prefer).
+
+### Updating Desktop Commander
 
 ## Updating & Uninstalling Desktop Commander
 
@@ -436,7 +443,7 @@ This project extends the MCP Filesystem Server to enable:
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
 
 ## DONE
-- **20-05-2025 v0.1.40 Release** - Added audit logging for all tool calls, improved line-based file operations, enhanced edit_block with better prompting for smaller edits, added explicit telemetry opt-out prompting 
+- **20-05-2025 v0.1.40 Release** - Added audit logging for all tool calls, improved line-based file operations, enhanced edit_block with better prompting for smaller edits, added explicit telemetry opt-out prompting
 - **05-05-2025 Fuzzy Search Logging** - Added comprehensive logging system for fuzzy search operations with detailed analysis tools, character-level diffs, and performance metrics to help debug edit_block failures
 - **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
 - **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
@@ -467,7 +474,7 @@ The following features are currently being explored:
 <div align="center">
   <h3>📢 SUPPORT THIS PROJECT</h3>
   <p><strong>Desktop Commander MCP is free and open source, but needs your support to thrive!</strong></p>
-  
+
   <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin: 20px 0; border: 2px solid #007bff;">
     <p>Our philosophy is simple: we don't want you to pay for it if you're not successful. But if Desktop Commander contributes to your success, please consider contributing to ours.</p>
     <p><strong>Ways to support:</strong></p>
