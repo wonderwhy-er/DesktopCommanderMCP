@@ -4,12 +4,14 @@ import {
     forceTerminate, 
     listSessions 
 } from '../tools/execute.js';
+import { sendInput } from '../tools/send-input.js';
 
 import { 
     ExecuteCommandArgsSchema,
     ReadOutputArgsSchema,
     ForceTerminateArgsSchema,
-    ListSessionsArgsSchema
+    ListSessionsArgsSchema,
+    SendInputArgsSchema
 } from '../tools/schemas.js';
 
 import { ServerResult } from '../types.js';
@@ -43,4 +45,11 @@ export async function handleForceTerminate(args: unknown): Promise<ServerResult>
  */
 export async function handleListSessions(): Promise<ServerResult> {
     return listSessions();
+}
+
+/**
+ * Handle send_input command
+ */
+export async function handleSendInput(args: unknown): Promise<ServerResult> {
+    return sendInput(args);
 }
