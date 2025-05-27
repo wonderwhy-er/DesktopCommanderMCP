@@ -335,6 +335,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "read_output",
                     description: `
                         Read new output from a running terminal session.
+                        Set timeout_ms for long running commands.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadOutputArgsSchema),

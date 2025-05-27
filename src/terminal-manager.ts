@@ -126,6 +126,15 @@ export class TerminalManager {
     return null;
   }
 
+    /**
+   * Get a session by PID
+   * @param pid Process ID
+   * @returns The session or undefined if not found
+   */
+  getSession(pid: number): TerminalSession | undefined {
+    return this.sessions.get(pid);
+  }
+
   forceTerminate(pid: number): boolean {
     const session = this.sessions.get(pid);
     if (!session) {
