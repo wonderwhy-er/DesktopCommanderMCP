@@ -16,12 +16,13 @@ export const ListProcessesArgsSchema = z.object({});
 // Terminal tools schemas
 export const ExecuteCommandArgsSchema = z.object({
   command: z.string(),
-  timeout_ms: z.number().optional(),
+  timeout_ms: z.number(),
   shell: z.string().optional(),
 });
 
 export const ReadOutputArgsSchema = z.object({
   pid: z.number(),
+  timeout_ms: z.number().optional(),
 });
 
 export const ForceTerminateArgsSchema = z.object({
