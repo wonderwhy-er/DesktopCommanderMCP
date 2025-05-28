@@ -162,16 +162,13 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
         
-        // Strictly enforce line count limit
+        // Check line count and provide helpful guidance for large files
         const lines = parsed.content.split('\n');
         const lineCount = lines.length;
-        let errorMessage = "";
+        let noteMessage = "";
         if (lineCount > MAX_LINES) {
-            errorMessage = `File was written with warning: Line count limit exceeded: ${lineCount} lines (maximum: ${MAX_LINES}).
-            
-SOLUTION: Split your content into smaller chunks:
-1. First chunk: write_file(path, firstChunk, {mode: 'rewrite'})
-2. Additional chunks: write_file(path, nextChunk, {mode: 'append'})`;
+            noteMessage = `
+Note: Large file detected (${lineCount} > ${MAX_LINES} lines). For improved reliability and easier debugging, consider splitting large files into smaller chunks using the append mode for future edits.`;
         }
 
         // Pass the mode parameter to writeFile
@@ -183,7 +180,7 @@ SOLUTION: Split your content into smaller chunks:
         return {
             content: [{ 
                 type: "text", 
-                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
+                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines)${noteMessage}`
             }],
         };
     } catch (error) {
