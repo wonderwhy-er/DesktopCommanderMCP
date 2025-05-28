@@ -1599,12 +1599,40 @@ npm run setup</pre>
                 
                 <div class="accordion-item">
                     <div class="accordion-header">
+                        <span>Why is the fileWriteLineLimit set to 50 by default? What is the maximum value?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p><strong>AIs are wasteful with tokens:</strong> Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to force AIs to do things in smaller changes as it saves time and tokens.</p>
+                            <p><strong>Claude UX message limits:</strong> There are limits within one message and hitting "Continue" does not really work. We're trying to make AI work in smaller chunks so when you hit that limit, multiple chunks have succeeded and that work is not lost - it just needs to restart from the last chunk.</p>
+                            <p><strong>Maximum value:</strong> You can set it to thousands if you want - there's no technical restriction.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
                         <span>Which operating systems does it support?</span>
                         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
                     </div>
                     <div class="accordion-body">
                         <div class="accordion-body-inner">
                             <p>Claude Desktop Commander works with Windows, macOS, and Linux. Work is ongoing to improve Windows support, WSL integration, and enhance compatibility with various Linux distributions.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Can I use Desktop Commander in any MCP client outside of Claude?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Yes, you can install Desktop Commander on other MCP clients like Cursor, Windsurf, DeepChat, or any client with MCP support. You can use any model available for that client.</p>
+                            <p><strong>Important caveats:</strong> Desktop Commander may work unexpectedly on other clients due to differences in system prompts and conflicts with their built-in tools. It's primarily designed and tested with Claude Desktop.</p>
+                            <p>If you try other clients, test carefully with non-critical projects first and consider sharing your experience to help improve compatibility.</p>
                         </div>
                     </div>
                 </div>
@@ -2041,6 +2069,8 @@ npm run setup</pre>
     <script src="js/websocket-handler.js" async></script>
     <!-- Accessibility improvements -->
     <script src="js/accessibility.js" defer></script>
+    <!-- Main JavaScript functionality -->
+    <script src="js/main.js" defer></script>
 
     <!-- JavaScript for command counter and typing effect -->
     <script>

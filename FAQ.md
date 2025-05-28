@@ -255,6 +255,28 @@ Absolutely. While it excels at coding-related tasks, Claude Desktop Commander ca
 - Running and managing any terminal-based tools
 - Data processing and analysis
 
+### Can I use Desktop Commander in any MCP client outside of Claude?
+
+Yes, you can install Desktop Commander MCP on other clients that support MCP, including:
+- Cursor
+- Windsurf 
+- DeepChat
+- Any other client with MCP support
+
+You can use any model available for that client with Desktop Commander.
+
+**However, important caveats:**
+- **Unexpected behavior**: Desktop Commander can work unexpectedly on other clients due to differences in system prompts and potential conflicts with their own built-in tools
+- **Not optimized for other clients**: Desktop Commander is primarily designed and tested with Claude Desktop
+- **Varying results**: The experience may differ significantly from the Claude Desktop experience
+
+**If you try other clients:**
+- Test carefully with non-critical projects first
+- Be aware that some features may not work as expected
+- Consider reporting your experience to help improve compatibility
+
+We welcome feedback from users who try Desktop Commander with other MCP clients to help us understand compatibility and improve the experience across different platforms.
+
 ## Security & Permissions
 
 ### Is it safe to give Claude access to my file system?
@@ -274,6 +296,33 @@ Recent updates have removed path limitations, and work is in progress to add con
 ### What commands are blocked by default?
 
 Claude Desktop Commander doesn't have a pre-defined blocklist, but you can use the `block_command` and `unblock_command` functions to manage which commands Claude can execute. It's recommended to block commands that could potentially be destructive, such as `rm -rf` or `format`.
+
+### Why is the fileWriteLineLimit set to 50 by default? What is the maximum value?
+
+The `fileWriteLineLimit` setting is set to 50 lines by default for these specific reasons:
+
+**Why 50 lines is the default:**
+- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to force AIs to do things in smaller changes as it saves time and tokens
+- **Claude UX message limits**: There are limits within one message and hitting "Continue" does not really work. What we're trying here is to make AI work in smaller chunks so when you hit that limit, multiple chunks have succeeded and that work is not lost - it just needs to restart from the last chunk
+
+**What is the maximum value:**
+- You can set it to thousands if you want - there's no technical restriction
+
+**Configuration examples:**
+```javascript
+// You can set it very high if needed
+set_config_value({ "key": "fileWriteLineLimit", "value": 2000 })
+
+// Or keep it small to force efficient behavior
+set_config_value({ "key": "fileWriteLineLimit", "value": 25 })
+```
+
+**Why the chunking approach works:**
+When you exceed the limit, the system automatically suggests breaking operations into chunks:
+1. First chunk: `write_file(path, firstChunk, {mode: 'rewrite'})`
+2. Additional chunks: `write_file(path, nextChunk, {mode: 'append'})`
+
+This way, if Claude hits message limits partway through, the completed chunks are preserved and you only need to restart from where it left off, rather than losing all the work.
 
 ## Usage Scenarios
 
