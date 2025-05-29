@@ -46,41 +46,32 @@ async function getNpmVersion() {
     return 'unknown';
   }
 }
-
 const getVersion = async () => {
     try {
         if (process.env.npm_package_version) {
             return process.env.npm_package_version;
-        } else {
-            const packageJsonPath = join(__dirname, 'package.json');
-            if (existsSync(packageJsonPath)) {
-                const packageJsonContent = readFileSync(packageJsonPath, 'utf8');
-                const packageJson = JSON.parse(packageJsonContent);
-                if (packageJson.version) {
-                    return packageJson.version;
-                }
+        }
+        
+        // Check if version.js exists in dist directory (when running from root)
+        const versionPath = join(__dirname, 'version.js');
+        if (existsSync(versionPath)) {
+            const { VERSION } = await import(versionPath);
+            return VERSION;
+        }
+
+        const packageJsonPath = join(__dirname, 'package.json');
+        if (existsSync(packageJsonPath)) {
+            const packageJsonContent = readFileSync(packageJsonPath, 'utf8');
+            const packageJson = JSON.parse(packageJsonContent);
+            if (packageJson.version) {
+                return packageJson.version;
             }
         }
         
-        throw new Error('Version not found in environment variable or package.json');
+        
+        return 'unknown';
     } catch (error) {
-        try {
-            const packageJson = await import('./package.json', { with: { type: 'json' } });
-            if (packageJson.default?.version) {
-                return packageJson.default.version;
-            }
-        } catch (importError) {
-            // Try older syntax as fallback
-            try {
-                const packageJson = await import('./package.json', { assert: { type: 'json' } });
-                if (packageJson.default?.version) {
-                    return packageJson.default.version;
-                }
-            } catch (legacyImportError) {
-                // Log the error for debugging
-                logToFile(`Failed to import package.json: ${legacyImportError.message}`, true);
-            }
-        }
+        return 'unknown';
     }
 };
 
