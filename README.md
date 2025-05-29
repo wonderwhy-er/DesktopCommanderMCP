@@ -84,7 +84,7 @@ Restart Claude if running.
 **🔄 Manual Update:** Run the setup command again  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
 
-### Option 2: Using bash script installer (macOS) ❌ **Manual Updates**
+### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates**
 For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
 ```
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
