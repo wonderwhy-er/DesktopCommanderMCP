@@ -66,7 +66,9 @@ Execute long-running terminal commands on your computer and manage processes thr
 ## Installation
 First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
 
-### Option 1: Install through npx
+> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1 and 3 have automatic updates**. Options 2, 4, and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+
+### Option 1: Install through npx ⭐ **Auto-Updates**
 Just run this in terminal:
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
@@ -78,14 +80,22 @@ npx @wonderwhy-er/desktop-commander@latest setup --debug
 ```
 Restart Claude if running.
 
-### Option 2: Using bash script installer (macOS)
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
+**🔄 Manual Update:** Run the setup command again  
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
+
+### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates**
 For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
 ```
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
 ```
 This script handles all dependencies and configuration automatically for a seamless setup experience.
 
-### Option 3: Installing via Smithery
+**✅ Auto-Updates:** Yes - requires manual updates  
+**🔄 Manual Update:** Re-run the bash installer command above  
+**🗑️ Uninstall:** Remove the MCP server entry from your Claude config file and delete the cloned repository if it exists
+
+### Option 3: Installing via Smithery ⭐ **Auto-Updates**
 
 To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
@@ -93,7 +103,11 @@ To install Desktop Commander for Claude Desktop automatically via [Smithery](htt
 npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 ```
 
-### Option 4: Add to claude_desktop_config manually
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
+**🔄 Manual Update:** Re-run the Smithery install command  
+**🗑️ Uninstall:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
+
+### Option 4: Add to claude_desktop_config manually ❌ **Manual Updates**
 Add this entry to your claude_desktop_config.json:
 
 - On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -115,7 +129,11 @@ Add this entry to your claude_desktop_config.json:
 ```
 Restart Claude if running.
 
-### Option 5: Checkout locally
+**❌ Auto-Updates:** No - uses npx but config might not update automatically  
+**🔄 Manual Update:** Usually automatic via npx, but if issues occur, update your config file or re-add the entry  
+**🗑️ Uninstall:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
+
+### Option 5: Checkout locally ❌ **Manual Updates**
 1. Clone and build:
 ```bash
 git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
@@ -130,11 +148,28 @@ The setup command will:
 - Configure Claude's desktop app
 - Add MCP servers to Claude's config if needed
 
-### Updating Desktop Commander
+**❌ Auto-Updates:** No - requires manual git updates  
+**🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
+**🗑️ Uninstall:** Remove the cloned directory and remove MCP server entry from Claude config
 
-When installed through npx (Option 1) or Smithery (Option 3), Desktop Commander will automatically update to the latest version whenever you restart Claude. No manual update process is needed.
+## Updating & Uninstalling Desktop Commander
 
-For manual installations, you can update by running the setup command again.
+### Automatic Updates (Options 1 & 3 only)
+**Options 1 (npx) and 3 (Smithery)** automatically update to the latest version whenever you restart Claude. No manual intervention needed.
+
+### Manual Updates (Options 2, 4 & 5)
+- **Option 2 (bash installer):** Re-run the curl command
+- **Option 4 (manual config):** Usually automatic via npx, but re-add config entry if issues occur
+- **Option 5 (local checkout):** `cd DesktopCommanderMCP && git pull && npm run setup`
+
+### Uninstalling Desktop Commander
+- **Option 1:** `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
+- **Option 2:** Remove MCP server entry from Claude config and delete any cloned repositories
+- **Option 3:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
+- **Option 4:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
+- **Option 5:** Delete the cloned directory and remove MCP server entry from Claude config
+
+After uninstalling, restart Claude Desktop to complete the removal.
 
 ## Usage
 
@@ -297,6 +332,30 @@ set_config_value({ "key": "allowedDirectories", "value": ["/Users/username/proje
 ```
 
 The configuration is saved to `config.json` in the server's working directory and persists between server restarts.
+
+#### Understanding fileWriteLineLimit
+
+The `fileWriteLineLimit` setting controls how many lines can be written in a single `write_file` operation (default: 50 lines). This limit exists for several important reasons:
+
+**Why the limit exists:**
+- **AIs are wasteful with tokens**: Instead of doing two small edits in a file, AIs may decide to rewrite the whole thing. We're trying to force AIs to do things in smaller changes as it saves time and tokens
+- **Claude UX message limits**: There are limits within one message and hitting "Continue" does not really work. What we're trying here is to make AI work in smaller chunks so when you hit that limit, multiple chunks have succeeded and that work is not lost - it just needs to restart from the last chunk
+
+**Setting the limit:**
+```javascript
+// You can set it to thousands if you want
+set_config_value({ "key": "fileWriteLineLimit", "value": 1000 })
+
+// Or keep it smaller to force more efficient behavior
+set_config_value({ "key": "fileWriteLineLimit", "value": 25 })
+```
+
+**Maximum value**: You can set it to thousands if you want - there's no technical restriction.
+
+**Best practices**:
+- Keep the default (50) to encourage efficient AI behavior and avoid token waste
+- The system automatically suggests chunking when limits are exceeded
+- Smaller chunks mean less work lost when Claude hits message limits
 
 ### Best Practices
 
