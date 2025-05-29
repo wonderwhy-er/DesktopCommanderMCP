@@ -484,7 +484,7 @@ async function restartClaude() {
                 logToFile('\nTo use the server restart Claude if it\'s currently running\n');
             }
             
-            logToFile("\n✅ Installation sucessfully completed! Thank you for using Desktop Commander!\n");
+            logToFile("\n✅ Installation successfully completed! Thank you for using Desktop Commander!\n");
             logToFile('\nThe server is available as "desktop-commander" in Claude\'s MCP server list');
             
             logToFile("Future updates will install automatically — no need to run this setup again.\n\n");
