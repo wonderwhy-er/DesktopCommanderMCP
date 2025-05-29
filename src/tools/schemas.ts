@@ -95,3 +95,11 @@ export const EditBlockArgsSchema = z.object({
   new_string: z.string(),
   expected_replacements: z.number().optional().default(1),
 });
+
+// Send input to process schema
+export const SendInputArgsSchema = z.object({
+  pid: z.number(),
+  input: z.string(),
+  timeout_ms: z.number().optional(),
+  wait_for_prompt: z.boolean().optional(),
+});
