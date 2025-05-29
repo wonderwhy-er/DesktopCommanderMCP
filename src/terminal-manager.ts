@@ -22,7 +22,7 @@ export class TerminalManager {
     if (!shellToUse) {
       try {
         const config = await configManager.getConfig();
-        shellToUse = config.shell || true;
+        shellToUse = config.defaultShell || true;
       } catch (error) {
         // If there's an error getting the config, fall back to default
         shellToUse = true;
