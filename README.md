@@ -91,7 +91,7 @@ curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/re
 ```
 This script handles all dependencies and configuration automatically for a seamless setup experience.
 
-**❌ Auto-Updates:** No - requires manual updates  
+**✅ Auto-Updates:** Yes - requires manual updates  
 **🔄 Manual Update:** Re-run the bash installer command above  
 **🗑️ Uninstall:** Remove the MCP server entry from your Claude config file and delete the cloned repository if it exists
 
