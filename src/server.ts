@@ -425,14 +425,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ✅ Process finished execution
                         ⏱️ Timeout reached (may still be running)
                         
-                        REPL USAGE:
-                        - Always call after send_input() to get REPL responses
-                        - May timeout if no output available - this is normal
-                        - For interactive sessions, use shorter timeouts (2-5 seconds)
-                        - REPLs may not show prompts immediately - that's expected
                         
-                        If read_output times out but session is active, the command likely executed successfully.
-                        Use list_sessions to check if sessions are blocked or responsive.
+                        DETECTION STATES:
+                        🔄 Process waiting for input (ready for interact_with_process)
+                        ✅ Process finished execution
+                        ⏱️ Timeout reached (may still be running)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
@@ -487,22 +484,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                 },
                 {
-                    name: "send_input",
-                    description: `Send input to a running terminal session. Essential for interactive REPL environments.
-                    
-                    INTERACTIVE WORKFLOW:
-                    1. Start bash: execute_command("bash")
-                    2. Launch REPL: send_input(pid, "python3") or send_input(pid, "node")
-                    3. Send code: send_input(pid, "print('Hello')")
-                    4. Read results: read_output(pid)
-                    
-                    REPL COMMANDS:
-                    - Python: Use "python3" to start, "exit()" to quit
-                    - Node.js: Use "node" to start, ".exit" or Ctrl+C to quit
-                    - SSH: Use "ssh user@host" for remote connections
-                    - Navigate directories before launching REPLs as needed
-                    
-                    Always follow send_input() with read_output() to get the response.`,
+                    name: "interact_with_process", 
+                    description: `
+                        Send input to a running process and automatically receive the response.
+                        
+                        🚨 CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
+                        For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
+                        The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
+                        
+                        📁 FILE ANALYSIS PRIORITY ORDER (MANDATORY):
+                        1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
+                        2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
+                        3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
+                        
+                        REQUIRED INTERACTIVE WORKFLOW FOR FILE ANALYSIS:
+                        1. Start REPL: start_process("python3 -i")
+                        2. Load libraries: interact_with_process(pid, "import pandas as pd, numpy as np")
+                        3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
+                        4. Analyze: interact_with_process(pid, "print(df.describe())")
+                        5. Continue: interact_with_process(pid, "df.groupby('column').size()")
+                        
+                        SMART DETECTION:
+                        - Automatically waits for REPL prompt (>>>, >, etc.)
+                        - Detects errors and completion states
+                        - Early exit prevents timeout delays
+                        - Clean output formatting (removes prompts)
+                        
+                        SUPPORTED REPLs:
+                        - Python: python3 -i (RECOMMENDED for data analysis)
+                        - Node.js: node -i  
+                        - R: R
+                        - Julia: julia
+                        - Shell: bash, zsh
+                        - Database: mysql, postgres
+                        
+                        PARAMETERS:
+                        - pid: Process ID from start_process
+                        - input: Code/command to execute
+                        - timeout_ms: Max wait (default: 8000ms)
+                        - wait_for_prompt: Auto-wait for response (default: true)
+                        
+                        Returns execution result with status indicators.
+                        
+                        ✅ ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
+                        ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SendInputArgsSchema),
                 },
                 {
@@ -632,9 +659,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 
             case "interact_with_process":
                 return await handlers.handleInteractWithProcess(args);
+
+            // Backward compatibility
+            case "execute_command":
+                return await handlers.handleStartProcess(args);
+
+            case "read_output":
+                return await handlers.handleReadProcessOutput(args);
                 
             case "send_input":
-                return await handlers.handleSendInput(args);
+                return await handlers.handleInteractWithProcess(args);
 
             case "force_terminate":
                 return await handlers.handleForceTerminate(args);

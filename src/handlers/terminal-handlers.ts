@@ -5,15 +5,13 @@ import {
     forceTerminate, 
     listSessions 
 } from '../tools/improved-process-tools.js';
-import { sendInput } from '../tools/send-input.js';
 
 import { 
     StartProcessArgsSchema,
     ReadProcessOutputArgsSchema,
     InteractWithProcessArgsSchema,
     ForceTerminateArgsSchema,
-    ListSessionsArgsSchema,
-    SendInputArgsSchema
+    ListSessionsArgsSchema
 } from '../tools/schemas.js';
 
 import { ServerResult } from '../types.js';
@@ -56,9 +54,15 @@ export async function handleListSessions(): Promise<ServerResult> {
     return listSessions();
 }
 
-/**
- * Handle send_input command
- */
+// Backward compatibility handlers
+export async function handleExecuteCommand(args: unknown): Promise<ServerResult> {
+    return handleStartProcess(args);
+}
+
+export async function handleReadOutput(args: unknown): Promise<ServerResult> {
+    return handleReadProcessOutput(args);
+}
+
 export async function handleSendInput(args: unknown): Promise<ServerResult> {
-    return sendInput(args);
+    return handleInteractWithProcess(args);
 }
