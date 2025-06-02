@@ -425,6 +425,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ✅ Process finished execution
                         ⏱️ Timeout reached (may still be running)
                         
+                        REPL USAGE:
+                        - Always call after send_input() to get REPL responses
+                        - May timeout if no output available - this is normal
+                        - For interactive sessions, use shorter timeouts (2-5 seconds)
+                        - REPLs may not show prompts immediately - that's expected
+                        
+                        If read_output times out but session is active, the command likely executed successfully.
+                        Use list_sessions to check if sessions are blocked or responsive.
+                        
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
                 },
@@ -479,7 +488,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
                 {
                     name: "send_input",
-                    description: "Send input to a running terminal session. Ideal for interactive REPL environments like Python, Node.js, or any other shell that expects user input.",
+                    description: `Send input to a running terminal session. Essential for interactive REPL environments.
+                    
+                    INTERACTIVE WORKFLOW:
+                    1. Start bash: execute_command("bash")
+                    2. Launch REPL: send_input(pid, "python3") or send_input(pid, "node")
+                    3. Send code: send_input(pid, "print('Hello')")
+                    4. Read results: read_output(pid)
+                    
+                    REPL COMMANDS:
+                    - Python: Use "python3" to start, "exit()" to quit
+                    - Node.js: Use "node" to start, ".exit" or Ctrl+C to quit
+                    - SSH: Use "ssh user@host" for remote connections
+                    - Navigate directories before launching REPLs as needed
+                    
+                    Always follow send_input() with read_output() to get the response.`,
                     inputSchema: zodToJsonSchema(SendInputArgsSchema),
                 },
                 {
