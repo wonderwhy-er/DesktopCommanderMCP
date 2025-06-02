@@ -14,16 +14,20 @@ export const SetConfigValueArgsSchema = z.object({
 export const ListProcessesArgsSchema = z.object({});
 
 // Terminal tools schemas
-export const ExecuteCommandArgsSchema = z.object({
+export const StartProcessArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number(),
   shell: z.string().optional(),
 });
 
-export const ReadOutputArgsSchema = z.object({
+export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
   timeout_ms: z.number().optional(),
 });
+
+// Backward compatibility
+export const ExecuteCommandArgsSchema = StartProcessArgsSchema;
+export const ReadOutputArgsSchema = ReadProcessOutputArgsSchema;
 
 export const ForceTerminateArgsSchema = z.object({
   pid: z.number(),
@@ -97,9 +101,12 @@ export const EditBlockArgsSchema = z.object({
 });
 
 // Send input to process schema
-export const SendInputArgsSchema = z.object({
+export const InteractWithProcessArgsSchema = z.object({
   pid: z.number(),
   input: z.string(),
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
+
+// Backward compatibility
+export const SendInputArgsSchema = InteractWithProcessArgsSchema;

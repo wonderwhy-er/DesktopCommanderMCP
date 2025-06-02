@@ -79,6 +79,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         console.error("Generating tools list...");
         return {
             tools: [
+                // 🚨🚨🚨 IMPORTANT: LOCAL FILE ANALYSIS TOOL SELECTION 🚨🚨🚨
+                // 
+                // FOR ANY LOCAL FILE WORK (CSV, JSON, logs, data analysis):
+                // ✅ ALWAYS USE: start_process + interact_with_process (with Python, R, etc.)
+                // ❌ NEVER USE: Analysis/REPL tool (CANNOT access local files and WILL FAIL)
+                //
+                // The analysis tool is browser-only and cannot read files from the user's computer.
+                // Always use processes for local file analysis!
+                
                 // Configuration tools
                 {
                     name: "get_config",
@@ -319,65 +328,129 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 
                 // Terminal tools
                 {
-                    name: "execute_command",
+                    name: "start_process",
                     description: `
-                        Execute a terminal command with timeout.
+                        Start a new terminal process with intelligent state detection.
                         
-                        Command will continue running in background if it doesn't complete within timeout.
+                        🚨 PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
+                        This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
+                        The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
                         
-                        INTERACTIVE SHELLS & REPLs:
-                        Direct execution with interactive flags works reliably:
-                        1. execute_command("node -i") - Start Node.js REPL directly
-                        2. execute_command("python3 -i") - Start Python REPL directly
-                        3. execute_command("bash") - Start interactive bash shell
-                        4. Use send_input() to send commands/code to any interactive session
-                        5. Use read_output() to get responses
+                        ⚠️ CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
                         
-                        BEST PRACTICE: Use execute_command() with appropriate interactive flags.
-                        This is more direct and reliable than wrapper approaches.
+                        REQUIRED WORKFLOW FOR LOCAL FILES:
+                        1. start_process("python3 -i") - Start Python REPL for data analysis
+                        2. interact_with_process(pid, "import pandas as pd, numpy as np")
+                        3. interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
+                        4. interact_with_process(pid, "print(df.describe())")
+                        5. Continue analysis with pandas, matplotlib, seaborn, etc.
                         
-                        NOTE: For file operations, prefer specialized tools like read_file, search_code, 
-                        list_directory instead of cat, grep, or ls commands.
+                        COMMON FILE ANALYSIS PATTERNS:
+                        • start_process("python3 -i") → Python REPL for data analysis (RECOMMENDED)
+                        • start_process("node -i") → Node.js for JSON processing  
+                        • start_process("cut -d',' -f1 file.csv | sort | uniq -c") → Quick CSV analysis
+                        • start_process("wc -l /path/file.csv") → Line counting
+                        • start_process("head -10 /path/file.csv") → File preview
+                        
+                        INTERACTIVE PROCESSES FOR DATA ANALYSIS:
+                        1. start_process("python3 -i") - Start Python REPL for data work
+                        2. start_process("node -i") - Start Node.js REPL for JSON/JS
+                        3. start_process("bash") - Start interactive bash shell
+                        4. Use interact_with_process() to send commands
+                        5. Use read_process_output() to get responses
+                        
+                        SMART DETECTION:
+                        - Detects REPL prompts (>>>, >, $, etc.)
+                        - Identifies when process is waiting for input
+                        - Recognizes process completion vs timeout
+                        - Early exit prevents unnecessary waiting
+                        
+                        STATES DETECTED:
+                        🔄 Process waiting for input (shows prompt)
+                        ✅ Process finished execution  
+                        ⏳ Process running (use read_process_output)
+                        
+                        ✅ ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
+                        ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
                 },
                 {
-                    name: "read_output",
+                    name: "read_process_output",
                     description: `
-                        Read new output from a running terminal session.
-                        Set timeout_ms for long running commands.
+                        Read output from a running process with intelligent completion detection.
+                        
+                        Automatically detects when process is ready for more input instead of timing out.
+                        
+                        SMART FEATURES:
+                        - Early exit when REPL shows prompt (>>>, >, etc.)
+                        - Detects process completion vs still running
+                        - Prevents hanging on interactive prompts
+                        - Clear status messages about process state
                         
                         REPL USAGE:
-                        - Always call after send_input() to get REPL responses
-                        - May timeout if no output available - this is normal
-                        - For interactive sessions, use shorter timeouts (2-5 seconds)
-                        - REPLs may not show prompts immediately - that's expected
+                        - Stops immediately when REPL prompt detected
+                        - Shows clear status: waiting for input vs finished
+                        - Shorter timeouts needed due to smart detection
+                        - Works with Python, Node.js, R, Julia, etc.
                         
-                        If read_output times out but session is active, the command likely executed successfully.
-                        Use list_sessions to check if sessions are blocked or responsive.
+                        DETECTION STATES:
+                        🔄 Process waiting for input (ready for interact_with_process)
+                        ✅ Process finished execution
+                        ⏱️ Timeout reached (may still be running)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
                 },
                 {
-                    name: "send_input",
-                    description: `Send input to a running terminal session. Essential for interactive REPL environments.
-                    
-                    INTERACTIVE WORKFLOW:
-                    1. Start bash: execute_command("bash")
-                    2. Launch REPL: send_input(pid, "python3") or send_input(pid, "node")
-                    3. Send code: send_input(pid, "print('Hello')")
-                    4. Read results: read_output(pid)
-                    
-                    REPL COMMANDS:
-                    - Python: Use "python3" to start, "exit()" to quit
-                    - Node.js: Use "node" to start, ".exit" or Ctrl+C to quit
-                    - SSH: Use "ssh user@host" for remote connections
-                    - Navigate directories before launching REPLs as needed
-                    
-                    Always follow send_input() with read_output() to get the response.`,
+                    name: "interact_with_process", 
+                    description: `
+                        Send input to a running process and automatically receive the response.
+                        
+                        🚨 CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
+                        For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
+                        The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
+                        
+                        📁 FILE ANALYSIS PRIORITY ORDER (MANDATORY):
+                        1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
+                        2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
+                        3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
+                        
+                        REQUIRED INTERACTIVE WORKFLOW FOR FILE ANALYSIS:
+                        1. Start REPL: start_process("python3 -i")
+                        2. Load libraries: interact_with_process(pid, "import pandas as pd, numpy as np")
+                        3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
+                        4. Analyze: interact_with_process(pid, "print(df.describe())")
+                        5. Continue: interact_with_process(pid, "df.groupby('column').size()")
+                        
+                        SMART DETECTION:
+                        - Automatically waits for REPL prompt (>>>, >, etc.)
+                        - Detects errors and completion states
+                        - Early exit prevents timeout delays
+                        - Clean output formatting (removes prompts)
+                        
+                        SUPPORTED REPLs:
+                        - Python: python3 -i (RECOMMENDED for data analysis)
+                        - Node.js: node -i  
+                        - R: R
+                        - Julia: julia
+                        - Shell: bash, zsh
+                        - Database: mysql, postgres
+                        
+                        PARAMETERS:
+                        - pid: Process ID from start_process
+                        - input: Code/command to execute
+                        - timeout_ms: Max wait (default: 8000ms)
+                        - wait_for_prompt: Auto-wait for response (default: true)
+                        
+                        Returns execution result with status indicators.
+                        
+                        ✅ ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
+                        ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SendInputArgsSchema),
                 },
                 {
@@ -427,20 +500,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
                 
-                // INTERACTIVE SHELLS & REPLs BEST PRACTICES:
-                // 1. Start with bash: execute_command("bash") 
-                // 2. Launch REPL within bash: send_input(pid, "python3")
-                // 3. Send code: send_input(pid, "print('Hello')")
-                // 4. Read output: read_output(pid) 
-                // 
-                // This approach is more reliable than direct REPL execution.
-                // Direct execute_command("python3") may become unresponsive.
+                // 🚨🚨🚨 CRITICAL TOOL SELECTION GUIDANCE 🚨🚨🚨
                 //
-                // REPL Examples:
-                // - Python: "python3" to start, "exit()" to quit
-                // - Node.js: "node" to start, ".exit" to quit  
-                // - SSH: "ssh user@host" for remote connections
-                // - Always use absolute paths before launching REPLs
+                // FOR LOCAL FILE ANALYSIS (CSV, JSON, logs, data files):
+                // ✅ ALWAYS USE: start_process + interact_with_process 
+                // ✅ ALTERNATIVE: Command-line tools (read_file, search_code, cut, awk, grep)
+                // ❌ NEVER EVER USE: Analysis tool (CANNOT access local files and WILL FAIL)
+                //
+                // 🔴 ANALYSIS/REPL TOOL LIMITATIONS:
+                // - CANNOT read files from user's computer/file system
+                // - ONLY works with uploaded files or web data
+                // - Browser-based JavaScript runtime only
+                // - NO access to pandas, numpy, or local Python libraries
+                //
+                // 🟢 PROCESS TOOLS ADVANTAGES:
+                // - CAN access ALL local files
+                // - Full system power (Python, R, databases, etc.)
+                // - Handle files of ANY size
+                // - Access to all installed libraries and tools
+                //
+                // MANDATORY WORKFLOW FOR LOCAL FILES:
+                // 1. start_process("python3 -i") 
+                // 2. interact_with_process(pid, "import pandas as pd")
+                // 3. interact_with_process(pid, "df = pd.read_csv('/path/to/file.csv')")
+                // 4. interact_with_process(pid, "print(df.head())")
+                //
+                // REMEMBER: "For local file analysis, ALWAYS use processes, NEVER use analysis tool"
             ],
         };
     } catch (error) {
@@ -487,14 +572,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 }
 
             // Terminal tools
+            case "start_process":
+                return await handlers.handleStartProcess(args);
+
+            case "read_process_output":
+                return await handlers.handleReadProcessOutput(args);
+                
+            case "interact_with_process":
+                return await handlers.handleInteractWithProcess(args);
+
+            // Backward compatibility
             case "execute_command":
-                return await handlers.handleExecuteCommand(args);
+                return await handlers.handleStartProcess(args);
 
             case "read_output":
-                return await handlers.handleReadOutput(args);
+                return await handlers.handleReadProcessOutput(args);
                 
             case "send_input":
-                return await handlers.handleSendInput(args);
+                return await handlers.handleInteractWithProcess(args);
 
             case "force_terminate":
                 return await handlers.handleForceTerminate(args);
