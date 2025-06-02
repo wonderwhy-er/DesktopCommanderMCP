@@ -46,41 +46,32 @@ async function getNpmVersion() {
     return 'unknown';
   }
 }
-
 const getVersion = async () => {
     try {
         if (process.env.npm_package_version) {
             return process.env.npm_package_version;
-        } else {
-            const packageJsonPath = join(__dirname, 'package.json');
-            if (existsSync(packageJsonPath)) {
-                const packageJsonContent = readFileSync(packageJsonPath, 'utf8');
-                const packageJson = JSON.parse(packageJsonContent);
-                if (packageJson.version) {
-                    return packageJson.version;
-                }
+        }
+        
+        // Check if version.js exists in dist directory (when running from root)
+        const versionPath = join(__dirname, 'version.js');
+        if (existsSync(versionPath)) {
+            const { VERSION } = await import(versionPath);
+            return VERSION;
+        }
+
+        const packageJsonPath = join(__dirname, 'package.json');
+        if (existsSync(packageJsonPath)) {
+            const packageJsonContent = readFileSync(packageJsonPath, 'utf8');
+            const packageJson = JSON.parse(packageJsonContent);
+            if (packageJson.version) {
+                return packageJson.version;
             }
         }
         
-        throw new Error('Version not found in environment variable or package.json');
+        
+        return 'unknown';
     } catch (error) {
-        try {
-            const packageJson = await import('./package.json', { with: { type: 'json' } });
-            if (packageJson.default?.version) {
-                return packageJson.default.version;
-            }
-        } catch (importError) {
-            // Try older syntax as fallback
-            try {
-                const packageJson = await import('./package.json', { assert: { type: 'json' } });
-                if (packageJson.default?.version) {
-                    return packageJson.default.version;
-                }
-            } catch (legacyImportError) {
-                // Log the error for debugging
-                logToFile(`Failed to import package.json: ${legacyImportError.message}`, true);
-            }
-        }
+        return 'unknown';
     }
 };
 
@@ -320,14 +311,14 @@ function logToFile(message, isError = false) {
             timestamp,
             message
         };
-        process.stdout.write(JSON.stringify(jsonOutput) + '\n');
+        process.stdout.write(`${message}\n`);
     } catch (err) {
         // Last resort error handling
-        process.stderr.write(JSON.stringify({
+        process.stderr.write(`${JSON.stringify({
             type: 'error',
             timestamp: new Date().toISOString(),
             message: `Failed to write to log file: ${err.message}`
-        }) + '\n');
+        })}\n`);
     }
 }
 
@@ -482,15 +473,22 @@ async function restartClaude() {
             } else if (platform === "darwin") {
                 await execAsync(`open -a "Claude"`);
                 updateSetupStep(startStep, 'completed');
-                logToFile(`Claude has been restarted.`);
+                logToFile("\n✅ Claude has been restarted automatically!");
                 await trackEvent('npx_setup_start_claude_success', { platform });
             } else if (platform === "linux") {
                 await execAsync(`claude`);
-                logToFile(`Claude has been restarted.`);
+                logToFile("\n✅ Claude has been restarted automatically!");
                 updateSetupStep(startStep, 'completed');
                 await trackEvent('npx_setup_start_claude_success', { platform });
+            } else {
+                logToFile('\nTo use the server restart Claude if it\'s currently running\n');
             }
-
+            
+            logToFile("\n✅ Installation successfully completed! Thank you for using Desktop Commander!\n");
+            logToFile('\nThe server is available as "desktop-commander" in Claude\'s MCP server list');
+            
+            logToFile("Future updates will install automatically — no need to run this setup again.\n\n");
+            logToFile("💬 Need help or found an issue? Join our community: https://discord.com/invite/kQ27sNnZr7\n\n")
             updateSetupStep(restartStep, 'completed');
             await trackEvent('npx_setup_restart_claude_success', { platform });
         } catch (startError) {
@@ -517,6 +515,16 @@ export default async function setup() {
 
     const setupStep = addSetupStep('main_setup');
     const debugMode = isDebugMode();
+
+    // Print ASCII art for DESKTOP COMMANDER
+    console.log('\n');
+    console.log('██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗ ');
+    console.log('██╔══██╗██╔════╝██╔════╝██║ ██╔╝╚══██╔══╝██╔═══██╗██╔══██╗   ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝██╔══██╗');
+    console.log('██║  ██║█████╗  ███████╗█████╔╝    ██║   ██║   ██║██████╔╝   ██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║█████╗  ██████╔╝');
+    console.log('██║  ██║██╔══╝  ╚════██║██╔═██╗    ██║   ██║   ██║██╔═══╝    ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗');
+    console.log('██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║        ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║');
+    console.log('╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝         ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝');
+    console.log('\n');
 
     if (debugMode) {
         logToFile('Debug mode enabled. Will configure with Node.js inspector options.');
@@ -705,13 +713,11 @@ export default async function setup() {
             throw new Error(`Failed to update config: ${updateError.message}`);
         }
         const appVersion = await getVersion()
-        logToFile(`Successfully added Desktop Commander MCP v${appVersion} server to Claude configuration!`);
+        logToFile(`✅ Desktop Commander MCP v${appVersion} successfully added to Claude’s configuration.`);
         logToFile(`Configuration location: ${claudeConfigPath}`);
 
         if (debugMode) {
             logToFile('\nTo use the debug server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander-debug" in Claude\'s MCP server list\n3. Connect your debugger to port 9229');
-        } else {
-            logToFile('\nTo use the server:\n1. Restart Claude if it\'s currently running\n2. The server will be available as "desktop-commander" in Claude\'s MCP server list');
         }
 
         // Try to restart Claude
@@ -725,6 +731,8 @@ export default async function setup() {
             total_steps: setupSteps.length,
             total_time_ms: Date.now() - setupStartTime
         });
+
+
 
         return true;
     } catch (error) {

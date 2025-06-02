@@ -48,7 +48,7 @@ export class TerminalManager {
     if (!shellToUse) {
       try {
         const config = await configManager.getConfig();
-        shellToUse = config.shell || true;
+        shellToUse = config.defaultShell || true;
       } catch (error) {
         // If there's an error getting the config, fall back to default
         shellToUse = true;
@@ -153,6 +153,15 @@ export class TerminalManager {
     }
 
     return null;
+  }
+
+    /**
+   * Get a session by PID
+   * @param pid Process ID
+   * @returns The session or undefined if not found
+   */
+  getSession(pid: number): TerminalSession | undefined {
+    return this.sessions.get(pid);
   }
 
   forceTerminate(pid: number): boolean {
