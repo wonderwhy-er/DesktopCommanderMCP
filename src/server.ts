@@ -325,6 +325,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         Command will continue running in background if it doesn't complete within timeout.
                         
+                        INTERACTIVE SHELLS & REPLs:
+                        Direct execution with interactive flags works reliably:
+                        1. execute_command("node -i") - Start Node.js REPL directly
+                        2. execute_command("python3 -i") - Start Python REPL directly
+                        3. execute_command("bash") - Start interactive bash shell
+                        4. Use send_input() to send commands/code to any interactive session
+                        5. Use read_output() to get responses
+                        
+                        BEST PRACTICE: Use execute_command() with appropriate interactive flags.
+                        This is more direct and reliable than wrapper approaches.
+                        
                         NOTE: For file operations, prefer specialized tools like read_file, search_code, 
                         list_directory instead of cat, grep, or ls commands.
                         
@@ -338,12 +349,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Read new output from a running terminal session.
                         Set timeout_ms for long running commands.
                         
+                        REPL USAGE:
+                        - Always call after send_input() to get REPL responses
+                        - May timeout if no output available - this is normal
+                        - For interactive sessions, use shorter timeouts (2-5 seconds)
+                        - REPLs may not show prompts immediately - that's expected
+                        
+                        If read_output times out but session is active, the command likely executed successfully.
+                        Use list_sessions to check if sessions are blocked or responsive.
+                        
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
                 },
                 {
                     name: "send_input",
-                    description: "Send input to a running terminal session. Ideal for interactive REPL environments like Python, Node.js, or any other shell that expects user input.",
+                    description: `Send input to a running terminal session. Essential for interactive REPL environments.
+                    
+                    INTERACTIVE WORKFLOW:
+                    1. Start bash: execute_command("bash")
+                    2. Launch REPL: send_input(pid, "python3") or send_input(pid, "node")
+                    3. Send code: send_input(pid, "print('Hello')")
+                    4. Read results: read_output(pid)
+                    
+                    REPL COMMANDS:
+                    - Python: Use "python3" to start, "exit()" to quit
+                    - Node.js: Use "node" to start, ".exit" or Ctrl+C to quit
+                    - SSH: Use "ssh user@host" for remote connections
+                    - Navigate directories before launching REPLs as needed
+                    
+                    Always follow send_input() with read_output() to get the response.`,
                     inputSchema: zodToJsonSchema(SendInputArgsSchema),
                 },
                 {
@@ -358,6 +392,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "list_sessions",
                     description: `
                         List all active terminal sessions.
+                        
+                        Shows session status including:
+                        - PID: Process identifier  
+                        - Blocked: Whether session is waiting for input
+                        - Runtime: How long the session has been running
+                        
+                        DEBUGGING REPLs:
+                        - "Blocked: true" often means REPL is waiting for input
+                        - Use this to verify sessions are running before sending input
+                        - Long runtime with blocked status may indicate stuck process
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
@@ -383,12 +427,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
                 
-                // Note: For interactive programming environments (REPLs) like Python or Node.js,
-                // use execute_command to start the session, send_input to send code,
-                // and read_output to get the results. For example:
-                // execute_command("python") to start Python
-                // send_input(pid, "print('Hello world')") to run code
-                // read_output(pid) to see the results
+                // INTERACTIVE SHELLS & REPLs BEST PRACTICES:
+                // 1. Start with bash: execute_command("bash") 
+                // 2. Launch REPL within bash: send_input(pid, "python3")
+                // 3. Send code: send_input(pid, "print('Hello')")
+                // 4. Read output: read_output(pid) 
+                // 
+                // This approach is more reliable than direct REPL execution.
+                // Direct execute_command("python3") may become unresponsive.
+                //
+                // REPL Examples:
+                // - Python: "python3" to start, "exit()" to quit
+                // - Node.js: "node" to start, ".exit" to quit  
+                // - SSH: "ssh user@host" for remote connections
+                // - Always use absolute paths before launching REPLs
             ],
         };
     } catch (error) {
