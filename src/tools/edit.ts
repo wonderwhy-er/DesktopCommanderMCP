@@ -1,4 +1,4 @@
-import { readFile, writeFile } from './filesystem.js';
+import { readFile, writeFile, readFileInternal } from './filesystem.js';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
@@ -119,8 +119,8 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     }
     
 
-    // Read file as plain string
-    const {content} = await readFile(filePath, false, 0, Number.MAX_SAFE_INTEGER);
+    // Read file as plain string without status messages
+    const content = await readFileInternal(filePath, 0, Number.MAX_SAFE_INTEGER);
     
     // Make sure content is a string
     if (typeof content !== 'string') {

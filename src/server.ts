@@ -136,7 +136,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         Supports partial file reading with:
                         - 'offset' (start line, default: 0)
+                          * Positive: Start from line N (0-based indexing)
+                          * Negative: Read last N lines from end (tail behavior)
                         - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000)
+                          * Used with positive offsets for range reading
+                          * Ignored when offset is negative (reads all requested tail lines)
+                        
+                        Examples:
+                        - offset: 0, length: 10     → First 10 lines
+                        - offset: 100, length: 5    → Lines 100-104
+                        - offset: -20               → Last 20 lines  
+                        - offset: -5, length: 10    → Last 5 lines (length ignored)
+                        
+                        Performance optimizations:
+                        - Large files with negative offsets use reverse reading for efficiency
+                        - Large files with deep positive offsets use byte estimation
+                        - Small files use fast readline streaming
                         
                         When reading from the file system, only works within allowed directories.
                         Can fetch content from URLs when isUrl parameter is set to true
