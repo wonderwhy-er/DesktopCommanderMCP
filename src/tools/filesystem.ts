@@ -590,10 +590,12 @@ export async function readFile(filePath: string, isUrl?: boolean, offset?: numbe
 
 /**
  * Read file content without status messages for internal operations
+ * This function preserves exact file content including original line endings,
+ * which is essential for edit operations that need to maintain file formatting.
  * @param filePath Path to the file
  * @param offset Starting line number to read from (default: 0)
  * @param length Maximum number of lines to read (default: from config or 1000)
- * @returns File content without status headers
+ * @returns File content without status headers, with preserved line endings
  */
 export async function readFileInternal(filePath: string, offset: number = 0, length?: number): Promise<string> {
     // Get default length from config if not provided
@@ -614,9 +616,68 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
         throw new Error('Cannot read image files as text for internal operations');
     }
     
-    // Use smart positioning without status messages
-    const result = await readFileWithSmartPositioning(validPath, offset, length, mimeType, false);
-    return result.content;
+    // IMPORTANT: For internal operations (especially edit operations), we must
+    // preserve exact file content including original line endings. 
+    // We cannot use readline-based reading as it strips line endings.
+    
+    // Read entire file content preserving line endings
+    const content = await fs.readFile(validPath, 'utf8');
+    
+    // If we need to apply offset/length, do it while preserving line endings
+    if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {
+        // Most common case for edit operations: read entire file
+        return content;
+    }
+    
+    // Handle offset/length by splitting on line boundaries while preserving line endings
+    const lines = splitLinesPreservingEndings(content);
+    
+    // Apply offset and length
+    const selectedLines = lines.slice(offset, offset + length);
+    
+    // Join back together (this preserves the original line endings)
+    return selectedLines.join('');
+}
+
+/**
+ * Split text into lines while preserving original line endings with each line
+ * @param content The text content to split
+ * @returns Array of lines, each including its original line ending
+ */
+function splitLinesPreservingEndings(content: string): string[] {
+    if (!content) return [''];
+    
+    const lines: string[] = [];
+    let currentLine = '';
+    
+    for (let i = 0; i < content.length; i++) {
+        const char = content[i];
+        currentLine += char;
+        
+        // Check for line ending patterns
+        if (char === '\n') {
+            // LF or end of CRLF
+            lines.push(currentLine);
+            currentLine = '';
+        } else if (char === '\r') {
+            // Could be CR or start of CRLF
+            if (i + 1 < content.length && content[i + 1] === '\n') {
+                // It's CRLF, include the \n as well
+                currentLine += content[i + 1];
+                i++; // Skip the \n in next iteration
+            }
+            // Either way, we have a complete line
+            lines.push(currentLine);
+            currentLine = '';
+        }
+    }
+    
+    // Handle any remaining content (file not ending with line ending)
+    if (currentLine) {
+        lines.push(currentLine);
+    }
+    
+    return lines;
 }
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
