@@ -168,30 +168,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "write_file",
                     description: `
-                        Write or append to file contents with a configurable line limit per call (default: 50 lines).
-                        THIS IS A STRICT REQUIREMENT. ANY file with more than the configured limit MUST BE written in chunks or IT WILL FAIL.
+                        Write or append to file contents. 
 
-                        ⚠️ IMPORTANT: PREVENTATIVE CHUNKING REQUIRED in these scenarios:
-                        1. When content exceeds 2,000 words or 30 lines
-                        2. When writing MULTIPLE files one after another (each next file is more likely to be truncated)
-                        3. When the file is the LAST ONE in a series of operations in the same message
+                        🎯 CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
+                        This is the normal, recommended way to write files - not an emergency measure.
+
+                        STANDARD PROCESS FOR ANY FILE:
+                        1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})  [≤30 lines]
+                        2. THEN → write_file(filePath, secondChunk, {mode: 'append'})   [≤30 lines]
+                        3. CONTINUE → write_file(filePath, nextChunk, {mode: 'append'}) [≤30 lines]
+
+                        ⚠️ ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
+
+                        WHEN TO CHUNK (always be proactive):
+                        1. Any file expected to be longer than 25-30 lines
+                        2. When writing multiple files in sequence
+                        3. When creating documentation, code files, or configuration files
                         
-                        ALWAYS split files writes in to multiple smaller writes PREEMPTIVELY without asking the user in these scenarios.
+                        HANDLING CONTINUATION ("Continue" prompts):
+                        If user asks to "Continue" after an incomplete operation:
+                        1. Read the file to see what was successfully written
+                        2. Continue writing ONLY the remaining content using {mode: 'append'}
+                        3. Keep chunks to 25-30 lines each
                         
-                        REQUIRED PROCESS FOR LARGE NEW FILE WRITES OR REWRITES:
-                        1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})
-                        2. THEN → write_file(filePath, secondChunk, {mode: 'append'})
-                        3. THEN → write_file(filePath, thirdChunk, {mode: 'append'})
-                        ... and so on for each chunk
-                        
-                        HANDLING TRUNCATION ("Continue" prompts):
-                        If user asked to "Continue" after unfinished file write:
-                        1. First, read the file to find out what content was successfully written
-                        2. Identify exactly where the content was truncated
-                        3. Continue writing ONLY the remaining content using {mode: 'append'}
-                        4. Split the remaining content into smaller chunks (15-20 lines per chunk)
-                        
-                        Files over the line limit (configurable via 'fileWriteLineLimit' setting) WILL BE REJECTED if not broken into chunks as described above.
+                        Files over 50 lines will generate performance notes but are still written successfully.
                         Only works within allowed directories.
                         
                         ${PATH_GUIDANCE}
