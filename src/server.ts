@@ -37,7 +37,7 @@ import {getConfig, setConfigValue} from './tools/config.js';
 import {trackToolCall} from './utils/trackTools.js';
 
 import {VERSION} from './version.js';
-import {capture} from "./utils/capture.js";
+import {capture, capture_call_tool} from "./utils/capture.js";
 
 console.error("Loading server.ts");
 
@@ -390,7 +390,7 @@ import {ServerResult} from './types.js';
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     try {
         const {name, arguments: args} = request.params;
-        capture('server_call_tool', {
+        capture_call_tool('server_call_tool', {
             name
         });
         
