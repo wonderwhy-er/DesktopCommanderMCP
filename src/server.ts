@@ -14,8 +14,9 @@ const PATH_GUIDANCE = `IMPORTANT: Always use absolute paths (starting with '/' o
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
 import {
-    ExecuteCommandArgsSchema,
-    ReadOutputArgsSchema,
+    StartProcessArgsSchema,
+    ReadProcessOutputArgsSchema,
+    InteractWithProcessArgsSchema,
     ForceTerminateArgsSchema,
     ListSessionsArgsSchema,
     KillProcessArgsSchema,
@@ -32,7 +33,6 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
-    SendInputArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {trackToolCall} from './utils/trackTools.js';
@@ -390,7 +390,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
+                    inputSchema: zodToJsonSchema(StartProcessArgsSchema),
                 },
                 {
                     name: "read_process_output",
@@ -417,7 +417,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ⏱️ Timeout reached (may still be running)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
+                    inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
                 },
                 {
                     name: "interact_with_process", 
@@ -466,7 +466,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SendInputArgsSchema),
+                    inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                 },
                 {
                     name: "force_terminate",
@@ -594,16 +594,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 return await handlers.handleReadProcessOutput(args);
                 
             case "interact_with_process":
-                return await handlers.handleInteractWithProcess(args);
-
-            // Backward compatibility
-            case "execute_command":
-                return await handlers.handleStartProcess(args);
-
-            case "read_output":
-                return await handlers.handleReadProcessOutput(args);
-                
-            case "send_input":
                 return await handlers.handleInteractWithProcess(args);
 
             case "force_terminate":

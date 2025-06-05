@@ -1,4 +1,5 @@
-import { readFile, writeFile, readFileInternal } from './filesystem.js';
+import { readFile, writeFile, readFileInternal, validatePath } from './filesystem.js';
+import fs from 'fs/promises';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
@@ -119,8 +120,9 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     }
     
 
-    // Read file as plain string without status messages
-    const content = await readFileInternal(filePath, 0, Number.MAX_SAFE_INTEGER);
+    // Read file directly to preserve line endings - critical for edit operations
+    const validPath = await validatePath(filePath);
+    const content = await fs.readFile(validPath, 'utf8');
     
     // Make sure content is a string
     if (typeof content !== 'string') {

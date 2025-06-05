@@ -1,6 +1,5 @@
 import assert from 'assert';
-import { executeCommand, readOutput, forceTerminate } from '../dist/tools/execute.js';
-import { sendInput } from '../dist/tools/send-input.js';
+import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } from '../dist/tools/improved-process-tools.js';
 
 /**
  * Test enhanced REPL functionality
@@ -10,15 +9,15 @@ async function testEnhancedREPL() {
   
   // Start Python in interactive mode
   console.log('Starting Python REPL...');
-  const result = await executeCommand({
+  const result = await startProcess({
     command: 'python -i',
     timeout_ms: 10000
   });
   
-  console.log('Result from execute_command:', result);
+  console.log('Result from start_process:', result);
   
   // Extract PID from the result text
-  const pidMatch = result.content[0].text.match(/Command started with PID (\d+)/);
+  const pidMatch = result.content[0].text.match(/Process started with PID (\d+)/);
   const pid = pidMatch ? parseInt(pidMatch[1]) : null;
   
   if (!pid) {
@@ -32,7 +31,7 @@ async function testEnhancedREPL() {
   
   // Send a simple Python command
   console.log("Sending simple command...");
-  await sendInput({
+  await interactWithProcess({
     pid,
     input: 'print("Hello from Python!")\n'
   });
@@ -43,7 +42,7 @@ async function testEnhancedREPL() {
   
   // Read the output
   console.log("Reading output...");
-  const output = await readOutput({ pid });
+  const output = await readProcessOutput({ pid });
   console.log('Python output:', output.content[0].text);
   
   // Terminate the session

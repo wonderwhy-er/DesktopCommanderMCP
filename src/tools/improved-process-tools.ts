@@ -317,11 +317,6 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   }
 }
 
-// Backward compatibility exports
-export { startProcess as executeCommand };
-export { readProcessOutput as readOutput };
-export { interactWithProcess as sendInput };
-
 /**
  * Force terminate a process
  */
