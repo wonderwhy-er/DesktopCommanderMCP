@@ -25,6 +25,11 @@ This document provides answers to the most commonly asked questions about Claude
 
 - [Features & Capabilities](#features--capabilities)
   - [What can I do with Claude Desktop Commander?](#what-can-i-do-with-claude-desktop-commander)
+  - [Can Claude analyze my CSV/Excel files directly?](#can-claude-analyze-my-csvexcel-files-directly)
+  - [Can Claude connect to remote servers?](#can-claude-connect-to-remote-servers)
+  - [Does Claude save temporary files when running code?](#does-claude-save-temporary-files-when-running-code)
+  - [What programming languages can Claude run interactively?](#what-programming-languages-can-claude-run-interactively)
+  - [Can Claude handle multi-step operations?](#can-claude-handle-multi-step-operations)
   - [How does it handle file editing?](#how-does-it-handle-file-editing)
   - [Can it help me understand complex codebases?](#can-it-help-me-understand-complex-codebases)
   - [How does it handle long-running commands?](#how-does-it-handle-long-running-commands)
@@ -188,6 +193,26 @@ The tool enables a wide range of tasks:
 - Create diagrams of system architecture
 - Analyze and summarize codebases
 - Produce reports on code quality or structure
+
+### Can Claude analyze my CSV/Excel files directly?
+
+Yes! Just ask Claude to analyze any data file. It will write and execute Python/Node code in memory to process your data and show results instantly.
+
+### Can Claude connect to remote servers?
+
+Yes! Claude can start SSH connections, databases, or other programs and continue interacting with them throughout your conversation.
+
+### Does Claude save temporary files when running code?
+
+If you ask. Code can run in memory. When you ask for data analysis, Claude executes Python/R code directly without creating files on your disk. Or creating if you ask.
+
+### What programming languages can Claude run interactively?
+
+Python, Node.js, R, Julia, and shell commands. Any interactive terminal REPL environments. Perfect for data analysis, web development, statistics, and system administration.
+
+### Can Claude handle multi-step operations?
+
+Yes! Claude can start a program (like SSH or database connection) and send multiple commands to it, maintaining context throughout the session.
 
 ### How does it handle file editing and URL content?
 
