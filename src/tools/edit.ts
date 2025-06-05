@@ -124,6 +124,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     const validPath = await validatePath(filePath);
     const content = await readFileInternal(filePath, 0, Number.MAX_SAFE_INTEGER);
     
+    
     // Make sure content is a string
     if (typeof content !== 'string') {
         capture('server_edit_block_content_not_string', {fileExtension: fileExtension, expectedReplacements});

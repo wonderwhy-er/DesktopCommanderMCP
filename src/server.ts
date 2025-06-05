@@ -33,7 +33,6 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
-    SendInputArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {trackToolCall} from './utils/trackTools.js';
@@ -482,20 +481,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
-                },
-                {
-                    name: "interact_with_process", 
-                    description: `
-                        Send input to a running process and automatically receive the response.
-                        
-                        🚨 CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
-                        For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
-                        The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
-                        
-                        📁 FILE ANALYSIS PRIORITY ORDER (MANDATORY):
-                        1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
-                        2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
-                        3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
                         
                         REQUIRED INTERACTIVE WORKFLOW FOR FILE ANALYSIS:
                         1. Start REPL: start_process("python3 -i")
@@ -530,7 +515,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SendInputArgsSchema),
+                    inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                 },
                 {
                     name: "force_terminate",
@@ -658,16 +643,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 return await handlers.handleReadProcessOutput(args);
                 
             case "interact_with_process":
-                return await handlers.handleInteractWithProcess(args);
-
-            // Backward compatibility
-            case "execute_command":
-                return await handlers.handleStartProcess(args);
-
-            case "read_output":
-                return await handlers.handleReadProcessOutput(args);
-                
-            case "send_input":
                 return await handlers.handleInteractWithProcess(args);
 
             case "force_terminate":

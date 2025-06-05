@@ -53,16 +53,3 @@ export async function handleForceTerminate(args: unknown): Promise<ServerResult>
 export async function handleListSessions(): Promise<ServerResult> {
     return listSessions();
 }
-
-// Backward compatibility handlers
-export async function handleExecuteCommand(args: unknown): Promise<ServerResult> {
-    return handleStartProcess(args);
-}
-
-export async function handleReadOutput(args: unknown): Promise<ServerResult> {
-    return handleReadProcessOutput(args);
-}
-
-export async function handleSendInput(args: unknown): Promise<ServerResult> {
-    return handleInteractWithProcess(args);
-}

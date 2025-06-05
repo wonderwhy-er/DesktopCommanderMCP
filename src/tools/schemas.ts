@@ -23,10 +23,6 @@ export const ReadProcessOutputArgsSchema = z.object({
   timeout_ms: z.number().optional(),
 });
 
-// Backward compatibility
-export const ExecuteCommandArgsSchema = StartProcessArgsSchema;
-export const ReadOutputArgsSchema = ReadProcessOutputArgsSchema;
-
 export const ForceTerminateArgsSchema = z.object({
   pid: z.number(),
 });
@@ -105,6 +101,3 @@ export const InteractWithProcessArgsSchema = z.object({
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
-
-// Backward compatibility
-export const SendInputArgsSchema = InteractWithProcessArgsSchema;
