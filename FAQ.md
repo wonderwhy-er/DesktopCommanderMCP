@@ -255,6 +255,17 @@ Absolutely. While it excels at coding-related tasks, Claude Desktop Commander ca
 - Running and managing any terminal-based tools
 - Data processing and analysis
 
+### Can I read files from the end like Unix tail?
+
+Yes! Recent updates added negative offset support:
+
+```javascript
+// Read last 10 lines
+read_file({ path: "server.log", offset: -10 })
+```
+
+This is useful for checking recent log entries or file endings without reading the entire content.
+
 ### Can I use Desktop Commander in any MCP client outside of Claude?
 
 Yes, you can install Desktop Commander MCP on other clients that support MCP, including:
