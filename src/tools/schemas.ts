@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-console.error("Loading schemas.ts");
-
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({});
 
