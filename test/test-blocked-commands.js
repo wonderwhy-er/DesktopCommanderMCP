@@ -10,9 +10,9 @@
 
 import { configManager } from '../dist/config-manager.js';
 import { commandManager } from '../dist/command-manager.js';
-import { executeCommand as executeCommandAPI } from '../dist/tools/execute.js';
+import { startProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 
-// We need a wrapper because executeCommand in tools/execute.js returns a ServerResult
+// We need a wrapper because startProcess in tools/improved-process-tools.js returns a ServerResult
 // but our tests expect to receive the actual command result
 async function executeCommand(command, timeout_ms = 2000, shell = null) {
   const args = {
@@ -24,7 +24,7 @@ async function executeCommand(command, timeout_ms = 2000, shell = null) {
     args.shell = shell;
   }
   
-  return await executeCommandAPI(args);
+  return await startProcess(args);
 }
 import fs from 'fs/promises';
 import path from 'path';
