@@ -4,6 +4,7 @@ import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProces
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage } from '../utils/process-detection.js';
+import { getSystemInfo } from '../utils/system-info.js';
 
 /**
  * Start a new process (renamed from execute_command)
@@ -55,6 +56,10 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   // Analyze the process state to detect if it's waiting for input
   const processState = analyzeProcessState(result.output, result.pid);
   
+  // Get system info for shell information
+  const systemInfo = getSystemInfo();
+  const shellUsed = parsed.data.shell || systemInfo.defaultShell;
+  
   let statusMessage = '';
   if (processState.isWaitingForInput) {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -67,7 +72,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid}\nInitial output:\n${result.output}${statusMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}`
     }],
   };
 }
