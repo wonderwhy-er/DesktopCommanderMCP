@@ -52,6 +52,7 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Move files/directories
   - Search files
   - Get file metadata
+  - **Negative offset file reading**: Read from end of files using negative offset values (like Unix tail)
 - Code editing capabilities:
   - Surgical text replacements for small changes
   - Full file rewrites for major changes
@@ -187,7 +188,7 @@ The server provides a comprehensive set of tools organized into several categori
 | | `list_sessions` | List all active terminal sessions |
 | | `list_processes` | List all running processes with detailed information |
 | | `kill_process` | Terminate a running process by PID |
-| **Filesystem** | `read_file` | Read contents from local filesystem or URLs with line-based pagination (supports offset and length parameters) |
+| **Filesystem** | `read_file` | Read contents from local filesystem or URLs with line-based pagination (supports positive/negative offset and length parameters) |
 | | `read_multiple_files` | Read multiple files simultaneously |
 | | `write_file` | Write file contents with options for rewrite or append mode (uses configurable line limits) |
 | | `create_directory` | Create a new directory or ensure it exists |

@@ -167,11 +167,9 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const lineCount = lines.length;
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
-            errorMessage = `File was written with warning: Line count limit exceeded: ${lineCount} lines (maximum: ${MAX_LINES}).
+            errorMessage = `✅ File written successfully! (${lineCount} lines)
             
-SOLUTION: Split your content into smaller chunks:
-1. First chunk: write_file(path, firstChunk, {mode: 'rewrite'})
-2. Additional chunks: write_file(path, nextChunk, {mode: 'append'})`;
+💡 Performance tip: For optimal speed, consider chunking files into ≤30 line pieces in future operations.`;
         }
 
         // Pass the mode parameter to writeFile

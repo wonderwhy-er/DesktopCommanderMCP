@@ -448,6 +448,7 @@ export default async function runTests() {
   try {
     originalConfig = await setup();
     await runEditBlockLineEndingTests();
+    return true;
   } catch (error) {
     console.error('❌ Test failed:', error.message);
     return false;
@@ -456,12 +457,13 @@ export default async function runTests() {
       await teardown(originalConfig);
     }
   }
-  return true;
 }
 
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
+  runTests().then(success => {
+    process.exit(success ? 0 : 1);
+  }).catch(error => {
     console.error('❌ Unhandled error:', error);
     process.exit(1);
   });
