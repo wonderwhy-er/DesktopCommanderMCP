@@ -1,18 +1,16 @@
 /**
  * Main test runner script
- * Imports and runs all test modules
+ * Runs all test modules and provides comprehensive summary
  */
 
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
 
 // Colors for console output
 const colors = {
@@ -21,7 +19,9 @@ const colors = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   blue: '\x1b[34m',
-  cyan: '\x1b[36m'
+  cyan: '\x1b[36m',
+  magenta: '\x1b[35m',
+  bold: '\x1b[1m'
 };
 
 /**
@@ -52,6 +52,39 @@ function runCommand(command, args, cwd = __dirname) {
 }
 
 /**
+ * Run a single Node.js test file as a subprocess
+ */
+function runTestFile(testFile) {
+  return new Promise((resolve) => {
+    console.log(`\n${colors.cyan}Running test module: ${testFile}${colors.reset}`);
+    
+    const startTime = Date.now();
+    const proc = spawn('node', [testFile], {
+      cwd: __dirname,
+      stdio: 'inherit',
+      shell: false
+    });
+    
+    proc.on('close', (code) => {
+      const duration = Date.now() - startTime;
+      if (code === 0) {
+        console.log(`${colors.green}✓ Test passed: ${testFile} (${duration}ms)${colors.reset}`);
+        resolve({ success: true, file: testFile, duration, exitCode: code });
+      } else {
+        console.error(`${colors.red}✗ Test failed: ${testFile} (${duration}ms) - Exit code: ${code}${colors.reset}`);
+        resolve({ success: false, file: testFile, duration, exitCode: code });
+      }
+    });
+    
+    proc.on('error', (err) => {
+      const duration = Date.now() - startTime;
+      console.error(`${colors.red}✗ Error running ${testFile}: ${err.message}${colors.reset}`);
+      resolve({ success: false, file: testFile, duration, error: err.message });
+    });
+  });
+}
+
+/**
  * Build the project
  */
 async function buildProject() {
@@ -60,117 +93,178 @@ async function buildProject() {
 }
 
 /**
- * Import and run all test modules
+ * Discover and run all test modules
  */
 async function runTestModules() {
   console.log(`\n${colors.cyan}===== Running tests =====${colors.reset}\n`);
   
-  // Define static test module paths relative to this file
-  // We need to use relative paths with extension for ES modules
-  const testModules = [
-    './test.js',
-    './test-directory-creation.js',
-    './test-allowed-directories.js',
-    './test-blocked-commands.js',
-    './test-default-shell.js',
-    './test-edit-block-line-endings.js',
-    './test-edit-block-occurrences.js',
-    './test-error-sanitization.js',
-    './test-home-directory.js',
-    './test-search-code.js',
-    './test-search-code-edge-cases.js'
-  ];
-  
-  // Dynamically find additional test files (optional)
-  // Use the current directory (no need for a subdirectory)
+  // Discover all test files
+  let testFiles = [];
   try {
     const files = await fs.readdir(__dirname);
-    for (const file of files) {
-      // Only include files that aren't already in the testModules list
-      if (file.startsWith('test-') && file.endsWith('.js') && !testModules.includes(`./${file}`)) {
-        testModules.push(`./${file}`);
-      }
+    
+    // Get all test files, starting with 'test' and ending with '.js'
+    const discoveredTests = files
+      .filter(file => file.startsWith('test') && file.endsWith('.js') && file !== 'run-all-tests.js')
+      .sort(); // Sort for consistent order
+    
+    // Ensure main test.js runs first if it exists
+    if (discoveredTests.includes('test.js')) {
+      testFiles.push('./test.js');
+      discoveredTests.splice(discoveredTests.indexOf('test.js'), 1);
     }
+    
+    // Add remaining tests
+    testFiles.push(...discoveredTests.map(file => `./${file}`));
+    
   } catch (error) {
-    console.warn(`${colors.yellow}Warning: Could not scan test directory: ${error.message}${colors.reset}`);
+    console.error(`${colors.red}Error: Could not scan test directory: ${error.message}${colors.reset}`);
+    process.exit(1);
   }
+  
+  if (testFiles.length === 0) {
+    console.warn(`${colors.yellow}Warning: No test files found${colors.reset}`);
+    return { success: true, results: [] };
+  }
+  
+  console.log(`${colors.blue}Found ${testFiles.length} test files:${colors.reset}`);
+  testFiles.forEach(file => console.log(`  - ${file}`));
+  console.log('');
   
   // Results tracking
-  let passed = 0;
-  let failed = 0;
-  const failedTests = [];
+  const results = [];
+  let totalDuration = 0;
   
-  // Import and run each test module
-  for (const modulePath of testModules) {
-    try {
-      console.log(`\n${colors.cyan}Running test module: ${modulePath}${colors.reset}`);
-      
-      // Dynamic import of the test module
-      const testModule = await import(modulePath);
-      
-      // Get the default exported function
-      if (typeof testModule.default !== 'function') {
-        console.warn(`${colors.yellow}Warning: ${modulePath} does not export a default function${colors.reset}`);
-        continue;
-      }
-      
-      // Execute the test
-      const success = await testModule.default();
-      
-      if (success) {
-        console.log(`${colors.green}✓ Test passed: ${modulePath}${colors.reset}`);
-        passed++;
-      } else {
-        console.error(`${colors.red}✗ Test failed: ${modulePath}${colors.reset}`);
-        failed++;
-        failedTests.push(modulePath);
-      }
-    } catch (error) {
-      console.error(`${colors.red}✗ Error importing or running ${modulePath}: ${error.message}${colors.reset}`);
-      failed++;
-      failedTests.push(modulePath);
-    }
+  // Run each test file
+  for (const testFile of testFiles) {
+    const result = await runTestFile(testFile);
+    results.push(result);
+    totalDuration += result.duration || 0;
   }
   
-  // Print summary
-  console.log(`\n${colors.cyan}===== Test Summary =====${colors.reset}\n`);
-  console.log(`Total tests: ${passed + failed}`);
-  console.log(`${colors.green}Passed: ${passed}${colors.reset}`);
+  // Calculate summary statistics
+  const passed = results.filter(r => r.success).length;
+  const failed = results.filter(r => !r.success).length;
+  const failedTests = results.filter(r => !r.success);
   
+  // Print detailed summary
+  console.log(`\n${colors.bold}${colors.cyan}===== TEST SUMMARY =====${colors.reset}\n`);
+  
+  // Overall stats
+  console.log(`${colors.bold}Overall Results:${colors.reset}`);
+  console.log(`  Total tests:     ${passed + failed}`);
+  console.log(`  ${colors.green}✓ Passed:        ${passed}${colors.reset}`);
+  console.log(`  ${failed > 0 ? colors.red : colors.green}✗ Failed:        ${failed}${colors.reset}`);
+  console.log(`  Total duration:  ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`);
+  
+  // Failed tests details
   if (failed > 0) {
-    console.log(`${colors.red}Failed: ${failed}${colors.reset}`);
-    console.log(`\nFailed tests:`);
-    failedTests.forEach(test => console.log(`${colors.red}- ${test}${colors.reset}`));
-    return false;
-  } else {
-    console.log(`\n${colors.green}All tests passed! 🎉${colors.reset}`);
-    return true;
+    console.log(`\n${colors.red}${colors.bold}Failed Tests:${colors.reset}`);
+    failedTests.forEach(test => {
+      console.log(`  ${colors.red}✗ ${test.file}${colors.reset}`);
+      if (test.exitCode !== undefined) {
+        console.log(`    Exit code: ${test.exitCode}`);
+      }
+      if (test.error) {
+        console.log(`    Error: ${test.error}`);
+      }
+    });
   }
+  
+  // Test performance summary
+  if (results.length > 0) {
+    console.log(`\n${colors.bold}Performance Summary:${colors.reset}`);
+    const avgDuration = totalDuration / results.length;
+    const slowestTest = results.reduce((prev, current) => 
+      (current.duration || 0) > (prev.duration || 0) ? current : prev
+    );
+    const fastestTest = results.reduce((prev, current) => 
+      (current.duration || 0) < (prev.duration || 0) ? current : prev
+    );
+    
+    console.log(`  Average test duration: ${avgDuration.toFixed(0)}ms`);
+    console.log(`  Fastest test: ${fastestTest.file} (${fastestTest.duration || 0}ms)`);
+    console.log(`  Slowest test: ${slowestTest.file} (${slowestTest.duration || 0}ms)`);
+  }
+  
+  // Final status
+  if (failed === 0) {
+    console.log(`\n${colors.green}${colors.bold}🎉 ALL TESTS PASSED! 🎉${colors.reset}`);
+    console.log(`${colors.green}All ${passed} tests completed successfully.${colors.reset}`);
+  } else {
+    console.log(`\n${colors.red}${colors.bold}❌ TESTS FAILED ❌${colors.reset}`);
+    console.log(`${colors.red}${failed} out of ${passed + failed} tests failed.${colors.reset}`);
+  }
+  
+  console.log(`\n${colors.cyan}===== Test run completed =====${colors.reset}\n`);
+  
+  return {
+    success: failed === 0,
+    results,
+    summary: {
+      total: passed + failed,
+      passed,
+      failed,
+      duration: totalDuration
+    }
+  };
 }
 
 /**
  * Main function
  */
 async function main() {
+  const overallStartTime = Date.now();
+  
   try {
-    console.log(`${colors.cyan}===== Starting test runner =====\n${colors.reset}`);
+    console.log(`${colors.bold}${colors.cyan}===== DESKTOP COMMANDER TEST RUNNER =====${colors.reset}`);
+    console.log(`${colors.blue}Starting test execution at ${new Date().toISOString()}${colors.reset}\n`);
     
     // Build the project first
     await buildProject();
     
     // Run all test modules
-    const success = await runTestModules();
+    const testResult = await runTestModules();
+    
+    // Final timing
+    const overallDuration = Date.now() - overallStartTime;
+    console.log(`${colors.blue}Total execution time: ${overallDuration}ms (${(overallDuration / 1000).toFixed(1)}s)${colors.reset}`);
     
     // Exit with appropriate code
-    process.exit(success ? 0 : 1);
+    process.exit(testResult.success ? 0 : 1);
+    
   } catch (error) {
-    console.error(`${colors.red}Error: ${error.message}${colors.reset}`);
+    console.error(`\n${colors.red}${colors.bold}FATAL ERROR:${colors.reset}`);
+    console.error(`${colors.red}${error.message}${colors.reset}`);
+    if (error.stack) {
+      console.error(`${colors.red}${error.stack}${colors.reset}`);
+    }
     process.exit(1);
   }
 }
 
+// Handle uncaught errors gracefully
+process.on('uncaughtException', (error) => {
+  console.error(`\n${colors.red}${colors.bold}UNCAUGHT EXCEPTION:${colors.reset}`);
+  console.error(`${colors.red}${error.message}${colors.reset}`);
+  if (error.stack) {
+    console.error(`${colors.red}${error.stack}${colors.reset}`);
+  }
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error(`\n${colors.red}${colors.bold}UNHANDLED REJECTION:${colors.reset}`);
+  console.error(`${colors.red}${reason}${colors.reset}`);
+  process.exit(1);
+});
+
 // Run the main function
 main().catch(error => {
-  console.error(`${colors.red}Unhandled error: ${error}${colors.reset}`);
+  console.error(`\n${colors.red}${colors.bold}MAIN FUNCTION ERROR:${colors.reset}`);
+  console.error(`${colors.red}${error.message}${colors.reset}`);
+  if (error.stack) {
+    console.error(`${colors.red}${error.stack}${colors.reset}`);
+  }
   process.exit(1);
 });
