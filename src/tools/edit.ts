@@ -122,7 +122,7 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
 
     // Read file directly to preserve line endings - critical for edit operations
     const validPath = await validatePath(filePath);
-    const content = await readFileInternal(validPath, 'utf8');
+    const content = await readFileInternal(validPath, 0, Number.MAX_SAFE_INTEGER);
     
     // Make sure content is a string
     if (typeof content !== 'string') {
