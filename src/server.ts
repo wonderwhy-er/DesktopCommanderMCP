@@ -353,6 +353,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ⚠️ CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
                         
+                        🪟 WINDOWS SHELL TROUBLESHOOTING:
+                        If Node.js or Python commands fail with "not recognized" errors on Windows:
+                        - Try different shells: specify shell parameter as "cmd" or "powershell.exe"
+                        - PowerShell may have execution policy restrictions for some tools
+                        - CMD typically has better compatibility with development tools like Node.js/Python
+                        - Example: start_process("node --version", shell="cmd") if PowerShell fails
+                        - Use set_config_value to change defaultShell if needed
+                        
                         REQUIRED WORKFLOW FOR LOCAL FILES:
                         1. start_process("python3 -i") - Start Python REPL for data analysis
                         2. interact_with_process(pid, "import pandas as pd, numpy as np")
