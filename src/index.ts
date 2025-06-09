@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { FilteredStdioServerTransport } from './custom-stdio.js';
+import { runHttpServer } from './http-transport.js';
 import { server } from './server.js';
-import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
 import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -50,15 +50,6 @@ async function runSetup() {
 
 async function runServer() {
   try {
-    // Check if first argument is "setup"
-    if (process.argv[2] === 'setup') {
-      await runSetup();
-      return;
-    }
-
-
-
-    const transport = new FilteredStdioServerTransport();
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -95,8 +86,13 @@ async function runServer() {
       process.exit(1);
     });
 
-    capture('run_server_start');
+    // Check if first argument is "setup"
+    if (process.argv[2] === 'setup') {
+      await runSetup();
+      return;
+    }
 
+    // Load the configuration.
     try {
       console.error("Loading configuration...");
       await configManager.loadConfig();
@@ -108,10 +104,23 @@ async function runServer() {
       // Continue anyway - we'll use an in-memory config
     }
 
+    // Parse --port flag
+    let port: number | undefined;
+    const portFlagIndex = process.argv.findIndex(arg => arg === '--port');
+    if (portFlagIndex !== -1 && process.argv[portFlagIndex + 1]) {
+      port = parseInt(process.argv[portFlagIndex + 1], 10);
+      if (isNaN(port)) {
+        console.error('Invalid port specified after --port');
+        process.exit(1);
+      }
+    }
 
-    console.error("Connecting server...");
-    await server.connect(transport);
-    console.error("Server connected successfully");
+    capture('run_server_start');
+    if (port !== undefined) {
+      await runHttpServer(port);
+    } else {
+      await runStdioServer();
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`FATAL ERROR: ${errorMessage}`);
@@ -127,6 +136,13 @@ async function runServer() {
     });
     process.exit(1);
   }
+}
+
+async function runStdioServer() {
+  console.error("Connecting server through stdio transport ...");
+  const transport = new FilteredStdioServerTransport();
+  await server.connect(transport);
+  console.error("Server connected successfully");
 }
 
 runServer().catch(async (error) => {
