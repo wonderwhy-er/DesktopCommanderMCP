@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://www.buymeacoffee.com/wonderwhyer)
-[![MCP Marketplace User Review Rating Badge](http://www.deepnlp.org/api/marketplace/svg?wonderwhy-er/desktopcommandermcp)](http://www.deepnlp.org/store/ai-agent/mcp-server/pub-wonderwhy-er/desktopcommandermcp)
+[![MCP Marketplace User Review Rating Badge](https://www.deepnlp.org/api/marketplace/svg?name=wonderwhy-er/DesktopCommanderMCP)](https://www.deepnlp.org/store/ai-agent/mcp-server/pub-wonderwhy-er/DesktopCommanderMCP)
 
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
