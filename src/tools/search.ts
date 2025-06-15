@@ -58,7 +58,8 @@ export async function searchCode(options: {
   }
   
   if (filePattern) {
-    args.push('-g', filePattern);
+    const patterns = filePattern.split('|');
+    patterns.forEach(p => args.push('-g', p));
   }
   
   // Add pattern and path
@@ -116,6 +117,9 @@ export async function searchCode(options: {
               });
             }
           } catch (error) {
+
+
+
             const errorMessage = error instanceof Error ? error.message : String(error);
             capture('server_request_error', {error: `Error parsing ripgrep output: ${errorMessage}`});
             console.error(`Error parsing ripgrep output: ${errorMessage}`);    
