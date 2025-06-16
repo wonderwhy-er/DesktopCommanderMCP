@@ -362,6 +362,68 @@ async function testManySmallFiles() {
 }
 
 /**
+ * Test filePattern with multiple values, including whitespace and empty tokens
+ */
+async function testFilePatternWithMultipleValues() {
+  console.log(`${colors.yellow}Testing filePattern with multiple values...${colors.reset}`);
+
+  // Create test files
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file1.ts'), 'export const myTsVar = "patternTs";');
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file2.js'), 'const myJsVar = "patternJs";');
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file3.py'), 'my_py_var = "patternPy"');
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file4.java'), 'String myJavaVar = "patternJava";');
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file5.go'), 'var myGoVar = "patternGo"');
+  await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'file6.txt'), 'This is a text file.');
+
+  // Test with valid multiple patterns
+  let result = await handleSearchCode({
+    path: EDGE_CASE_TEST_DIR,
+    pattern: 'pattern',
+    filePattern: '*.ts|*.js|*.py'
+  });
+  let text = result.content[0].text;
+  assert(text.includes('file1.ts'), 'Should find match in file1.ts');
+  assert(text.includes('file2.js'), 'Should find match in file2.js');
+  assert(text.includes('file3.py'), 'Should find match in file3.py');
+  assert(!text.includes('file4.java'), 'Should not find match in file4.java');
+  assert(!text.includes('file5.go'), 'Should not find match in file5.go');
+
+  // Test with patterns including whitespace
+  result = await handleSearchCode({
+    path: EDGE_CASE_TEST_DIR,
+    pattern: 'pattern',
+    filePattern: ' *.ts | *.js '
+  });
+  text = result.content[0].text;
+  assert(text.includes('file1.ts'), 'Should find match with whitespace-padded patterns (file1.ts)');
+  assert(text.includes('file2.js'), 'Should find match with whitespace-padded patterns (file2.js)');
+  assert(!text.includes('file3.py'), 'Should not find match with whitespace-padded patterns (file3.py)');
+
+  // Test with patterns including empty tokens (e.g., || or leading/trailing |)
+  result = await handleSearchCode({
+    path: EDGE_CASE_TEST_DIR,
+    pattern: 'pattern',
+    filePattern: '|*.ts||*.py|'
+  });
+  text = result.content[0].text;
+  assert(text.includes('file1.ts'), 'Should find match with empty tokens (file1.ts)');
+  assert(text.includes('file3.py'), 'Should find match with empty tokens (file3.py)');
+  assert(!text.includes('file2.js'), 'Should not find match with empty tokens (file2.js)');
+
+  // Test with only empty tokens
+  result = await handleSearchCode({
+    path: EDGE_CASE_TEST_DIR,
+    pattern: 'pattern',
+    filePattern: '|||'
+  });
+  text = result.content[0].text;
+  assert(!text.includes('file1.ts'), 'Should not find any matches with only empty patterns');
+  assert(!text.includes('file2.js'), 'Should not find any matches with only empty patterns');
+
+  console.log(`${colors.green}✓ FilePattern with multiple values test passed${colors.reset}`);
+}
+
+/**
  * Main test runner for edge cases
  */
 export async function testSearchCodeEdgeCases() {
