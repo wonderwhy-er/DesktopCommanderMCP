@@ -448,7 +448,8 @@ export async function testSearchCodeEdgeCases() {
     await testLargeContextLines();
     await testPathTraversalSecurity();
     await testManySmallFiles();
-    
+    await testFilePatternWithMultipleValues();
+
     console.log(`${colors.green}✅ All handleSearchCode edge case tests passed!${colors.reset}`);
     return true;
     
