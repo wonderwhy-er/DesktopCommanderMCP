@@ -58,7 +58,10 @@ export async function searchCode(options: {
   }
   
   if (filePattern) {
-    const patterns = filePattern.split('|');
+    const patterns = filePattern
+      .split('|')
+      .map(p => p.trim())      // remove surrounding spaces
+      .filter(Boolean);        // drop empty tokens
     patterns.forEach(p => args.push('-g', p));
   }
   
@@ -117,6 +120,9 @@ export async function searchCode(options: {
               });
             }
           } catch (error) {
+
+
+
 
 
 
