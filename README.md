@@ -181,6 +181,67 @@ After uninstalling, restart Claude Desktop to complete the removal.
 
 The server provides a comprehensive set of tools organized into several categories:
 
+### Real-time Diagnostics (VSCode-style)
+
+Desktop Commander MCP includes an optional diagnostics system that provides immediate feedback on code quality, similar to VS Code's error highlighting. When enabled, you'll see TypeScript errors, ESLint warnings, and other diagnostics automatically after writing or editing files.
+
+#### Quick Start
+```javascript
+// Enable diagnostics for TypeScript files
+await configureDiagnostics({
+    enabled: true,
+    providers: ['typescript'],
+    showWarnings: true
+});
+
+// Now when you edit TypeScript files, you'll see errors immediately
+```
+
+#### Supported Providers
+- **TypeScript**: Type checking, syntax errors, and compiler warnings
+- **ESLint**: JavaScript/TypeScript linting rules and style issues  
+- **Flake8**: Python code style and error checking
+- **Extensible**: Easy to add new diagnostic providers
+
+#### Configuration Options
+- `enabled`: Enable/disable the diagnostics system (default: false)
+- `providers`: Array of providers to use (empty = all available)
+- `showWarnings`: Include warnings in output (default: true)
+- `showInlineAnnotations`: Show inline code annotations (default: false)
+- `maxDiagnostics`: Maximum number of diagnostics to display (default: 20)
+
+#### Example Usage
+```javascript
+// Enable all available providers
+await configureDiagnostics({
+    enabled: true,
+    providers: [], // Empty means all available
+    showWarnings: true,
+    maxDiagnostics: 10
+});
+
+// Enable only TypeScript
+await configureDiagnostics({
+    enabled: true,
+    providers: ['typescript'],
+    showWarnings: false // Only show errors
+});
+
+// Disable diagnostics
+await configureDiagnostics({
+    enabled: false
+});
+```
+
+When diagnostics are enabled, you'll see immediate feedback after file operations:
+```
+Successfully wrote to example.ts (15 lines)
+
+🔍 Diagnostics (2 errors):
+├─ example.ts:3:5 - error TS2322: Type 'string' is not assignable to type 'number'
+└─ example.ts:7:12 - error TS2304: Cannot find name 'undefinedVariable'
+```
+
 ### Available Tools
 
 | Category | Tool | Description |

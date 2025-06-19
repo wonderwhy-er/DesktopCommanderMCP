@@ -37,7 +37,7 @@ export interface DiagnosticsConfig {
 
 // Default diagnostics configuration
 const DEFAULT_DIAGNOSTICS_CONFIG: DiagnosticsConfig = {
-    enabled: true,  // Enabled by default
+    enabled: false, // Disabled by default - opt-in feature
     providers: [],
     showWarnings: true,
     showInlineAnnotations: false
@@ -89,9 +89,8 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
             return false;
         }
         
-        // Check if tsconfig.json exists
-        const tsConfig = await this.findTsConfig(filePath);
-        return tsConfig !== null;
+        // Always available for TypeScript files - we'll create a minimal config if needed
+        return true;
     }
     
     private async findTsConfig(filePath: string): Promise<string | null> {
@@ -113,7 +112,6 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
     
     async runDiagnostics(filePath: string): Promise<Diagnostic[]> {
         const tsConfigPath = await this.findTsConfig(filePath);
-        if (!tsConfigPath) return [];
         
         const DIAGNOSTIC_TIMEOUT = 10000; // 10 seconds
         const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB
@@ -124,12 +122,15 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
             
             if (tsConfigPath) {
                 args.push('--project', tsConfigPath);
+            } else {
+                // If no tsconfig.json found, run with basic settings
+                args.push('--target', 'ES2020', '--module', 'commonjs', '--strict');
             }
             
             args.push(filePath);
             
             const tsc = spawn('npx', ['tsc', ...args], {
-                cwd: path.dirname(tsConfigPath),
+                cwd: tsConfigPath ? path.dirname(tsConfigPath) : path.dirname(filePath),
                 shell: true,
                 env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=512' }
             });
@@ -185,24 +186,32 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
                 output += chunk;
             });
             
-            tsc.on('close', () => {
+            tsc.on('close', (code) => {
                 clearTimeout(timeout);
                 
                 if (killed) return;
                 
+
+                
                 const lines = output.split('\n');
+                const fileName = path.basename(filePath);
+                
                 for (const line of lines) {
                     const match = line.match(/^(.+?)\((\d+),(\d+)\): (error|warning) (TS\d+): (.+)$/);
                     if (match) {
-                        diagnostics.push({
-                            file: match[1],
-                            line: parseInt(match[2]),
-                            column: parseInt(match[3]),
-                            severity: match[4] === 'error' ? 'error' : 'warning',
-                            code: match[5],
-                            message: match[6],
-                            source: this.name
-                        });
+                        const errorFile = match[1];
+                        // Only include errors from the specific file we're checking
+                        if (errorFile.endsWith(fileName) || errorFile === filePath) {
+                            diagnostics.push({
+                                file: match[1],
+                                line: parseInt(match[2]),
+                                column: parseInt(match[3]),
+                                severity: match[4] === 'error' ? 'error' : 'warning',
+                                code: match[5],
+                                message: match[6],
+                                source: this.name
+                            });
+                        }
                     }
                 }
                 resolve(diagnostics);
