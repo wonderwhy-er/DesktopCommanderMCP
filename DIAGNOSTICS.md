@@ -50,7 +50,7 @@ configure_diagnostics {
 
 ### Options
 
-- **enabled**: `boolean` - Turn diagnostics on/off (default: `false`)
+- **enabled**: `boolean` - Turn diagnostics on/off (default: `true`)
 - **providers**: `string[]` - Which providers to use. Empty array means all available (default: `[]`)
 - **showWarnings**: `boolean` - Include warnings in output (default: `true`)
 - **showInlineAnnotations**: `boolean` - Show inline code annotations (default: `false`)

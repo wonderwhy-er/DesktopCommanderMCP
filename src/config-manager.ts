@@ -135,7 +135,7 @@ class ConfigManager {
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
       diagnostics: {
-        enabled: false,  // Opt-in for diagnostics
+        enabled: true,   // Enabled by default
         providers: [],   // Empty means all available providers
         showWarnings: true,
         showInlineAnnotations: false

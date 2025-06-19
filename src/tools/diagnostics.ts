@@ -37,7 +37,7 @@ export interface DiagnosticsConfig {
 
 // Default diagnostics configuration
 const DEFAULT_DIAGNOSTICS_CONFIG: DiagnosticsConfig = {
-    enabled: false,
+    enabled: true,  // Enabled by default
     providers: [],
     showWarnings: true,
     showInlineAnnotations: false

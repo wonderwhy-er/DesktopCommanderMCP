@@ -343,7 +343,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Diagnostics provide VSCode-style lint/type error reporting after write_file and edit_block operations.
                         
                         Options:
-                        - enabled: Turn diagnostics on/off (default: false)
+                        - enabled: Turn diagnostics on/off (default: true)
                         - providers: Array of provider names to use (empty = all available)
                         - showWarnings: Include warnings in output (default: true)
                         - showInlineAnnotations: Show inline code annotations (default: false)
@@ -524,7 +524,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             // Diagnostics tools
             case "configure_diagnostics":
-                return await configureDiagnostics(args);
+                return await configureDiagnostics(args as any);
 
             case "list_diagnostic_providers":
                 return await listDiagnosticProviders();

@@ -55,7 +55,7 @@ export async function listDiagnosticProviders() {
     
     const providerList = providers.map(p => {
         const isEnabled = diagnosticsConfig.providers.length === 0 || 
-                         diagnosticsConfig.providers.includes(p.name);
+                         diagnosticsConfig.providers.includes(p.name as never);
         return `- ${p.name}: ${p.fileExtensions.join(', ')} ${isEnabled ? '(enabled)' : '(disabled)'}`;
     }).join('\n');
     
