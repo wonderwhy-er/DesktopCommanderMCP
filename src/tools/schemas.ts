@@ -93,3 +93,14 @@ export const EditBlockArgsSchema = z.object({
   new_string: z.string(),
   expected_replacements: z.number().optional().default(1),
 });
+
+// Diagnostics tools schemas
+export const ConfigureDiagnosticsArgsSchema = z.object({
+  enabled: z.boolean().optional(),
+  providers: z.array(z.string()).optional(),
+  showWarnings: z.boolean().optional(),
+  showInlineAnnotations: z.boolean().optional(),
+  maxDiagnostics: z.number().optional(),
+});
+
+export const ListDiagnosticProvidersArgsSchema = z.object({});

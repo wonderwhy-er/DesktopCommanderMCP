@@ -13,6 +13,13 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  diagnostics?: {
+    enabled: boolean;
+    providers: string[];
+    showWarnings: boolean;
+    showInlineAnnotations: boolean;
+    maxDiagnostics?: number;
+  };
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -126,7 +133,13 @@ class ConfigManager {
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
-      fileReadLineLimit: 1000  // Default line limit for file read operations (changed from character-based)
+      fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
+      diagnostics: {
+        enabled: false,  // Disabled by default - users can enable via configure_diagnostics
+        providers: [],   // Empty means all available providers
+        showWarnings: true,
+        showInlineAnnotations: false
+      }
     };
   }
 

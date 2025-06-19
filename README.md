@@ -59,6 +59,11 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Multiple file support
   - Pattern-based replacements
   - vscode-ripgrep based recursive code or text search in folders
+- Real-time diagnostics (VSCode-style):
+  - TypeScript type checking
+  - ESLint linting
+  - Extensible provider system
+  - Configurable output limits
 - Comprehensive audit logging:
   - All tool calls are automatically logged
   - Log rotation with 10MB size limit
@@ -176,6 +181,67 @@ After uninstalling, restart Claude Desktop to complete the removal.
 
 The server provides a comprehensive set of tools organized into several categories:
 
+### Real-time Diagnostics (VSCode-style)
+
+Desktop Commander MCP includes an optional diagnostics system that provides immediate feedback on code quality, similar to VS Code's error highlighting. When enabled, you'll see TypeScript errors, ESLint warnings, and other diagnostics automatically after writing or editing files.
+
+#### Quick Start
+```javascript
+// Enable diagnostics for TypeScript files
+await configureDiagnostics({
+    enabled: true,
+    providers: ['typescript'],
+    showWarnings: true
+});
+
+// Now when you edit TypeScript files, you'll see errors immediately
+```
+
+#### Supported Providers
+- **TypeScript**: Type checking, syntax errors, and compiler warnings
+- **ESLint**: JavaScript/TypeScript linting rules and style issues  
+- **Flake8**: Python code style and error checking
+- **Extensible**: Easy to add new diagnostic providers
+
+#### Configuration Options
+- `enabled`: Enable/disable the diagnostics system (default: false)
+- `providers`: Array of providers to use (empty = all available)
+- `showWarnings`: Include warnings in output (default: true)
+- `showInlineAnnotations`: Show inline code annotations (default: false)
+- `maxDiagnostics`: Maximum number of diagnostics to display (default: 20)
+
+#### Example Usage
+```javascript
+// Enable all available providers
+await configureDiagnostics({
+    enabled: true,
+    providers: [], // Empty means all available
+    showWarnings: true,
+    maxDiagnostics: 10
+});
+
+// Enable only TypeScript
+await configureDiagnostics({
+    enabled: true,
+    providers: ['typescript'],
+    showWarnings: false // Only show errors
+});
+
+// Disable diagnostics
+await configureDiagnostics({
+    enabled: false
+});
+```
+
+When diagnostics are enabled, you'll see immediate feedback after file operations:
+```
+Successfully wrote to example.ts (15 lines)
+
+🔍 Diagnostics (2 errors):
+├─ example.ts:3:5 - error TS2322: Type 'string' is not assignable to type 'number'
+└─ example.ts:7:12 - error TS2304: Cannot find name 'undefinedVariable'
+```
+
 ### Available Tools
 
 | Category | Tool | Description |
@@ -198,6 +264,8 @@ The server provides a comprehensive set of tools organized into several categori
 | | `search_code` | Search for text/code patterns within file contents using ripgrep |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
+| **Diagnostics** | `configure_diagnostics` | Configure real-time code analysis (TypeScript, ESLint, etc.) after file operations |
+| | `list_diagnostic_providers` | List available diagnostic providers and their status |
 
 ### Tool Usage Examples
 
@@ -600,6 +668,10 @@ Yes, when installed through npx or Smithery, Desktop Commander automatically upd
 
 ### I'm having trouble installing or using the tool. Where can I get help?
 Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new) with details about your problem.
+
+## Diagnostics
+
+Desktop Commander includes real-time code diagnostics that provide VSCode-style error and warning feedback after file operations. For detailed information about configuring and using diagnostics, see the [Diagnostics Documentation](DIAGNOSTICS.md).
 
 ## Data Collection & Privacy
 
