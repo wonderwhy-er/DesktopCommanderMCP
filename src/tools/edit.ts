@@ -7,6 +7,7 @@ import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 import { configManager } from '../config-manager.js';
 import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
+import { collectDiagnostics, formatDiagnostics } from './diagnostics.js';
 
 interface SearchReplace {
     search: string;
@@ -180,10 +181,15 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         
         await writeFile(filePath, newContent);
         capture('server_edit_block_exact_success', {fileExtension: fileExtension, expectedReplacements, hasWarning: warningMessage !== ""});
+        
+        // Collect diagnostics if enabled
+        const diagnosticsResult = await collectDiagnostics(filePath);
+        const diagnosticsMessage = formatDiagnostics(diagnosticsResult);
+        
         return {
             content: [{ 
                 type: "text", 
-                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}${warningMessage}` 
+                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}${warningMessage}${diagnosticsMessage}` 
             }],
         };
     }

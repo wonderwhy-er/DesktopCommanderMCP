@@ -15,6 +15,7 @@ import {ServerResult} from '../types.js';
 import {withTimeout} from '../utils/withTimeout.js';
 import {createErrorResponse} from '../error-handlers.js';
 import {configManager} from '../config-manager.js';
+import {collectDiagnostics, formatDiagnostics} from '../tools/diagnostics.js';
 
 import {
     ReadFileArgsSchema,
@@ -178,10 +179,14 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
         
+        // Collect diagnostics if enabled
+        const diagnosticsResult = await collectDiagnostics(parsed.path);
+        const diagnosticsMessage = formatDiagnostics(diagnosticsResult);
+        
         return {
             content: [{ 
                 type: "text", 
-                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
+                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}${diagnosticsMessage}`
             }],
         };
     } catch (error) {
