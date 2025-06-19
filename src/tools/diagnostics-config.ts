@@ -9,13 +9,15 @@ export async function configureDiagnostics(args: {
     providers?: string[];
     showWarnings?: boolean;
     showInlineAnnotations?: boolean;
+    maxDiagnostics?: number;
 }) {
     const config = await configManager.getConfig();
     const currentDiagnostics = config.diagnostics || {
         enabled: false,
         providers: [],
         showWarnings: true,
-        showInlineAnnotations: false
+        showInlineAnnotations: false,
+        maxDiagnostics: 20
     };
     
     // Update only provided fields
@@ -24,7 +26,8 @@ export async function configureDiagnostics(args: {
         ...(args.enabled !== undefined && { enabled: args.enabled }),
         ...(args.providers !== undefined && { providers: args.providers }),
         ...(args.showWarnings !== undefined && { showWarnings: args.showWarnings }),
-        ...(args.showInlineAnnotations !== undefined && { showInlineAnnotations: args.showInlineAnnotations })
+        ...(args.showInlineAnnotations !== undefined && { showInlineAnnotations: args.showInlineAnnotations }),
+        ...(args.maxDiagnostics !== undefined && { maxDiagnostics: args.maxDiagnostics })
     };
     
     await configManager.setValue('diagnostics', updatedDiagnostics);
@@ -36,7 +39,8 @@ export async function configureDiagnostics(args: {
                   `- Enabled: ${updatedDiagnostics.enabled}\n` +
                   `- Providers: ${updatedDiagnostics.providers.length === 0 ? 'all available' : updatedDiagnostics.providers.join(', ')}\n` +
                   `- Show warnings: ${updatedDiagnostics.showWarnings}\n` +
-                  `- Show inline annotations: ${updatedDiagnostics.showInlineAnnotations}`
+                  `- Show inline annotations: ${updatedDiagnostics.showInlineAnnotations}\n` +
+                  `- Max diagnostics shown: ${updatedDiagnostics.maxDiagnostics || 20}`
         }]
     };
 }

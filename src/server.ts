@@ -32,8 +32,11 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    ConfigureDiagnosticsArgsSchema,
+    ListDiagnosticProvidersArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {configureDiagnostics, listDiagnosticProviders} from './tools/diagnostics-config.js';
 import {trackToolCall} from './utils/trackTools.js';
 
 import {VERSION} from './version.js';
@@ -331,6 +334,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 },
                 
+                // Diagnostics tools
+                {
+                    name: "configure_diagnostics",
+                    description: `
+                        Configure diagnostics settings for real-time code analysis after file operations.
+                        
+                        Diagnostics provide VSCode-style lint/type error reporting after write_file and edit_block operations.
+                        
+                        Options:
+                        - enabled: Turn diagnostics on/off (default: false)
+                        - providers: Array of provider names to use (empty = all available)
+                        - showWarnings: Include warnings in output (default: true)
+                        - showInlineAnnotations: Show inline code annotations (default: false)
+                        - maxDiagnostics: Maximum number of diagnostics to show (default: 20)
+                        
+                        Available providers: typescript, eslint, flake8
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ConfigureDiagnosticsArgsSchema),
+                },
+                {
+                    name: "list_diagnostic_providers",
+                    description: `
+                        List all available diagnostic providers and their current status.
+                        
+                        Shows which diagnostic providers are available for different file types
+                        and whether they are currently enabled.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ListDiagnosticProvidersArgsSchema),
+                },
+                
                 // Terminal tools
                 {
                     name: "execute_command",
@@ -486,6 +521,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "edit_block":
                 return await handlers.handleEditBlock(args);
+
+            // Diagnostics tools
+            case "configure_diagnostics":
+                return await configureDiagnostics(args);
+
+            case "list_diagnostic_providers":
+                return await listDiagnosticProviders();
 
             default:
                 capture('server_unknown_tool', {name});

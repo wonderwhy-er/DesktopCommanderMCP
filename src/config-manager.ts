@@ -18,6 +18,7 @@ export interface ServerConfig {
     providers: string[];
     showWarnings: boolean;
     showInlineAnnotations: boolean;
+    maxDiagnostics?: number;
   };
   [key: string]: any; // Allow for arbitrary configuration keys
 }

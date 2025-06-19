@@ -59,6 +59,11 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Multiple file support
   - Pattern-based replacements
   - vscode-ripgrep based recursive code or text search in folders
+- Real-time diagnostics (VSCode-style):
+  - TypeScript type checking
+  - ESLint linting
+  - Extensible provider system
+  - Configurable output limits
 - Comprehensive audit logging:
   - All tool calls are automatically logged
   - Log rotation with 10MB size limit
@@ -198,6 +203,8 @@ The server provides a comprehensive set of tools organized into several categori
 | | `search_code` | Search for text/code patterns within file contents using ripgrep |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
+| **Diagnostics** | `configure_diagnostics` | Configure real-time code analysis (TypeScript, ESLint, etc.) after file operations |
+| | `list_diagnostic_providers` | List available diagnostic providers and their status |
 
 ### Tool Usage Examples
 
@@ -600,6 +607,10 @@ Yes, when installed through npx or Smithery, Desktop Commander automatically upd
 
 ### I'm having trouble installing or using the tool. Where can I get help?
 Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new) with details about your problem.
+
+## Diagnostics
+
+Desktop Commander includes real-time code diagnostics that provide VSCode-style error and warning feedback after file operations. For detailed information about configuring and using diagnostics, see the [Diagnostics Documentation](DIAGNOSTICS.md).
 
 ## Data Collection & Privacy
 

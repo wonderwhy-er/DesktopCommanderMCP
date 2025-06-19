@@ -32,6 +32,7 @@ export interface DiagnosticsConfig {
     providers: string[];
     showWarnings: boolean;
     showInlineAnnotations: boolean;
+    maxDiagnostics?: number;
 }
 
 // Default diagnostics configuration
@@ -114,6 +115,9 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
         const tsConfigPath = await this.findTsConfig(filePath);
         if (!tsConfigPath) return [];
         
+        const DIAGNOSTIC_TIMEOUT = 10000; // 10 seconds
+        const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB
+        
         return new Promise((resolve) => {
             const diagnostics: Diagnostic[] = [];
             const args = ['--noEmit', '--pretty', 'false'];
@@ -126,20 +130,66 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
             
             const tsc = spawn('npx', ['tsc', ...args], {
                 cwd: path.dirname(tsConfigPath),
-                shell: true
+                shell: true,
+                env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=512' }
             });
             
             let output = '';
+            let outputSize = 0;
+            let killed = false;
+            
+            // Set timeout
+            const timeout = setTimeout(() => {
+                if (!killed) {
+                    killed = true;
+                    tsc.kill();
+                    capture('diagnostics_timeout', {
+                        provider: this.name,
+                        timeout: DIAGNOSTIC_TIMEOUT
+                    });
+                    resolve(diagnostics);
+                }
+            }, DIAGNOSTIC_TIMEOUT);
             
             tsc.stdout.on('data', (data) => {
-                output += data.toString();
+                const chunk = data.toString();
+                outputSize += chunk.length;
+                
+                if (outputSize > MAX_OUTPUT_SIZE) {
+                    if (!killed) {
+                        killed = true;
+                        tsc.kill();
+                        capture('diagnostics_output_too_large', {
+                            provider: this.name,
+                            size: outputSize
+                        });
+                    }
+                    return;
+                }
+                
+                output += chunk;
             });
             
             tsc.stderr.on('data', (data) => {
-                output += data.toString();
+                const chunk = data.toString();
+                outputSize += chunk.length;
+                
+                if (outputSize > MAX_OUTPUT_SIZE) {
+                    if (!killed) {
+                        killed = true;
+                        tsc.kill();
+                    }
+                    return;
+                }
+                
+                output += chunk;
             });
             
             tsc.on('close', () => {
+                clearTimeout(timeout);
+                
+                if (killed) return;
+                
                 const lines = output.split('\n');
                 for (const line of lines) {
                     const match = line.match(/^(.+?)\((\d+),(\d+)\): (error|warning) (TS\d+): (.+)$/);
@@ -158,7 +208,14 @@ class TypeScriptDiagnosticProvider implements DiagnosticProvider {
                 resolve(diagnostics);
             });
             
-            tsc.on('error', () => resolve([]));
+            tsc.on('error', (err) => {
+                clearTimeout(timeout);
+                capture('diagnostics_spawn_error', {
+                    provider: this.name,
+                    error: err.message
+                });
+                resolve([]);
+            });
         });
     }
 }
@@ -224,22 +281,60 @@ class ESLintDiagnosticProvider implements DiagnosticProvider {
         const eslintConfig = await this.findEslintConfig(filePath);
         if (!eslintConfig) return [];
         
+        const DIAGNOSTIC_TIMEOUT = 10000; // 10 seconds
+        const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB
+        
         return new Promise((resolve) => {
             const diagnostics: Diagnostic[] = [];
-            const args = ['eslint', '--format', 'json', filePath];
+            const args = ['eslint', '--format', 'json', '--no-ignore', filePath];
             
             const eslint = spawn('npx', args, {
                 cwd: path.dirname(eslintConfig),
-                shell: true
+                shell: true,
+                env: { ...process.env, NODE_OPTIONS: '--max-old-space-size=512' }
             });
             
             let output = '';
+            let outputSize = 0;
+            let killed = false;
+            
+            // Set timeout
+            const timeout = setTimeout(() => {
+                if (!killed) {
+                    killed = true;
+                    eslint.kill();
+                    capture('diagnostics_timeout', {
+                        provider: this.name,
+                        timeout: DIAGNOSTIC_TIMEOUT
+                    });
+                    resolve(diagnostics);
+                }
+            }, DIAGNOSTIC_TIMEOUT);
             
             eslint.stdout.on('data', (data) => {
-                output += data.toString();
+                const chunk = data.toString();
+                outputSize += chunk.length;
+                
+                if (outputSize > MAX_OUTPUT_SIZE) {
+                    if (!killed) {
+                        killed = true;
+                        eslint.kill();
+                        capture('diagnostics_output_too_large', {
+                            provider: this.name,
+                            size: outputSize
+                        });
+                    }
+                    return;
+                }
+                
+                output += chunk;
             });
             
             eslint.on('close', () => {
+                clearTimeout(timeout);
+                
+                if (killed) return;
+                
                 try {
                     const results = JSON.parse(output);
                     if (results && results[0] && results[0].messages) {
@@ -255,13 +350,23 @@ class ESLintDiagnosticProvider implements DiagnosticProvider {
                             });
                         }
                     }
-                } catch {
-                    // Failed to parse
+                } catch (e) {
+                    capture('diagnostics_parse_error', {
+                        provider: this.name,
+                        error: e instanceof Error ? e.message : String(e)
+                    });
                 }
                 resolve(diagnostics);
             });
             
-            eslint.on('error', () => resolve([]));
+            eslint.on('error', (err) => {
+                clearTimeout(timeout);
+                capture('diagnostics_spawn_error', {
+                    provider: this.name,
+                    error: err.message
+                });
+                resolve([]);
+            });
         });
     }
 }
@@ -357,19 +462,25 @@ export async function collectDiagnostics(filePath: string): Promise<DiagnosticsR
     const diagnostics: Diagnostic[] = [];
     const enabledProviders = diagnosticRegistry.getEnabledProviders(config);
     
-    // Run diagnostics from all enabled providers
-    for (const provider of enabledProviders) {
+    // Run diagnostics from all enabled providers in parallel
+    const diagnosticPromises = enabledProviders.map(async (provider) => {
         try {
             if (await provider.isAvailable(filePath)) {
-                const providerDiagnostics = await provider.runDiagnostics(filePath);
-                diagnostics.push(...providerDiagnostics);
+                return await provider.runDiagnostics(filePath);
             }
+            return [];
         } catch (error) {
             capture('diagnostics_provider_error', {
                 provider: provider.name,
                 error: error instanceof Error ? error.message : String(error)
             });
+            return [];
         }
+    });
+    
+    const results = await Promise.all(diagnosticPromises);
+    for (const providerDiagnostics of results) {
+        diagnostics.push(...providerDiagnostics);
     }
     
     // Filter warnings if configured
@@ -407,6 +518,7 @@ export function formatDiagnostics(result: DiagnosticsResult, config?: Diagnostic
     }
     
     const showInline = config?.showInlineAnnotations ?? false;
+    const maxDiagnostics = config?.maxDiagnostics ?? 20; // Default to showing max 20
     const lines: string[] = ['\n'];
     
     if (showInline) {
@@ -417,22 +529,43 @@ export function formatDiagnostics(result: DiagnosticsResult, config?: Diagnostic
     const errors = result.diagnostics.filter(d => d.severity === 'error');
     const warnings = result.diagnostics.filter(d => d.severity === 'warning');
     
+    let displayedCount = 0;
+    const totalCount = errors.length + warnings.length;
+    
     if (errors.length > 0) {
+        const errorsToShow = errors.slice(0, Math.min(errors.length, maxDiagnostics));
+        displayedCount += errorsToShow.length;
+        
         lines.push(`\n❌ ${errors.length} Error${errors.length > 1 ? 's' : ''}:`);
-        for (const diag of errors) {
+        for (const diag of errorsToShow) {
             const location = `${diag.line}:${diag.column}`;
             const code = diag.code ? ` [${diag.code}]` : '';
             lines.push(`   ${location} - ${diag.message}${code} (${diag.source})`);
+        }
+        
+        if (errors.length > errorsToShow.length) {
+            lines.push(`   ... and ${errors.length - errorsToShow.length} more errors`);
         }
     }
     
-    if (warnings.length > 0) {
+    if (warnings.length > 0 && displayedCount < maxDiagnostics) {
+        const remainingSlots = maxDiagnostics - displayedCount;
+        const warningsToShow = warnings.slice(0, Math.min(warnings.length, remainingSlots));
+        
         lines.push(`\n⚠️  ${warnings.length} Warning${warnings.length > 1 ? 's' : ''}:`);
-        for (const diag of warnings) {
+        for (const diag of warningsToShow) {
             const location = `${diag.line}:${diag.column}`;
             const code = diag.code ? ` [${diag.code}]` : '';
             lines.push(`   ${location} - ${diag.message}${code} (${diag.source})`);
         }
+        
+        if (warnings.length > warningsToShow.length) {
+            lines.push(`   ... and ${warnings.length - warningsToShow.length} more warnings`);
+        }
+    }
+    
+    if (totalCount > maxDiagnostics) {
+        lines.push(`\n(Showing ${Math.min(totalCount, maxDiagnostics)} of ${totalCount} issues)`);
     }
     
     return lines.join('\n');

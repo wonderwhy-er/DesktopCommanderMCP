@@ -184,7 +184,8 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         
         // Collect diagnostics if enabled
         const diagnosticsResult = await collectDiagnostics(filePath);
-        const diagnosticsMessage = formatDiagnostics(diagnosticsResult);
+        const config = await configManager.getConfig();
+        const diagnosticsMessage = formatDiagnostics(diagnosticsResult, config.diagnostics);
         
         return {
             content: [{ 

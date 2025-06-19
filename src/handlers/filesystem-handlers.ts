@@ -181,7 +181,8 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         
         // Collect diagnostics if enabled
         const diagnosticsResult = await collectDiagnostics(parsed.path);
-        const diagnosticsMessage = formatDiagnostics(diagnosticsResult);
+        const diagnosticsConfig = (await configManager.getConfig()).diagnostics;
+        const diagnosticsMessage = formatDiagnostics(diagnosticsResult, diagnosticsConfig);
         
         return {
             content: [{ 
