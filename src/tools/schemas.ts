@@ -38,6 +38,7 @@ export const ReadFileArgsSchema = z.object({
   path: z.string(),
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
+  render: z.literal('read_file'),
   length: z.number().optional().default(1000),
 });
 
@@ -91,5 +92,6 @@ export const EditBlockArgsSchema = z.object({
   file_path: z.string(),
   old_string: z.string(),
   new_string: z.string(),
+  render: z.literal('diff'),
   expected_replacements: z.number().optional().default(1),
 });
