@@ -20,6 +20,7 @@
     "testemonials"
   ],
   "scripts": {
+    "open-chat": "open -n /Applications/Claude.app",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",

@@ -1,13 +1,15 @@
 import { 
-    executeCommand, 
-    readOutput, 
+    startProcess, 
+    readProcessOutput, 
+    interactWithProcess,
     forceTerminate, 
     listSessions 
-} from '../tools/execute.js';
+} from '../tools/improved-process-tools.js';
 
 import { 
-    ExecuteCommandArgsSchema,
-    ReadOutputArgsSchema,
+    StartProcessArgsSchema,
+    ReadProcessOutputArgsSchema,
+    InteractWithProcessArgsSchema,
     ForceTerminateArgsSchema,
     ListSessionsArgsSchema
 } from '../tools/schemas.js';
@@ -15,19 +17,26 @@ import {
 import { ServerResult } from '../types.js';
 
 /**
- * Handle execute_command command
+ * Handle start_process command (improved execute_command)
  */
-export async function handleExecuteCommand(args: unknown): Promise<ServerResult> {
-    const parsed = ExecuteCommandArgsSchema.parse(args);
-    return executeCommand(parsed);
+export async function handleStartProcess(args: unknown): Promise<ServerResult> {
+    const parsed = StartProcessArgsSchema.parse(args);
+    return startProcess(parsed);
 }
 
 /**
- * Handle read_output command
+ * Handle read_process_output command (improved read_output)
  */
-export async function handleReadOutput(args: unknown): Promise<ServerResult> {
-    const parsed = ReadOutputArgsSchema.parse(args);
-    return readOutput(parsed);
+export async function handleReadProcessOutput(args: unknown): Promise<ServerResult> {
+    const parsed = ReadProcessOutputArgsSchema.parse(args);
+    return readProcessOutput(parsed);
+}
+
+/**
+ * Handle interact_with_process command (improved send_input)
+ */
+export async function handleInteractWithProcess(args: unknown): Promise<ServerResult> {
+    return interactWithProcess(args);
 }
 
 /**
