@@ -16,6 +16,32 @@ export class TerminalManager {
   private sessions: Map<number, TerminalSession> = new Map();
   private completedSessions: Map<number, CompletedSession> = new Map();
   
+  /**
+   * Send input to a running process
+   * @param pid Process ID
+   * @param input Text to send to the process
+   * @returns Whether input was successfully sent
+   */
+  sendInputToProcess(pid: number, input: string): boolean {
+    const session = this.sessions.get(pid);
+    if (!session) {
+      return false;
+    }
+    
+    try {
+      if (session.process.stdin && !session.process.stdin.destroyed) {
+        // Ensure input ends with a newline for most REPLs
+        const inputWithNewline = input.endsWith('\n') ? input : input + '\n';
+        session.process.stdin.write(inputWithNewline);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error(`Error sending input to process ${pid}:`, error);
+      return false;
+    }
+  }
+  
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
     // Get the shell from config if not specified
     let shellToUse: string | boolean | undefined = shell;
@@ -29,10 +55,13 @@ export class TerminalManager {
       }
     }
     
+    // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
+    // Note: No special stdio options needed here, Node.js handles pipes by default
     const spawnOptions = { 
       shell: shellToUse
     };
     
+    // Spawn the process with an empty array of arguments and our options
     const process = spawn(command, [], spawnOptions);
     let output = '';
     

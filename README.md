@@ -38,6 +38,10 @@ Execute long-running terminal commands on your computer and manage processes thr
 
 ## Features
 
+- **Enhanced terminal commands with interactive process control**
+- **Execute code in memory (Python, Node.js, R) without saving files**
+- **Instant data analysis - just ask to analyze CSV/JSON files**
+- **Interact with running processes (SSH, databases, development servers)**
 - Execute terminal commands with output streaming
 - Command timeout and background execution support
 - Process management (list and kill processes)
@@ -182,8 +186,9 @@ The server provides a comprehensive set of tools organized into several categori
 |----------|------|-------------|
 | **Configuration** | `get_config` | Get the complete server configuration as JSON (includes blockedCommands, defaultShell, allowedDirectories, fileReadLineLimit, fileWriteLineLimit, telemetryEnabled) |
 | | `set_config_value` | Set a specific configuration value by key. Available settings: <br>• `blockedCommands`: Array of shell commands that cannot be executed<br>• `defaultShell`: Shell to use for commands (e.g., bash, zsh, powershell)<br>• `allowedDirectories`: Array of filesystem paths the server can access for file operations (⚠️ terminal commands can still access files outside these directories)<br>• `fileReadLineLimit`: Maximum lines to read at once (default: 1000)<br>• `fileWriteLineLimit`: Maximum lines to write at once (default: 50)<br>• `telemetryEnabled`: Enable/disable telemetry (boolean) |
-| **Terminal** | `execute_command` | Execute a terminal command with configurable timeout and shell selection |
-| | `read_output` | Read new output from a running terminal session |
+| **Terminal** | `start_process` | Start programs with smart detection of when they're ready for input |
+| | `interact_with_process` | Send commands to running programs and get responses |
+| | `read_process_output` | Read output from running processes |
 | | `force_terminate` | Force terminate a running terminal session |
 | | `list_sessions` | List all active terminal sessions |
 | | `list_processes` | List all running processes with detailed information |
@@ -198,6 +203,23 @@ The server provides a comprehensive set of tools organized into several categori
 | | `search_code` | Search for text/code patterns within file contents using ripgrep |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
+
+### Quick Examples
+
+**Data Analysis:**
+```
+"Analyze sales.csv and show top customers" → Claude runs Python code in memory
+```
+
+**Remote Access:**
+```
+"SSH to my server and check disk space" → Claude maintains SSH session
+```
+
+**Development:**
+```
+"Start Node.js and test this API" → Claude runs interactive Node session
+```
 
 ### Tool Usage Examples
 
