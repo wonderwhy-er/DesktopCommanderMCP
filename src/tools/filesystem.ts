@@ -263,11 +263,11 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
     const fileSize = stats.size;
     const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB threshold
     const SMALL_READ_THRESHOLD = 100; // For very small reads, use efficient methods
-    
+
     // For negative offsets (tail behavior), use reverse reading
     if (offset < 0) {
         const requestedLines = Math.abs(offset);
-        
+
         if (fileSize > LARGE_FILE_THRESHOLD && requestedLines <= SMALL_READ_THRESHOLD) {
             // Use efficient reverse reading for large files with small tail requests
             return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage);
@@ -276,14 +276,14 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
             return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage);
         }
     }
-    
+
     // For positive offsets
     else {
         // For small files or reading from start, use simple readline
         if (fileSize < LARGE_FILE_THRESHOLD || offset === 0) {
             return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
         }
-        
+
         // For large files with middle/end reads, try to estimate position
         else {
             // If seeking deep into file, try byte estimation
@@ -304,37 +304,37 @@ async function readLastNLinesReverse(filePath: string, n: number, mimeType: stri
     try {
         const stats = await fd.stat();
         const fileSize = stats.size;
-        
+
         const chunkSize = 8192; // 8KB chunks
         let position = fileSize;
         let lines: string[] = [];
         let partialLine = '';
-        
+
         while (position > 0 && lines.length < n) {
             const readSize = Math.min(chunkSize, position);
             position -= readSize;
-            
+
             const buffer = Buffer.alloc(readSize);
             await fd.read(buffer, 0, readSize, position);
-            
+
             const chunk = buffer.toString('utf-8');
             const text = chunk + partialLine;
             const chunkLines = text.split('\n');
-            
+
             partialLine = chunkLines.shift() || '';
             lines = chunkLines.concat(lines);
         }
-        
+
         // Add the remaining partial line if we reached the beginning
         if (position === 0 && partialLine) {
             lines.unshift(partialLine);
         }
-        
+
         const result = lines.slice(-n); // Get exactly n lines
-        const content = includeStatusMessage 
+        const content = includeStatusMessage
             ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
             : result.join('\n');
-        
+
         return { content, mimeType, isImage: false };
     } finally {
         await fd.close();
@@ -349,19 +349,19 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
         input: createReadStream(filePath),
         crlfDelay: Infinity
     });
-    
+
     const buffer: string[] = new Array(requestedLines);
     let bufferIndex = 0;
     let totalLines = 0;
-    
+
     for await (const line of rl) {
         buffer[bufferIndex] = line;
         bufferIndex = (bufferIndex + 1) % requestedLines;
         totalLines++;
     }
-    
+
     rl.close();
-    
+
     // Extract lines in correct order
     let result: string[];
     if (totalLines >= requestedLines) {
@@ -372,8 +372,8 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
     } else {
         result = buffer.slice(0, totalLines);
     }
-    
-    const content = includeStatusMessage 
+
+    const content = includeStatusMessage
         ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
         : result.join('\n');
     return { content, mimeType, isImage: false };
@@ -387,10 +387,10 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
         input: createReadStream(filePath),
         crlfDelay: Infinity
     });
-    
+
     const result: string[] = [];
     let lineNumber = 0;
-    
+
     for await (const line of rl) {
         if (lineNumber >= offset && result.length < length) {
             result.push(line);
@@ -398,11 +398,11 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
         if (result.length >= length) break; // Early exit optimization
         lineNumber++;
     }
-    
+
     rl.close();
-    
+
     if (includeStatusMessage) {
-        const statusMessage = offset === 0 
+        const statusMessage = offset === 0
             ? `[Reading ${result.length} lines from start]`
             : `[Reading ${result.length} lines from line ${offset}]`;
         const content = `${statusMessage}\n\n${result.join('\n')}`;
@@ -422,51 +422,51 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
         input: createReadStream(filePath),
         crlfDelay: Infinity
     });
-    
+
     let sampleLines = 0;
     let bytesRead = 0;
     const SAMPLE_SIZE = 10000; // Sample first 10KB
-    
+
     for await (const line of rl) {
         bytesRead += Buffer.byteLength(line, 'utf-8') + 1; // +1 for newline
         sampleLines++;
         if (bytesRead >= SAMPLE_SIZE) break;
     }
-    
+
     rl.close();
-    
+
     if (sampleLines === 0) {
         // Fallback to simple read
         return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
     }
-    
+
     // Estimate average line length and seek position
     const avgLineLength = bytesRead / sampleLines;
     const estimatedBytePosition = Math.floor(offset * avgLineLength);
-    
+
     // Create a new stream starting from estimated position
     const fd = await fs.open(filePath, 'r');
     try {
         const stats = await fd.stat();
         const startPosition = Math.min(estimatedBytePosition, stats.size);
-        
+
         const stream = createReadStream(filePath, { start: startPosition });
         const rl2 = createInterface({
             input: stream,
             crlfDelay: Infinity
         });
-        
+
         const result: string[] = [];
         let lineCount = 0;
         let firstLineSkipped = false;
-        
+
         for await (const line of rl2) {
             // Skip first potentially partial line if we didn't start at beginning
             if (!firstLineSkipped && startPosition > 0) {
                 firstLineSkipped = true;
                 continue;
             }
-            
+
             if (result.length < length) {
                 result.push(line);
             } else {
@@ -474,10 +474,10 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
             }
             lineCount++;
         }
-        
+
         rl2.close();
-        
-        const content = includeStatusMessage 
+
+        const content = includeStatusMessage
             ? `[Reading ${result.length} lines from estimated position (target line ${offset})]\n\n${result.join('\n')}`
             : result.join('\n');
         return { content, mimeType, isImage: false };
@@ -605,36 +605,36 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     }
 
     const validPath = await validatePath(filePath);
-    
+
     // Get file extension and MIME type
     const fileExtension = path.extname(validPath).toLowerCase();
     const { getMimeType, isImageFile } = await import('./mime-types.js');
     const mimeType = getMimeType(validPath);
     const isImage = isImageFile(mimeType);
-    
+
     if (isImage) {
         throw new Error('Cannot read image files as text for internal operations');
     }
-    
+
     // IMPORTANT: For internal operations (especially edit operations), we must
-    // preserve exact file content including original line endings. 
+    // preserve exact file content including original line endings.
     // We cannot use readline-based reading as it strips line endings.
-    
+
     // Read entire file content preserving line endings
     const content = await fs.readFile(validPath, 'utf8');
-    
+
     // If we need to apply offset/length, do it while preserving line endings
     if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {
         // Most common case for edit operations: read entire file
         return content;
     }
-    
+
     // Handle offset/length by splitting on line boundaries while preserving line endings
     const lines = splitLinesPreservingEndings(content);
-    
+
     // Apply offset and length
     const selectedLines = lines.slice(offset, offset + length);
-    
+
     // Join back together (this preserves the original line endings)
     return selectedLines.join('');
 }
@@ -646,14 +646,14 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
  */
 function splitLinesPreservingEndings(content: string): string[] {
     if (!content) return [''];
-    
+
     const lines: string[] = [];
     let currentLine = '';
-    
+
     for (let i = 0; i < content.length; i++) {
         const char = content[i];
         currentLine += char;
-        
+
         // Check for line ending patterns
         if (char === '\n') {
             // LF or end of CRLF
@@ -671,12 +671,12 @@ function splitLinesPreservingEndings(content: string): string[] {
             currentLine = '';
         }
     }
-    
+
     // Handle any remaining content (file not ending with line ending)
     if (currentLine) {
         lines.push(currentLine);
     }
-    
+
     return lines;
 }
 

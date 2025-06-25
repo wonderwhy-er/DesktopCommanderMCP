@@ -59,7 +59,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   // Get system info for shell information
   const systemInfo = getSystemInfo();
   const shellUsed = parsed.data.shell || systemInfo.defaultShell;
-  
+
   let statusMessage = '';
   if (processState.isWaitingForInput) {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -72,7 +72,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}`
+      text: `Process started with PID ${result.pid}\nInitial output:\n${result.output}${statusMessage}`
     }],
   };
 }

@@ -84,7 +84,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         return {
             tools: [
                 // 🚨🚨🚨 IMPORTANT: LOCAL FILE ANALYSIS TOOL SELECTION 🚨🚨🚨
-                // 
+                //
                 // FOR ANY LOCAL FILE WORK (CSV, JSON, logs, data analysis):
                 // ✅ ALWAYS USE: start_process + interact_with_process (with Python, R, etc.)
                 // ❌ NEVER USE: Analysis/REPL tool (CANNOT access local files and WILL FAIL)
@@ -96,7 +96,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 // 🐚 DEFAULT SHELL: ${SYSTEM_INFO.defaultShell}
                 // 📁 PATH SEPARATOR: "${SYSTEM_INFO.pathSeparator}"
                 // 📄 EXAMPLE ABSOLUTE PATH: ${SYSTEM_INFO.examplePaths.absolute}
-                
+
                 // Configuration tools
                 {
                     name: "get_config",
@@ -364,6 +364,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ⚠️ CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
                         
                         ${OS_GUIDANCE}
+                        Start a new terminal process with intelligent state detection.
+                        
+                        🚨 PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
+                        This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
+                        The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
+                        
+                        ⚠️ CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
+                        
+                        🪟 WINDOWS SHELL TROUBLESHOOTING:
+                        If Node.js or Python commands fail with "not recognized" errors on Windows:
+                        - Try different shells: specify shell parameter as "cmd" or "powershell.exe"
+                        - PowerShell may have execution policy restrictions for some tools
+                        - CMD typically has better compatibility with development tools like Node.js/Python
+                        - Example: start_process("node --version", shell="cmd") if PowerShell fails
+                        - Use set_config_value to change defaultShell if needed
                         
                         REQUIRED WORKFLOW FOR LOCAL FILES:
                         1. start_process("python3 -i") - Start Python REPL for data analysis
@@ -432,7 +447,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
                 },
                 {
-                    name: "interact_with_process", 
+                    name: "interact_with_process",
                     description: `
                         Send input to a running process and automatically receive the response.
                         
@@ -526,11 +541,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
-                
+
                 // 🚨🚨🚨 CRITICAL TOOL SELECTION GUIDANCE 🚨🚨🚨
                 //
                 // FOR LOCAL FILE ANALYSIS (CSV, JSON, logs, data files):
-                // ✅ ALWAYS USE: start_process + interact_with_process 
+                // ✅ ALWAYS USE: start_process + interact_with_process
                 // ✅ ALTERNATIVE: Command-line tools (read_file, search_code, cut, awk, grep)
                 // ❌ NEVER EVER USE: Analysis tool (CANNOT access local files and WILL FAIL)
                 //
@@ -547,7 +562,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 // - Access to all installed libraries and tools
                 //
                 // MANDATORY WORKFLOW FOR LOCAL FILES:
-                // 1. start_process("python3 -i") 
+                // 1. start_process("python3 -i")
                 // 2. interact_with_process(pid, "import pandas as pd")
                 // 3. interact_with_process(pid, "df = pd.read_csv('/path/to/file.csv')")
                 // 4. interact_with_process(pid, "print(df.head())")
@@ -559,6 +574,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 // - Default Shell: ${SYSTEM_INFO.defaultShell}
                 // - Use ${SYSTEM_INFO.pathSeparator} for paths (example: ${SYSTEM_INFO.examplePaths.absolute})
                 // ${SYSTEM_INFO.isWindows ? '- Windows: Use "cmd" or "powershell.exe" if commands fail' : '- Unix/Linux: Standard shell tools available (grep, awk, sed, etc.)'}
+
+                // 🚨🚨🚨 CRITICAL TOOL SELECTION GUIDANCE 🚨🚨🚨
+                //
+                // FOR LOCAL FILE ANALYSIS (CSV, JSON, logs, data files):
+                // ✅ ALWAYS USE: start_process + interact_with_process
+                // ✅ ALTERNATIVE: Command-line tools (read_file, search_code, cut, awk, grep)
+                // ❌ NEVER EVER USE: Analysis tool (CANNOT access local files and WILL FAIL)
+                //
+                // 🔴 ANALYSIS/REPL TOOL LIMITATIONS:
+                // - CANNOT read files from user's computer/file system
+                // - ONLY works with uploaded files or web data
+                // - Browser-based JavaScript runtime only
+                // - NO access to pandas, numpy, or local Python libraries
+                //
+                // 🟢 PROCESS TOOLS ADVANTAGES:
+                // - CAN access ALL local files
+                // - Full system power (Python, R, databases, etc.)
+                // - Handle files of ANY size
+                // - Access to all installed libraries and tools
+                //
+                // MANDATORY WORKFLOW FOR LOCAL FILES:
+                // 1. start_process("python3 -i")
+                // 2. interact_with_process(pid, "import pandas as pd")
+                // 3. interact_with_process(pid, "df = pd.read_csv('/path/to/file.csv')")
+                // 4. interact_with_process(pid, "print(df.head())")
+                //
+                // REMEMBER: "For local file analysis, ALWAYS use processes, NEVER use analysis tool"
             ],
         };
     } catch (error) {
@@ -610,7 +652,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "read_process_output":
                 return await handlers.handleReadProcessOutput(args);
-                
+
             case "interact_with_process":
                 return await handlers.handleInteractWithProcess(args);
 
