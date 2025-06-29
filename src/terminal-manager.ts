@@ -3,6 +3,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import { analyzeProcessState } from './utils/process-detection.js';
 
 interface CompletedSession {
   pid: number;
@@ -86,10 +87,33 @@ export class TerminalManager {
     this.sessions.set(process.pid, session);
 
     return new Promise((resolve) => {
+      let resolved = false;
+      let periodicCheck: NodeJS.Timeout | null = null;
+      
+      // Quick prompt patterns for immediate detection
+      const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
+      
+      const resolveOnce = (result: CommandExecutionResult) => {
+        if (resolved) return;
+        resolved = true;
+        if (periodicCheck) clearInterval(periodicCheck);
+        resolve(result);
+      };
+
       process.stdout.on('data', (data) => {
         const text = data.toString();
         output += text;
         session.lastOutput += text;
+        
+        // Immediate check for obvious prompts
+        if (quickPromptPatterns.test(text)) {
+          session.isBlocked = true;
+          resolveOnce({
+            pid: process.pid!,
+            output,
+            isBlocked: true
+          });
+        }
       });
 
       process.stderr.on('data', (data) => {
@@ -98,9 +122,25 @@ export class TerminalManager {
         session.lastOutput += text;
       });
 
+      // Periodic comprehensive check every 100ms
+      periodicCheck = setInterval(() => {
+        if (output.trim()) {
+          const processState = analyzeProcessState(output, process.pid);
+          if (processState.isWaitingForInput) {
+            session.isBlocked = true;
+            resolveOnce({
+              pid: process.pid!,
+              output,
+              isBlocked: true
+            });
+          }
+        }
+      }, 100);
+
+      // Timeout fallback
       setTimeout(() => {
         session.isBlocked = true;
-        resolve({
+        resolveOnce({
           pid: process.pid!,
           output,
           isBlocked: true
@@ -126,7 +166,7 @@ export class TerminalManager {
           
           this.sessions.delete(process.pid);
         }
-        resolve({
+        resolveOnce({
           pid: process.pid!,
           output,
           isBlocked: false
