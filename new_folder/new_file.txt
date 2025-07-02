@@ -1,3 +1,0 @@
-This is a new file created by Claude using Desktop Commander.
-It demonstrates the write_file functionality.
-Files can be created and modified easily using these tools.
