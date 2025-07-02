@@ -84,7 +84,21 @@ export async function handleSearchCode(args: unknown): Promise<ServerResult> {
         formattedResults += `  ${result.line}: ${result.match}\n`;
     });
 
+    // Truncate if results are too large to prevent Claude API limits
+    const MAX_RESPONSE_SIZE = 1000000; // 1 million characters limit
+    const resultText = formattedResults.trim();
+    
+    if (resultText.length > MAX_RESPONSE_SIZE) {
+        const truncatedText = resultText.substring(0, MAX_RESPONSE_SIZE);
+        const remainingCharacters = resultText.length - MAX_RESPONSE_SIZE;
+        const truncatedResults = `${truncatedText}\n\n[Results truncated - ${remainingCharacters} more characters available. Try refining your search pattern or using a more specific file pattern to get fewer results.]`;
+        
+        return {
+            content: [{type: "text", text: truncatedResults}],
+        };
+    }
+
     return {
-        content: [{type: "text", text: formattedResults.trim()}],
+        content: [{type: "text", text: resultText}],
     };
 }
