@@ -1,0 +1,79 @@
+diff --git a/editor-plugins/utils/open-ai-utils/src/main/ts/OpenAiUtils.ts b/editor-plugins/utils/open-ai-utils/src/main/ts/OpenAiUtils.ts
+index 1234567..abcdefg 100644
+--- a/editor-plugins/utils/open-ai-utils/src/main/ts/OpenAiUtils.ts
++++ b/editor-plugins/utils/open-ai-utils/src/main/ts/OpenAiUtils.ts
+@@ -605,6 +605,21 @@ export async function enhancedOpenAiCompletion<T extends OpenAISuggestion>(
+ 	onOpenAiParsingError?: (retries: number) => void,
+ 	onApiError?: (retries: number) => void
+ ): Promise<T> {
++	// Create Langfuse trace if tracing is enabled
++	let traceId: string | null = null;
++	if (isActive("js-langfuse-tracing") && options.tracingMetadata) {
++		traceId = await createLangfuseTrace(openAiService, {
++			name: options.tracingMetadata.traceName || "openai-completion",
++			input: {
++				systemPrompt: options.systemPrompt,
++				userPrompt: options.userPrompt,
++				model: options.model,
++				functionDefinition: options.functionDefinition,
++			},
++			tags: options.tracingMetadata.tags || [],
++			metadata: options.tracingMetadata.metadata || {},
++		});
++	}
++	const startTime = new Date();
++
++	try {
+ 	// Convert enhanced options to standard options
+ 	const standardOptions: OpenAICompletionOptions = {
+ 		retries: options.retries ?? 3,
+@@ -622,12 +637,47 @@ export async function enhancedOpenAiCompletion<T extends OpenAISuggestion>(
+ 	};
+ 
+ 	// Use the standard OpenAI completion function
+-	return openAiCompletion<T>(
++	const result = await openAiCompletion<T>(
+ 		openAiService,
+ 		standardOptions,
+ 		preziOid,
+ 		validateResult,
+ 		onTooManyRequestsOrInternalServerError,
+ 		onOpenAiParsingError,
+ 		onApiError
+ 	);
++
++		// Record generation in Langfuse if tracing is enabled
++		if (traceId && isActive("js-langfuse-tracing")) {
++			const endTime = new Date();
++			await recordLangfuseGeneration(openAiService, traceId, {
++				name: options.tracingMetadata?.traceName || "openai-completion",
++				model: standardOptions.model || "gpt-3.5-turbo",
++				input: {
++					systemPrompt: standardOptions.systemPrompt,
++					userPrompt: standardOptions.userPrompt,
++					functionDefinition: standardOptions.functionDefinition,
++				},
++				output: result,
++				startTime,
++				endTime,
++				metadata: options.tracingMetadata?.metadata,
++				modelParameters: {
++					temperature: standardOptions.temperature,
++					max_tokens: standardOptions.max_tokens,
++				},
++				usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
++			});
++			await updateLangfuseTrace(openAiService, traceId, result);
++		}
++
++		return result;
++	} catch (error) {
++		// Update trace with error if tracing is enabled
++		if (traceId && isActive("js-langfuse-tracing")) {
++			await updateLangfuseTrace(openAiService, traceId, {
++				error: error instanceof Error ? error.message : String(error),
++			});
++		}
++		throw error;
++	}
+ }

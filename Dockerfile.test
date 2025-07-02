@@ -1,0 +1,27 @@
+# Use Node.js official image
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy test files (these don't need dependencies)
+COPY startup-detection-test.js ./
+
+# Copy the built startup detector module
+COPY dist/utils/startup-detector.js ./dist/utils/startup-detector.js
+COPY dist/utils/startup-detector.d.ts ./dist/utils/startup-detector.d.ts
+
+# Create a simple test script for Docker detection
+RUN echo '#!/bin/sh' > /app/test-docker.sh && \
+    echo 'echo "🐳 Docker Detection Test"' >> /app/test-docker.sh && \
+    echo 'echo "======================"' >> /app/test-docker.sh && \
+    echo 'echo ""' >> /app/test-docker.sh && \
+    echo 'echo "1. Testing with comprehensive detection script:"' >> /app/test-docker.sh && \
+    echo 'node startup-detection-test.js' >> /app/test-docker.sh && \
+    echo 'echo ""' >> /app/test-docker.sh && \
+    echo 'echo "2. Testing production module directly:"' >> /app/test-docker.sh && \
+    echo 'node -e "import(\"./dist/utils/startup-detector.js\").then(({ getStartupInfo, getStartupMethod, isDocker, isProduction }) => { const info = getStartupInfo(); console.log(\"🚀 Method:\", getStartupMethod()); console.log(\"🐳 Is Docker:\", isDocker()); console.log(\"🏭 Is Production:\", isProduction()); console.log(\"📍 Environment:\", info.environment); console.log(\"🔍 Confidence:\", info.confidence + \"%\"); console.log(\"📝 Evidence:\", info.details.evidence.join(\", \")); console.log(\"\"); console.log(\"Full Detection Results:\"); console.log(JSON.stringify(info, null, 2)); }).catch(console.error);"' >> /app/test-docker.sh && \
+    chmod +x /app/test-docker.sh
+
+# Default command runs the test
+CMD ["/app/test-docker.sh"]

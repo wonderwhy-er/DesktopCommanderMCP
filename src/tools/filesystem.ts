@@ -250,6 +250,68 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 }
 
 /**
+ * Get total line count for a file efficiently (for files under 10MB)
+ * @param filePath Path to the file
+ * @returns Total line count or undefined if cannot determine efficiently
+ */
+async function getTotalLineCount(filePath: string): Promise<number | undefined> {
+    try {
+        const stats = await fs.stat(filePath);
+        // Only count lines for reasonably sized files to avoid performance issues
+        if (stats.size < 10 * 1024 * 1024) { // 10MB limit
+            const content = await fs.readFile(filePath, 'utf8');
+            return content.split('\n').length;
+        }
+    } catch (error) {
+        // If we can't read the file, just return undefined
+    }
+    return undefined;
+}
+
+/**
+ * Generate enhanced status message with total and remaining line information
+ * @param readLines Number of lines actually read
+ * @param offset Starting offset (line number)
+ * @param totalLines Total lines in the file (if available)
+ * @param isNegativeOffset Whether this is a tail operation
+ * @returns Enhanced status message string
+ */
+function generateEnhancedStatusMessage(
+    readLines: number, 
+    offset: number, 
+    totalLines?: number,
+    isNegativeOffset: boolean = false
+): string {
+    if (isNegativeOffset) {
+        // For tail operations (negative offset)
+        if (totalLines !== undefined) {
+            return `[Reading last ${readLines} lines (total: ${totalLines} lines)]`;
+        } else {
+            return `[Reading last ${readLines} lines]`;
+        }
+    } else {
+        // For normal reads (positive offset)
+        if (totalLines !== undefined) {
+            const endLine = offset + readLines;
+            const remainingLines = Math.max(0, totalLines - endLine);
+            
+            if (offset === 0) {
+                return `[Reading ${readLines} lines from start (total: ${totalLines} lines, ${remainingLines} remaining)]`;
+            } else {
+                return `[Reading ${readLines} lines from line ${offset} (total: ${totalLines} lines, ${remainingLines} remaining)]`;
+            }
+        } else {
+            // Fallback when total lines unknown
+            if (offset === 0) {
+                return `[Reading ${readLines} lines from start]`;
+            } else {
+                return `[Reading ${readLines} lines from line ${offset}]`;
+            }
+        }
+    }
+}
+
+/**
  * Read file content using smart positioning for optimal performance
  * @param filePath Path to the file (already validated)
  * @param offset Starting line number (negative for tail behavior)
@@ -264,16 +326,19 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
     const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB threshold
     const SMALL_READ_THRESHOLD = 100; // For very small reads, use efficient methods
 
+    // Get total line count for enhanced status messages (only for smaller files)
+    const totalLines = await getTotalLineCount(filePath);
+
     // For negative offsets (tail behavior), use reverse reading
     if (offset < 0) {
         const requestedLines = Math.abs(offset);
 
         if (fileSize > LARGE_FILE_THRESHOLD && requestedLines <= SMALL_READ_THRESHOLD) {
             // Use efficient reverse reading for large files with small tail requests
-            return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage);
+            return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
         } else {
             // Use readline circular buffer for other cases
-            return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage);
+            return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
         }
     }
 
@@ -281,16 +346,16 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
     else {
         // For small files or reading from start, use simple readline
         if (fileSize < LARGE_FILE_THRESHOLD || offset === 0) {
-            return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+            return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
         }
 
         // For large files with middle/end reads, try to estimate position
         else {
             // If seeking deep into file, try byte estimation
             if (offset > 1000) {
-                return await readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage);
+                return await readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
             } else {
-                return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+                return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
             }
         }
     }
@@ -299,7 +364,7 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
 /**
  * Read last N lines efficiently by reading file backwards in chunks
  */
-async function readLastNLinesReverse(filePath: string, n: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readLastNLinesReverse(filePath: string, n: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const fd = await fs.open(filePath, 'r');
     try {
         const stats = await fd.stat();
@@ -325,35 +390,26 @@ async function readLastNLinesReverse(filePath: string, n: number, mimeType: stri
             lines = chunkLines.concat(lines);
         }
 
-        partialLine = chunkLines.shift() || '';
-        lines = chunkLines.concat(lines);
+        // Add the remaining partial line if we reached the beginning
+        if (position === 0 && partialLine) {
+            lines.unshift(partialLine);
+        }
+
+        const result = lines.slice(-n); // Get exactly n lines
+        const content = includeStatusMessage
+            ? `${generateEnhancedStatusMessage(result.length, -n, fileTotalLines, true)}\n\n${result.join('\n')}`
+            : result.join('\n');
+
+        return { content, mimeType, isImage: false };
+    } finally {
+        await fd.close();
     }
-
-    // Add the remaining partial line if we reached the beginning
-    if (position === 0 && partialLine) {
-        lines.unshift(partialLine);
-    }
-
-    // Add the remaining partial line if we reached the beginning
-    if (position === 0 && partialLine) {
-        lines.unshift(partialLine);
-    }
-
-    const result = lines.slice(-n); // Get exactly n lines
-    const content = includeStatusMessage
-        ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
-        : result.join('\n');
-
-    return { content, mimeType, isImage: false };
-} finally {
-    await fd.close();
-}
 }
 
 /**
  * Read from end using readline with circular buffer
  */
-async function readFromEndWithReadline(filePath: string, requestedLines: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromEndWithReadline(filePath: string, requestedLines: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const rl = createInterface({
         input: createReadStream(filePath),
         crlfDelay: Infinity
@@ -383,7 +439,7 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
     }
 
     const content = includeStatusMessage
-        ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
+        ? `${generateEnhancedStatusMessage(result.length, -requestedLines, fileTotalLines, true)}\n\n${result.join('\n')}`
         : result.join('\n');
     return { content, mimeType, isImage: false };
 }
@@ -391,7 +447,7 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
 /**
  * Read from start/middle using readline
  */
-async function readFromStartWithReadline(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromStartWithReadline(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const rl = createInterface({
         input: createReadStream(filePath),
         crlfDelay: Infinity
@@ -411,9 +467,7 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
     rl.close();
 
     if (includeStatusMessage) {
-        const statusMessage = offset === 0
-            ? `[Reading ${result.length} lines from start]`
-            : `[Reading ${result.length} lines from line ${offset}]`;
+        const statusMessage = generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
         const content = `${statusMessage}\n\n${result.join('\n')}`;
         return { content, mimeType, isImage: false };
     } else {
@@ -425,7 +479,7 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
 /**
  * Read from estimated byte position for very large files
  */
-async function readFromEstimatedPosition(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromEstimatedPosition(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     // First, do a quick scan to estimate lines per byte
     const rl = createInterface({
         input: createReadStream(filePath),
@@ -448,7 +502,7 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
 
     if (sampleLines === 0) {
         // Fallback to simple read
-        return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+        return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines);
     }
 
     // Estimate average line length and seek position
@@ -489,7 +543,7 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
         rl2.close();
 
         const content = includeStatusMessage
-            ? `[Reading ${result.length} lines from estimated position (target line ${offset})]\n\n${result.join('\n')}`
+            ? `${generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
             : result.join('\n');
             ? `[Reading ${result.length} lines from estimated position (target line ${offset})]\n\n${result.join('\n')}`
             : result.join('\n');
