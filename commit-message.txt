@@ -1,0 +1,20 @@
+refactor: simplify REPL implementation by using terminal commands
+
+This refactoring removes the specialized REPL implementation in favor of using
+standard terminal commands for interactive sessions. This approach:
+
+- Simplifies the codebase by removing specialized REPL-specific code
+- Makes the implementation more flexible and works with any REPL environment 
+  without requiring language-specific configurations
+- Provides a more consistent user experience by using the same interface for
+  all interactive sessions
+
+Key changes:
+- Removed specialized REPL manager, handlers, and tools
+- Enhanced terminal functionality to better handle interactive sessions
+- Added documentation and examples for using terminal commands with REPL environments
+- Added proper send_input capability to the terminal manager
+- Created example scripts showing how to interact with Python and Node.js REPLs
+
+This change also better aligns with the Unix philosophy of creating simple,
+composable tools rather than specialized abstractions.

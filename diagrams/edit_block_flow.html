@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>edit_block Tool Detailed Flow</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .mermaid { margin-top: 30px; border: 1px solid #eee; padding: 20px; border-radius: 8px; box-shadow: 2px 2px 8px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <h1>edit_block Tool Detailed Flow</h1>
+    <pre class="mermaid">
+        graph TD
+            A["Claude Calls edit_block"] --> B{"handleEditBlock(args)"};
+            B --> C{"Validate Args (EditBlockArgsSchema)"};
+            C -- Valid --> D["Read File Content (readFile)"];
+            D --> E{"Detect File Line Endings"};
+            E --> F["Normalize Search/Replace Strings"];
+
+            F --> G{"Attempt Exact Match"};
+            G -- Exact Match Found & Count Matches Expected --> H[Perform Exact Replacement];
+            H --> I[Check for Line Limit Warnings];
+            I --> J[Write File (writeFile)];
+            J --> K[Return Success/Warning to Claude];
+
+            G -- Exact Match Found & Count Mismatch --> L[Return "Count Mismatch" Error to Claude];
+
+            G -- No Exact Match --> M{Perform Fuzzy Search (recursiveFuzzyIndexOf)};
+            M --> N{Calculate Similarity (getSimilarityRatio)};
+            N --> O{Generate Character-Level Diff (highlightDifferences)};
+            O --> P{Extract Character Code Data (getCharacterCodeData)};
+
+            P --> Q{Log Fuzzy Search Event (fuzzySearchLogger)};
+            Q --> R{Capture Telemetry (capture)};
+
+            R --> S{Compare Similarity to FUZZY_THRESHOLD};
+            S -- Similarity >= Threshold --> T[Return "Close Match Found" Message with Diff and Logs];
+            S -- Similarity < Threshold --> U[Return "No Close Match" Message with Diff and Logs];
+
+            subgraph "src/tools/edit.ts"
+                B
+                C
+                D
+                E
+                F
+                G
+                H
+                I
+                J
+                K
+                L
+                M
+                N
+                O
+                P
+                Q
+                R
+                S
+                T
+                U
+            end
+    </pre>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+</body>
+</html>
