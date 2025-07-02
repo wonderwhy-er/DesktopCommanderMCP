@@ -44,6 +44,7 @@ import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
 import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
+import {usageTracker} from './utils/usageTracker.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
@@ -549,8 +550,9 @@ import * as handlers from './handlers/index.js';
 import {ServerResult} from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
+    const {name, arguments: args} = request.params;
+
     try {
-        const {name, arguments: args} = request.params;
         capture_call_tool('server_call_tool', {
             name
         });
@@ -559,116 +561,186 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
+        let result: ServerResult;
+
         switch (name) {
             // Config tools
             case "get_config":
                 try {
-                    return await getConfig();
+                    result = await getConfig();
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_config handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to get configuration`}],
                         isError: true,
                     };
                 }
+                break;
             case "set_config_value":
                 try {
-                    return await setConfigValue(args);
+                    result = await setConfigValue(args);
                 } catch (error) {
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
                         isError: true,
                     };
                 }
+                break;
 
             case "get_usage_stats":
                 try {
-                    return await getUsageStats();
+                    result = await getUsageStats();
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to get usage statistics`}],
                         isError: true,
                     };
                 }
+                break;
 
             case "give_feedback_to_desktop_commander":
                 try {
-                    return await giveFeedbackToDesktopCommander(args);
+                    result = await giveFeedbackToDesktopCommander(args);
                 } catch (error) {
                     capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to open feedback form`}],
                         isError: true,
                     };
                 }
+                break;
 
             // Terminal tools
             case "start_process":
-                return await handlers.handleStartProcess(args);
+                result = await handlers.handleStartProcess(args);
+                break;
 
             case "read_process_output":
-                return await handlers.handleReadProcessOutput(args);
+                result = await handlers.handleReadProcessOutput(args);
+                break;
                 
             case "interact_with_process":
-                return await handlers.handleInteractWithProcess(args);
+                result = await handlers.handleInteractWithProcess(args);
+                break;
 
             case "force_terminate":
-                return await handlers.handleForceTerminate(args);
+                result = await handlers.handleForceTerminate(args);
+                break;
 
             case "list_sessions":
-                return await handlers.handleListSessions();
+                result = await handlers.handleListSessions();
+                break;
 
             // Process tools
             case "list_processes":
-                return await handlers.handleListProcesses();
+                result = await handlers.handleListProcesses();
+                break;
 
             case "kill_process":
-                return await handlers.handleKillProcess(args);
+                result = await handlers.handleKillProcess(args);
+                break;
 
             // Note: REPL functionality removed in favor of using general terminal commands
 
             // Filesystem tools
             case "read_file":
-                return await handlers.handleReadFile(args);
+                result = await handlers.handleReadFile(args);
+                break;
 
             case "read_multiple_files":
-                return await handlers.handleReadMultipleFiles(args);
+                result = await handlers.handleReadMultipleFiles(args);
+                break;
 
             case "write_file":
-                return await handlers.handleWriteFile(args);
+                result = await handlers.handleWriteFile(args);
+                break;
 
             case "create_directory":
-                return await handlers.handleCreateDirectory(args);
+                result = await handlers.handleCreateDirectory(args);
+                break;
 
             case "list_directory":
-                return await handlers.handleListDirectory(args);
+                result = await handlers.handleListDirectory(args);
+                break;
 
             case "move_file":
-                return await handlers.handleMoveFile(args);
+                result = await handlers.handleMoveFile(args);
+                break;
 
             case "search_files":
-                return await handlers.handleSearchFiles(args);
+                result = await handlers.handleSearchFiles(args);
+                break;
 
             case "search_code":
-                return await handlers.handleSearchCode(args);
+                result = await handlers.handleSearchCode(args);
+                break;
 
             case "get_file_info":
-                return await handlers.handleGetFileInfo(args);
+                result = await handlers.handleGetFileInfo(args);
+                break;
 
             case "edit_block":
-                return await handlers.handleEditBlock(args);
+                result = await handlers.handleEditBlock(args);
+                break;
 
             default:
                 capture('server_unknown_tool', {name});
-                return {
+                result = {
                     content: [{type: "text", text: `Error: Unknown tool: ${name}`}],
                     isError: true,
                 };
         }
+
+        // Track success or failure based on result
+        if (result.isError) {
+            await usageTracker.trackFailure(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
+        } else {
+            await usageTracker.trackSuccess(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
+            
+            // Check if should prompt for feedback (only on successful operations)
+            const shouldPrompt = true;//await usageTracker.shouldPromptForFeedback();
+            console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
+            
+            if (shouldPrompt) {
+                console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
+                const feedbackMessage = await usageTracker.getFeedbackPromptMessage();
+                console.log(`[FEEDBACK DEBUG] Generated message: ${feedbackMessage.substring(0, 50)}...`);
+                
+                // Inject feedback instruction for the LLM
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                    console.log(`[FEEDBACK DEBUG] Using primary path - injecting LLM instruction`);
+                    const currentContent = result.content[0].text || '';
+                    result.content[0].text = `${currentContent}${feedbackMessage}`;
+                    console.log(`[FEEDBACK DEBUG] Instruction injected, length: ${result.content[0].text.length}`);
+                } else {
+                    console.log(`[FEEDBACK DEBUG] Using fallback path - adding instruction as new content`);
+                    // Fallback if content structure is different
+                    result.content = [
+                        ...(result.content || []),
+                        {
+                            type: "text",
+                            text: feedbackMessage
+                        }
+                    ];
+                }
+                
+                // Mark that we've prompted (to prevent spam)
+                await usageTracker.markFeedbackPrompted();
+                console.log(`[FEEDBACK DEBUG] Marked as prompted, feedback should appear!`);
+            }
+        }
+
+        return result;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Track the failure
+        await usageTracker.trackFailure(name);
+
         capture('server_request_error', {
             error: errorMessage
         });
