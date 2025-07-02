@@ -37,8 +37,12 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    GetUsageStatsArgsSchema,
+    GiveFeedbackArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {getUsageStats} from './tools/usage.js';
+import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
 
 import {VERSION} from './version.js';
@@ -512,6 +516,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
+                {
+                    name: "get_usage_stats",
+                    description: `
+                        Get usage statistics for debugging and analysis.
+                        
+                        Returns summary of tool usage, success/failure rates, and performance metrics.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                },
+                {
+                    name: "give_feedback_to_desktop_commander",
+                    description: `
+                        Open feedback form in browser to provide feedback about Desktop Commander.
+                        
+                        All fields are optional. If provided, they will be pre-filled in the form.
+                        Opens the feedback form in the default browser.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                },
             ],
         };
     } catch (error) {
@@ -553,6 +578,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
                     return {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                        isError: true,
+                    };
+                }
+
+            case "get_usage_stats":
+                try {
+                    return await getUsageStats();
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
+                    return {
+                        content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        isError: true,
+                    };
+                }
+
+            case "give_feedback_to_desktop_commander":
+                try {
+                    return await giveFeedbackToDesktopCommander(args);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
+                    return {
+                        content: [{type: "text", text: `Error: Failed to open feedback form`}],
                         isError: true,
                     };
                 }

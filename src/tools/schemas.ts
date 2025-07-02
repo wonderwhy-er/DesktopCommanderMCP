@@ -101,3 +101,33 @@ export const InteractWithProcessArgsSchema = z.object({
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
+
+// Usage stats schema
+export const GetUsageStatsArgsSchema = z.object({});
+
+// Feedback tool schema
+export const GiveFeedbackArgsSchema = z.object({
+  // Contact information (all optional)
+  email: z.string().optional(),
+  role: z.string().optional(),
+  company: z.string().optional(),
+  
+  // Discovery and feedback content (all optional)
+  heard_about: z.enum([
+    'Friends',
+    'Colleagues', 
+    'YouTube',
+    'TikTok',
+    'Reddit',
+    'Medium',
+    'Other'
+  ]).optional(),
+  client_used: z.string().optional(),
+  other_tools: z.string().optional(),
+  what_doing: z.string().optional(),
+  what_enjoy: z.string().optional(),
+  how_better: z.string().optional(),
+  else_to_share: z.string().optional(),
+  recommendation_score: z.number().min(1).max(10).optional(),
+  user_study: z.boolean().optional(),
+});
