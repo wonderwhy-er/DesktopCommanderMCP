@@ -423,15 +423,28 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       return {
         content: [{
           type: "text",
-          text: `✅ Input executed in process ${pid}.\n(No output produced)${statusMessage}`
+          text: `✅ Input executed in process ${pid}.\n📭 (No output produced)${statusMessage}`
         }],
       };
     }
     
+    // Format response with better structure and consistent emojis
+    let responseText = `✅ Input executed in process ${pid}`;
+    
+    if (cleanOutput && cleanOutput.trim().length > 0) {
+      responseText += `:\n\n📤 Output:\n${cleanOutput}`;
+    } else {
+      responseText += `.\n📭 (No output produced)`;
+    }
+    
+    if (statusMessage) {
+      responseText += `\n\n${statusMessage}`;
+    }
+
     return {
       content: [{
         type: "text", 
-        text: `✅ Input executed in process ${pid}:\n\n${cleanOutput}${statusMessage}`
+        text: responseText
       }],
     };
     
