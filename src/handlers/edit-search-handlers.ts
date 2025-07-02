@@ -26,6 +26,9 @@ export async function handleSearchCode(args: unknown): Promise<ServerResult> {
     const parsed = SearchCodeArgsSchema.parse(args);
     const timeoutMs = parsed.timeoutMs || 30000; // 30 seconds default
 
+    // Limit maxResults to prevent overwhelming responses
+    const safeMaxResults = parsed.maxResults ? Math.min(parsed.maxResults, 5000) : 2000; // Default to 2000 instead of 1000
+
     // Apply timeout at the handler level
     const searchOperation = async () => {
         return await searchTextInFiles({
@@ -33,7 +36,7 @@ export async function handleSearchCode(args: unknown): Promise<ServerResult> {
             pattern: parsed.pattern,
             filePattern: parsed.filePattern,
             ignoreCase: parsed.ignoreCase,
-            maxResults: parsed.maxResults,
+            maxResults: safeMaxResults,
             includeHidden: parsed.includeHidden,
             contextLines: parsed.contextLines,
             // Don't pass timeoutMs down to the implementation
@@ -72,17 +75,36 @@ export async function handleSearchCode(args: unknown): Promise<ServerResult> {
         };
     }
 
-    // Format the results in a VS Code-like format
+    // Format the results in a VS Code-like format with early truncation
     let currentFile = "";
     let formattedResults = "";
+    const MAX_RESPONSE_SIZE = 900000; // 900KB limit - well below the 1MB API limit
+    let resultsProcessed = 0;
+    let totalResults = results.length;
 
-    results.forEach(result => {
+    for (const result of results) {
+        // Check if adding this result would exceed our limit
+        const newFileHeader = result.file !== currentFile ? `\n${result.file}:\n` : '';
+        const newLine = `  ${result.line}: ${result.match}\n`;
+        const potentialAddition = newFileHeader + newLine;
+        
+        // If adding this would exceed the limit, truncate here
+        if (formattedResults.length + potentialAddition.length > MAX_RESPONSE_SIZE) {
+            const remainingResults = totalResults - resultsProcessed;
+            const avgResultLength = formattedResults.length / Math.max(resultsProcessed, 1);
+            const estimatedRemainingChars = remainingResults * avgResultLength;
+            const truncationMessage = `\n\n[Results truncated - ${remainingResults} more results available (approximately ${Math.round(estimatedRemainingChars).toLocaleString()} more characters). Try refining your search pattern or using a more specific file pattern to get fewer results.]`;
+            formattedResults += truncationMessage;
+            break;
+        }
+        
         if (result.file !== currentFile) {
-            formattedResults += `\n${result.file}:\n`;
+            formattedResults += newFileHeader;
             currentFile = result.file;
         }
-        formattedResults += `  ${result.line}: ${result.match}\n`;
-    });
+        formattedResults += newLine;
+        resultsProcessed++;
+    }
 
     return {
         content: [{type: "text", text: formattedResults.trim()}],

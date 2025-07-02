@@ -37,3 +37,6 @@ coverage/
 .history
 
 server.log
+
+# Local planning/documentation directories
+plans/

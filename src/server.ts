@@ -7,9 +7,13 @@ import {
     type CallToolRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import {zodToJsonSchema} from "zod-to-json-schema";
+import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
 
-// Shared constants for tool descriptions
-const PATH_GUIDANCE = `IMPORTANT: Always use absolute paths (starting with '/' or drive letter like 'C:\\') for reliability. Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
+// Get system information once at startup
+const SYSTEM_INFO = getSystemInfo();
+const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
+const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
+const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
@@ -79,15 +83,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         console.error("Generating tools list...");
         return {
             tools: [
-                // 🚨🚨🚨 IMPORTANT: LOCAL FILE ANALYSIS TOOL SELECTION 🚨🚨🚨
-                // 
-                // FOR ANY LOCAL FILE WORK (CSV, JSON, logs, data analysis):
-                // ✅ ALWAYS USE: start_process + interact_with_process (with Python, R, etc.)
-                // ❌ NEVER USE: Analysis/REPL tool (CANNOT access local files and WILL FAIL)
-                //
-                // The analysis tool is browser-only and cannot read files from the user's computer.
-                // Always use processes for local file analysis!
-                
                 // Configuration tools
                 {
                     name: "get_config",
@@ -99,7 +94,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
-                        -  version (version of the DesktopCommander)
+                        - version (version of the DesktopCommander)
+                        - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
@@ -185,7 +181,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Write or append to file contents. 
 
-                        🎯 CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
+                        CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
 
                         STANDARD PROCESS FOR ANY FILE:
@@ -193,7 +189,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         2. THEN → write_file(filePath, secondChunk, {mode: 'append'})   [≤30 lines]
                         3. CONTINUE → write_file(filePath, nextChunk, {mode: 'append'}) [≤30 lines]
 
-                        ⚠️ ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
+                        ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
 
                         WHEN TO CHUNK (always be proactive):
                         1. Any file expected to be longer than 25-30 lines
@@ -347,19 +343,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Start a new terminal process with intelligent state detection.
                         
-                        🚨 PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
+                        PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
                         This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
                         The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
                         
-                        ⚠️ CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
+                        CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
                         
-                        🪟 WINDOWS SHELL TROUBLESHOOTING:
-                        If Node.js or Python commands fail with "not recognized" errors on Windows:
-                        - Try different shells: specify shell parameter as "cmd" or "powershell.exe"
-                        - PowerShell may have execution policy restrictions for some tools
-                        - CMD typically has better compatibility with development tools like Node.js/Python
-                        - Example: start_process("node --version", shell="cmd") if PowerShell fails
-                        - Use set_config_value to change defaultShell if needed
+                        ${OS_GUIDANCE}
                         
                         REQUIRED WORKFLOW FOR LOCAL FILES:
                         1. start_process("python3 -i") - Start Python REPL for data analysis
@@ -389,12 +379,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Early exit prevents unnecessary waiting
                         
                         STATES DETECTED:
-                        🔄 Process waiting for input (shows prompt)
-                        ✅ Process finished execution  
-                        ⏳ Process running (use read_process_output)
+                        Process waiting for input (shows prompt)
+                        Process finished execution  
+                        Process running (use read_process_output)
                         
-                        ✅ ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
-                        ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
+                        ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
+                        NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -420,9 +410,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Works with Python, Node.js, R, Julia, etc.
                         
                         DETECTION STATES:
-                        🔄 Process waiting for input (ready for interact_with_process)
-                        ✅ Process finished execution
-                        ⏱️ Timeout reached (may still be running)
+                        Process waiting for input (ready for interact_with_process)
+                        Process finished execution
+                        Timeout reached (may still be running)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
@@ -432,11 +422,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Send input to a running process and automatically receive the response.
                         
-                        🚨 CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
+                        CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
                         For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
                         The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
                         
-                        📁 FILE ANALYSIS PRIORITY ORDER (MANDATORY):
+                        FILE ANALYSIS PRIORITY ORDER (MANDATORY):
                         1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
                         2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
                         3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
@@ -470,8 +460,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         Returns execution result with status indicators.
                         
-                        ✅ ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
-                        ❌ NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
+                        ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
+                        NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
@@ -522,33 +512,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
-                
-                // 🚨🚨🚨 CRITICAL TOOL SELECTION GUIDANCE 🚨🚨🚨
-                //
-                // FOR LOCAL FILE ANALYSIS (CSV, JSON, logs, data files):
-                // ✅ ALWAYS USE: start_process + interact_with_process 
-                // ✅ ALTERNATIVE: Command-line tools (read_file, search_code, cut, awk, grep)
-                // ❌ NEVER EVER USE: Analysis tool (CANNOT access local files and WILL FAIL)
-                //
-                // 🔴 ANALYSIS/REPL TOOL LIMITATIONS:
-                // - CANNOT read files from user's computer/file system
-                // - ONLY works with uploaded files or web data
-                // - Browser-based JavaScript runtime only
-                // - NO access to pandas, numpy, or local Python libraries
-                //
-                // 🟢 PROCESS TOOLS ADVANTAGES:
-                // - CAN access ALL local files
-                // - Full system power (Python, R, databases, etc.)
-                // - Handle files of ANY size
-                // - Access to all installed libraries and tools
-                //
-                // MANDATORY WORKFLOW FOR LOCAL FILES:
-                // 1. start_process("python3 -i") 
-                // 2. interact_with_process(pid, "import pandas as pd")
-                // 3. interact_with_process(pid, "df = pd.read_csv('/path/to/file.csv')")
-                // 4. interact_with_process(pid, "print(df.head())")
-                //
-                // REMEMBER: "For local file analysis, ALWAYS use processes, NEVER use analysis tool"
             ],
         };
     } catch (error) {
