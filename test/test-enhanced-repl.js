@@ -76,9 +76,18 @@ async function testEnhancedREPL() {
 for i in range(3):
     print(greet(f"Guest {i+1}"))`;
   
-  const multilineResult = await interactWithProcess({
+  // Send the multi-line code
+  await interactWithProcess({
     pid,
     input: multilineCode,
+    wait_for_prompt: true,
+    timeout_ms: 5000
+  });
+  
+  // Send an empty line to complete and execute the block
+  const multilineResult = await interactWithProcess({
+    pid,
+    input: '',
     wait_for_prompt: true,
     timeout_ms: 5000
   });

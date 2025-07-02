@@ -600,8 +600,6 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
         const content = includeStatusMessage
             ? `${generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
             : result.join('\n');
-            ? `[Reading ${result.length} lines from estimated position (target line ${offset})]\n\n${result.join('\n')}`
-            : result.join('\n');
         return { content, mimeType, isImage: false };
     } finally {
         await fd.close();
