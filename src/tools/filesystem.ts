@@ -8,6 +8,85 @@ import {capture} from '../utils/capture.js';
 import {withTimeout} from '../utils/withTimeout.js';
 import {configManager} from '../config-manager.js';
 
+// CONSTANTS SECTION - Consolidate all timeouts and thresholds
+const FILE_OPERATION_TIMEOUTS = {
+    PATH_VALIDATION: 10000,    // 10 seconds
+    URL_FETCH: 30000,          // 30 seconds  
+    FILE_READ: 30000,          // 30 seconds
+} as const;
+
+const FILE_SIZE_LIMITS = {
+    LARGE_FILE_THRESHOLD: 10 * 1024 * 1024,  // 10MB
+    LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
+} as const;
+
+const READ_PERFORMANCE_THRESHOLDS = {
+    SMALL_READ_THRESHOLD: 100,    // For very small reads
+    DEEP_OFFSET_THRESHOLD: 1000,  // For byte estimation
+    SAMPLE_SIZE: 10000,           // Sample size for estimation
+    CHUNK_SIZE: 8192,             // 8KB chunks for reverse reading
+} as const;
+
+// UTILITY FUNCTIONS - Eliminate duplication
+
+/**
+ * Count lines in text content efficiently
+ * @param content Text content to count lines in
+ * @returns Number of lines
+ */
+function countLines(content: string): number {
+    return content.split('\n').length;
+}
+
+/**
+ * Count lines in a file efficiently (for files under size limit)
+ * @param filePath Path to the file
+ * @returns Line count or undefined if file too large/can't read
+ */
+async function getFileLineCount(filePath: string): Promise<number | undefined> {
+    try {
+        const stats = await fs.stat(filePath);
+        // Only count lines for reasonably sized files to avoid performance issues
+        if (stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
+            const content = await fs.readFile(filePath, 'utf8');
+            return countLines(content);
+        }
+    } catch (error) {
+        // If we can't read the file, just return undefined
+    }
+    return undefined;
+}
+
+/**
+ * Get MIME type information for a file
+ * @param filePath Path to the file
+ * @returns Object with mimeType and isImage properties
+ */
+async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; isImage: boolean }> {
+    const { getMimeType, isImageFile } = await import('./mime-types.js');
+    const mimeType = getMimeType(filePath);
+    const isImage = isImageFile(mimeType);
+    return { mimeType, isImage };
+}
+
+/**
+ * Get file extension for telemetry purposes
+ * @param filePath Path to the file
+ * @returns Lowercase file extension
+ */
+function getFileExtension(filePath: string): string {
+    return path.extname(filePath).toLowerCase();
+}
+
+/**
+ * Get default read length from configuration
+ * @returns Default number of lines to read
+ */
+async function getDefaultReadLength(): Promise<number> {
+    const config = await configManager.getConfig();
+    return config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
+}
+
 // Initialize allowed directories from configuration
 async function getAllowedDirs(): Promise<string[]> {
     try {
@@ -47,13 +126,13 @@ function expandHome(filepath: string): string {
  * Recursively validates parent directories until it finds a valid one
  * This function handles the case where we need to create nested directories
  * and we need to check if any of the parent directories exist
- * 
+ *
  * @param directoryPath The path to validate
  * @returns Promise<boolean> True if a valid parent directory was found
  */
 async function validateParentDirectories(directoryPath: string): Promise<boolean> {
     const parentDir = path.dirname(directoryPath);
-    
+
     // Base case: we've reached the root or the same directory (shouldn't happen normally)
     if (parentDir === directoryPath || parentDir === path.dirname(parentDir)) {
         return false;
@@ -71,7 +150,7 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 
 /**
  * Checks if a path is within any of the allowed directories
- * 
+ *
  * @param pathToCheck Path to check
  * @returns boolean True if path is allowed
  */
@@ -98,7 +177,7 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         if (normalizedPathToCheck === normalizedAllowedDir) {
             return true;
         }
-        
+
         // Check if path is a subdirectory of the allowed directory
         // Make sure to add a separator to prevent partial directory name matches
         // e.g. /home/user vs /home/username
@@ -106,7 +185,7 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         if (subdirCheck) {
             return true;
         }
-        
+
         // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
         if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
             return normalizedPathToCheck.startsWith('c:');
@@ -122,23 +201,21 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
  * Validates a path to ensure it can be accessed or created.
  * For existing paths, returns the real path (resolving symlinks).
  * For non-existent paths, validates parent directories to ensure they exist.
- * 
+ *
  * @param requestedPath The path to validate
  * @returns Promise<string> The validated path
  * @throws Error if the path or its parent directories don't exist or if the path is not allowed
  */
 export async function validatePath(requestedPath: string): Promise<string> {
-    const PATH_VALIDATION_TIMEOUT = 10000; // 10 seconds timeout
-    
     const validationOperation = async (): Promise<string> => {
         // Expand home directory if present
         const expandedPath = expandHome(requestedPath);
-        
+
         // Convert to absolute path
         const absolute = path.isAbsolute(expandedPath)
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
-            
+
         // Check if path is allowed
         if (!(await isPathAllowed(absolute))) {
             capture('server_path_validation_error', {
@@ -148,7 +225,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
 
             throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
-        
+
         // Check if path exists
         try {
             const stats = await fs.stat(absolute);
@@ -165,24 +242,24 @@ export async function validatePath(requestedPath: string): Promise<string> {
             return absolute;
         }
     };
-    
+
     // Execute with timeout
     const result = await withTimeout(
         validationOperation(),
-        PATH_VALIDATION_TIMEOUT,
+        FILE_OPERATION_TIMEOUTS.PATH_VALIDATION,
         `Path validation operation`, // Generic name for telemetry
         null
     );
-    
+
     if (result === null) {
         // Keep original path in error for AI but a generic message for telemetry
         capture('server_path_validation_timeout', {
-            timeoutMs: PATH_VALIDATION_TIMEOUT
+            timeoutMs: FILE_OPERATION_TIMEOUTS.PATH_VALIDATION
         });
 
         throw new Error(`Path validation failed for path: ${requestedPath}`);
     }
-    
+
     return result;
 }
 
@@ -202,50 +279,94 @@ export interface FileResult {
 export async function readFileFromUrl(url: string): Promise<FileResult> {
     // Import the MIME type utilities
     const { isImageFile } = await import('./mime-types.js');
-    
+
     // Set up fetch with timeout
-    const FETCH_TIMEOUT_MS = 30000;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
     
     try {
         const response = await fetch(url, {
             signal: controller.signal
         });
-        
+
         // Clear the timeout since fetch completed
         clearTimeout(timeoutId);
-        
+
         if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
-        
+
         // Get MIME type from Content-Type header
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
-        
+
         if (isImage) {
             // For images, convert to base64
             const buffer = await response.arrayBuffer();
             const content = Buffer.from(buffer).toString('base64');
-            
+
             return { content, mimeType: contentType, isImage };
         } else {
             // For text content
             const content = await response.text();
-            
+
             return { content, mimeType: contentType, isImage };
         }
     } catch (error) {
         // Clear the timeout to prevent memory leaks
         clearTimeout(timeoutId);
-        
+
         // Return error information instead of throwing
         const errorMessage = error instanceof DOMException && error.name === 'AbortError'
-            ? `URL fetch timed out after ${FETCH_TIMEOUT_MS}ms: ${url}`
+            ? `URL fetch timed out after ${FILE_OPERATION_TIMEOUTS.URL_FETCH}ms: ${url}`
             : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
 
         throw new Error(errorMessage);
+    }
+}
+
+
+
+/**
+ * Generate enhanced status message with total and remaining line information
+ * @param readLines Number of lines actually read
+ * @param offset Starting offset (line number)
+ * @param totalLines Total lines in the file (if available)
+ * @param isNegativeOffset Whether this is a tail operation
+ * @returns Enhanced status message string
+ */
+function generateEnhancedStatusMessage(
+    readLines: number, 
+    offset: number, 
+    totalLines?: number,
+    isNegativeOffset: boolean = false
+): string {
+    if (isNegativeOffset) {
+        // For tail operations (negative offset)
+        if (totalLines !== undefined) {
+            return `[Reading last ${readLines} lines (total: ${totalLines} lines)]`;
+        } else {
+            return `[Reading last ${readLines} lines]`;
+        }
+    } else {
+        // For normal reads (positive offset)
+        if (totalLines !== undefined) {
+            const endLine = offset + readLines;
+            const remainingLines = Math.max(0, totalLines - endLine);
+            
+            if (offset === 0) {
+                return `[Reading ${readLines} lines from start (total: ${totalLines} lines, ${remainingLines} remaining)]`;
+            } else {
+                return `[Reading ${readLines} lines from line ${offset} (total: ${totalLines} lines, ${remainingLines} remaining)]`;
+            }
+        } else {
+            // Fallback when total lines unknown
+            if (offset === 0) {
+                return `[Reading ${readLines} lines from start]`;
+            } else {
+                return `[Reading ${readLines} lines from line ${offset}]`;
+            }
+        }
     }
 }
 
@@ -261,36 +382,37 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 async function readFileWithSmartPositioning(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
     const stats = await fs.stat(filePath);
     const fileSize = stats.size;
-    const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB threshold
-    const SMALL_READ_THRESHOLD = 100; // For very small reads, use efficient methods
+
+    // Get total line count for enhanced status messages (only for smaller files)
+    const totalLines = await getFileLineCount(filePath);
 
     // For negative offsets (tail behavior), use reverse reading
     if (offset < 0) {
         const requestedLines = Math.abs(offset);
 
-        if (fileSize > LARGE_FILE_THRESHOLD && requestedLines <= SMALL_READ_THRESHOLD) {
+        if (fileSize > FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD && requestedLines <= READ_PERFORMANCE_THRESHOLDS.SMALL_READ_THRESHOLD) {
             // Use efficient reverse reading for large files with small tail requests
-            return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage);
+            return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
         } else {
             // Use readline circular buffer for other cases
-            return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage);
+            return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
         }
     }
 
     // For positive offsets
     else {
         // For small files or reading from start, use simple readline
-        if (fileSize < LARGE_FILE_THRESHOLD || offset === 0) {
-            return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+        if (fileSize < FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD || offset === 0) {
+            return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
         }
 
         // For large files with middle/end reads, try to estimate position
         else {
             // If seeking deep into file, try byte estimation
-            if (offset > 1000) {
-                return await readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage);
+            if (offset > READ_PERFORMANCE_THRESHOLDS.DEEP_OFFSET_THRESHOLD) {
+                return await readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
             } else {
-                return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+                return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
             }
         }
     }
@@ -299,19 +421,18 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
 /**
  * Read last N lines efficiently by reading file backwards in chunks
  */
-async function readLastNLinesReverse(filePath: string, n: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readLastNLinesReverse(filePath: string, n: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const fd = await fs.open(filePath, 'r');
     try {
         const stats = await fd.stat();
         const fileSize = stats.size;
 
-        const chunkSize = 8192; // 8KB chunks
         let position = fileSize;
         let lines: string[] = [];
         let partialLine = '';
 
         while (position > 0 && lines.length < n) {
-            const readSize = Math.min(chunkSize, position);
+            const readSize = Math.min(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE, position);
             position -= readSize;
 
             const buffer = Buffer.alloc(readSize);
@@ -332,7 +453,7 @@ async function readLastNLinesReverse(filePath: string, n: number, mimeType: stri
 
         const result = lines.slice(-n); // Get exactly n lines
         const content = includeStatusMessage
-            ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
+            ? `${generateEnhancedStatusMessage(result.length, -n, fileTotalLines, true)}\n\n${result.join('\n')}`
             : result.join('\n');
 
         return { content, mimeType, isImage: false };
@@ -344,7 +465,7 @@ async function readLastNLinesReverse(filePath: string, n: number, mimeType: stri
 /**
  * Read from end using readline with circular buffer
  */
-async function readFromEndWithReadline(filePath: string, requestedLines: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromEndWithReadline(filePath: string, requestedLines: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const rl = createInterface({
         input: createReadStream(filePath),
         crlfDelay: Infinity
@@ -374,7 +495,7 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
     }
 
     const content = includeStatusMessage
-        ? `[Reading last ${result.length} lines]\n\n${result.join('\n')}`
+        ? `${generateEnhancedStatusMessage(result.length, -requestedLines, fileTotalLines, true)}\n\n${result.join('\n')}`
         : result.join('\n');
     return { content, mimeType, isImage: false };
 }
@@ -382,7 +503,7 @@ async function readFromEndWithReadline(filePath: string, requestedLines: number,
 /**
  * Read from start/middle using readline
  */
-async function readFromStartWithReadline(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromStartWithReadline(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     const rl = createInterface({
         input: createReadStream(filePath),
         crlfDelay: Infinity
@@ -402,9 +523,7 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
     rl.close();
 
     if (includeStatusMessage) {
-        const statusMessage = offset === 0
-            ? `[Reading ${result.length} lines from start]`
-            : `[Reading ${result.length} lines from line ${offset}]`;
+        const statusMessage = generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
         const content = `${statusMessage}\n\n${result.join('\n')}`;
         return { content, mimeType, isImage: false };
     } else {
@@ -416,7 +535,7 @@ async function readFromStartWithReadline(filePath: string, offset: number, lengt
 /**
  * Read from estimated byte position for very large files
  */
-async function readFromEstimatedPosition(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
+async function readFromEstimatedPosition(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
     // First, do a quick scan to estimate lines per byte
     const rl = createInterface({
         input: createReadStream(filePath),
@@ -425,19 +544,20 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
 
     let sampleLines = 0;
     let bytesRead = 0;
-    const SAMPLE_SIZE = 10000; // Sample first 10KB
+
+
 
     for await (const line of rl) {
         bytesRead += Buffer.byteLength(line, 'utf-8') + 1; // +1 for newline
         sampleLines++;
-        if (bytesRead >= SAMPLE_SIZE) break;
+        if (bytesRead >= READ_PERFORMANCE_THRESHOLDS.SAMPLE_SIZE) break;
     }
 
     rl.close();
 
     if (sampleLines === 0) {
         // Fallback to simple read
-        return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage);
+        return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines);
     }
 
     // Estimate average line length and seek position
@@ -478,7 +598,7 @@ async function readFromEstimatedPosition(filePath: string, offset: number, lengt
         rl2.close();
 
         const content = includeStatusMessage
-            ? `[Reading ${result.length} lines from estimated position (target line ${offset})]\n\n${result.join('\n')}`
+            ? `${generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
             : result.join('\n');
         return { content, mimeType, isImage: false };
     } finally {
@@ -499,24 +619,20 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
         throw new Error('Invalid file path provided');
     }
     
-    // Import the MIME type utilities
-    const { getMimeType, isImageFile } = await import('./mime-types.js');
-    
     // Get default length from config if not provided
     if (length === undefined) {
-        const config = await configManager.getConfig();
-        length = config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
+        length = await getDefaultReadLength();
     }
 
     const validPath = await validatePath(filePath);
-    
+
     // Get file extension for telemetry using path module consistently
-    const fileExtension = path.extname(validPath).toLowerCase();
+    const fileExtension = getFileExtension(validPath);
 
     // Check file size before attempting to read
     try {
         const stats = await fs.stat(validPath);
-        
+
         // Capture file extension in telemetry without capturing the file path
         capture('server_read_file', {
             fileExtension: fileExtension,
@@ -530,12 +646,9 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
         capture('server_read_file_error', {error: errorMessage, fileExtension: fileExtension});
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
-    
+
     // Detect the MIME type based on file extension
-    const mimeType = getMimeType(validPath);
-    const isImage = isImageFile(mimeType);
-    
-    const FILE_READ_TIMEOUT = 30000; // 30 seconds timeout for file operations
+    const { mimeType, isImage } = await getMimeTypeInfo(validPath);
     
     // Use withTimeout to handle potential hangs
     const readOperation = async () => {
@@ -544,7 +657,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
             // Images are always read in full, ignoring offset and length
             const buffer = await fs.readFile(validPath);
             const content = buffer.toString('base64');
-            
+
             return { content, mimeType, isImage };
         } else {
             // For all other files, use smart positioning approach
@@ -562,7 +675,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
     // Execute with timeout
     const result = await withTimeout(
         readOperation(),
-        FILE_READ_TIMEOUT,
+        FILE_OPERATION_TIMEOUTS.FILE_READ,
         `Read file operation for ${filePath}`,
         null
     );
@@ -570,7 +683,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
         // Handles the impossible case where withTimeout resolves to null instead of throwing
         throw new Error('Failed to read the file');
     }
-    
+
     return result;
 }
 
@@ -583,7 +696,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
  * @returns File content or file result with metadata
  */
 export async function readFile(filePath: string, isUrl?: boolean, offset?: number, length?: number): Promise<FileResult> {
-    return isUrl 
+    return isUrl
         ? readFileFromUrl(filePath)
         : readFileFromDisk(filePath, offset, length);
 }
@@ -600,17 +713,14 @@ export async function readFile(filePath: string, isUrl?: boolean, offset?: numbe
 export async function readFileInternal(filePath: string, offset: number = 0, length?: number): Promise<string> {
     // Get default length from config if not provided
     if (length === undefined) {
-        const config = await configManager.getConfig();
-        length = config.fileReadLineLimit ?? 1000;
+        length = await getDefaultReadLength();
     }
 
     const validPath = await validatePath(filePath);
 
     // Get file extension and MIME type
-    const fileExtension = path.extname(validPath).toLowerCase();
-    const { getMimeType, isImageFile } = await import('./mime-types.js');
-    const mimeType = getMimeType(validPath);
-    const isImage = isImageFile(mimeType);
+    const fileExtension = getFileExtension(validPath);
+    const { mimeType, isImage } = await getMimeTypeInfo(validPath);
 
     if (isImage) {
         throw new Error('Cannot read image files as text for internal operations');
@@ -684,11 +794,11 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
     const validPath = await validatePath(filePath);
 
     // Get file extension for telemetry
-    const fileExtension = path.extname(validPath).toLowerCase();
+    const fileExtension = getFileExtension(validPath);
 
     // Calculate content metrics
     const contentBytes = Buffer.from(content).length;
-    const lineCount = content.split('\n').length;
+    const lineCount = countLines(content);
 
     // Capture file extension and operation details in telemetry without capturing the file path
     capture('server_write_file', {
@@ -768,7 +878,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
 
         for (const entry of entries) {
             const fullPath = path.join(currentPath, entry.name);
-            
+
             try {
                 await validatePath(fullPath);
 
@@ -784,7 +894,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             }
         }
     }
-    
+
     try {
         // Validate root path before starting search
         const validPath = await validatePath(rootPath);
@@ -813,7 +923,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
 export async function getFileInfo(filePath: string): Promise<Record<string, any>> {
     const validPath = await validatePath(filePath);
     const stats = await fs.stat(validPath);
-    
+
     // Basic file info
     const info: Record<string, any> = {
         size: stats.size,
@@ -824,18 +934,17 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         isFile: stats.isFile(),
         permissions: stats.mode.toString(8).slice(-3),
     };
-    
+
     // For text files that aren't too large, also count lines
-    if (stats.isFile() && stats.size < 10 * 1024 * 1024) { // Limit to 10MB files
+    if (stats.isFile() && stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
         try {
-            // Import the MIME type utilities
-            const { getMimeType, isImageFile } = await import('./mime-types.js');
-            const mimeType = getMimeType(validPath);
+            // Get MIME type information
+            const { mimeType, isImage } = await getMimeTypeInfo(validPath);
             
             // Only count lines for non-image, likely text files
-            if (!isImageFile(mimeType)) {
+            if (!isImage) {
                 const content = await fs.readFile(validPath, 'utf8');
-                const lineCount = content.split('\n').length;
+                const lineCount = countLines(content);
                 info.lineCount = lineCount;
                 info.lastLine = lineCount - 1; // Zero-indexed last line
                 info.appendPosition = lineCount; // Position to append at end
@@ -845,9 +954,6 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
             // This could happen for binary files or very large files
         }
     }
-    
+
     return info;
 }
-
-// This function has been replaced with configManager.getConfig()
-// Use get_config tool to retrieve allowedDirectories

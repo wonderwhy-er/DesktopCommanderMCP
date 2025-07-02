@@ -3,7 +3,8 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { getSystemInfo } from '../utils/system-info.js';
 
 /**
  * Start a new process (renamed from execute_command)
@@ -55,6 +56,10 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   // Analyze the process state to detect if it's waiting for input
   const processState = analyzeProcessState(result.output, result.pid);
   
+  // Get system info for shell information
+  const systemInfo = getSystemInfo();
+  const shellUsed = parsed.data.shell || systemInfo.defaultShell;
+  
   let statusMessage = '';
   if (processState.isWaitingForInput) {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -67,7 +72,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid}\nInitial output:\n${result.output}${statusMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}`
     }],
   };
 }
@@ -98,12 +103,18 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   let output = "";
   let timeoutReached = false;
   let earlyExit = false;
-  let processState;
+  let processState: ProcessState | undefined;
 
   try {
     const outputPromise: Promise<string> = new Promise<string>((resolve) => {
       const initialOutput = terminalManager.getNewOutput(pid);
       if (initialOutput && initialOutput.length > 0) {
+        // Immediate check on existing output
+        const state = analyzeProcessState(initialOutput, pid);
+        if (state.isWaitingForInput) {
+          earlyExit = true;
+          processState = state;
+        }
         resolve(initialOutput);
         return;
       }
@@ -111,19 +122,64 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
       let resolved = false;
       let interval: NodeJS.Timeout | null = null;
       let timeout: NodeJS.Timeout | null = null;
+      
+      // Quick prompt patterns for immediate detection
+      const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
 
       const cleanup = () => {
         if (interval) clearInterval(interval);
         if (timeout) clearTimeout(timeout);
       };
 
-      const resolveOnce = (value: string, isTimeout = false) => {
+      let resolveOnce = (value: string, isTimeout = false) => {
         if (resolved) return;
         resolved = true;
         cleanup();
         timeoutReached = isTimeout;
         resolve(value);
       };
+
+      // Monitor for new output with immediate detection
+      const session = terminalManager.getSession(pid);
+      if (session && session.process && session.process.stdout && session.process.stderr) {
+        const immediateDetector = (data: Buffer) => {
+          const text = data.toString();
+          // Immediate check for obvious prompts
+          if (quickPromptPatterns.test(text)) {
+            const newOutput = terminalManager.getNewOutput(pid) || text;
+            const state = analyzeProcessState(output + newOutput, pid);
+            if (state.isWaitingForInput) {
+              earlyExit = true;
+              processState = state;
+              resolveOnce(newOutput);
+              return;
+            }
+          }
+        };
+        
+        session.process.stdout.on('data', immediateDetector);
+        session.process.stderr.on('data', immediateDetector);
+        
+        // Cleanup immediate detectors when done
+        const originalResolveOnce = resolveOnce;
+        const cleanupDetectors = () => {
+          if (session.process.stdout) {
+            session.process.stdout.removeListener('data', immediateDetector);
+          }
+          if (session.process.stderr) {
+            session.process.stderr.removeListener('data', immediateDetector);
+          }
+        };
+        
+        // Override resolveOnce to include cleanup
+        const resolveOnceWithCleanup = (value: string, isTimeout = false) => {
+          cleanupDetectors();
+          originalResolveOnce(value, isTimeout);
+        };
+        
+        // Replace the local resolveOnce reference
+        resolveOnce = resolveOnceWithCleanup;
+      }
 
       interval = setInterval(() => {
         const newOutput = terminalManager.getNewOutput(pid);
@@ -241,39 +297,113 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       };
     }
 
-    // Smart waiting with process state detection
+    // Smart waiting with immediate and periodic detection
     let output = "";
-    let attempts = 0;
-    const maxAttempts = Math.ceil(timeout_ms / 200);
-    let processState;
+    let processState: ProcessState | undefined;
+    let earlyExit = false;
     
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-      const newOutput = terminalManager.getNewOutput(pid);
-      if (newOutput && newOutput.length > 0) {
-        output += newOutput;
+    // Quick prompt patterns for immediate detection
+    const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
+    
+    const waitForResponse = (): Promise<void> => {
+      return new Promise((resolve) => {
+        let resolved = false;
+        let attempts = 0;
+        const maxAttempts = Math.ceil(timeout_ms / 200);
+        let interval: NodeJS.Timeout | null = null;
         
-        // Analyze current state
-        processState = analyzeProcessState(output, pid);
+        let resolveOnce = () => {
+          if (resolved) return;
+          resolved = true;
+          if (interval) clearInterval(interval);
+          resolve();
+        };
         
-        // Exit early if we detect the process is waiting for input
-        if (processState.isWaitingForInput) {
-          break;
+        // Set up immediate detection on the process streams
+        const session = terminalManager.getSession(pid);
+        if (session && session.process && session.process.stdout && session.process.stderr) {
+          const immediateDetector = (data: Buffer) => {
+            const text = data.toString();
+            // Immediate check for obvious prompts
+            if (quickPromptPatterns.test(text)) {
+              // Get the latest output and analyze
+              setTimeout(() => {
+                const newOutput = terminalManager.getNewOutput(pid);
+                if (newOutput) {
+                  output += newOutput;
+                  const state = analyzeProcessState(output, pid);
+                  if (state.isWaitingForInput) {
+                    processState = state;
+                    earlyExit = true;
+                    resolveOnce();
+                  }
+                }
+              }, 50); // Small delay to ensure output is captured
+            }
+          };
+          
+          session.process.stdout.on('data', immediateDetector);
+          session.process.stderr.on('data', immediateDetector);
+          
+          // Cleanup when done
+          const cleanupDetectors = () => {
+            if (session.process.stdout) {
+              session.process.stdout.removeListener('data', immediateDetector);
+            }
+            if (session.process.stderr) {
+              session.process.stderr.removeListener('data', immediateDetector);
+            }
+          };
+          
+          // Override resolveOnce to include cleanup
+          const originalResolveOnce = resolveOnce;
+          const resolveOnceWithCleanup = () => {
+            cleanupDetectors();
+            originalResolveOnce();
+          };
+          
+          // Replace the local resolveOnce reference
+          resolveOnce = resolveOnceWithCleanup;
         }
         
-        // Also exit if process finished
-        if (processState.isFinished) {
-          break;
-        }
-      }
-      
-      attempts++;
-    }
+        // Periodic check as fallback
+        interval = setInterval(() => {
+          if (resolved) return;
+          
+          const newOutput = terminalManager.getNewOutput(pid);
+          if (newOutput && newOutput.length > 0) {
+            output += newOutput;
+            
+            // Analyze current state
+            processState = analyzeProcessState(output, pid);
+            
+            // Exit early if we detect the process is waiting for input
+            if (processState.isWaitingForInput) {
+              earlyExit = true;
+              resolveOnce();
+              return;
+            }
+            
+            // Also exit if process finished
+            if (processState.isFinished) {
+              resolveOnce();
+              return;
+            }
+          }
+          
+          attempts++;
+          if (attempts >= maxAttempts) {
+            resolveOnce();
+          }
+        }, 200);
+      });
+    };
+    
+    await waitForResponse();
 
     // Clean and format output
     const cleanOutput = cleanProcessOutput(output, input);
-    const timeoutReached = attempts >= maxAttempts;
+    const timeoutReached = !earlyExit && !processState?.isFinished && !processState?.isWaitingForInput;
     
     // Determine final state
     if (!processState) {
@@ -293,15 +423,28 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       return {
         content: [{
           type: "text",
-          text: `✅ Input executed in process ${pid}.\n(No output produced)${statusMessage}`
+          text: `✅ Input executed in process ${pid}.\n📭 (No output produced)${statusMessage}`
         }],
       };
     }
     
+    // Format response with better structure and consistent emojis
+    let responseText = `✅ Input executed in process ${pid}`;
+    
+    if (cleanOutput && cleanOutput.trim().length > 0) {
+      responseText += `:\n\n📤 Output:\n${cleanOutput}`;
+    } else {
+      responseText += `.\n📭 (No output produced)`;
+    }
+    
+    if (statusMessage) {
+      responseText += `\n\n${statusMessage}`;
+    }
+
     return {
       content: [{
         type: "text", 
-        text: `✅ Input executed in process ${pid}:\n\n${cleanOutput}${statusMessage}`
+        text: responseText
       }],
     };
     
