@@ -1,4 +1,5 @@
 import { configManager } from '../config-manager.js';
+import { capture } from './capture.js';
 
 export interface ToolUsageStats {
   // Tool category counters

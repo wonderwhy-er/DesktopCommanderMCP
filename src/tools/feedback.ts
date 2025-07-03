@@ -1,5 +1,6 @@
 import { ServerResult } from '../types.js';
 import { usageTracker } from '../utils/usageTracker.js';
+import { capture } from '../utils/capture.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
@@ -32,6 +33,22 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
     // Get usage stats for context
     const stats = await usageTracker.getStats();
     
+    // Capture feedback tool usage event
+    await capture('feedback_tool_called', {
+      has_email: !!params.email,
+      has_role: !!params.role,
+      has_company: !!params.company,
+      has_recommendation_score: !!params.recommendation_score,
+      recommendation_score: params.recommendation_score || null,
+      total_calls: stats.totalToolCalls,
+      successful_calls: stats.successfulCalls,
+      failed_calls: stats.failedCalls,
+      days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+      total_sessions: stats.totalSessions,
+      platform: os.platform(),
+      params_provided: Object.keys(params).length
+    });
+    
     // Build Tally.so URL with pre-filled parameters
     const tallyUrl = await buildTallyUrl(params, stats);
     
@@ -39,6 +56,12 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
     const success = await openUrlInBrowser(tallyUrl);
     
     if (success) {
+      // Capture successful browser opening
+      await capture('feedback_form_opened_successfully', {
+        total_calls: stats.totalToolCalls,
+        platform: os.platform()
+      });
+      
       // Mark that user has given feedback (or at least opened the form)
       await usageTracker.markFeedbackGiven();
       
@@ -54,6 +77,13 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
         }]
       };
     } else {
+      // Capture browser opening failure
+      await capture('feedback_form_open_failed', {
+        total_calls: stats.totalToolCalls,
+        platform: os.platform(),
+        error_type: 'browser_open_failed'
+      });
+      
       return {
         content: [{
           type: "text",
@@ -66,6 +96,12 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
     }
     
   } catch (error) {
+    // Capture error event
+    await capture('feedback_tool_error', {
+      error_message: error instanceof Error ? error.message : String(error),
+      error_type: error instanceof Error ? error.constructor.name : 'unknown'
+    });
+    
     return {
       content: [{
         type: "text",

@@ -710,6 +710,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 const feedbackMessage = await usageTracker.getFeedbackPromptMessage();
                 console.log(`[FEEDBACK DEBUG] Generated message: ${feedbackMessage.substring(0, 50)}...`);
                 
+                // Capture feedback prompt injection event
+                const stats = await usageTracker.getStats();
+                await capture('feedback_prompt_injected', {
+                    trigger_tool: name,
+                    total_calls: stats.totalToolCalls,
+                    successful_calls: stats.successfulCalls,
+                    failed_calls: stats.failedCalls,
+                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+                    total_sessions: stats.totalSessions,
+                    message_variant: feedbackMessage.includes('Hey there') ? 'hey_there' : 
+                                   feedbackMessage.includes('Quick chat') ? 'quick_chat' :
+                                   feedbackMessage.includes('star user') ? 'star_user' :
+                                   feedbackMessage.includes('being awesome') ? 'being_awesome' :
+                                   feedbackMessage.includes('Love seeing') ? 'love_seeing' :
+                                   'making_great_use'
+                });
+                
                 // Inject feedback instruction for the LLM
                 if (result.content && result.content.length > 0 && result.content[0].type === "text") {
                     console.log(`[FEEDBACK DEBUG] Using primary path - injecting LLM instruction`);
