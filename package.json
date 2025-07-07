@@ -32,6 +32,7 @@
     "setup": "npm install && npm run build && node setup-claude-server.js",
     "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
     "prepare": "npm run build",
+    "clean": "shx rm -rf dist",
     "test": "node test/run-all-tests.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "link:local": "npm run build && npm link",

@@ -122,7 +122,7 @@ class ConfigManager {
         "cipher",    // Encrypt/decrypt files or wipe data
         "takeown"    // Take ownership of files
       ],
-      defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
+      defaultShell: os.platform() === 'win32' ? 'powershell.exe' : '/bin/sh',
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
