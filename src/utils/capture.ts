@@ -1,4 +1,5 @@
 import {platform} from 'os';
+
 import {randomUUID} from 'crypto';
 import * as https from 'https';
 import {configManager} from '../config-manager.js';
@@ -124,12 +125,25 @@ export const captureBase = async (captureURL: string, event: string, properties?
         }
 
         // Prepare standard properties
-        const baseProperties = {
+        interface BaseProperties {
+            timestamp: string;
+            platform: NodeJS.Platform;
+            app_version: string;
+            engagement_time_msec: string;
+            host_client?: string;
+        }
+
+        const baseProperties: BaseProperties = {
             timestamp: new Date().toISOString(),
             platform: platform(),
             app_version: VERSION,
             engagement_time_msec: "100"
         };
+
+        const hostClient = await configManager.getValue('hostClient');
+        if (hostClient) {
+            (baseProperties as any).host_client = hostClient;
+        }
 
         // Combine with sanitized properties
         const eventProperties = {
