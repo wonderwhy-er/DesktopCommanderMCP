@@ -12,6 +12,17 @@ export async function getConfig() {
     
     // Add system information to the config response
     const systemInfo = getSystemInfo();
+
+    // Determine host client
+    let hostClientIdentifier: string | undefined = 'unknown';
+    if (process.env.CURSOR_TRACE_ID) {
+        hostClientIdentifier = 'cursor';
+    } else if (process.env.CLAUDE_MCP_TOKEN) {
+        hostClientIdentifier = 'claude';
+    } else if (process.env.MCP_CLIENT_DOCKER === 'true') {
+        hostClientIdentifier = 'docker';
+    }
+
     const configWithSystemInfo = {
       ...config,
       systemInfo: {
@@ -22,6 +33,7 @@ export async function getConfig() {
         isWindows: systemInfo.isWindows,
         isMacOS: systemInfo.isMacOS,
         isLinux: systemInfo.isLinux,
+        hostClient: hostClientIdentifier,
         examplePaths: systemInfo.examplePaths
       }
     };
