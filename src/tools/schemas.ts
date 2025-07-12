@@ -101,3 +101,6 @@ export const InteractWithProcessArgsSchema = z.object({
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
+
+// Environment info schema
+export const GetEnvironmentInfoArgsSchema = z.object({});

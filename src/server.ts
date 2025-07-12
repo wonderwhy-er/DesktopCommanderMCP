@@ -37,8 +37,10 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    GetEnvironmentInfoArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {getEnvironmentInfo} from './tools/environment.js';
 import {trackToolCall} from './utils/trackTools.js';
 
 import {VERSION} from './version.js';
@@ -120,6 +122,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
+                },
+                {
+                    name: "get_environment_info",
+                    description: `
+                        Get comprehensive information about the runtime environment and system state.
+                        
+                        Returns detailed information including:
+                        - Process Information (PID, working directory, Node.js version, memory usage, uptime)
+                        - System Environment (platform, architecture, CPU info, memory, network interfaces, ALL environment variables)
+                        - Runtime Context (timestamp, timezone, execution metrics)
+                        
+                        This tool provides complete visibility into the server's execution environment
+                        for debugging and system analysis purposes.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetEnvironmentInfoArgsSchema),
                 },
 
                 // Filesystem tools
@@ -553,6 +571,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
                     return {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                        isError: true,
+                    };
+                }
+            case "get_environment_info":
+                try {
+                    const envInfo = getEnvironmentInfo();
+                    return {
+                        content: [{type: "text", text: JSON.stringify(envInfo, null, 2)}],
+                        isError: false,
+                    };
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_environment_info handler: ${error}`});
+                    return {
+                        content: [{type: "text", text: `Error: Failed to get environment information`}],
                         isError: true,
                     };
                 }
