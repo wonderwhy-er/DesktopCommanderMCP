@@ -532,8 +532,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
                         
-                        All fields are optional. If provided, they will be pre-filled in the form.
-                        Opens the feedback form in the default browser.
+                        CRITICAL: NEVER call this tool immediately when user says "yes/sure/okay" to feedback.
+                        ALWAYS ask the following questions FIRST before calling the tool:
+                        
+                        REQUIRED QUESTIONS TO ASK:
+                        - What are you working on with Desktop Commander?
+                        - How do you use it in your workflow?
+                        - What could be improved?
+                        - What's your role/company? (optional)
+                        - How did you hear about Desktop Commander?
+                        - Any other thoughts to share?
+                        
+                        ONLY call this tool AFTER collecting the user's responses to these questions.
+                        If the user just says "sure/yes/okay" to feedback, respond with the questions above.
+                        Use their responses to pre-fill the form parameters.
+                        All parameters are optional - only include what the user provides.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
