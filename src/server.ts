@@ -719,12 +719,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     failed_calls: stats.failedCalls,
                     days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
                     total_sessions: stats.totalSessions,
-                    message_variant: feedbackMessage.includes('Quick feedback request') ? 'clean_minimal' : 
-                                   feedbackMessage.includes('Help us improve') ? 'help_improve' :
-                                   feedbackMessage.includes('Quick question') ? 'quick_question' :
-                                   feedbackMessage.includes('Feedback opportunity') ? 'opportunity' :
-                                   feedbackMessage.includes('Quick favor') ? 'quick_favor' :
-                                   'team_request'
+                    message_variant: feedbackMessage.includes('finding value') ? 'early_adopter_social_proof' : 
+                                   feedbackMessage.includes('Early feedback is most valuable') ? 'early_timing_scarcity' :
+                                   feedbackMessage.includes('fresh perspective') ? 'new_user_authority' :
+                                   feedbackMessage.includes('discovering what this tool') ? 'discovery_community' :
+                                   feedbackMessage.includes('Nice start') ? 'early_progress' :
+                                   'learning_curve_value'
                 });
                 
                 // Inject feedback instruction for the LLM

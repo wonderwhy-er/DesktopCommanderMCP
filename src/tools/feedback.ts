@@ -1,6 +1,7 @@
 import { ServerResult } from '../types.js';
 import { usageTracker } from '../utils/usageTracker.js';
 import { capture } from '../utils/capture.js';
+import { configManager } from '../config-manager.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as os from 'os';
@@ -11,18 +12,18 @@ interface FeedbackParams {
   // Contact information (all optional)
   email?: string;
   role?: string;
-  company?: string;
+  company_url?: string;
+  department?: string;
   
   // Discovery and feedback content (all optional)
   heard_about?: string;
   client_used?: string;
   other_tools?: string;
   what_doing?: string;
-  what_enjoy?: string;
+  workflow?: string;
+  task?: string;
   how_better?: string;
   else_to_share?: string;
-  recommendation_score?: number; // 1-10
-  user_study?: boolean;
 }
 
 /**
@@ -37,9 +38,10 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
     await capture('feedback_tool_called', {
       has_email: !!params.email,
       has_role: !!params.role,
-      has_company: !!params.company,
-      has_recommendation_score: !!params.recommendation_score,
-      recommendation_score: params.recommendation_score || null,
+      has_company_url: !!params.company_url,
+      has_department: !!params.department,
+      has_workflow: !!params.workflow,
+      has_task: !!params.task,
       total_calls: stats.totalToolCalls,
       successful_calls: stats.successfulCalls,
       failed_calls: stats.failedCalls,
@@ -124,16 +126,16 @@ async function buildTallyUrl(params: FeedbackParams, stats: any): Promise<string
   // Add user-provided parameters (if any)
   if (params.email) urlParams.set('email', params.email);
   if (params.role) urlParams.set('role', params.role);
-  if (params.company) urlParams.set('company', params.company);
+  if (params.company_url) urlParams.set('company_url', params.company_url);
+  if (params.department) urlParams.set('department', params.department);
   if (params.heard_about) urlParams.set('heard_about', params.heard_about);
   if (params.client_used) urlParams.set('client_used', params.client_used);
   if (params.other_tools) urlParams.set('other_tools', params.other_tools);
   if (params.what_doing) urlParams.set('what_doing', params.what_doing);
-  if (params.what_enjoy) urlParams.set('what_enjoy', params.what_enjoy);
+  if (params.workflow) urlParams.set('workflow', params.workflow);
+  if (params.task) urlParams.set('task', params.task);
   if (params.how_better) urlParams.set('how_better', params.how_better);
   if (params.else_to_share) urlParams.set('else_to_share', params.else_to_share);
-  if (params.recommendation_score) urlParams.set('recommendation_score', params.recommendation_score.toString());
-  if (params.user_study !== undefined) urlParams.set('user_study', params.user_study.toString());
   
   // Add context information (always included)
   urlParams.set('tool_call_count', stats.totalToolCalls.toString());
@@ -144,6 +146,16 @@ async function buildTallyUrl(params: FeedbackParams, stats: any): Promise<string
   
   // Add platform info
   urlParams.set('platform', os.platform());
+  
+  // Add client_id from analytics config
+  try {
+    const telemetryConfig = await configManager.getValue('telemetryConfig');
+    const clientId = telemetryConfig?.clientId || 'unknown';
+    urlParams.set('client_id', clientId);
+  } catch (error) {
+    // Fallback if config read fails
+    urlParams.set('client_id', 'unknown');
+  }
   
   return `${baseUrl}?${urlParams.toString()}`;
 }
