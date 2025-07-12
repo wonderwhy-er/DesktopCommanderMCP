@@ -7,7 +7,7 @@ async function testSearchTruncation() {
         
         // Test search that will produce many results
         const searchArgs = {
-            path: '/Users/eduardruzga/work/ClaudeServerCommander',
+            path: '.',
             pattern: 'function|const|let|var',  // This should match many lines
             maxResults: 50000,  // Very high limit to get lots of results
             ignoreCase: true

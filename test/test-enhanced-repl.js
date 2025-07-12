@@ -1,5 +1,27 @@
 import assert from 'assert';
+import { execSync } from 'child_process';
 import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } from '../dist/tools/improved-process-tools.js';
+
+/**
+ * Determines the correct python command to use
+ * @returns {string} 'python3' or 'python'
+ */
+function getPythonCommand() {
+  try {
+    // Prefer python3 if available
+    execSync('command -v python3', { stdio: 'ignore' });
+    return 'python3';
+  } catch (e) {
+    // Fallback to python
+    try {
+      execSync('command -v python', { stdio: 'ignore' });
+      return 'python';
+    } catch (error) {
+      throw new Error('Neither python3 nor python command is available in the PATH');
+    }
+  }
+}
+
 
 /**
  * Test enhanced REPL functionality
@@ -7,11 +29,15 @@ import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } 
 async function testEnhancedREPL() {
   console.log('Testing enhanced REPL functionality...');
   
+  const pythonCommand = getPythonCommand();
+  console.log(`Using python command: ${pythonCommand}`);
+
   // Start Python in interactive mode
   console.log('Starting Python REPL...');
   const result = await startProcess({
-    command: 'python -i',
-    timeout_ms: 10000
+    command: `${pythonCommand} -i`,
+    timeout_ms: 10000,
+    shell: '/bin/bash'
   });
   
   console.log('Result from start_process:', result);

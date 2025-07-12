@@ -7,7 +7,7 @@ async function testImprovedSearchTruncation() {
         
         // Test search that will produce many results to trigger truncation
         const searchArgs = {
-            path: '/Users/eduardruzga/work/ClaudeServerCommander',
+            path: '.',
             pattern: '.',  // Match almost every line - this should be a lot of results
             maxResults: 50000,  // Very high limit to get lots of results, but capped at 5000
             ignoreCase: true

@@ -5,6 +5,8 @@ import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { getSystemInfo } from '../utils/system-info.js';
+import * as os from 'os';
+import { configManager } from '../config-manager.js';
 
 /**
  * Start a new process (renamed from execute_command)
@@ -40,10 +42,28 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
+  let shellUsed: string | undefined = parsed.data.shell;
+
+  if (!shellUsed) {
+    const config = await configManager.getConfig();
+    if (config.defaultShell) {
+      shellUsed = config.defaultShell;
+    } else {
+      const isWindows = os.platform() === 'win32';
+      if (isWindows && process.env.COMSPEC) {
+        shellUsed = process.env.COMSPEC;
+      } else if (!isWindows && process.env.SHELL) {
+        shellUsed = process.env.SHELL;
+      } else {
+        shellUsed = isWindows ? 'cmd.exe' : '/bin/sh';
+      }
+    }
+  }
+
   const result = await terminalManager.executeCommand(
     parsed.data.command,
     parsed.data.timeout_ms,
-    parsed.data.shell
+    shellUsed
   );
 
   if (result.pid === -1) {
@@ -55,10 +75,6 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   // Analyze the process state to detect if it's waiting for input
   const processState = analyzeProcessState(result.output, result.pid);
-  
-  // Get system info for shell information
-  const systemInfo = getSystemInfo();
-  const shellUsed = parsed.data.shell || systemInfo.defaultShell;
   
   let statusMessage = '';
   if (processState.isWaitingForInput) {
