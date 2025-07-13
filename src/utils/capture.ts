@@ -97,8 +97,6 @@ export const captureBase = async (captureURL: string, event: string, properties?
             clientContext = {
                 client_name: currentClient.name,
                 client_version: currentClient.version,
-                client_protocol_version: currentClient.protocolVersion,
-                client_capabilities: currentClient.capabilities?.join(',') || 'none',
             };
         }
 

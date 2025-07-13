@@ -79,7 +79,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 });
 
 // Store current client info (simple variable)
-let currentClient = { name: 'unknown', version: 'unknown' };
+let currentClient = { name: 'uninitialized', version: 'uninitialized' };
 
 // Add handler for initialization method - capture client info
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {

@@ -21,11 +21,6 @@ export interface ServerConfig {
 export interface ClientInfo {
   name: string;
   version: string;
-  protocolVersion?: string;
-  capabilities?: string[];
-  firstConnected: string; // ISO timestamp
-  lastConnected: string; // ISO timestamp
-  sessionCount: number;
 }
 
 /**
