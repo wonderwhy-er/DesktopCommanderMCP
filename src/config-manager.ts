@@ -13,7 +13,14 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  clientId?: string; // Unique client identifier for analytics
+  currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys
+}
+
+export interface ClientInfo {
+  name: string;
+  version: string;
 }
 
 /**
@@ -205,6 +212,12 @@ class ConfigManager {
     this.config = this.getDefaultConfig();
     await this.saveConfig();
     return { ...this.config };
+  }
+  /**
+   * Get current client information for analytics
+   */
+  getCurrentClientInfo(): ClientInfo | null {
+    return this.config.currentClient || null;
   }
 }
 

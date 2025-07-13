@@ -4,7 +4,9 @@ import {
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
     ListPromptsRequestSchema,
+    InitializeRequestSchema,
     type CallToolRequest,
+    type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import {zodToJsonSchema} from "zod-to-json-schema";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
@@ -76,6 +78,44 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
     };
 });
 
+// Store current client info (simple variable)
+let currentClient = { name: 'uninitialized', version: 'uninitialized' };
+
+// Add handler for initialization method - capture client info
+server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
+    try {
+        // Extract and store current client information
+        const clientInfo = request.params?.clientInfo;
+        if (clientInfo) {
+            currentClient = {
+                name: clientInfo.name || 'unknown',
+                version: clientInfo.version || 'unknown'
+            };
+            console.log(`Client connected: ${currentClient.name} v${currentClient.version}`);
+        }
+        
+        // Return standard initialization response
+        return {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+                tools: {},
+                resources: {},
+                prompts: {},
+            },
+            serverInfo: {
+                name: "desktop-commander",
+                version: VERSION,
+            },
+        };
+    } catch (error) {
+        console.error("Error in initialization handler:", error);
+        throw error;
+    }
+});
+
+// Export current client info for access by other modules
+export { currentClient };
+
 console.error("Setting up request handlers...");
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -94,6 +134,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - currentClient (information about the currently connected MCP client)
+                        - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -556,6 +598,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                         isError: true,
                     };
                 }
+                break;
 
             // Terminal tools
             case "start_process":

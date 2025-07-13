@@ -1,6 +1,7 @@
 import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
+import { currentClient } from '../server.js';
 
 /**
  * Get the entire config including system information
@@ -10,10 +11,11 @@ export async function getConfig() {
   try {
     const config = await configManager.getConfig();
     
-    // Add system information to the config response
+    // Add system information and current client to the config response
     const systemInfo = getSystemInfo();
     const configWithSystemInfo = {
       ...config,
+      currentClient,
       systemInfo: {
         platform: systemInfo.platform,
         platformName: systemInfo.platformName,

@@ -90,6 +90,16 @@ export const captureBase = async (captureURL: string, event: string, properties?
             uniqueUserId = await getOrCreateUUID();
         }
 
+        // Get current client information for all events
+        const currentClient = configManager.getCurrentClientInfo();
+        let clientContext = {};
+        if (currentClient) {
+            clientContext = {
+                client_name: currentClient.name,
+                client_version: currentClient.version,
+            };
+        }
+
         // Create a deep copy of properties to avoid modifying the original objects
         // This ensures we don't alter error objects that are also returned to the AI
         let sanitizedProperties;
@@ -131,9 +141,10 @@ export const captureBase = async (captureURL: string, event: string, properties?
             engagement_time_msec: "100"
         };
 
-        // Combine with sanitized properties
+        // Combine with sanitized properties and client context
         const eventProperties = {
             ...baseProperties,
+            ...clientContext,
             ...sanitizedProperties
         };
 
