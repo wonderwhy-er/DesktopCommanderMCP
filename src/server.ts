@@ -532,20 +532,59 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
                         
-                        CRITICAL: NEVER call this tool immediately when user says "yes/sure/okay" to feedback.
-                        ALWAYS ask the following questions FIRST before calling the tool:
+                        CRITICAL WORKFLOW:
+                        1. NEVER call this tool immediately when user says "yes/sure/okay" to feedback
+                        2. ALWAYS offer two options first:
+                           - Fill form manually in browser (just open blank form)
+                           - Get AI help to pre-fill form (ask questions first)
+                        3. If user chooses AI help, ask the mapping questions below
+                        4. If user chooses manual, call tool with no parameters
                         
-                        REQUIRED QUESTIONS TO ASK:
-                        - What are you working on with Desktop Commander?
-                        - How do you use it in your workflow?
-                        - What could be improved?
-                        - What's your role/company? (optional)
-                        - How did you hear about Desktop Commander?
-                        - Any other thoughts to share?
+                        FORM STRUCTURE (5 pages) - Ask questions based on user preference:
                         
-                        ONLY call this tool AFTER collecting the user's responses to these questions.
-                        If the user just says "sure/yes/okay" to feedback, respond with the questions above.
-                        Use their responses to pre-fill the form parameters.
+                        PAGE 1: Let's get to know you
+                        - "What's your role/job title?" → role
+                        - "What department do you work in?" → department  
+                        - "What's your primary focus at work?" → what_doing
+                        - "What is your company URL?" → company_url
+                        - "How comfortable are you with writing code by yourself?" → coding_comfort
+                          (Options: Very Comfortable, Somewhat Comfortable, Not Comfortable)
+                        - "Where did you hear about Desktop Commander?" → heard_about
+                          (Options: Friends, Colleagues, YouTube, TikTok, Reddit, Medium, Google/Search)
+                        
+                        PAGE 2: Understanding Your Usage  
+                        - "What problem were you trying to solve when you started using Desktop Commander?" → problem_solving
+                        - "What's your typical workflow with Desktop Commander?" → workflow
+                        - "Can you describe a task or use case where Desktop Commander helped you significantly?" → task
+                        - "Was there a moment or feature that made everything 'click' for you?" → aha_moment
+                        - "What other AI tools or agents are you currently using or have used before?" → other_tools
+                        - "How easy was it to get started with our product? (0-10 scale)" → ease_of_start
+                        
+                        PAGE 3: Feedback & Improvements
+                        - "Is there anything you found confusing or unexpected in working with Desktop Commander?" → confusing_parts
+                        - "What would you improve or change to make Desktop Commander even more useful?" → how_better
+                        - "Is there anything else you would like to share that we didn't ask?" → else_to_share
+                        
+                        PAGE 4: Final Thoughts
+                        - "How likely are you to recommend Desktop Commander to a colleague or friend? (0-10 scale)" → recommendation_score
+                        - "Would you be open to participating in user study?" → user_study (Options: Yes, No)
+                        - "Your email" → email
+                        
+                        PAGE 5: Usage Statistics (AUTO-FILLED - no need to ask):
+                        - tool_call_count: Approximate number of tool calls made
+                        - days_using: How many days actively used Desktop Commander  
+                        - platform: Which platform user is on (Windows, Linux, Mac OS)
+                        - client_used: Which client are you using (Claude, VS Code, Windsurf etc)
+                        
+                        EXAMPLE INTERACTION:
+                        User: "sure, I'll give feedback"
+                        Claude: "Great! I can help in two ways:
+                        1. 📝 Open blank form - you fill everything manually (5 pages)
+                        2. 🤖 AI-assisted - I'll ask questions and pre-fill the form
+                        
+                        Which would you prefer?"
+                        
+                        Only call this tool AFTER the user chooses and you collect responses (if AI-assisted).
                         All parameters are optional - only include what the user provides.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -732,12 +771,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     failed_calls: stats.failedCalls,
                     days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
                     total_sessions: stats.totalSessions,
-                    message_variant: feedbackMessage.includes('finding value') ? 'early_adopter_social_proof' : 
-                                   feedbackMessage.includes('Early feedback is most valuable') ? 'early_timing_scarcity' :
-                                   feedbackMessage.includes('fresh perspective') ? 'new_user_authority' :
-                                   feedbackMessage.includes('discovering what this tool') ? 'discovery_community' :
-                                   feedbackMessage.includes('Nice start') ? 'early_progress' :
-                                   'learning_curve_value'
+                    message_variant: feedbackMessage.includes('Simply type "feedback" or "yes"') ? 'direct_command_style' : 
+                                   feedbackMessage.includes('Just type "feedback"') ? 'value_proposition_action' :
+                                   feedbackMessage.includes('Simply say "feedback"') ? 'personal_actionable' :
+                                   feedbackMessage.includes('Type "feedback" when ready') ? 'problem_focused_command' :
+                                   feedbackMessage.includes('Reply "yes" to share') ? 'community_easy_response' :
+                                   feedbackMessage.includes('Type "feedback" to start') ? 'authority_simple_command' :
+                                   'unknown_variant'
                 });
                 
                 // Inject feedback instruction for the LLM
