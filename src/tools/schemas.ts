@@ -105,49 +105,12 @@ export const InteractWithProcessArgsSchema = z.object({
 // Usage stats schema
 export const GetUsageStatsArgsSchema = z.object({});
 
-// Feedback tool schema
+// Feedback tool schema - no pre-filled parameters, all user input
 export const GiveFeedbackArgsSchema = z.object({
-  // Page 1: Let's get to know you
-  role: z.string().optional(),
-  department: z.string().optional(),
-  what_doing: z.string().optional(), // What's your primary focus at work?
-  company_url: z.string().optional(),
-  coding_comfort: z.enum([
-    'Very Comfortable',
-    'Somewhat Comfortable',
-    'Not Comfortable'
-  ]).optional(),
-  heard_about: z.enum([
-    'Friends',
-    'Colleagues', 
-    'YouTube',
-    'TikTok',
-    'Reddit',
-    'Medium',
-    'Google/Search'
-  ]).optional(),
-  
-  // Page 2: Understanding Your Usage
-  problem_solving: z.string().optional(), // What problem were you trying to solve when you started using Desktop Commander?
-  workflow: z.string().optional(), // What's your typical workflow with Desktop Commander?
-  task: z.string().optional(), // Can you describe a task or use case where Desktop Commander helped you significantly?
-  aha_moment: z.string().optional(), // Was there a moment or feature that made everything "click"?
-  other_tools: z.string().optional(), // What other AI tools or agents are you currently using?
-  ease_of_start: z.number().min(0).max(10).optional(), // How easy was it to get started? (0-10)
-  
-  // Page 3: Feedback & Improvements
-  confusing_parts: z.string().optional(), // Is there anything you found confusing or unexpected?
-  how_better: z.string().optional(), // What would you improve or change?
-  else_to_share: z.string().optional(), // Is there anything else you would like to share?
-  
-  // Page 4: Final Thoughts
-  recommendation_score: z.number().min(0).max(10).optional(), // How likely to recommend? (0-10)
-  user_study: z.enum(['Yes', 'No']).optional(), // Would you be open to participating in user study?
-  email: z.string().optional(),
-  
-  // Page 5: Usage Statistics (auto-filled, but can be overridden)
-  tool_call_count: z.string().optional(),
-  days_using: z.string().optional(),
-  platform: z.string().optional(),
-  client_used: z.string().optional(),
+  // No parameters needed - form will be filled manually by user
+  // Only auto-filled hidden fields remain:
+  // - tool_call_count (auto)
+  // - days_using (auto) 
+  // - platform (auto)
+  // - client_id (auto)
 });
