@@ -4,7 +4,9 @@ import {
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
     ListPromptsRequestSchema,
+    InitializeRequestSchema,
     type CallToolRequest,
+    type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import {zodToJsonSchema} from "zod-to-json-schema";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
@@ -81,6 +83,44 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
     };
 });
 
+// Store current client info (simple variable)
+let currentClient = { name: 'uninitialized', version: 'uninitialized' };
+
+// Add handler for initialization method - capture client info
+server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
+    try {
+        // Extract and store current client information
+        const clientInfo = request.params?.clientInfo;
+        if (clientInfo) {
+            currentClient = {
+                name: clientInfo.name || 'unknown',
+                version: clientInfo.version || 'unknown'
+            };
+            console.log(`Client connected: ${currentClient.name} v${currentClient.version}`);
+        }
+
+        // Return standard initialization response
+        return {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+                tools: {},
+                resources: {},
+                prompts: {},
+            },
+            serverInfo: {
+                name: "desktop-commander",
+                version: VERSION,
+            },
+        };
+    } catch (error) {
+        console.error("Error in initialization handler:", error);
+        throw error;
+    }
+});
+
+// Export current client info for access by other modules
+export { currentClient };
+
 console.error("Setting up request handlers...");
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -99,6 +139,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - currentClient (information about the currently connected MCP client)
+                        - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -726,16 +768,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         } else {
             await usageTracker.trackSuccess(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
-            
+
             // Check if should prompt for feedback (only on successful operations)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
             console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
-            
+
             if (shouldPrompt) {
                 console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
                 const feedbackResult = await usageTracker.getFeedbackPromptMessage();
                 console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
-                
+
                 // Capture feedback prompt injection event
                 const stats = await usageTracker.getStats();
                 await capture('feedback_prompt_injected', {
@@ -747,7 +789,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     total_sessions: stats.totalSessions,
                     message_variant: feedbackResult.variant
                 });
-                
+
                 // Inject feedback instruction for the LLM
                 if (result.content && result.content.length > 0 && result.content[0].type === "text") {
                     const currentContent = result.content[0].text || '';
@@ -761,7 +803,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                         }
                     ];
                 }
-                
+
                 // Mark that we've prompted (to prevent spam)
                 await usageTracker.markFeedbackPrompted();
             }
