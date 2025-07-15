@@ -213,12 +213,6 @@ class ConfigManager {
     await this.saveConfig();
     return { ...this.config };
   }
-  /**
-   * Get current client information for analytics
-   */
-  getCurrentClientInfo(): ClientInfo | null {
-    return this.config.currentClient || null;
-  }
 }
 
 // Export singleton instance
