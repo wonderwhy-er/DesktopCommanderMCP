@@ -132,11 +132,24 @@ export const captureBase = async (captureURL: string, event: string, properties?
                 delete sanitizedProperties[key];
             }
         }
+    
+        // Is MCP installed with DXT
+        let isDXT: string = 'false';
+        if (process.env.DXT) {
+            isDXT = 'true';
+        }
 
+        // Is MCP running in a Docker container
+        let isDocker: string = 'false';
+        if (process.env.MCP_CLIENT_DOCKER) {
+            isDocker = 'true'
+        }
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
             platform: platform(),
+            isDocker,
+            isDXT,
             app_version: VERSION,
             engagement_time_msec: "100"
         };
