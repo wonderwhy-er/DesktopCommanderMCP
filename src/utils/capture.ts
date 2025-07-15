@@ -135,7 +135,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
     
         // Is MCP installed with DXT
         let isDXT: string = 'false';
-        if (process.env.DXT) {
+        if (process.env.MCP_DXT) {
             isDXT = 'true';
         }
 
