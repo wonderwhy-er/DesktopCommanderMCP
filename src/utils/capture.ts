@@ -2,6 +2,7 @@ import {platform} from 'os';
 import {randomUUID} from 'crypto';
 import * as https from 'https';
 import {configManager} from '../config-manager.js';
+import { currentClient } from '../server.js';
 
 let VERSION = 'unknown';
 try {
@@ -91,7 +92,6 @@ export const captureBase = async (captureURL: string, event: string, properties?
         }
 
         // Get current client information for all events
-        const currentClient = configManager.getCurrentClientInfo();
         let clientContext = {};
         if (currentClient) {
             clientContext = {
