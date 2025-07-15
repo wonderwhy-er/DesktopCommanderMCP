@@ -39,9 +39,14 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    GetUsageStatsArgsSchema,
+    GiveFeedbackArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {getUsageStats} from './tools/usage.js';
+import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
+import {usageTracker} from './utils/usageTracker.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
@@ -93,7 +98,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             };
             console.log(`Client connected: ${currentClient.name} v${currentClient.version}`);
         }
-        
+
         // Return standard initialization response
         return {
             protocolVersion: "2024-11-05",
@@ -554,6 +559,53 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
+                {
+                    name: "get_usage_stats",
+                    description: `
+                        Get usage statistics for debugging and analysis.
+                        
+                        Returns summary of tool usage, success/failure rates, and performance metrics.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                },
+                {
+                    name: "give_feedback_to_desktop_commander",
+                    description: `
+                        Open feedback form in browser to provide feedback about Desktop Commander.
+                        
+                        IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
+                        The user will fill out the form manually in their browser.
+                        
+                        WORKFLOW:
+                        1. When user agrees to give feedback, just call this tool immediately
+                        2. No need to ask questions or collect information
+                        3. Tool opens form with only usage statistics pre-filled automatically:
+                           - tool_call_count: Number of commands they've made
+                           - days_using: How many days they've used Desktop Commander
+                           - platform: Their operating system (Mac/Windows/Linux)
+                           - client_id: Analytics identifier
+                        
+                        All survey questions will be answered directly in the form:
+                        - Job title and technical comfort level
+                        - Company URL for industry context
+                        - Other AI tools they use
+                        - Desktop Commander's biggest advantage
+                        - How they typically use it
+                        - Recommendation likelihood (0-10)
+                        - User study participation interest
+                        - Email and any additional feedback
+                        
+                        EXAMPLE INTERACTION:
+                        User: "sure, I'll give feedback"
+                        Claude: "Perfect! Let me open the feedback form for you."
+                        [calls tool immediately]
+                        
+                        No parameters are needed - just call the tool to open the form.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                },
             ],
         };
     } catch (error) {
@@ -566,8 +618,9 @@ import * as handlers from './handlers/index.js';
 import {ServerResult} from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
+    const {name, arguments: args} = request.params;
+
     try {
-        const {name, arguments: args} = request.params;
         capture_call_tool('server_call_tool', {
             name
         });
@@ -576,25 +629,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
+        let result: ServerResult;
+
         switch (name) {
             // Config tools
             case "get_config":
                 try {
-                    return await getConfig();
+                    result = await getConfig();
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_config handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to get configuration`}],
                         isError: true,
                     };
                 }
+                break;
             case "set_config_value":
                 try {
-                    return await setConfigValue(args);
+                    result = await setConfigValue(args);
                 } catch (error) {
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "get_usage_stats":
+                try {
+                    result = await getUsageStats();
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "give_feedback_to_desktop_commander":
+                try {
+                    result = await giveFeedbackToDesktopCommander(args);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to open feedback form`}],
                         isError: true,
                     };
                 }
@@ -602,69 +682,140 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             // Terminal tools
             case "start_process":
-                return await handlers.handleStartProcess(args);
+                result = await handlers.handleStartProcess(args);
+                break;
 
             case "read_process_output":
-                return await handlers.handleReadProcessOutput(args);
+                result = await handlers.handleReadProcessOutput(args);
+                break;
                 
             case "interact_with_process":
-                return await handlers.handleInteractWithProcess(args);
+                result = await handlers.handleInteractWithProcess(args);
+                break;
 
             case "force_terminate":
-                return await handlers.handleForceTerminate(args);
+                result = await handlers.handleForceTerminate(args);
+                break;
 
             case "list_sessions":
-                return await handlers.handleListSessions();
+                result = await handlers.handleListSessions();
+                break;
 
             // Process tools
             case "list_processes":
-                return await handlers.handleListProcesses();
+                result = await handlers.handleListProcesses();
+                break;
 
             case "kill_process":
-                return await handlers.handleKillProcess(args);
+                result = await handlers.handleKillProcess(args);
+                break;
 
             // Note: REPL functionality removed in favor of using general terminal commands
 
             // Filesystem tools
             case "read_file":
-                return await handlers.handleReadFile(args);
+                result = await handlers.handleReadFile(args);
+                break;
 
             case "read_multiple_files":
-                return await handlers.handleReadMultipleFiles(args);
+                result = await handlers.handleReadMultipleFiles(args);
+                break;
 
             case "write_file":
-                return await handlers.handleWriteFile(args);
+                result = await handlers.handleWriteFile(args);
+                break;
 
             case "create_directory":
-                return await handlers.handleCreateDirectory(args);
+                result = await handlers.handleCreateDirectory(args);
+                break;
 
             case "list_directory":
-                return await handlers.handleListDirectory(args);
+                result = await handlers.handleListDirectory(args);
+                break;
 
             case "move_file":
-                return await handlers.handleMoveFile(args);
+                result = await handlers.handleMoveFile(args);
+                break;
 
             case "search_files":
-                return await handlers.handleSearchFiles(args);
+                result = await handlers.handleSearchFiles(args);
+                break;
 
             case "search_code":
-                return await handlers.handleSearchCode(args);
+                result = await handlers.handleSearchCode(args);
+                break;
 
             case "get_file_info":
-                return await handlers.handleGetFileInfo(args);
+                result = await handlers.handleGetFileInfo(args);
+                break;
 
             case "edit_block":
-                return await handlers.handleEditBlock(args);
+                result = await handlers.handleEditBlock(args);
+                break;
 
             default:
                 capture('server_unknown_tool', {name});
-                return {
+                result = {
                     content: [{type: "text", text: `Error: Unknown tool: ${name}`}],
                     isError: true,
                 };
         }
+
+        // Track success or failure based on result
+        if (result.isError) {
+            await usageTracker.trackFailure(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
+        } else {
+            await usageTracker.trackSuccess(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
+
+            // Check if should prompt for feedback (only on successful operations)
+            const shouldPrompt = await usageTracker.shouldPromptForFeedback();
+            console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
+
+            if (shouldPrompt) {
+                console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
+                const feedbackResult = await usageTracker.getFeedbackPromptMessage();
+                console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
+
+                // Capture feedback prompt injection event
+                const stats = await usageTracker.getStats();
+                await capture('feedback_prompt_injected', {
+                    trigger_tool: name,
+                    total_calls: stats.totalToolCalls,
+                    successful_calls: stats.successfulCalls,
+                    failed_calls: stats.failedCalls,
+                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+                    total_sessions: stats.totalSessions,
+                    message_variant: feedbackResult.variant
+                });
+
+                // Inject feedback instruction for the LLM
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                    const currentContent = result.content[0].text || '';
+                    result.content[0].text = `${currentContent}${feedbackResult.message}`;
+               } else {
+                    result.content = [
+                        ...(result.content || []),
+                        {
+                            type: "text",
+                            text: feedbackResult.message
+                        }
+                    ];
+                }
+
+                // Mark that we've prompted (to prevent spam)
+                await usageTracker.markFeedbackPrompted();
+            }
+        }
+
+        return result;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Track the failure
+        await usageTracker.trackFailure(name);
+
         capture('server_request_error', {
             error: errorMessage
         });

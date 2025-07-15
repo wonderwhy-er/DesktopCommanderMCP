@@ -101,3 +101,16 @@ export const InteractWithProcessArgsSchema = z.object({
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
 });
+
+// Usage stats schema
+export const GetUsageStatsArgsSchema = z.object({});
+
+// Feedback tool schema - no pre-filled parameters, all user input
+export const GiveFeedbackArgsSchema = z.object({
+  // No parameters needed - form will be filled manually by user
+  // Only auto-filled hidden fields remain:
+  // - tool_call_count (auto)
+  // - days_using (auto) 
+  // - platform (auto)
+  // - client_id (auto)
+});
