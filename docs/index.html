@@ -1731,6 +1731,58 @@ npm run setup</pre>
                         </div>
                     </div>
                 </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How does Desktop Commander collect feedback and usage data?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Desktop Commander has three separate data collection systems:</p>
+                            <ul>
+                                <li><strong>Personal Usage Analytics (Local Only, Always Active):</strong> Collects usage statistics stored locally on your machine only. Use the <code>get_usage_stats</code> tool to view your personal usage patterns. This data never leaves your computer without actions from your side.</li>
+                                <li><strong>Anonymous Telemetry (External, Opt-Out Available):</strong> Sends anonymous usage data to analytics services to help improve the tool. No personal information is collected. Can be disabled by asking: "Disable telemetry in Desktop Commander Config".</li>
+                                <li><strong>Feedback System (User Controlled):</strong> Use the <code>give_feedback_to_desktop_commander</code> tool to provide feedback. Opens a browser-based form where you can edit or remove any pre-filled information. Completely optional.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How do I stop seeing feedback prompts?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>If you don't want to see periodic feedback requests, you can disable them:</p>
+                            <ul>
+                                <li><strong>Simple method:</strong> Ask in chat: "Set in Desktop Commander Config feedbackGiven to true"</li>
+                            </ul>
+                            <p>This will stop Desktop Commander from showing feedback prompts while keeping all other functionality intact.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Does Desktop Commander work in Docker containers?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Yes! Desktop Commander can be run in Docker containers for complete isolation from your host system, providing zero risk to your computer. This is perfect for testing, development, or when you want complete sandboxing.</p>
+                            <p><strong>Installation:</strong></p>
+                            <ol>
+                                <li>Install Docker for Windows/Mac from <a href="https://www.docker.com/products/docker-desktop/" target="_blank">docker.com</a></li>
+                                <li>Visit: <a href="https://hub.docker.com/mcp/server/desktop-commander/manual" target="_blank">https://hub.docker.com/mcp/server/desktop-commander/manual</a></li>
+                                <li>Use the provided terminal command or click "Standalone" to get the config JSON</li>
+                            </ol>
+                            <p><strong>Benefits:</strong> Complete isolation, no risk to your files, consistent environment, and easy cleanup.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
 

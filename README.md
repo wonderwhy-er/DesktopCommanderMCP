@@ -22,6 +22,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Docker Support](#docker-support)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#work-in-progress-and-todos)
 - [Sponsors and Supporters](#sponsors-and-supporters)
