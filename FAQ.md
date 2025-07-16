@@ -329,7 +329,7 @@ Yes! Desktop Commander can be run in Docker containers for **complete isolation 
 **Installation:**
 1. Install Docker for Windows/Mac from [docker.com](https://www.docker.com/products/docker-desktop/)
 2. Visit: https://hub.docker.com/mcp/server/desktop-commander/manual
-3. Use the provided terminal command or click "Standalone" to get the config JSON
+3. Choose Claude Desktop or other client you are using and copy the provided MCP toolkit commands to terminal or click "Standalone" to get the config JSON for your client
 
 **Benefits:**
 - Complete isolation from your host system
