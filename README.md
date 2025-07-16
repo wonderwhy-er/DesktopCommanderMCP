@@ -22,6 +22,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Docker Support](#docker-support)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#work-in-progress-and-todos)
 - [Sponsors and Supporters](#sponsors-and-supporters)
@@ -203,6 +204,8 @@ The server provides a comprehensive set of tools organized into several categori
 | | `search_code` | Search for text/code patterns within file contents using ripgrep |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
+| **Analytics** | `get_usage_stats` | Get usage statistics for your own insight |
+| | `give_feedback_to_desktop_commander` | Open feedback form in browser to provide feedback to Desktop Commander Team |
 
 ### Quick Examples
 
@@ -255,7 +258,34 @@ The `edit_block` tool includes several enhancements for better reliability:
 
 When a search fails, you'll see detailed information about the closest match found, including similarity percentage, execution time, and character differences. All these details are automatically logged for later analysis using the fuzzy search log tools.
 
-### URL Support
+### Docker Support
+
+### 🐳 Isolated Environment Usage
+
+Desktop Commander can be run in Docker containers for **complete isolation from your host system**, providing **zero risk to your computer**. This is perfect for testing, development, or when you want complete sandboxing.
+
+### Installation Instructions
+
+1. **Install Docker for Windows/Mac**
+   - Download and install Docker Desktop from [docker.com](https://www.docker.com/products/docker-desktop/)
+
+2. **Get Desktop Commander Docker Configuration**
+   - Visit: https://hub.docker.com/mcp/server/desktop-commander/manual
+   - **Option A:** Use the provided terminal command for automated setup
+   - **Option B:** Click "Standalone" to get the config JSON and add it manually to your Claude Desktop config
+ ![docker-config.png](screenshots/docker-config.png)
+
+3. **Mount Your Machine Folders (Coming Soon)**
+   - Instructions on how to mount your local directories into the Docker container will be provided soon
+   - This will allow you to work with your files while maintaining complete isolation
+
+### Benefits of Docker Usage
+- **Complete isolation** from your host system
+- **Consistent environment** across different machines
+- **Easy cleanup** - just remove the container when done
+- **Perfect for testing** new features or configurations
+
+## URL Support
 - `read_file` can now fetch content from both local files and URLs
 - Example: `read_file` with `isUrl: true` parameter to read from web resources
 - Handles both text and image content from remote sources
@@ -627,17 +657,29 @@ Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, 
 
 Desktop Commander collects limited anonymous telemetry data to help improve the tool. No personal information, file contents, file paths, or command arguments are collected.
 
-Telemetry is enabled by default. To opt out:
+### Usage Analytics (Local Only)
+- **Local usage statistics** are always collected and stored locally on your machine for functionality and the `get_usage_stats` tool
+- Use the `get_usage_stats` tool to view your personal usage patterns, success rates, and performance metrics
+- **This data is NOT sent anywhere** - it remains on your computer for your personal insights
+
+### Feedback System
+- Use the `give_feedback_to_desktop_commander` tool to provide feedback about Desktop Commander
+- Opens a browser-based feedback form to send suggestions and feedback to the development team
+- Only basic usage statistics (tool call count, days using, platform) are pre-filled to provide context but you can remove them
+
+### External Telemetry Opt-Out
+External telemetry (sent to analytics services) is enabled by default but can be disabled:
 
 1. Open the chat and simply ask:
    **"Disable telemetry"**
 2. The chatbot will update your settings automatically.
 
+**Note:** This only disables external telemetry. Local usage analytics remain active for tool functionality but is not share externally
+
 For complete details about data collection, please see our [Privacy Policy](PRIVACY.md).
 
 ## Verifications
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/25ff7a06-58bc-40b8-bd79-ebb715140f1a)
-
 
 ## License
 
