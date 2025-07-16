@@ -63,6 +63,7 @@ export const server = new Server(
             tools: {},
             resources: {},  // Add empty resources capability
             prompts: {},    // Add empty prompts capability
+            logging: {},    // Add logging capability for console redirection
         },
     },
 );
@@ -106,6 +107,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 tools: {},
                 resources: {},
                 prompts: {},
+                logging: {},
             },
             serverInfo: {
                 name: "desktop-commander",

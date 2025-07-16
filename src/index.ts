@@ -59,6 +59,9 @@ async function runServer() {
 
 
     const transport = new FilteredStdioServerTransport();
+    
+    // Export transport for use throughout the application
+    global.mcpTransport = transport;
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
