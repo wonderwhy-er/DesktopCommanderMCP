@@ -318,8 +318,7 @@ Desktop Commander has three separate data collection systems:
 
 If you don't want to see periodic feedback requests, you can disable them:
 
-1. **Simple method:** Ask in chat: **"Set feedbackGiven to true"**
-2. **Configuration method:** Use `set_config_value({"key": "feedbackGiven", "value": true})`
+**Simple method:** Ask in chat: **"Set feedbackGiven to true"**
 
 This will stop Desktop Commander from showing feedback prompts while keeping all other functionality intact.
 
