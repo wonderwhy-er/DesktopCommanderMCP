@@ -1,5 +1,3 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/wonderwhy-er-desktopcommandermcp-badge.png)](https://mseep.ai/app/wonderwhy-er-desktopcommandermcp)
-
 # Desktop Commander MCP
 ### Search, update, manage files and run terminal commands with AI
 
@@ -636,6 +634,10 @@ Telemetry is enabled by default. To opt out:
 2. The chatbot will update your settings automatically.
 
 For complete details about data collection, please see our [Privacy Policy](PRIVACY.md).
+
+## Verifications
+[![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/25ff7a06-58bc-40b8-bd79-ebb715140f1a)
+
 
 ## License
 
