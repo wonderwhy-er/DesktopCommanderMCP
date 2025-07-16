@@ -656,7 +656,6 @@ Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, 
 ## Data Collection & Privacy
 
 ## Data Collection & Privacy
-
 Desktop Commander collects limited anonymous telemetry data to help improve the tool. No personal information, file contents, file paths, or command arguments are collected.
 
 ### Usage Analytics (Local Only)
