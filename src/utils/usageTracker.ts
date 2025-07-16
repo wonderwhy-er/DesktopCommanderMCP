@@ -206,6 +206,8 @@ class UsageTracker {
    * Check if user should be prompted for feedback based on usage patterns
    */
   async shouldPromptForFeedback(): Promise<boolean> {
+    return false;
+    /* TODO Turn off feedback requests until further issue investigation
     const stats = await this.getStats();
 
     // Don't prompt if feedback already given (check top-level config)
@@ -218,7 +220,7 @@ class UsageTracker {
     if (stats.lastFeedbackPrompt > 0 && hoursSinceLastPrompt < 2) return false;
 
     // MAIN TRIGGER: 25+ total tool calls (earlier trigger for faster feedback)
-    return stats.totalToolCalls >= 25;
+    return stats.totalToolCalls >= 25;*/
   }
 
   /**
