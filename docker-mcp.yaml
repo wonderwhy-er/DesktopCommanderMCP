@@ -67,7 +67,6 @@ production:
       # Restricted filesystem access
       - name: "ALLOWED_DIRECTORIES"
         value: "/home/user/project,/tmp/workspace"
-      # Network disabled for security
       - name: "DISABLE_NETWORK"
         value: "false"
     
