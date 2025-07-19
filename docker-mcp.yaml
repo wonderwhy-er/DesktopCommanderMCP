@@ -1,0 +1,58 @@
+# Docker MCP catalog configuration for Desktop Commander
+# This file defines how Desktop Commander should be configured in the Docker MCP Gateway
+# to ensure persistent filesystem state across tool calls.
+
+registry:
+  desktop-commander:
+    # Container image
+    image: "mcp/desktop-commander:latest"
+    
+    # CRITICAL: Enable long-lived container mode to maintain filesystem persistence
+    # This prevents the MCP Gateway from creating fresh containers for each tool call
+    longLived: true
+    
+    # Environment variables
+    env:
+      - name: "MCP_CLIENT_DOCKER"
+        value: "true"
+      - name: "NODE_ENV"
+        value: "production"
+    
+    # Command to run the MCP server (default command from Dockerfile)
+    command: ["node", "dist/index.js"]
+    
+    # Volumes for persistent development workflows (optional)
+    volumes:
+      # Example: Mount a workspace directory for persistent file operations
+      # - "./workspace:/workspace"
+      # - "~/.desktop-commander:/app/config"
+    
+    # Security settings
+    disableNetwork: false  # Desktop Commander may need network access for some operations
+    
+    # Allowed hosts (if network restrictions needed)
+    # allowHosts:
+    #   - "api.example.com"
+    
+    # Secrets (if needed)
+    # secrets:
+    #   - name: "api_key"
+    #     env: "API_KEY"
+
+# Alternative configuration showing Desktop Commander as individual tools (PROBLEMATIC)
+# This is how it's currently configured and causes the persistence bug:
+#
+# registry:
+#   desktop-commander-tools:
+#     tools:
+#       - name: write_file
+#         description: "Write content to a file"
+#         container:
+#           image: "mcp/desktop-commander:latest"
+#           command: ["node", "dist/index.js", "tool", "write_file"]
+#       - name: read_file
+#         description: "Read content from a file"
+#         container:
+#           image: "mcp/desktop-commander:latest"
+#           command: ["node", "dist/index.js", "tool", "read_file"]
+#       # ... other tools as separate containers (CAUSES PERSISTENCE LOSS)
