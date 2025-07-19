@@ -2,6 +2,7 @@ import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
+import { getDockerMCPInfo } from '../utils/docker-persistence.js';
 
 /**
  * Get the entire config including system information
@@ -13,6 +14,8 @@ export async function getConfig() {
     
     // Add system information and current client to the config response
     const systemInfo = getSystemInfo();
+    const dockerMCPInfo = await getDockerMCPInfo();
+    
     const configWithSystemInfo = {
       ...config,
       currentClient,
@@ -25,14 +28,32 @@ export async function getConfig() {
         isMacOS: systemInfo.isMacOS,
         isLinux: systemInfo.isLinux,
         examplePaths: systemInfo.examplePaths
-      }
+      },
+      dockerMCP: dockerMCPInfo
     };
+    
+    // Add persistence warnings to the response text if needed
+    let responseText = `Current configuration:\n${JSON.stringify(configWithSystemInfo, null, 2)}`;
+    
+    if (dockerMCPInfo.isDockerMCP && dockerMCPInfo.persistenceStatus === 'ephemeral') {
+      responseText += '\n\n⚠️  PERSISTENCE WARNING: Desktop Commander may be running in ephemeral mode!\n';
+      responseText += 'Files written with write_file may not persist between tool calls.\n\n';
+      responseText += 'IMMEDIATE FIX: Run "docker mcp gateway run --long-lived"\n';
+      responseText += 'PERMANENT FIX: See docs/DOCKER_MCP_CONFIGURATION.md for details\n';
+      
+      if (dockerMCPInfo.containerInfo.recommendations) {
+        responseText += '\nRecommendations:\n';
+        dockerMCPInfo.containerInfo.recommendations.forEach((rec: string) => {
+          responseText += `- ${rec}\n`;
+        });
+      }
+    }
     
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
       content: [{
         type: "text",
-        text: `Current configuration:\n${JSON.stringify(configWithSystemInfo, null, 2)}`
+        text: responseText
       }],
     };
   } catch (error) {
