@@ -1,4 +1,6 @@
 import { homedir, platform } from 'os';
+import fs from 'fs/promises';
+import path from 'path';
 import { join } from 'path';
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -28,6 +30,96 @@ try {
 // Setup tracking
 let setupSteps = []; // Track setup progress
 let setupStartTime = Date.now();
+
+/**
+   * Initialize configuration - load from disk or create default
+   */
+async function initConfigFile() {
+    const USER_HOME = homedir();
+    const CONFIG_DIR = path.join(USER_HOME, '.claude-server-commander');
+
+    // Paths relative to the config directory
+    const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+    try {
+        // Ensure config directory exists
+        const configDir = path.dirname(CONFIG_FILE);
+        if (!existsSync(configDir)) {
+            await mkdir(configDir, { recursive: true });
+        }
+
+        // Check if config file exists
+        try {
+            await fs.access(CONFIG_FILE);
+            // Load existing config
+            const configData = await fs.readFile(CONFIG_FILE, 'utf8');
+        } catch (error) {
+            const defaultConfig = {
+                blockedCommands: [
+
+                    // Disk and partition management
+                    "mkfs",      // Create a filesystem on a device
+                    "format",    // Format a storage device (cross-platform)
+                    "mount",     // Mount a filesystem
+                    "umount",    // Unmount a filesystem
+                    "fdisk",     // Manipulate disk partition tables
+                    "dd",        // Convert and copy files, can write directly to disks
+                    "parted",    // Disk partition manipulator
+                    "diskpart",  // Windows disk partitioning utility
+                    
+                    // System administration and user management
+                    "sudo",      // Execute command as superuser
+                    "su",        // Substitute user identity
+                    "passwd",    // Change user password
+                    "adduser",   // Add a user to the system
+                    "useradd",   // Create a new user
+                    "usermod",   // Modify user account
+                    "groupadd",  // Create a new group
+                    "chsh",      // Change login shell
+                    "visudo",    // Edit the sudoers file
+                    
+                    // System control
+                    "shutdown",  // Shutdown the system
+                    "reboot",    // Restart the system
+                    "halt",      // Stop the system
+                    "poweroff",  // Power off the system
+                    "init",      // Change system runlevel
+                    
+                    // Network and security
+                    "iptables",  // Linux firewall administration
+                    "firewall",  // Generic firewall command
+                    "netsh",     // Windows network configuration
+                    
+                    // Windows system commands
+                    "sfc",       // System File Checker
+                    "bcdedit",   // Boot Configuration Data editor
+                    "reg",       // Windows registry editor
+                    "net",       // Network/user/service management
+                    "sc",        // Service Control manager
+                    "runas",     // Execute command as another user
+                    "cipher",    // Encrypt/decrypt files or wipe data
+                    "takeown"    // Take ownership of files
+                ],
+                clientId: uniqueUserId, // Use the generated UUID as client ID
+                defaultShell: platform() === 'win32' ? 'powershell.exe' : '/bin/sh',
+                allowedDirectories: [],
+                telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+                fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
+                fileReadLineLimit: 1000  // Default line limit for file read operations (changed from character-based)
+            };
+            logToFile('User id ' + uniqueUserId);
+            try {
+                await fs.writeFile(CONFIG_FILE, JSON.stringify(defaultConfig, null, 2), 'utf8');
+            } catch (error) {
+                console.error('Failed to save config:', error);
+                throw error;
+            }
+        }
+
+    } catch (error) {
+        console.error('Failed to initialize config:', error);
+    }
+}
+
 
 
 // Function to get npm version
@@ -532,6 +624,7 @@ export default async function setup() {
     }
 
     try {
+        await initConfigFile();
         // Check if config directory exists and create it if necessary
         const configDirStep = addSetupStep('check_config_directory');
         const configDir = dirname(claudeConfigPath);
