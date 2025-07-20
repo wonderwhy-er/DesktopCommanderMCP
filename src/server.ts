@@ -414,6 +414,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("wc -l /path/file.csv") → Line counting
                         • start_process("head -10 /path/file.csv") → File preview
                         
+                        BINARY FILE SUPPORT:
+                        For PDF, Excel, Word, archives, databases, and other binary formats, use process tools with appropriate libraries or command-line utilities.
+                        
                         INTERACTIVE PROCESSES FOR DATA ANALYSIS:
                         1. start_process("python3 -i") - Start Python REPL for data work
                         2. start_process("node -i") - Start Node.js REPL for JSON/JS
@@ -486,6 +489,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
                         4. Analyze: interact_with_process(pid, "print(df.describe())")
                         5. Continue: interact_with_process(pid, "df.groupby('column').size()")
+                        
+                        BINARY FILE PROCESSING WORKFLOWS:
+                        Use appropriate Python libraries (PyPDF2, pandas, docx2txt, etc.) or command-line tools for binary file analysis.
                         
                         SMART DETECTION:
                         - Automatically waits for REPL prompt (>>>, >, etc.)
