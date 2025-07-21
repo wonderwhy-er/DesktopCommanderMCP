@@ -113,6 +113,17 @@ async function runServer() {
 
 
     console.error("Connecting server...");
+
+    // Set up event-driven initialization completion handler
+    server.oninitialized = () => {
+      // This callback is triggered after the client sends the "initialized" notification
+      // At this point, the MCP protocol handshake is fully complete
+      transport.enableNotifications();
+      process.stderr.write(
+        `[desktop-commander] MCP fully initialized, notifications enabled\n`
+      );
+    };
+
     await server.connect(transport);
     console.error("Server connected successfully");
   } catch (error) {

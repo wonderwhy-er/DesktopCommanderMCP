@@ -97,7 +97,8 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
             };
-            console.log(`Client connected: ${currentClient.name} v${currentClient.version}`);
+            // Log to stderr during initialization to avoid protocol violations
+            process.stderr.write(`[desktop-commander] Client connected: ${currentClient.name} v${currentClient.version}\n`);
         }
 
         // Return standard initialization response
