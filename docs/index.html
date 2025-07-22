@@ -190,6 +190,25 @@
             color: white;
             background-color: #0056a0;
         }
+        
+        .header-consultation-btn {
+            background-color: #ff6b35; 
+            color: white; 
+            padding: 8px 15px; 
+            border-radius: 5px; 
+            text-decoration: none; 
+            font-weight: 500;
+            margin-right: 10px;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+        
+        .header-consultation-btn:hover {
+            color: white;
+            background-color: #e55a2b;
+            transform: translateY(-1px);
+        }
         /* Constrain header layout */
         .header-container { 
             display: flex; 
@@ -304,6 +323,24 @@
             background-color: #0056a0 !important;
         }
         
+        /* Consultation Button Styles */
+        .consultation-btn {
+            background-color: #ff6b35 !important; /* Distinctive orange color */
+            border: none !important;
+            color: white !important;
+            font-weight: 500 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+        }
+        
+        .consultation-btn:hover {
+            background-color: #e55a2b !important;
+            color: white !important;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(255, 107, 53, 0.4);
+        }
+        
         /* Promotion Bar Styles */
         .promotion-bar {
             background-color: #0078D7;
@@ -321,7 +358,7 @@
         
         
         @media (max-width: 768px) {
-            .header-cta-btn {
+            .header-cta-btn, .header-consultation-btn {
                 display: none;
             }
             
@@ -787,6 +824,12 @@
                 gap: 15px;
             }
             
+            .hero-content .hero-btns .btn {
+                flex: 1;
+                min-width: 140px;
+                text-align: center;
+            }
+            
             /* Mobile menu when active */
             .mobile-nav.active {
                 display: block;
@@ -891,7 +934,7 @@
                 </ul>
                 </nav>
                 
-                <a href="#installation" class="header-cta-btn">Install</a>
+                <a href="https://go.desktopcommander.app/free-call" class="header-cta-btn">Free consultation</a>
                 <div class="mobile-menu-btn" role="button" aria-expanded="false" aria-label="Toggle mobile menu" tabindex="0">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
@@ -942,6 +985,9 @@
                         </div>
                     </div>
                     <div class="hero-btns">
+                        <a href="https://go.desktopcommander.app/free-call" target="_blank" class="btn primary-btn consultation-btn">
+                            FREE CONSULTATION
+                        </a>
                         <a href="#installation" class="btn primary-btn blue_btn">
                             INSTALL
                         </a>
@@ -2070,6 +2116,7 @@ npm run setup</pre>
                 <div class="footer-column">
                     <h3>Resources</h3>
                     <ul>
+                        <li><a href="https://go.desktopcommander.app/free-call">Free consultation</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GitHub Repository</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/wiki" target="_blank">Documentation</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues" target="_blank">Issue Tracker</a></li>
