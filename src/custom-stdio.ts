@@ -24,6 +24,7 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     info: typeof console.info;
   };
   private originalStdoutWrite: typeof process.stdout.write;
+  private isInitialized: boolean = false;
 
   constructor() {
     super();
@@ -49,25 +50,61 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     process.stderr.write(`[desktop-commander] Enhanced FilteredStdioServerTransport initialized\n`);
   }
 
+  /**
+   * Call this method after MCP initialization is complete to enable JSON-RPC notifications
+   */
+  public enableNotifications() {
+    this.isInitialized = true;
+    process.stderr.write(`[desktop-commander] JSON-RPC notifications enabled\n`);
+  }
+
+  /**
+   * Check if notifications are enabled
+   */
+  public get isNotificationsEnabled(): boolean {
+    return this.isInitialized;
+  }
+
   private setupConsoleRedirection() {
     console.log = (...args: any[]) => {
-      this.sendLogNotification("info", args);
+      if (this.isInitialized) {
+        this.sendLogNotification("info", args);
+      } else {
+        // During initialization, send to stderr to avoid protocol violations
+        process.stderr.write(`[LOG] ${args.join(' ')}\n`);
+      }
     };
 
     console.info = (...args: any[]) => {
-      this.sendLogNotification("info", args);
+      if (this.isInitialized) {
+        this.sendLogNotification("info", args);
+      } else {
+        process.stderr.write(`[INFO] ${args.join(' ')}\n`);
+      }
     };
 
     console.warn = (...args: any[]) => {
-      this.sendLogNotification("warning", args);
+      if (this.isInitialized) {
+        this.sendLogNotification("warning", args);
+      } else {
+        process.stderr.write(`[WARN] ${args.join(' ')}\n`);
+      }
     };
 
     console.error = (...args: any[]) => {
-      this.sendLogNotification("error", args);
+      if (this.isInitialized) {
+        this.sendLogNotification("error", args);
+      } else {
+        process.stderr.write(`[ERROR] ${args.join(' ')}\n`);
+      }
     };
 
     console.debug = (...args: any[]) => {
-      this.sendLogNotification("debug", args);
+      if (this.isInitialized) {
+        this.sendLogNotification("debug", args);
+      } else {
+        process.stderr.write(`[DEBUG] ${args.join(' ')}\n`);
+      }
     };
   }
 
@@ -87,7 +124,12 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
           return this.originalStdoutWrite.call(process.stdout, buffer, encoding, callback);
         } else if (trimmed.length > 0) {
           // Non-JSON-RPC output, wrap it in a log notification
-          this.sendLogNotification("info", [buffer.replace(/\n$/, '')]);
+          if (this.isInitialized) {
+            this.sendLogNotification("info", [buffer.replace(/\n$/, '')]);
+          } else {
+            // During initialization, send to stderr
+            process.stderr.write(`[STDOUT] ${buffer}`);
+          }
           if (callback) callback();
           return true;
         }
