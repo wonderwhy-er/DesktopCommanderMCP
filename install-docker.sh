@@ -118,7 +118,7 @@ build_docker_args() {
 ask_for_folders() {
     echo
     print_info "Which folders would you like Desktop Commander to access?"
-    echo "Enter folder paths (one per line). Press Enter twice when done:"
+    echo "Add a folder path and press Enter. When you are finished adding folders, press Enter again to continue."
     echo "Examples:"
     case "$OS" in
         macos)
@@ -148,6 +148,7 @@ ask_for_folders() {
         if [[ -d "$folder" ]]; then
             FOLDERS+=("$folder")
             print_success "Added: $folder"
+            print_info "Folder added. Type in another folder or just press Enter to continue to next step"
         else
             print_warning "Folder does not exist: $folder"
             read -p "Add anyway? (y/N): " -r
