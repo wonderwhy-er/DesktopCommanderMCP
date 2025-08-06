@@ -196,7 +196,7 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 ```json
 {
   "mcpServers": {
-    "desktop-commander": {
+    "desktop-commander-in-docker": {
       "command": "docker",
       "args": [
         "run",
@@ -213,7 +213,7 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 ```json
 {
   "mcpServers": {
-    "desktop-commander": {
+    "desktop-commander-in-docker": {
       "command": "docker",
       "args": [
         "run",
