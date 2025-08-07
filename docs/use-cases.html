@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, shrink-to-fit=no">
+    <title>Use Cases - Desktop Commander MCP</title>
+    
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Explore real-world use cases for Desktop Commander MCP. See how developers, DevOps engineers, data analysts, and other professionals use Claude AI with terminal access and file management.">
+    <meta name="keywords" content="Desktop Commander use cases, Claude AI terminal, developer tools, DevOps automation, data analysis with AI, technical writing AI">
+    <meta name="author" content="Desktop Commander MCP Team">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://desktopcommander.app/use-cases.html">
+    <meta property="og:title" content="Use Cases - Desktop Commander MCP">
+    <meta property="og:description" content="Explore real-world use cases for Desktop Commander MCP across different professional roles and workflows.">
+    <meta property="og:image" content="https://desktopcommander.app/logo.png">
+    
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:url" content="https://desktopcommander.app/use-cases.html">
+    <meta property="twitter:title" content="Use Cases - Desktop Commander MCP">
+    <meta property="twitter:description" content="Explore real-world use cases for Desktop Commander MCP across different professional roles and workflows.">
+    <meta property="twitter:image" content="https://desktopcommander.app/logo.png">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://desktopcommander.app/use-cases.html">
+    
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#171717">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --background: 220 13% 9%;
+            --foreground: 210 40% 98%;
+            --card: 220 13% 11%;
+            --card-foreground: 210 40% 98%;
+            --primary: 217 91% 60%;
+            --primary-foreground: 220 13% 9%;
+            --secondary: 220 13% 15%;
+            --secondary-foreground: 210 40% 98%;
+            --muted: 220 13% 15%;
+            --muted-foreground: 215 20% 65%;
+            --accent: 217 91% 60%;
+            --border: 220 13% 18%;
+            --dc-blue: 217 91% 60%;
+            --dc-surface: 220 13% 11%;
+            --dc-surface-elevated: 220 13% 13%;
+            --radius: 0.75rem;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+
+        /* Header Styles */
+        .header {
+            background: hsl(var(--background));
+            border-bottom: 1px solid hsl(var(--border));
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 0;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+            font-size: 1.125rem;
+            color: hsl(var(--foreground));
+            text-decoration: none;
+        }
+
+        .logo img {
+            width: 32px;
+            height: 32px;
+        }
+
+        .nav-link {
+            color: hsl(var(--muted-foreground));
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-link:hover {
+            color: hsl(var(--foreground));
+        }
+
+        /* Main Content */
+        .main-content {
+            padding: 4rem 0;
+        }
+
+        .hero-section {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .hero-title {
+            font-size: 3.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, hsl(var(--foreground)), hsl(var(--primary)));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: hsl(var(--muted-foreground));
+            max-width: 600px;
+            margin: 0 auto 2rem;
+        }
+
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            color: hsl(var(--muted-foreground));
+            font-size: 0.875rem;
+        }
+
+        .breadcrumb a {
+            color: hsl(var(--primary));
+            text-decoration: none;
+        }
+
+        /* Use Cases Grid */
+        .use-cases-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 2rem;
+            margin-bottom: 4rem;
+        }
+
+        .use-case-card {
+            background: hsl(var(--card));
+            border: 1px solid hsl(var(--border));
+            border-radius: var(--radius);
+            padding: 2rem;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .use-case-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .use-case-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            border-color: hsl(var(--primary) / 0.5);
+        }
+
+        .use-case-card:hover::before {
+            opacity: 1;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            background: hsl(var(--primary) / 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-description {
+            color: hsl(var(--muted-foreground));
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .difficulty-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .difficulty-simple {
+            background: rgba(34, 197, 94, 0.1);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .difficulty-medium {
+            background: rgba(234, 179, 8, 0.1);
+            color: #eab308;
+            border: 1px solid rgba(234, 179, 8, 0.2);
+        }
+
+        .difficulty-complex {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .use-case-list {
+            list-style: none;
+            margin-bottom: 1.5rem;
+        }
+
+        .use-case-list li {
+            padding: 0.5rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+            color: hsl(var(--muted-foreground));
+        }
+
+        .use-case-list li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: hsl(var(--primary));
+            font-weight: 600;
+        }
+
+        .card-footer {
+            display: flex;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .role-tag {
+            padding: 0.25rem 0.5rem;
+            background: hsl(var(--muted));
+            color: hsl(var(--muted-foreground));
+            border-radius: calc(var(--radius) - 2px);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        /* CTA Section */
+        .cta-section {
+            text-align: center;
+            padding: 4rem 2rem;
+            background: hsl(var(--card));
+            border-radius: var(--radius);
+            border: 1px solid hsl(var(--border));
+        }
+
+        .cta-title {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .cta-description {
+            color: hsl(var(--muted-foreground));
+            margin-bottom: 2rem;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border-radius: var(--radius);
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .btn-primary {
+            background: hsl(var(--primary));
+            color: hsl(var(--primary-foreground));
+        }
+
+        .btn-primary:hover {
+            background: hsl(var(--primary) / 0.9);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: hsl(var(--foreground));
+            border: 1px solid hsl(var(--border));
+        }
+
+        .btn-secondary:hover {
+            background: hsl(var(--muted));
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .hero-title {
+                font-size: 2.5rem;
+            }
+
+            .use-cases-grid {
+                grid-template-columns: 1fr;
+                gap: 1.5rem;
+            }
+
+            .use-case-card {
+                padding: 1.5rem;
+            }
+
+            .cta-section {
+                padding: 2rem 1rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero-title {
+                font-size: 2rem;
+            }
+
+            .container {
+                padding: 0 0.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <a href="index.html" class="logo">
+                    <img src="optimized_images/logo.webp" alt="DesktopCommander Logo" width="32" height="32" />
+                    <span>DesktopCommander</span>
+                </a>
+                <nav>
+                    <a href="index.html" class="nav-link">← Back to Home</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Breadcrumb -->
+            <div class="breadcrumb">
+                <a href="index.html">Home</a>
+                <span>/</span>
+                <span>Use Cases</span>
+            </div>
+
+            <!-- Hero Section -->
+            <section class="hero-section">
+                <h1 class="hero-title">Real-World Use Cases</h1>
+                <p class="hero-subtitle">
+                    Discover how professionals across different roles leverage Desktop Commander MCP 
+                    to streamline their workflows and boost productivity with AI-powered automation.
+                </p>
+            </section>
+
+            <!-- Use Cases Grid -->            <section class="use-cases-grid">
+                <!-- AI Software Engineer -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <path d="M16 18l6-6-6-6"></path>
+                                <path d="M8 6l-6 6 6 6"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI Software Engineer</h2>
+                            <div class="difficulty-badge difficulty-medium">Intermediate</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Build products faster without extensive coding knowledge. Desktop Commander transforms Claude into your personal full-stack development assistant with direct codebase access.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Create and manage large-scale projects with intelligent code generation</li>
+                        <li>Perform comprehensive code reviews with AI-powered analysis</li>
+                        <li>Navigate and understand complex codebases effortlessly</li>
+                        <li>Conduct security audits with automated vulnerability detection</li>
+                        <li>Add comprehensive test coverage across your entire application</li>
+                        <li>Optimize SEO and performance with data-driven insights</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Full Stack</span>
+                        <span class="role-tag">Code Review</span>
+                        <span class="role-tag">Testing</span>
+                    </div>
+                </div>
+
+                <!-- AI DevOps Engineer -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                                <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                                <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                                <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI DevOps Engineer</h2>
+                            <div class="difficulty-badge difficulty-complex">Advanced</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Streamline infrastructure management, automate deployments, and optimize server configurations with intelligent AI assistance for complex DevOps workflows.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Configure local development environments with automated setup</li>
+                        <li>Generate and maintain Ansible playbooks and Terraform configurations</li>
+                        <li>Create and optimize Dockerfiles with best practices</li>
+                        <li>Analyze remote server logs for troubleshooting and monitoring</li>
+                        <li>Configure and manage remote servers through secure SSH connections</li>
+                        <li>Automate CI/CD pipeline configuration and optimization</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Infrastructure</span>
+                        <span class="role-tag">Automation</span>
+                        <span class="role-tag">Monitoring</span>
+                    </div>
+                </div>
+
+                <!-- AI Data Analyst -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <path d="M3 3v18h18"></path>
+                                <path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI Data Analyst</h2>
+                            <div class="difficulty-badge difficulty-simple">Beginner</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Transform raw data into actionable insights with instant analysis capabilities. Connect to databases, process CSV files, and generate reports with AI-powered analytics.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Instant CSV and Excel file analysis with automated insights</li>
+                        <li>Connect to databases with persistent session management</li>
+                        <li>Perform advanced statistical analysis using R and Python</li>
+                        <li>Create compelling data visualizations and interactive charts</li>
+                        <li>Generate comprehensive reports with automated formatting</li>
+                        <li>Build predictive models and perform trend analysis</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Analytics</span>
+                        <span class="role-tag">Visualization</span>
+                        <span class="role-tag">Statistics</span>
+                    </div>
+                </div>
+
+                <!-- AI Technical Writer -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                <polyline points="14 2 14 8 20 8"></polyline>
+                                <line x1="16" y1="13" x2="8" y2="13"></line>
+                                <line x1="16" y1="17" x2="8" y2="17"></line>
+                                <polyline points="10 9 9 9 8 9"></polyline>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI Technical Writer</h2>
+                            <div class="difficulty-badge difficulty-simple">Beginner</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Create and maintain professional documentation with AI assistance. Automate content creation, ensure consistency, and keep documentation synchronized with codebase changes.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Generate and update comprehensive project documentation</li>
+                        <li>Create automated release notes from commit histories</li>
+                        <li>Optimize content for search engines and user experience</li>
+                        <li>Maintain consistency across large documentation sets</li>
+                        <li>Generate UML diagrams and flowcharts from existing code</li>
+                        <li>Create API documentation with automated examples</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Documentation</span>
+                        <span class="role-tag">Content</span>
+                        <span class="role-tag">SEO</span>
+                    </div>
+                </div>
+
+                <!-- AI UX/UI Designer -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI UX/UI Designer</h2>
+                            <div class="difficulty-badge difficulty-medium">Intermediate</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Bridge the gap between design and development. Convert design files to production-ready code, manage design assets, and create interactive prototypes efficiently.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Convert Figma designs directly into production-ready components</li>
+                        <li>Create interactive prototypes with rapid iteration cycles</li>
+                        <li>Automate image resizing and optimization for multiple platforms</li>
+                        <li>Process design files at scale with consistent quality</li>
+                        <li>Generate design system documentation and component libraries</li>
+                        <li>Optimize assets for web performance and accessibility</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Design Systems</span>
+                        <span class="role-tag">Prototyping</span>
+                        <span class="role-tag">Assets</span>
+                    </div>
+                </div>
+
+                <!-- AI Personal Assistant -->
+                <div class="use-case-card">
+                    <div class="card-header">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: hsl(var(--primary))">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="card-title">AI Personal Assistant</h2>
+                            <div class="difficulty-badge difficulty-simple">Beginner</div>
+                        </div>
+                    </div>
+                    <p class="card-description">
+                        Organize your digital life with intelligent file management, document processing, and knowledge management. Perfect for productivity optimization and information organization.
+                    </p>
+                    <ul class="use-case-list">
+                        <li>Intelligently organize files and folders across your system</li>
+                        <li>Manage personal knowledge bases in Obsidian or similar tools</li>
+                        <li>Automatically summarize and review important documents</li>
+                        <li>Check documents for errors, consistency, and formatting</li>
+                        <li>Automate repetitive file operations and maintenance tasks</li>
+                        <li>Create searchable archives of important information</li>
+                    </ul>
+                    <div class="card-footer">
+                        <span class="role-tag">Organization</span>
+                        <span class="role-tag">Productivity</span>
+                        <span class="role-tag">Knowledge</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- CTA Section -->
+            <section class="cta-section">
+                <h2 class="cta-title">Ready to Transform Your Workflow?</h2>
+                <p class="cta-description">
+                    Join thousands of professionals who have revolutionized their productivity with Desktop Commander MCP. 
+                    Start your journey with AI-powered automation today.
+                </p>
+                <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+                    <a href="index.html#installation" class="btn btn-primary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Get Started Now
+                    </a>
+                    <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn btn-secondary">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.02.06.03.09.02 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12 0 1.17-.83 2.12-1.89 2.12z"></path>
+                        </svg>
+                        Join Community
+                    </a>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer style="background: hsl(var(--card)); border-top: 1px solid hsl(var(--border)); margin-top: 4rem; padding: 2rem 0;">
+        <div class="container" style="text-align: center;">
+            <p style="color: hsl(var(--muted-foreground)); margin: 0;">
+                © 2025 Desktop Commander MCP. Built with ❤️ for the developer community.
+            </p>
+        </div>
+    </footer>
+
+    <!-- Analytics Tracking -->
+    <script src="js/analytics-tracking.js" defer></script>
+</body>
+</html>
