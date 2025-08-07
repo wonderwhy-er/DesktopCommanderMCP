@@ -53,8 +53,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Track installation method selection
     initializeInstallationTracking();
     
-    // Track copy-to-clipboard events
-    initializeCopyTracking();
+    // Track copy-to-clipboard events (with delay to wait for main.js to create buttons)
+    setTimeout(function() {
+        initializeCopyTracking();
+    }, 500); // Wait 500ms for main.js to create copy buttons
     
     // Track navigation clicks
     initializeNavigationTracking();
@@ -126,47 +128,67 @@ function initializeInstallationTracking() {
 
 // Track copy-to-clipboard events
 function initializeCopyTracking() {
-    // We'll add copy buttons to installation commands
-    document.querySelectorAll('pre').forEach(function(preElement) {
-        // Only add copy buttons to installation section
-        if (preElement.closest('#installation')) {
-            const copyButton = document.createElement('button');
-            copyButton.className = 'copy-button';
-            copyButton.innerHTML = '📋 Copy';
-            copyButton.setAttribute('aria-label', 'Copy command to clipboard');
-            
-            // Wrap pre in container for positioning
-            const container = document.createElement('div');
-            container.className = 'pre-container';
-            preElement.parentNode.insertBefore(container, preElement);
-            container.appendChild(preElement);
-            container.appendChild(copyButton);
-            
-            copyButton.addEventListener('click', function() {
-                const command = preElement.textContent.trim();
-                const method = preElement.closest('.tab-content').id || 'unknown';
-                
-                navigator.clipboard.writeText(command).then(function() {
-                    copyButton.innerHTML = '✅ Copied!';
-                    copyButton.classList.add('copied');
+    // Use existing copy buttons (created by main.js) instead of creating new ones
+    document.querySelectorAll('#installation .copy-button').forEach(function(copyButton) {
+        copyButton.addEventListener('click', function() {
+            // Find the associated pre element
+            const container = copyButton.closest('.pre-container');
+            if (container) {
+                const preElement = container.querySelector('pre');
+                if (preElement) {
+                    const command = preElement.textContent.trim();
+                    const method = preElement.closest('.tab-content').id || 'unknown';
                     
                     // Track the copy event
                     DesktopCommanderAnalytics.trackCopyCommand(command, method);
-                    
-                    setTimeout(function() {
-                        copyButton.innerHTML = '📋 Copy';
-                        copyButton.classList.remove('copied');
-                    }, 2000);
-                }).catch(function(err) {
-                    console.error('Failed to copy: ', err);
-                    copyButton.innerHTML = '❌ Failed';
-                    setTimeout(function() {
-                        copyButton.innerHTML = '📋 Copy';
-                    }, 2000);
-                });
-            });
-        }
+                }
+            }
+        });
     });
+    
+    // If no existing copy buttons found, create them (fallback)
+    if (document.querySelectorAll('#installation .copy-button').length === 0) {
+        document.querySelectorAll('#installation pre').forEach(function(preElement) {
+            // Only proceed if there's no existing copy button
+            if (!preElement.closest('.pre-container')) {
+                const copyButton = document.createElement('button');
+                copyButton.className = 'copy-button';
+                copyButton.innerHTML = '📋 Copy';
+                copyButton.setAttribute('aria-label', 'Copy command to clipboard');
+                
+                // Wrap pre in container for positioning
+                const container = document.createElement('div');
+                container.className = 'pre-container';
+                preElement.parentNode.insertBefore(container, preElement);
+                container.appendChild(preElement);
+                container.appendChild(copyButton);
+                
+                copyButton.addEventListener('click', function() {
+                    const command = preElement.textContent.trim();
+                    const method = preElement.closest('.tab-content').id || 'unknown';
+                    
+                    navigator.clipboard.writeText(command).then(function() {
+                        copyButton.innerHTML = '✅ Copied!';
+                        copyButton.classList.add('copied');
+                        
+                        // Track the copy event
+                        DesktopCommanderAnalytics.trackCopyCommand(command, method);
+                        
+                        setTimeout(function() {
+                            copyButton.innerHTML = '📋 Copy';
+                            copyButton.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy: ', err);
+                        copyButton.innerHTML = '❌ Failed';
+                        setTimeout(function() {
+                            copyButton.innerHTML = '📋 Copy';
+                        }, 2000);
+                    });
+                });
+            }
+        });
+    }
 }
 
 // Track navigation section clicks
