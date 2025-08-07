@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Desktop Commander Docker Installation Script - Essential Persistence
-# Simplified approach with essential volumes for complete development persistence
+# Desktop Commander Docker Installation Script
 
 set -e
 
@@ -16,6 +15,9 @@ NC='\033[0m' # No Color
 DOCKER_IMAGE="mcp/desktop-commander:latest"
 CONTAINER_NAME="desktop-commander"
 
+# Global flag for verbose output
+VERBOSE=false
+
 print_header() {
     echo
     echo -e "${BLUE}██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗${NC}"
@@ -25,10 +27,9 @@ print_header() {
     echo -e "${BLUE}██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║        ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║${NC}"
     echo -e "${BLUE}╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝         ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝${NC}"
     echo
-    echo -e "${BLUE}🐳 Docker Installation - Essential Persistence${NC}"
+    echo -e "${BLUE}🐳 Docker Installation${NC}"
     echo
-    print_info "🛡️ Secure sandbox environment that won't mess up your main computer - experiment without worry"
-    print_warning "Files in mounted folders will be modified on your host machine"
+    print_info "Experiment with AI in secure sandbox environment that won't mess up your main computer"
     echo
 }
 
@@ -46,6 +47,12 @@ print_warning() {
 
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+print_verbose() {
+    if [ "$VERBOSE" = true ]; then
+        echo -e "${BLUE}ℹ️  $1${NC}"
+    fi
 }
 
 # Detect OS
@@ -71,38 +78,46 @@ get_claude_config_path() {
 
 # Check if Docker is available
 check_docker() {
-    if ! command -v docker >/dev/null 2>&1; then
-        print_error "Docker is not installed or not in PATH"
-        echo
-        echo "Please install Docker first:"
-        case "$OS" in
-            "macos")
-                echo "  • Download Docker Desktop from: https://www.docker.com/products/docker-desktop/"
-                ;;
-            "linux")
-                echo "  • Install Docker Engine: https://docs.docker.com/engine/install/"
-                ;;
-        esac
-        exit 1
-    fi
+    while true; do
+        if ! command -v docker >/dev/null 2>&1; then
+            print_error "Docker is not installed or not found"
+            echo
+            print_error "Please install Docker first:"
+            case "$OS" in
+                "macos")
+                    print_error "• Download Docker Desktop: https://www.docker.com/products/docker-desktop/"
+                    ;;
+                "linux")
+                    print_error "• Install Docker Engine: https://docs.docker.com/engine/install/"
+                    ;;
+            esac
+            echo
+            echo -n "Press Enter when Docker Desktop is running or Ctrl+C to exit: "
+            read -r
+            continue
+        fi
 
-    if ! docker info >/dev/null 2>&1; then
-        print_error "Docker is not running"
-        echo "Please start Docker and try again"
-        exit 1
-    fi
+        if ! docker info >/dev/null 2>&1; then
+            print_error "Docker is installed but not running"
+            echo
+            print_error "Please start Docker Desktop and try again"
+            echo
+            echo -n "Press Enter when Docker Desktop is running or Ctrl+C to exit: "
+            read -r
+            continue
+        fi
+
+        # If we get here, Docker is working
+        break
+    done
 
     print_success "Docker is available and running"
 }
 
 # Pull the Docker image
 pull_docker_image() {
-    echo
-    print_info "Ready to download Desktop Commander Docker image (~500MB)"
-    echo -n "Press Enter to continue or Ctrl+C to cancel: "
-    read -r
-
-    print_info "Downloading image..."
+    print_info "Downloading Desktop Commander Docker image..."
+    
     if docker pull "$DOCKER_IMAGE" >/dev/null 2>&1; then
         print_success "Docker image downloaded"
     else
@@ -115,67 +130,89 @@ pull_docker_image() {
 ask_for_folders() {
     echo
     echo -e "${BLUE}📁 Folder Access Setup${NC}"
-    print_info "Desktop Commander runs in isolation - only selected folders are accessible"
+    print_info "By default, Desktop Commander will have access to your user folder:"
+    print_info "📂 $HOME"
     echo
-
-    FOLDERS=()
-
-    # Ask for complete user home directory first
-    echo -n "Mount your complete home directory ($HOME)? [Y/n]: "
+    echo -n "Press Enter to accept user folder access or 'y' to customize: "
     read -r response
-    case "$response" in
-        [nN]|[nN][oO])
-            print_info "Skipping home directory"
-            ;;
-        *)
-            FOLDERS+=("$HOME")
-            print_success "Added home directory access"
-            ;;
-    esac
+    
+    FOLDERS=()
+    
+    if [[ $response =~ ^[Yy]$ ]]; then
+        # Custom folder selection
+        echo
+        print_info "Custom folder selection:"
+        echo -n "Mount your complete home directory ($HOME)? [Y/n]: "
+        read -r home_response
+        case "$home_response" in
+            [nN]|[nN][oO]) 
+                print_info "Skipping home directory"
+                ;;
+            *) 
+                FOLDERS+=("$HOME")
+                print_success "Added home directory access"
+                ;;
+        esac
 
-    # Ask for additional folders
-    echo
-    print_info "Add extra folders outside home directory (optional):"
-
-    while true; do
-        echo -n "Enter folder path (or Enter to finish): "
-        read -r custom_dir
-
-        if [ -z "$custom_dir" ]; then
-            break
-        fi
-
-        custom_dir="${custom_dir/#\~/$HOME}"
-
-        if [ -d "$custom_dir" ]; then
-            FOLDERS+=("$custom_dir")
-            print_success "Added: $custom_dir"
-        else
-            echo -n "Folder doesn't exist. Add anyway? [y/N]: "
-            read -r add_anyway
-            if [[ $add_anyway =~ ^[Yy]$ ]]; then
-                FOLDERS+=("$custom_dir")
-                print_info "Added: $custom_dir (will create if needed)"
+        # Ask for additional folders
+        echo
+        print_info "Add extra folders outside home directory (optional):"
+        
+        while true; do
+            echo -n "Enter folder path (or Enter to finish): "
+            read -r custom_dir
+            
+            if [ -z "$custom_dir" ]; then
+                break
             fi
-        fi
-    done
+            
+            custom_dir="${custom_dir/#\~/$HOME}"
+            
+            if [ -d "$custom_dir" ]; then
+                FOLDERS+=("$custom_dir")
+                print_success "Added: $custom_dir"
+            else
+                echo -n "Folder doesn't exist. Add anyway? [y/N]: "
+                read -r add_anyway
+                if [[ $add_anyway =~ ^[Yy]$ ]]; then
+                    FOLDERS+=("$custom_dir")
+                    print_info "Added: $custom_dir (will create if needed)"
+                fi
+            fi
+        done
 
-    if [ ${#FOLDERS[@]} -eq 0 ]; then
-        print_warning "No folders selected - container will have no file access"
-        echo -n "Continue anyway? [y/N]: "
-        read -r confirm
-        if [[ ! $confirm =~ ^[Yy]$ ]]; then
-            exit 0
+        if [ ${#FOLDERS[@]} -eq 0 ]; then
+            echo
+            print_warning "⚠️  No folders selected - Desktop Commander will have NO file access"
+            echo
+            print_info "This means:"
+            echo "  • Desktop Commander cannot read or write any files on your computer"
+            echo "  • It cannot help with coding projects, file management, or document editing"
+            echo "  • It will only work for system commands and package installation"
+            echo "  • This makes Desktop Commander much less useful than intended"
+            echo
+            print_info "You probably want to share at least some folder to work with files"
+            print_info "Most users share their home directory: $HOME"
+            echo
+            echo -n "Continue with NO file access? [y/N]: "
+            read -r confirm
+            if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                print_info "Restarting folder selection..."
+                ask_for_folders
+                return
+            fi
+            print_warning "Proceeding with no file access - Desktop Commander will be limited"
         fi
     else
-        print_success "Selected ${#FOLDERS[@]} folders"
+        # Default: use home directory
+        FOLDERS+=("$HOME")
+        print_success "Using default access to your user folder"
     fi
 }
 
 # Setup essential volumes for maximum persistence
 setup_persistent_volumes() {
-    echo
-    print_info "🔧 Setting up persistent development environment"
+    print_verbose "🔧 Setting up persistent development environment"
 
     # Essential volumes that cover everything a developer needs
     ESSENTIAL_VOLUMES=(
@@ -192,12 +229,12 @@ setup_persistent_volumes() {
         fi
     done
 
-    print_success "Persistent environment ready - your tools will survive restarts"
+    print_verbose "Persistent environment ready - your tools will survive restarts"
 }
 
 # Build Docker run arguments
 build_docker_args() {
-    print_info "Building Docker configuration..."
+    print_verbose "Building Docker configuration..."
 
     # Start with base arguments (use --rm so containers auto-remove after each use)
     DOCKER_ARGS=("run" "-i" "--rm")
@@ -216,27 +253,27 @@ build_docker_args() {
     # Add the image
     DOCKER_ARGS+=("$DOCKER_IMAGE")
 
-    print_success "Docker configuration ready"
-    print_info "Essential volumes: ${#ESSENTIAL_VOLUMES[@]} volumes"
-    print_info "Mounted folders: ${#FOLDERS[@]} folders"
-    print_info "Container mode: Auto-remove after each use (--rm)"
+    print_verbose "Docker configuration ready"
+    print_verbose "Essential volumes: ${#ESSENTIAL_VOLUMES[@]} volumes"
+    print_verbose "Mounted folders: ${#FOLDERS[@]} folders"
+    print_verbose "Container mode: Auto-remove after each use (--rm)"
 }
 
 # Update Claude desktop config
 update_claude_config() {
-    print_info "Updating Claude Desktop configuration..."
+    print_verbose "Updating Claude Desktop configuration..."
 
     # Create config directory if it doesn't exist
     CONFIG_DIR=$(dirname "$CLAUDE_CONFIG")
     if [[ ! -d "$CONFIG_DIR" ]]; then
         mkdir -p "$CONFIG_DIR"
-        print_info "Created config directory: $CONFIG_DIR"
+        print_verbose "Created config directory: $CONFIG_DIR"
     fi
 
     # Create config if it doesn't exist
     if [[ ! -f "$CLAUDE_CONFIG" ]]; then
         echo '{"mcpServers": {}}' > "$CLAUDE_CONFIG"
-        print_info "Created new Claude config file"
+        print_verbose "Created new Claude config file"
     fi
 
     # Convert DOCKER_ARGS array to JSON format
@@ -281,15 +318,15 @@ print('Successfully updated Claude config')
         exit 1
     }
 
-    print_success "Updated Claude config: $CLAUDE_CONFIG"
-    print_info "Desktop Commander will be available as 'desktop-commander-in-docker' in Claude"
+    print_verbose "Updated Claude config: $CLAUDE_CONFIG"
+    print_verbose "Desktop Commander will be available as 'desktop-commander-in-docker' in Claude"
 }
 
 # Test the persistent setup
 test_persistence() {
-    print_info "Testing persistent container setup..."
+    print_verbose "Testing persistent container setup..."
 
-    print_info "Testing essential volumes with a temporary container..."
+    print_verbose "Testing essential volumes with a temporary container..."
 
     # Test that essential paths are available for persistence
     if docker "${DOCKER_ARGS[@]}" /bin/bash -c "
@@ -301,10 +338,10 @@ test_persistence() {
         echo 'Home persistence: OK'
         echo 'Container test completed successfully'
     " >/dev/null 2>&1; then
-        print_success "Essential persistence test passed"
-        print_info "Volumes are working correctly"
+        print_verbose "Essential persistence test passed"
+        print_verbose "Volumes are working correctly"
     else
-        print_warning "Some persistence tests had issues (might still work)"
+        print_verbose "Some persistence tests had issues (might still work)"
     fi
 }
 
@@ -452,6 +489,7 @@ show_help() {
     echo
     echo "Options:"
     echo "  (no args)    Interactive installation"
+    echo "  --verbose    Show detailed technical output"
     echo "  --reset      Remove all persistent data"
     echo "  --status     Show current status"
     echo "  --help       Show this help"
@@ -480,6 +518,10 @@ case "${1:-}" in
     --help)
         show_help
         exit 0
+        ;;
+    --verbose)
+        VERBOSE=true
+        # Continue to main installation flow
         ;;
     ""|--install)
         # Main installation flow
