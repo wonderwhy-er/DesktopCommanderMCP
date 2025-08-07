@@ -355,9 +355,9 @@ show_management_info() {
     echo "• Your development tools and configs persist between uses"
     echo "• Each command creates a fresh, clean container"
     echo
-    print_info "To refresh/reset your persistent environment:"
-    echo "• Run: $0 --reset"
-    echo "• This removes all installed packages and resets everything"
+    print_info "💡 If you broke the Docker container or need a fresh start:"
+    echo "• Run: $0 --reset && $0"
+    echo "• This will reset everything and reinstall from scratch"
 }
 
 # Reset all persistent data
@@ -375,22 +375,49 @@ reset_persistence() {
     read -p "Are you sure you want to reset everything? [y/N]: " -r
     case "$REPLY" in
         [yY]|[yY][eE][sS])
-            print_info "Stopping and removing container..."
+            print_info "Cleaning up containers and volumes..."
+            
+            # Stop and remove any containers that might be using our volumes
+            print_verbose "Stopping any running Desktop Commander containers..."
+            docker ps -q --filter "ancestor=$DOCKER_IMAGE" | xargs -r docker stop >/dev/null 2>&1 || true
+            docker ps -a -q --filter "ancestor=$DOCKER_IMAGE" | xargs -r docker rm >/dev/null 2>&1 || true
+            
+            # Also try by container name if it exists
             docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
             docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-            print_info "Removing essential volumes..."
+            print_info "Removing persistent volumes..."
             local volumes=("dc-system" "dc-home" "dc-workspace" "dc-packages")
+            local failed_volumes=()
+            
             for volume in "${volumes[@]}"; do
                 if docker volume rm "$volume" >/dev/null 2>&1; then
-                    print_success "Removed volume: $volume"
+                    print_success "✅ Removed volume: $volume"
                 else
-                    print_warning "Failed to remove volume: $volume (may not exist)"
+                    failed_volumes+=("$volume")
+                    print_warning "⚠️  Volume $volume is still in use or doesn't exist"
                 fi
             done
+            
+            # If some volumes failed, try harder cleanup
+            if [ ${#failed_volumes[@]} -gt 0 ]; then
+                print_info "Attempting force cleanup of remaining volumes..."
+                # Remove ALL containers that might be holding references (more aggressive)
+                docker container prune -f >/dev/null 2>&1 || true
+                
+                for volume in "${failed_volumes[@]}"; do
+                    if docker volume rm "$volume" >/dev/null 2>&1; then
+                        print_success "✅ Force removed volume: $volume"
+                    else
+                        print_error "❌ Could not remove volume: $volume"
+                        print_info "Manual cleanup needed: docker volume rm $volume"
+                    fi
+                done
+            fi
 
-            print_success "All persistent data has been reset"
-            echo "Run the installer again to set up a fresh container."
+            print_success "🎉 Persistent data reset complete!"
+            echo
+            print_info "Run the installer again to create a fresh environment"
             ;;
         *)
             print_info "Reset cancelled"
