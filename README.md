@@ -236,6 +236,14 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 **✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
 **🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
 
+#### Troubleshooting Docker Installation
+If you broke the Docker container or need a fresh start:
+```bash
+# Reset and reinstall from scratch
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset && bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
+```
+This will completely reset your persistent environment and reinstall everything fresh with exception of not touching mounted folders
+
 ## Updating & Uninstalling Desktop Commander
 
 ### Automatic Updates (Options 1, 2, 3, 4 & 6)
