@@ -92,10 +92,14 @@
     <!-- Web Components Loader - Dynamically loads all sponsorship components -->
     <script src="components/component-loader.js" defer></script>
     
-    <!-- Defer Google Analytics until page is loaded -->
+    <!-- Analytics Tracking - Button and interaction tracking -->
+    <script src="js/analytics-tracking.js" defer></script>
+    
+    <!-- Enhanced Google Analytics with faster loading for event tracking -->
     <script>
-    // Defer Google Analytics loading
+    // Load Google Analytics immediately for better event tracking
     document.addEventListener('DOMContentLoaded', function() {
+        // Reduced delay for faster analytics initialization
         setTimeout(function() {
             var analyticsScript = document.createElement('script');
             analyticsScript.async = true;
@@ -105,8 +109,20 @@
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
             gtag('js', new Date());
-            gtag('config', 'G-HXL4Y3Y62N');
-        }, 3000); // 3 second delay
+            gtag('config', 'G-HXL4Y3Y62N', {
+                // Enhanced measurement for better tracking
+                enhanced_measurement: true,
+                // Track outbound clicks automatically
+                track_outbound_links: true,
+                // Track file downloads
+                track_downloads: true,
+                // Track scroll depth
+                track_scroll: true
+            });
+            
+            // Make gtag available globally for our custom tracking
+            window.gtag = gtag;
+        }, 1000); // Reduced from 3000ms to 1000ms for faster initialization
     });
     </script>
 
@@ -934,7 +950,7 @@
                 </ul>
                 </nav>
                 
-                <a href="https://go.desktopcommander.app/free-call" class="header-cta-btn">Free consultation</a>
+                <a href="https://go.desktopcommander.app/free-call" class="header-cta-btn" data-track="consultation-header">Free consultation</a>
                 <div class="mobile-menu-btn" role="button" aria-expanded="false" aria-label="Toggle mobile menu" tabindex="0">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
@@ -985,13 +1001,13 @@
                         </div>
                     </div>
                     <div class="hero-btns">
-                        <a href="https://go.desktopcommander.app/free-call" target="_blank" class="btn primary-btn consultation-btn">
+                        <a href="https://go.desktopcommander.app/free-call" target="_blank" class="btn primary-btn consultation-btn" data-track="consultation-hero">
                             FREE CONSULTATION
                         </a>
-                        <a href="#installation" class="btn primary-btn blue_btn">
+                        <a href="#installation" class="btn primary-btn blue_btn" data-track="install-hero">
                             INSTALL
                         </a>
-                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn secondary-btn contact-btn" style="background-color: transparent; border: 2px solid #ffffff; color: #ffffff;">
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn secondary-btn contact-btn" style="background-color: transparent; border: 2px solid #ffffff; color: #ffffff;" data-track="discord-hero">
                             JOIN DISCORD
                         </a>
                     </div>
@@ -1383,7 +1399,7 @@ npm run setup</pre>
             </div>
             
             <div class="trusted-by-cta">
-                <a href="#installation" class="btn ">Install</a>
+                <a href="#installation" class="btn" data-track="install-trusted-section">Install</a>
             </div>
         </div>
     </section>
