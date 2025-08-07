@@ -171,7 +171,7 @@ Perfect for users who want complete isolation or don't have Node.js installed. D
 
 **macOS/Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
 ```
 
 **Windows PowerShell (Run as Administrator):**
@@ -229,15 +229,12 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 ```
 
 #### Docker Benefits
-✅ **Complete Isolation:** Runs in sandboxed environment  
-✅ **No Node.js Required:** Everything included in the container  
-✅ **Clean Execution:** Fresh container for each tool call  
-✅ **Cross-Platform:** Same experience on all operating systems  
-✅ **Easy Cleanup:** Containers automatically removed after use  
+✅ **Controlled Isolation:** Runs in sandboxed environment only with selected folders access
+✅ **No Node.js Required:** Everything included in the container
+✅ **Cross-Platform:** Same experience on all operating systems
 
 **✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
 **🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
-**🗑️ Uninstall:** Run the installer with `-Uninstall` flag, or manually remove the Claude config entry
 
 ## Updating & Uninstalling Desktop Commander
 
@@ -255,7 +252,6 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 - **Option 3:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
 - **Option 4:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
 - **Option 5:** Delete the cloned directory and remove MCP server entry from Claude config
-- **Option 6:** Run `.\install-docker.ps1 -Uninstall` (Windows) or the bash installer with uninstall flag
 
 After uninstalling, restart Claude Desktop to complete the removal.
 
