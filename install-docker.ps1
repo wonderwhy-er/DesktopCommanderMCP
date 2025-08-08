@@ -231,22 +231,300 @@ function Build-DockerArgs {
         Write-Info "Mounted folders: $($script:Folders.Count) folders" 
         Write-Info "Container mode: Auto-remove after each use (--rm)"
     }
-}function Update-ClaudeConfig {
+}function Find-ClaudeProcess {
+    Write-Info "Looking for Claude Desktop processes..."
+    
+    # Try different process name patterns for Claude
+    $processNames = @("Claude", "claude", "Claude Desktop", "claude-desktop", "ClaudeDesktop")
+    $foundProcesses = @()
+    
+    foreach ($processName in $processNames) {
+        if ($VerboseOutput) { Write-Info "Checking for process pattern: $processName" }
+        try {
+            $processes = Get-Process -Name $processName -ErrorAction SilentlyContinue
+            if ($processes) {
+                foreach ($proc in $processes) {
+                    $procPath = try { $proc.Path } catch { "Unknown" }
+                    $procWindowTitle = try { $proc.MainWindowTitle } catch { "N/A" }
+                    
+                    $foundProcesses += @{
+                        Name = $proc.ProcessName
+                        Id = $proc.Id
+                        Path = $procPath
+                        WindowTitle = $procWindowTitle
+                    }
+                    if ($VerboseOutput) { Write-Info "Found: $($proc.ProcessName) (PID: $($proc.Id))" }
+                }
+            }
+        } catch {
+            if ($VerboseOutput) { Write-Info "No processes found for pattern: $processName" }
+        }
+    }
+    
+    # Also try WMI for more comprehensive search
+    if ($VerboseOutput) { Write-Info "Searching with WMI for Claude-related processes..." }
+    try {
+        $wmiProcesses = Get-WmiObject Win32_Process | Where-Object { 
+            $_.Name -like "*claude*" -or 
+            $_.CommandLine -like "*claude*" -or
+            $_.ExecutablePath -like "*claude*"
+        }
+        
+        foreach ($proc in $wmiProcesses) {
+            $foundProcesses += @{
+                Name = $proc.Name
+                Id = $proc.ProcessId
+                Path = $proc.ExecutablePath
+                CommandLine = $proc.CommandLine
+            }
+            if ($VerboseOutput) { Write-Info "WMI Found: $($proc.Name) (PID: $($proc.ProcessId))" }
+        }
+    } catch {
+        if ($VerboseOutput) { Write-Info "WMI search failed or no additional processes found" }
+    }
+    
+    return $foundProcesses
+}
+
+function Stop-ClaudeProcess {
+    Write-Info "Attempting to stop Claude Desktop..."
+    
+    $processes = Find-ClaudeProcess
+    
+    if ($processes.Count -eq 0) {
+        Write-Info "No Claude Desktop processes found running"
+        return $true
+    }
+    
+    Write-Info "Found $($processes.Count) Claude-related process(es)"
+    foreach ($proc in $processes) {
+        Write-Info "  - $($proc.Name) (PID: $($proc.Id))"
+        if ($proc.Path -and $proc.Path -ne "Unknown" -and $VerboseOutput) {
+            Write-Info "    Path: $($proc.Path)"
+        }
+    }
+    
+    $stoppedCount = 0
+    
+    # Method 1: Graceful shutdown using Stop-Process
+    Write-Info "Attempting graceful shutdown..."
+    foreach ($proc in $processes) {
+        try {
+            Stop-Process -Id $proc.Id -ErrorAction Stop
+            Write-Success "Gracefully stopped: $($proc.Name) (PID: $($proc.Id))"
+            $stoppedCount++
+        } catch {
+            Write-Warning "Could not gracefully stop: $($proc.Name) (PID: $($proc.Id)) - $($_.Exception.Message)"
+        }
+    }
+    
+    # Wait a moment for graceful shutdown
+    Start-Sleep -Seconds 2
+    
+    # Method 2: Force kill remaining processes
+    $remainingProcesses = Find-ClaudeProcess
+    if ($remainingProcesses.Count -gt 0) {
+        Write-Info "Force stopping remaining processes..."
+        foreach ($proc in $remainingProcesses) {
+            try {
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                Write-Success "Force stopped: $($proc.Name) (PID: $($proc.Id))"
+                $stoppedCount++
+            } catch {
+                Write-Error "Could not force stop: $($proc.Name) (PID: $($proc.Id)) - $($_.Exception.Message)"
+            }
+        }
+    }
+    
+    # Final verification
+    Start-Sleep -Seconds 1
+    $finalProcesses = Find-ClaudeProcess
+    if ($finalProcesses.Count -eq 0) {
+        Write-Success "All Claude processes stopped successfully"
+        return $true
+    } else {
+        Write-Warning "Some Claude processes may still be running"
+        return $false
+    }
+}
+
+function Find-ClaudeExecutable {
+    if ($VerboseOutput) { Write-Info "Searching for Claude Desktop executable..." }
+    
+    # Common installation paths for Claude Desktop
+    $claudePaths = @(
+        "$env:LOCALAPPDATA\Programs\Claude\Claude.exe",
+        "$env:PROGRAMFILES\Claude\Claude.exe", 
+        "$env:PROGRAMFILES(x86)\Claude\Claude.exe",
+        "$env:APPDATA\Claude\Claude.exe",
+        "$env:USERPROFILE\AppData\Local\Programs\Claude\Claude.exe"
+    )
+    
+    if ($VerboseOutput) { Write-Info "Checking standard installation paths..." }
+    foreach ($path in $claudePaths) {
+        if ($VerboseOutput) { Write-Info "Checking: $path" }
+        if (Test-Path $path) {
+            if ($VerboseOutput) { Write-Info "Found Claude executable: $path" }
+            return $path
+        }
+    }
+    
+    # Check registry for installation location
+    if ($VerboseOutput) { Write-Info "Searching Windows registry for Claude installation..." }
+    try {
+        $uninstallKeys = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+        
+        foreach ($keyPath in $uninstallKeys) {
+            try {
+                $entries = Get-ItemProperty $keyPath -ErrorAction SilentlyContinue | Where-Object { 
+                    $_.DisplayName -like "*Claude*" 
+                }
+                foreach ($entry in $entries) {
+                    if ($entry.InstallLocation) {
+                        $possibleExe = Join-Path $entry.InstallLocation "Claude.exe"
+                        if ($VerboseOutput) { Write-Info "Registry found: $($entry.DisplayName) at $possibleExe" }
+                        if (Test-Path $possibleExe) {
+                            if ($VerboseOutput) { Write-Info "Found Claude executable via registry: $possibleExe" }
+                            return $possibleExe
+                        }
+                    }
+                    if ($entry.UninstallString) {
+                        $uninstallDir = Split-Path $entry.UninstallString -Parent
+                        $possibleExe = Join-Path $uninstallDir "Claude.exe"
+                        if ($VerboseOutput) { Write-Info "Trying uninstall directory: $possibleExe" }
+                        if (Test-Path $possibleExe) {
+                            if ($VerboseOutput) { Write-Info "Found Claude executable via uninstall path: $possibleExe" }
+                            return $possibleExe
+                        }
+                    }
+                }
+            } catch {
+                if ($VerboseOutput) { Write-Info "Could not check registry key: $keyPath" }
+            }
+        }
+    } catch {
+        if ($VerboseOutput) { Write-Info "Registry search failed" }
+    }
+    
+    # Last resort: search common program directories
+    if ($VerboseOutput) { Write-Info "Performing broader search in program directories..." }
+    $searchDirs = @(
+        "$env:LOCALAPPDATA\Programs",
+        "$env:PROGRAMFILES",
+        "$env:PROGRAMFILES(x86)"
+    )
+    
+    foreach ($dir in $searchDirs) {
+        if (Test-Path $dir) {
+            if ($VerboseOutput) { Write-Info "Searching in: $dir" }
+            try {
+                $found = Get-ChildItem -Path $dir -Recurse -Name "Claude.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) {
+                    $fullPath = Join-Path $dir $found
+                    if ($VerboseOutput) { Write-Info "Found Claude executable via search: $fullPath" }
+                    return $fullPath
+                }
+            } catch {
+                if ($VerboseOutput) { Write-Info "Could not search in: $dir" }
+            }
+        }
+    }
+    
+    return $null
+}
+
+function Start-ClaudeProcess {
+    Write-Info "Attempting to start Claude Desktop..."
+    
+    $claudePath = Find-ClaudeExecutable
+    
+    if (-not $claudePath) {
+        Write-Warning "Could not find Claude Desktop executable"
+        Write-Info "Claude may not be installed or may be in a non-standard location"
+        Write-Info "You can start Claude Desktop manually after installation completes"
+        return $false
+    }
+    
+    Write-Success "Found Claude executable: $claudePath"
+    
+    try {
+        Write-Info "Starting Claude Desktop..."
+        if ($VerboseOutput) { Write-Info "Executing: Start-Process -FilePath '$claudePath' -PassThru" }
+        $process = Start-Process -FilePath $claudePath -PassThru -ErrorAction Stop
+        
+        if ($process) {
+            Write-Success "Process started with PID: $($process.Id)"
+            
+            # Wait for the process to initialize
+            Write-Info "Waiting 5 seconds for Claude to initialize..."
+            Start-Sleep -Seconds 5
+            
+            # Check if the process is still running
+            try {
+                $runningProcess = Get-Process -Id $process.Id -ErrorAction Stop
+                Write-Success "Claude Desktop is running and stable (PID: $($runningProcess.Id))"
+                Write-Success "Process name: $($runningProcess.ProcessName)"
+                if ($runningProcess.MainWindowTitle -and $VerboseOutput) {
+                    Write-Info "Window title: $($runningProcess.MainWindowTitle)"
+                }
+                return $true
+            } catch {
+                Write-Warning "Process started but exited quickly (PID: $($process.Id))"
+                Write-Info "This might indicate a configuration issue"
+                return $false
+            }
+        } else {
+            Write-Error "Failed to start process - Start-Process returned null"
+            return $false
+        }
+    } catch {
+        Write-Error "Exception starting Claude Desktop: $($_.Exception.Message)"
+        if ($VerboseOutput) { Write-Info "Full exception: $($_.Exception)" }
+        return $false
+    }
+}
+
+function Restart-Claude {
+    Write-Info "Attempting to restart Claude Desktop..."
+    
+    # Step 1: Stop Claude
+    $stopSuccess = Stop-ClaudeProcess
+    
+    if (-not $stopSuccess) {
+        Write-Warning "Failed to stop Claude completely, but continuing with startup attempt"
+    }
+    
+    # Step 2: Start Claude
+    $startSuccess = Start-ClaudeProcess
+    
+    # Step 3: Final verification
+    Write-Info "Verifying Claude restart..."
+    Start-Sleep -Seconds 2
+    $finalProcesses = Find-ClaudeProcess
+    
+    if ($startSuccess -and $finalProcesses.Count -gt 0) {
+        Write-Success "Claude Desktop restart: SUCCESSFUL"
+        Write-Info "Claude Desktop is now running with updated configuration"
+        return $true
+    } else {
+        Write-Warning "Claude Desktop restart: PARTIAL or FAILED"
+        Write-Info "You may need to start Claude Desktop manually"
+        Write-Info "The configuration has been updated and will work when Claude starts"
+        return $false
+    }
+}
+
+function Update-ClaudeConfig {
     Write-Info "Updating Claude Desktop configuration..."
 
     $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
     Write-Info "Config location: $configPath"
 
-    # Create backup of existing config
-    if (Test-Path $configPath) {
-        $backupPath = "$configPath.backup-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')"
-        try {
-            Copy-Item $configPath $backupPath
-            Write-Info "Created backup: $backupPath"
-        } catch {
-            Write-Warning "Could not create backup, continuing anyway..."
-        }
-    }
+    # No backup needed - direct config update
 
     $configDir = Split-Path $configPath -Parent
     if (!(Test-Path $configDir)) {
@@ -549,6 +827,7 @@ function Start-Installation {
     Initialize-Volumes
     Build-DockerArgs
     Update-ClaudeConfig
+    Restart-Claude
 
     Write-Host ""
     Write-Success "Setup complete!"
@@ -577,8 +856,8 @@ function Start-Installation {
     Write-Info "- Then: .\install-docker-clean.ps1"
     Write-Info "- This will reset everything and reinstall from scratch"
     Write-Host ""
-    Write-Success "Restart Claude Desktop to use Desktop Commander!"
-    Write-Info "Desktop Commander is available as desktop-commander-in-docker in Claude"
+    Write-Info "Claude Desktop has been automatically restarted (if possible)"
+    Write-Success "Desktop Commander is available as 'desktop-commander-in-docker' in Claude"
     
     Write-Host ""
     Write-Info "Next steps: Install anything you want - it will persist!"
