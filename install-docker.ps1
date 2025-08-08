@@ -1,22 +1,20 @@
-# Desktop Commander Docker Installation Script for Windows
-# PowerShell script for Windows users
 
+
+
+#!/usr/bin/env powershell
 param(
+    [string]$Option = "",
     [switch]$Help,
-    [switch]$Uninstall
+    [switch]$Status,
+    [switch]$Reset,
+    [switch]$VerboseOutput
 )
 
-$ErrorActionPreference = "Stop"
-
-# Configuration
-$DOCKER_IMAGE = "mcp/desktop-commander:latest"
-$CLAUDE_CONFIG = "$env:APPDATA\Claude\claude_desktop_config.json"
-
-# Colors for output
-function Write-Success { param($Message) Write-Host "✅ $Message" -ForegroundColor Green }
-function Write-Error { param($Message) Write-Host "❌ Error: $Message" -ForegroundColor Red }
-function Write-Warning { param($Message) Write-Host "⚠️  Warning: $Message" -ForegroundColor Yellow }
-function Write-Info { param($Message) Write-Host "ℹ️  $Message" -ForegroundColor Blue }
+# Colors and output functions
+function Write-Success { param($Message) Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
+function Write-Error { param($Message) Write-Host "[ERROR] $Message" -ForegroundColor Red }
+function Write-Warning { param($Message) Write-Host "[WARNING] $Message" -ForegroundColor Yellow }
+function Write-Info { param($Message) Write-Host "[INFO] $Message" -ForegroundColor Blue }
 
 function Write-Header {
     Write-Host ""
@@ -27,278 +25,369 @@ function Write-Header {
     Write-Host "██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║        ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║" -ForegroundColor Blue
     Write-Host "╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝         ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝" -ForegroundColor Blue
     Write-Host ""
-    Write-Host "🐳 Docker Installation" -ForegroundColor Blue
+    Write-Host "Desktop Commander Docker Installation" -ForegroundColor Blue
     Write-Host ""
-}
-
-function Show-Help {
-    Write-Header
-    Write-Host "Desktop Commander Docker Installation for Windows"
-    Write-Host ""
-    Write-Host "Usage:"
-    Write-Host "  .\install-docker.ps1           Install Desktop Commander with Docker"
-    Write-Host "  .\install-docker.ps1 -Help     Show this help message"
-    Write-Host "  .\install-docker.ps1 -Uninstall Remove Desktop Commander Docker setup"
-    Write-Host ""
-    Write-Host "Prerequisites:"
-    Write-Host "  • Docker Desktop for Windows"
-    Write-Host "  • Claude Desktop app"
+    Write-Info "Experiment with AI in secure sandbox environment that won't mess up your main computer"
     Write-Host ""
 }
 
 function Test-Docker {
-    Write-Info "Checking Docker installation..."
-    
-    try {
-        $null = Get-Command docker -ErrorAction Stop
-    } catch {
-        Write-Error "Docker is not installed."
-        Write-Info "Please install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
-        exit 1
-    }
-    
-    try {
-        $null = docker info 2>$null
-        Write-Success "Docker is installed and running"
-    } catch {
-        Write-Error "Docker is not running."
-        Write-Info "Please start Docker Desktop and try again."
-        exit 1
+    while ($true) {
+        # First check if docker command exists
+        try {
+            $null = Get-Command docker -ErrorAction Stop
+        } catch {
+            Write-Error "Docker is not installed or not found"
+            Write-Host ""
+            Write-Error "Please install Docker first:"
+            Write-Error "Download Docker Desktop: https://www.docker.com/products/docker-desktop/"
+            Write-Host ""
+            $null = Read-Host "Press Enter when Docker Desktop is installed or Ctrl+C to exit"
+            continue
+        }
+
+        # Then check if Docker daemon is running (this is the key fix!)
+        Write-Info "Checking Docker installation and daemon status..."
+        try {
+            $null = docker info 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "Docker is installed and running"
+                break
+            } else {
+                throw "Docker daemon not running"
+            }
+        } catch {
+            Write-Error "Docker is installed but not running"
+            Write-Host ""
+            Write-Error "Please start Docker Desktop and try again"
+            Write-Info "Make sure Docker Desktop is fully started (check system tray)"
+            Write-Host ""
+            $null = Read-Host "Press Enter when Docker Desktop is running or Ctrl+C to exit"
+            continue
+        }
     }
 }
 
 function Get-DockerImage {
-    Write-Info "Pulling Desktop Commander Docker image..."
+    Write-Info "Pulling latest Docker image (this may take a moment)..."
     try {
-        docker pull $DOCKER_IMAGE
-        Write-Success "Docker image pulled successfully"
+        docker pull mcp/desktop-commander:latest
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Docker image ready: mcp/desktop-commander:latest"
+        } else {
+            Write-Error "Failed to pull Docker image"
+            Write-Info "Check your internet connection and Docker Hub access"
+            exit 1
+        }
     } catch {
-        Write-Error "Failed to pull Docker image"
+        Write-Error "Failed to get Docker image"
+        Write-Info "This could be a network issue or Docker Hub being unavailable"
         exit 1
     }
 }
 
-function Get-FoldersToMount {
+function Initialize-Volumes {
+    Write-Info "Setting up persistent development environment"
     Write-Host ""
-    Write-Info "Which folders would you like Desktop Commander to access?"
-    Write-Host "Enter folder paths (one per line). Press Enter twice when done:"
-    Write-Host "Examples:"
-    Write-Host "  C:\Users\$env:USERNAME\Desktop"
-    Write-Host "  C:\Users\$env:USERNAME\Documents"
-    Write-Host "  C:\Users\$env:USERNAME\Projects"
+    Write-Info "Creating essential volumes for development persistence:"
+    Write-Info "- dc-system: All system packages, binaries, libraries"
+    Write-Info "- dc-home: User configs, dotfiles, SSH keys, git config"
+    Write-Info "- dc-workspace: Development files and projects"
+    Write-Info "- dc-packages: Package databases, caches, logs"
     Write-Host ""
-    
-    $folders = @()
-    while ($true) {
-        $folder = Read-Host "Folder path (or press Enter to finish)"
-        if ([string]::IsNullOrWhiteSpace($folder)) {
-            break
-        }
-        
-        # Expand environment variables
-        $folder = [Environment]::ExpandEnvironmentVariables($folder)
-        
-        # Check if folder exists
-        if (Test-Path $folder -PathType Container) {
-            $folders += $folder
-            Write-Success "Added: $folder"
-        } else {
-            Write-Warning "Folder does not exist: $folder"
-            $response = Read-Host "Add anyway? (y/N)"
-            if ($response -eq "y" -or $response -eq "Y") {
-                $folders += $folder
-                Write-Info "Added: $folder"
-            }
-        }
-    }
-    
-    if ($folders.Count -eq 0) {
-        Write-Warning "No folders selected. Desktop Commander will run with limited file access."
-        $response = Read-Host "Continue anyway? (y/N)"
-        if ($response -ne "y" -and $response -ne "Y") {
-            Write-Info "Installation cancelled."
-            exit 0
-        }
-    }
-    
-    return $folders
-}
 
-function Build-DockerArgs {
-    param($Folders)
-    
-    Write-Info "Building Docker configuration..."
-    
-    # Start with base arguments
-    $dockerArgs = @("run", "-i", "--rm")
-    
-    # Add volume mounts
-    foreach ($folder in $Folders) {
-        $folderName = Split-Path $folder -Leaf
-        $dockerArgs += "-v"
-        $dockerArgs += "${folder}:/mnt/${folderName}"
+    $volumes = @("dc-system", "dc-home", "dc-workspace", "dc-packages")
+    $volumesCreated = 0
+
+    foreach ($volume in $volumes) {
+        try {
+            $null = docker volume inspect $volume 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                docker volume create $volume | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Created volume: $volume"
+                    $volumesCreated++
+                } else {
+                    Write-Warning "Failed to create volume: $volume"
+                }
+            } else {
+                Write-Info "Volume already exists: $volume"
+            }
+        } catch {
+            Write-Warning "Could not manage volume: $volume"
+        }
     }
-    
-    # Add the image
-    $dockerArgs += $DOCKER_IMAGE
-    
-    Write-Success "Docker configuration built with $($Folders.Count) mounted folders"
-    return $dockerArgs
+
+    if ($volumesCreated -gt 0) {
+        Write-Host ""
+        Write-Success "Created $volumesCreated new volume(s)"
+    }
+    Write-Success "Persistent environment ready - your tools will survive restarts!"
 }
 
 function Update-ClaudeConfig {
-    param($DockerArgs)
-    
     Write-Info "Updating Claude Desktop configuration..."
-    
-    # Create config directory if it doesn't exist
-    $configDir = Split-Path $CLAUDE_CONFIG -Parent
+
+    $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
+    Write-Info "Config location: $configPath"
+
+    # Create directory if needed
+    $configDir = Split-Path $configPath -Parent
     if (!(Test-Path $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
-        Write-Info "Created config directory: $configDir"
+        Write-Info "Created config directory"
     }
-    
-    # Load or create config
+
+    # Read existing config or create new
     $config = @{}
-    if (Test-Path $CLAUDE_CONFIG) {
+    if (Test-Path $configPath) {
         try {
-            $configContent = Get-Content $CLAUDE_CONFIG -Raw | ConvertFrom-Json
-            $config = @{}
-            $configContent.PSObject.Properties | ForEach-Object { $config[$_.Name] = $_.Value }
+            $config = Get-Content $configPath | ConvertFrom-Json -AsHashtable
+            Write-Info "Loading existing Claude configuration"
         } catch {
-            Write-Warning "Could not parse existing config. Creating new one."
+            Write-Warning "Could not parse existing config, creating new one"
+            $config = @{}
         }
+    } else {
+        Write-Info "Creating new Claude configuration"
     }
-    
-    # Ensure mcpServers exists
+
+    # Ensure mcpServers section exists
     if (!$config.mcpServers) {
         $config.mcpServers = @{}
     }
-    
-    # Configure to use docker run with volumes
-    $config.mcpServers."desktop-commander" = @{
+
+    # Add our server configuration
+    $config.mcpServers["desktop-commander-in-docker"] = @{
         command = "docker"
-        args = $DockerArgs
+        args = @(
+            "run", "-i", "--rm",
+            "-v", "dc-system:/usr",
+            "-v", "dc-home:/root",
+            "-v", "dc-workspace:/workspace",
+            "-v", "dc-packages:/var",
+            "mcp/desktop-commander:latest"
+        )
     }
-    
-    # Save config
+
+    # Save configuration
     try {
-        $config | ConvertTo-Json -Depth 10 | Set-Content $CLAUDE_CONFIG -Encoding UTF8
-        Write-Success "Claude configuration updated"
+        # Save configuration without BOM to prevent JSON parsing issues
+        $jsonConfig = $config | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($configPath, $jsonConfig, [System.Text.UTF8Encoding]::new($false))
+        Write-Success "Claude configuration updated successfully"
+        Write-Info "Server 'desktop-commander-in-docker' added to MCP servers"
     } catch {
-        Write-Error "Failed to update Claude config: $_"
+        Write-Error "Failed to save Claude configuration"
         exit 1
     }
 }
 
-function Restart-Claude {
-    Write-Info "Attempting to restart Claude..."
-    
-    # Kill Claude if running
+function Show-Status {
+    Write-Header
+    Write-Info "Checking installation status..."
+    Write-Host ""
+
+    # Check Docker
     try {
-        $claudeProcess = Get-Process -Name "Claude" -ErrorAction SilentlyContinue
-        if ($claudeProcess) {
-            Stop-Process -Name "Claude" -Force
-            Start-Sleep -Seconds 2
-        }
-    } catch {
-        # Process not running, that's fine
-    }
-    
-    # Try to start Claude
-    try {
-        $claudePath = Get-Command "Claude" -ErrorAction SilentlyContinue
-        if ($claudePath) {
-            Start-Process "Claude"
+        $null = docker info 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Docker daemon: Running"
         } else {
-            Write-Warning "Could not auto-start Claude. Please start it manually."
+            Write-Warning "Docker daemon: Not running"
         }
     } catch {
-        Write-Warning "Could not auto-start Claude. Please start it manually."
+        Write-Warning "Docker: Not available"
+    }
+
+    # Check Docker image
+    try {
+        $null = docker image inspect mcp/desktop-commander:latest 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Docker image: Available"
+        } else {
+            Write-Warning "Docker image: Missing"
+        }
+    } catch {
+        Write-Warning "Docker image: Cannot check"
+    }
+
+    # Check volumes
+    $volumes = @("dc-system", "dc-home", "dc-workspace", "dc-packages")
+    $volumesFound = 0
+
+    Write-Host ""
+    Write-Info "Persistent Volumes Status:"
+
+    foreach ($volume in $volumes) {
+        try {
+            $null = docker volume inspect $volume 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $volumesFound++
+                Write-Success "  OK: $volume"
+            } else {
+                Write-Warning "  MISSING: $volume"
+            }
+        } catch {
+            Write-Warning "  UNKNOWN: $volume (cannot check)"
+        }
+    }
+
+    # Check Claude config
+    $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
+    if (Test-Path $configPath) {
+        try {
+            $config = Get-Content $configPath | ConvertFrom-Json
+            if ($config.mcpServers."desktop-commander-in-docker") {
+                Write-Success "Claude config: Desktop Commander configured"
+            } else {
+                Write-Warning "Claude config: Missing Desktop Commander server"
+            }
+        } catch {
+            Write-Warning "Claude config: Cannot parse"
+        }
+    } else {
+        Write-Warning "Claude config: File not found"
+    }
+
+    Write-Host ""
+    Write-Host "Status Summary:" -ForegroundColor Yellow
+    Write-Host "  Essential volumes: $volumesFound/4 found"
+    Write-Host "  Container mode: Auto-remove (fresh containers)"
+    Write-Host "  Persistence: Data stored in volumes"
+
+    Write-Host ""
+    if ($volumesFound -eq 4) {
+        Write-Success "Ready to use with Claude!"
+        Write-Info "Each command creates a fresh container that uses your persistent volumes."
+    } elseif ($volumesFound -gt 0) {
+        Write-Warning "Some volumes missing - may need to reinstall"
+        Write-Info "Run reset and reinstall to fix this"
+    } else {
+        Write-Error "No volumes found - please run full installation"
+        Write-Info "Run: .\install-docker-simple.ps1"
     }
 }
 
-function Remove-Installation {
+function Reset-Installation {
     Write-Header
-    Write-Info "Uninstalling Desktop Commander Docker setup..."
-    
-    # Update Claude config
-    if (Test-Path $CLAUDE_CONFIG) {
+    Write-Warning "This will remove ALL persistent container data!"
+    Write-Info "This includes:"
+    Write-Info "  - All installed packages and software"
+    Write-Info "  - All user configurations and settings"
+    Write-Info "  - All development projects in /workspace"
+    Write-Info "  - All package caches and databases"
+    Write-Host ""
+    Write-Info "Your mounted folders will NOT be affected."
+    Write-Host ""
+
+    $confirm = Read-Host "Are you sure you want to reset everything? [y/N]"
+    if ($confirm -match "^[yY]") {
+        Write-Info "Cleaning up containers and volumes..."
+
+        # Stop any running containers using our volumes
         try {
-            $config = Get-Content $CLAUDE_CONFIG -Raw | ConvertFrom-Json
-            if ($config.mcpServers -and $config.mcpServers."desktop-commander") {
-                $config.mcpServers.PSObject.Properties.Remove("desktop-commander")
-                $config | ConvertTo-Json -Depth 10 | Set-Content $CLAUDE_CONFIG -Encoding UTF8
-                Write-Success "Removed from Claude configuration"
+            $containers = docker ps -q --filter "ancestor=mcp/desktop-commander:latest" 2>$null
+            if ($containers -and $LASTEXITCODE -eq 0) {
+                docker stop $containers 2>$null | Out-Null
+                docker rm $containers 2>$null | Out-Null
+                Write-Info "Stopped running containers"
             }
         } catch {
-            Write-Warning "Could not update Claude config. Please remove 'desktop-commander' manually."
+            # Ignore errors here
         }
+
+        Write-Info "Removing persistent volumes..."
+        $volumes = @("dc-system", "dc-home", "dc-workspace", "dc-packages")
+        $removedCount = 0
+
+        foreach ($volume in $volumes) {
+            try {
+                docker volume rm $volume 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Removed volume: $volume"
+                    $removedCount++
+                } else {
+                    Write-Warning "Volume $volume is still in use or doesn't exist"
+                }
+            } catch {
+                Write-Warning "Error removing volume: $volume"
+            }
+        }
+
+        Write-Host ""
+        Write-Success "Persistent data reset complete!"
+        if ($removedCount -gt 0) {
+            Write-Success "Successfully removed $removedCount volume(s)"
+        }
+        Write-Host ""
+        Write-Info "To reinstall after reset:"
+        Write-Info "Run: .\install-docker-simple.ps1"
+    } else {
+        Write-Info "Reset cancelled"
     }
-    
-    Write-Success "🎉 Uninstall completed!"
-    exit 0
+}
+
+function Show-Help {
+    Write-Host "Desktop Commander Docker Installation" -ForegroundColor Blue
+    Write-Host ""
+    Write-Host "Usage:"
+    Write-Host "  .\install-docker-simple.ps1                 - Install Desktop Commander"
+    Write-Host "  .\install-docker-simple.ps1 -Status         - Check installation status"
+    Write-Host "  .\install-docker-simple.ps1 -Reset          - Reset all data"
+    Write-Host "  .\install-docker-simple.ps1 -Help           - Show this help"
+    Write-Host ""
+    Write-Host "Troubleshooting:"
+    Write-Host "If you broke the Docker container or need a fresh start:"
+    Write-Host "  .\install-docker-simple.ps1 -Reset"
+    Write-Host "  .\install-docker-simple.ps1"
+    Write-Host ""
+    Write-Host "This will completely reset your persistent environment and reinstall everything fresh."
 }
 
 function Start-Installation {
     Write-Header
-    
-    Write-Success "Detected OS: Windows"
-    Write-Info "Claude config path: $CLAUDE_CONFIG"
-    
+
+    if ($Help) {
+        Show-Help
+        return
+    }
+
+    if ($Status) {
+        Show-Status
+        return
+    }
+
+    if ($Reset) {
+        Reset-Installation
+        return
+    }
+
+    # Main installation
     Test-Docker
     Get-DockerImage
-    $folders = Get-FoldersToMount
-    $dockerArgs = Build-DockerArgs -Folders $folders
-    Update-ClaudeConfig -DockerArgs $dockerArgs
-    Restart-Claude
-    
+    Initialize-Volumes
+    Update-ClaudeConfig
+
     Write-Host ""
-    Write-Success "🎉 Desktop Commander Docker installation completed!"
+    Write-Success "Setup complete!"
     Write-Host ""
-    Write-Info "What was installed:"
-    Write-Host "  • Docker image: $DOCKER_IMAGE"
-    Write-Host "  • Mounted folders: $($folders.Count) folders"
-    Write-Host "  • Claude config: Updated with ephemeral containers"
+    Write-Info "How it works:"
+    Write-Info "- Desktop Commander runs in isolated containers"
+    Write-Info "- Your development tools and configs persist between uses"
+    Write-Info "- Each command creates a fresh, clean container"
     Write-Host ""
-    Write-Info "Next steps:"
-    Write-Host "  1. Restart Claude Desktop if it's running"
-    Write-Host "  2. Desktop Commander will be available as 'desktop-commander' in Claude"
-    Write-Host "  3. Each tool call uses a fresh, clean container"
+    Write-Info "To refresh/reset your persistent environment:"
+    Write-Info "- Run: .\install-docker-simple.ps1 -Reset"
+    Write-Info "- This removes all installed packages and resets everything"
     Write-Host ""
-    Write-Info "✅ Installation successfully completed! Thank you for using Desktop Commander!"
-    Write-Host "The server is available as `"desktop-commander`" in Claude's MCP server list"
-    Write-Host "Future updates will install automatically — no need to run this setup again."
+    Write-Info "If you broke the Docker container or need a fresh start:"
+    Write-Info "- Run: .\install-docker-simple.ps1 -Reset"
+    Write-Info "- Then: .\install-docker-simple.ps1"
+    Write-Info "- This will reset everything and reinstall from scratch"
     Write-Host ""
-    Write-Info "💬 Need help or found an issue? Join our community: https://discord.com/invite/kQ27sNnZr7"
-    Write-Host ""
-    Write-Info "To uninstall:"
-    Write-Host "  • Run: .\install-docker.ps1 -Uninstall"
-    Write-Host ""
+    Write-Success "Restart Claude Desktop to use Desktop Commander!"
 }
 
-# Main execution
-if ($Help) {
-    Show-Help
-    exit 0
-}
-
-if ($Uninstall) {
-    Remove-Installation
-    exit 0
-}
-
-# Check execution policy
-try {
-    $executionPolicy = Get-ExecutionPolicy
-    if ($executionPolicy -eq "Restricted") {
-        Write-Warning "PowerShell execution policy is Restricted."
-        Write-Info "Run this command as Administrator to allow scripts:"
-        Write-Host "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor Cyan
-        exit 1
-    }
-} catch {
-    # Continue anyway
-}
-
+# Run installation
 Start-Installation
