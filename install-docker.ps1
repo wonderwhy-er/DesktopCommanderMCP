@@ -18,14 +18,11 @@ function Write-Info { param($Message) Write-Host "[INFO] $Message" -ForegroundCo
 
 function Write-Header {
     Write-Host ""
-    Write-Host "██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗" -ForegroundColor Blue
-    Write-Host "██╔══██╗██╔════╝██╔════╝██║ ██╔╝╚══██╔══╝██╔═══██╗██╔══██╗   ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝██╔══██╗" -ForegroundColor Blue
-    Write-Host "██║  ██║█████╗  ███████╗█████╔╝    ██║   ██║   ██║██████╔╝   ██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║█████╗  ██████╔╝" -ForegroundColor Blue
-    Write-Host "██║  ██║██╔══╝  ╚════██║██╔═██╗    ██║   ██║   ██║██╔═══╝    ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗" -ForegroundColor Blue
-    Write-Host "██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║        ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║" -ForegroundColor Blue
-    Write-Host "╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝         ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝" -ForegroundColor Blue
-    Write-Host ""
-    Write-Host "Desktop Commander Docker Installation" -ForegroundColor Blue
+    Write-Host "================================================================" -ForegroundColor Blue
+    Write-Host "                         CLAUDE                                 " -ForegroundColor Blue  
+    Write-Host "                   SERVER COMMANDER                             " -ForegroundColor Blue
+    Write-Host "                    Docker Installer                           " -ForegroundColor Blue
+    Write-Host "================================================================" -ForegroundColor Blue
     Write-Host ""
     Write-Info "Experiment with AI in secure sandbox environment that won't mess up your main computer"
     Write-Host ""
