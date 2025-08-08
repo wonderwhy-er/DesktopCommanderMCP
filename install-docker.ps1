@@ -1,6 +1,3 @@
-
-
-
 #!/usr/bin/env powershell
 param(
     [string]$Option = "",
@@ -9,6 +6,10 @@ param(
     [switch]$Reset,
     [switch]$VerboseOutput
 )
+
+# Script-level variables for folder and Docker args
+$script:Folders = @()
+$script:DockerArgs = @()
 
 # Colors and output functions
 function Write-Success { param($Message) Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
@@ -30,7 +31,6 @@ function Write-Header {
 
 function Test-Docker {
     while ($true) {
-        # First check if docker command exists
         try {
             $null = Get-Command docker -ErrorAction Stop
         } catch {
@@ -43,7 +43,6 @@ function Test-Docker {
             continue
         }
 
-        # Then check if Docker daemon is running (this is the key fix!)
         Write-Info "Checking Docker installation and daemon status..."
         try {
             $null = docker info 2>$null
@@ -80,6 +79,81 @@ function Get-DockerImage {
         Write-Error "Failed to get Docker image"
         Write-Info "This could be a network issue or Docker Hub being unavailable"
         exit 1
+    }
+}function Ask-ForFolders {
+    Write-Host ""
+    Write-Host "Folder Access Setup" -ForegroundColor Blue
+    Write-Info "By default, Desktop Commander will have access to your user folder:"
+    Write-Info "Folder: $env:USERPROFILE"
+    Write-Host ""
+    $response = Read-Host "Press Enter to accept user folder access or 'y' to customize"
+    
+    $script:Folders = @()
+    
+    if ($response -match "^[Yy]$") {
+        Write-Host ""
+        Write-Info "Custom folder selection:"
+        $homeResponse = Read-Host "Mount your complete home directory ($env:USERPROFILE)? [Y/n]"
+        
+        switch ($homeResponse.ToLower()) {
+            { $_ -in @("n", "no") } { 
+                Write-Info "Skipping home directory"
+            }
+            default { 
+                $script:Folders += $env:USERPROFILE
+                Write-Success "Added home directory access"
+            }
+        }
+
+        Write-Host ""
+        Write-Info "Add extra folders outside home directory (optional):"
+        
+        while ($true) {
+            $customDir = Read-Host "Enter folder path (or Enter to finish)"
+            
+            if ([string]::IsNullOrEmpty($customDir)) {
+                break
+            }
+            
+            $customDir = [System.Environment]::ExpandEnvironmentVariables($customDir)
+            $customDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($customDir)
+            
+            if (Test-Path $customDir -PathType Container) {
+                $script:Folders += $customDir
+                Write-Success "Added: $customDir"
+            } else {
+                $addAnyway = Read-Host "Folder doesn't exist. Add anyway? [y/N]"
+                if ($addAnyway -match "^[Yy]$") {
+                    $script:Folders += $customDir
+                    Write-Info "Added: $customDir (will create if needed)"
+                }
+            }
+        }
+
+        if ($script:Folders.Count -eq 0) {
+            Write-Host ""
+            Write-Warning "WARNING: No folders selected - Desktop Commander will have NO file access"
+            Write-Host ""
+            Write-Info "This means:"
+            Write-Host "  - Desktop Commander cannot read or write any files on your computer"
+            Write-Host "  - It cannot help with coding projects, file management, or document editing"
+            Write-Host "  - It will only work for system commands and package installation"
+            Write-Host "  - This makes Desktop Commander much less useful than intended"
+            Write-Host ""
+            Write-Info "You probably want to share at least some folder to work with files"
+            Write-Info "Most users share their home directory: $env:USERPROFILE"
+            Write-Host ""
+            $confirm = Read-Host "Continue with NO file access? [y/N]"
+            if ($confirm -notmatch "^[Yy]$") {
+                Write-Info "Restarting folder selection..."
+                Ask-ForFolders
+                return
+            }
+            Write-Warning "Proceeding with no file access - Desktop Commander will be limited"
+        }
+    } else {
+        $script:Folders += $env:USERPROFILE
+        Write-Success "Using default access to your user folder"
     }
 }
 
@@ -122,13 +196,58 @@ function Initialize-Volumes {
     Write-Success "Persistent environment ready - your tools will survive restarts!"
 }
 
-function Update-ClaudeConfig {
+function Build-DockerArgs {
+    Write-Info "Building Docker configuration..."
+
+    $script:DockerArgs = @("run", "-i", "--rm")
+
+    $essentialVolumes = @(
+        "dc-system:/usr",
+        "dc-home:/root", 
+        "dc-workspace:/workspace",
+        "dc-packages:/var"
+    )
+
+    foreach ($volume in $essentialVolumes) {
+        $script:DockerArgs += "-v"
+        $script:DockerArgs += $volume
+    }
+
+    foreach ($folder in $script:Folders) {
+        $folderName = Split-Path $folder -Leaf
+        $dockerPath = $folder.Replace('\', '/')
+        if ($dockerPath -match '^([A-Za-z]):(.*)') {
+            $dockerPath = "/$($matches[1].ToLower())$($matches[2])"
+        }
+        $script:DockerArgs += "-v"
+        $script:DockerArgs += "${folder}:/mnt/${folderName}"
+    }
+
+    $script:DockerArgs += "mcp/desktop-commander:latest"
+
+    if ($VerboseOutput) {
+        Write-Info "Docker configuration ready"
+        Write-Info "Essential volumes: 4 volumes"
+        Write-Info "Mounted folders: $($script:Folders.Count) folders" 
+        Write-Info "Container mode: Auto-remove after each use (--rm)"
+    }
+}function Update-ClaudeConfig {
     Write-Info "Updating Claude Desktop configuration..."
 
     $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
     Write-Info "Config location: $configPath"
 
-    # Create directory if needed
+    # Create backup of existing config
+    if (Test-Path $configPath) {
+        $backupPath = "$configPath.backup-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')"
+        try {
+            Copy-Item $configPath $backupPath
+            Write-Info "Created backup: $backupPath"
+        } catch {
+            Write-Warning "Could not create backup, continuing anyway..."
+        }
+    }
+
     $configDir = Split-Path $configPath -Parent
     if (!(Test-Path $configDir)) {
         New-Item -ItemType Directory -Path $configDir -Force | Out-Null
@@ -139,10 +258,38 @@ function Update-ClaudeConfig {
     $config = @{}
     if (Test-Path $configPath) {
         try {
-            $config = Get-Content $configPath | ConvertFrom-Json -AsHashtable
-            Write-Info "Loading existing Claude configuration"
+            # Read as JSON object first, then convert to hashtable if needed
+            $jsonContent = Get-Content $configPath -Raw | ConvertFrom-Json
+            
+            # Convert PSCustomObject to hashtable for easier manipulation
+            $config = @{}
+            foreach ($property in $jsonContent.PSObject.Properties) {
+                if ($property.Name -eq "mcpServers" -and $property.Value) {
+                    # Preserve existing MCP servers
+                    $config.mcpServers = @{}
+                    foreach ($serverProperty in $property.Value.PSObject.Properties) {
+                        $serverConfig = @{
+                            command = $serverProperty.Value.command
+                        }
+                        if ($serverProperty.Value.args) {
+                            $serverConfig.args = @($serverProperty.Value.args)
+                        }
+                        if ($serverProperty.Value.env) {
+                            $serverConfig.env = @{}
+                            foreach ($envProperty in $serverProperty.Value.env.PSObject.Properties) {
+                                $serverConfig.env[$envProperty.Name] = $envProperty.Value
+                            }
+                        }
+                        $config.mcpServers[$serverProperty.Name] = $serverConfig
+                    }
+                    Write-Info "Preserved $($config.mcpServers.Count) existing MCP server(s)"
+                } else {
+                    $config[$property.Name] = $property.Value
+                }
+            }
         } catch {
             Write-Warning "Could not parse existing config, creating new one"
+            Write-Warning "Error: $($_.Exception.Message)"
             $config = @{}
         }
     } else {
@@ -152,30 +299,66 @@ function Update-ClaudeConfig {
     # Ensure mcpServers section exists
     if (!$config.mcpServers) {
         $config.mcpServers = @{}
+        Write-Info "Created new mcpServers section"
     }
 
-    # Add our server configuration
+    # Check if our server already exists
+    if ($config.mcpServers.ContainsKey("desktop-commander-in-docker")) {
+        Write-Info "Updating existing Desktop Commander configuration"
+    } else {
+        Write-Info "Adding new Desktop Commander configuration"
+    }
+
+    # Convert PowerShell array to proper format for JSON
+    $argsArray = @()
+    foreach ($arg in $script:DockerArgs) {
+        $argsArray += $arg
+    }
+
+    # Add/update our server configuration (this preserves all other servers)
     $config.mcpServers["desktop-commander-in-docker"] = @{
         command = "docker"
-        args = @(
-            "run", "-i", "--rm",
-            "-v", "dc-system:/usr",
-            "-v", "dc-home:/root",
-            "-v", "dc-workspace:/workspace",
-            "-v", "dc-packages:/var",
-            "mcp/desktop-commander:latest"
-        )
+        args = $argsArray
     }
 
     # Save configuration
     try {
-        # Save configuration without BOM to prevent JSON parsing issues
         $jsonConfig = $config | ConvertTo-Json -Depth 10
         [System.IO.File]::WriteAllText($configPath, $jsonConfig, [System.Text.UTF8Encoding]::new($false))
         Write-Success "Claude configuration updated successfully"
         Write-Info "Server 'desktop-commander-in-docker' added to MCP servers"
+        Write-Info "Total MCP servers configured: $($config.mcpServers.Count)"
+        
+        # List all configured servers
+        if ($config.mcpServers.Count -gt 1) {
+            Write-Host ""
+            Write-Info "All configured MCP servers:"
+            foreach ($serverName in $config.mcpServers.Keys) {
+                if ($serverName -eq "desktop-commander-in-docker") {
+                    Write-Info "  * $serverName (Desktop Commander) - UPDATED"
+                } else {
+                    Write-Info "  * $serverName (preserved)"
+                }
+            }
+        }
+        
+        # Show what folders are mounted for our server
+        if ($script:Folders.Count -gt 0) {
+            Write-Host ""
+            Write-Info "Folders accessible to Desktop Commander:"
+            foreach ($folder in $script:Folders) {
+                $folderName = Split-Path $folder -Leaf
+                Write-Info "  Folder: $folder -> /mnt/$folderName"
+            }
+        } else {
+            Write-Warning "No folders mounted - limited file access"
+        }
     } catch {
         Write-Error "Failed to save Claude configuration"
+        Write-Error "Error: $($_.Exception.Message)"
+        if (Test-Path "$configPath.backup-*") {
+            Write-Info "You can restore from backup if needed"
+        }
         exit 1
     }
 }
@@ -185,7 +368,6 @@ function Show-Status {
     Write-Info "Checking installation status..."
     Write-Host ""
 
-    # Check Docker
     try {
         $null = docker info 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -197,7 +379,6 @@ function Show-Status {
         Write-Warning "Docker: Not available"
     }
 
-    # Check Docker image
     try {
         $null = docker image inspect mcp/desktop-commander:latest 2>$null
         if ($LASTEXITCODE -eq 0) {
@@ -209,7 +390,6 @@ function Show-Status {
         Write-Warning "Docker image: Cannot check"
     }
 
-    # Check volumes
     $volumes = @("dc-system", "dc-home", "dc-workspace", "dc-packages")
     $volumesFound = 0
 
@@ -230,7 +410,6 @@ function Show-Status {
         }
     }
 
-    # Check Claude config
     $configPath = "$env:APPDATA\Claude\claude_desktop_config.json"
     if (Test-Path $configPath) {
         try {
@@ -262,11 +441,9 @@ function Show-Status {
         Write-Info "Run reset and reinstall to fix this"
     } else {
         Write-Error "No volumes found - please run full installation"
-        Write-Info "Run: .\install-docker-simple.ps1"
+        Write-Info "Run: .\install-docker-clean.ps1"
     }
-}
-
-function Reset-Installation {
+}function Reset-Installation {
     Write-Header
     Write-Warning "This will remove ALL persistent container data!"
     Write-Info "This includes:"
@@ -282,7 +459,6 @@ function Reset-Installation {
     if ($confirm -match "^[yY]") {
         Write-Info "Cleaning up containers and volumes..."
 
-        # Stop any running containers using our volumes
         try {
             $containers = docker ps -q --filter "ancestor=mcp/desktop-commander:latest" 2>$null
             if ($containers -and $LASTEXITCODE -eq 0) {
@@ -319,25 +495,32 @@ function Reset-Installation {
         }
         Write-Host ""
         Write-Info "To reinstall after reset:"
-        Write-Info "Run: .\install-docker-simple.ps1"
+        Write-Info "Run: .\install-docker-clean.ps1"
     } else {
         Write-Info "Reset cancelled"
     }
 }
 
 function Show-Help {
-    Write-Host "Desktop Commander Docker Installation" -ForegroundColor Blue
+    Write-Host "Desktop Commander Docker Installation (Enhanced)" -ForegroundColor Blue
     Write-Host ""
     Write-Host "Usage:"
-    Write-Host "  .\install-docker-simple.ps1                 - Install Desktop Commander"
-    Write-Host "  .\install-docker-simple.ps1 -Status         - Check installation status"
-    Write-Host "  .\install-docker-simple.ps1 -Reset          - Reset all data"
-    Write-Host "  .\install-docker-simple.ps1 -Help           - Show this help"
+    Write-Host "  .\install-docker-clean.ps1                 - Interactive installation with folder selection"
+    Write-Host "  .\install-docker-clean.ps1 -Status         - Check installation status"
+    Write-Host "  .\install-docker-clean.ps1 -Reset          - Reset all data"
+    Write-Host "  .\install-docker-clean.ps1 -VerboseOutput  - Show detailed output"
+    Write-Host "  .\install-docker-clean.ps1 -Help           - Show this help"
+    Write-Host ""
+    Write-Host "Features:"
+    Write-Host "  - Interactive folder selection (like Mac version)"
+    Write-Host "  - Custom folder mounting outside home directory"
+    Write-Host "  - Persistent development environment"
+    Write-Host "  - Enhanced configuration options"
     Write-Host ""
     Write-Host "Troubleshooting:"
     Write-Host "If you broke the Docker container or need a fresh start:"
-    Write-Host "  .\install-docker-simple.ps1 -Reset"
-    Write-Host "  .\install-docker-simple.ps1"
+    Write-Host "  .\install-docker-clean.ps1 -Reset"
+    Write-Host "  .\install-docker-clean.ps1"
     Write-Host ""
     Write-Host "This will completely reset your persistent environment and reinstall everything fresh."
 }
@@ -360,10 +543,11 @@ function Start-Installation {
         return
     }
 
-    # Main installation
     Test-Docker
     Get-DockerImage
+    Ask-ForFolders
     Initialize-Volumes
+    Build-DockerArgs
     Update-ClaudeConfig
 
     Write-Host ""
@@ -373,17 +557,34 @@ function Start-Installation {
     Write-Info "- Desktop Commander runs in isolated containers"
     Write-Info "- Your development tools and configs persist between uses"
     Write-Info "- Each command creates a fresh, clean container"
+    
+    if ($script:Folders.Count -gt 0) {
+        Write-Host ""
+        Write-Info "Your accessible folders:"
+        foreach ($folder in $script:Folders) {
+            $folderName = Split-Path $folder -Leaf
+            Write-Info "  Folder: $folder -> /mnt/$folderName"
+        }
+    }
+    
     Write-Host ""
     Write-Info "To refresh/reset your persistent environment:"
-    Write-Info "- Run: .\install-docker-simple.ps1 -Reset"
+    Write-Info "- Run: .\install-docker-clean.ps1 -Reset"
     Write-Info "- This removes all installed packages and resets everything"
     Write-Host ""
     Write-Info "If you broke the Docker container or need a fresh start:"
-    Write-Info "- Run: .\install-docker-simple.ps1 -Reset"
-    Write-Info "- Then: .\install-docker-simple.ps1"
+    Write-Info "- Run: .\install-docker-clean.ps1 -Reset"
+    Write-Info "- Then: .\install-docker-clean.ps1"
     Write-Info "- This will reset everything and reinstall from scratch"
     Write-Host ""
     Write-Success "Restart Claude Desktop to use Desktop Commander!"
+    Write-Info "Desktop Commander is available as desktop-commander-in-docker in Claude"
+    
+    Write-Host ""
+    Write-Info "Next steps: Install anything you want - it will persist!"
+    Write-Info "- System packages: apt install nodejs python3-pip"
+    Write-Info "- Global packages: npm install -g typescript"  
+    Write-Info "- User configs: git config, SSH keys, .bashrc"
 }
 
 # Run installation
