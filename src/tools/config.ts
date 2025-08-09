@@ -24,6 +24,7 @@ export async function getConfig() {
         isWindows: systemInfo.isWindows,
         isMacOS: systemInfo.isMacOS,
         isLinux: systemInfo.isLinux,
+        docker: systemInfo.docker,
         examplePaths: systemInfo.examplePaths
       }
     };
