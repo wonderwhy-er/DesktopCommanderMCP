@@ -1297,6 +1297,10 @@
                         <h3>Smithery Install</h3>
                         <p>Install automatically via Smithery:</p>
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude</pre>
+                        <br />
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Re-run the Smithery install command</p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude</pre></p>
                     </div>
                 </div>
             </div>
@@ -1309,6 +1313,10 @@
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
                         <p>For macOS users, you can also use this bash script:</p>
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash</pre>
+                        
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre></p>
                     </div>
                 </div>
             </div>
@@ -1326,7 +1334,10 @@
                         <pre
                             style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash</pre>
                         <p style="margin-top: 10px; font-style: italic;">This is the simplest installation method for macOS users.
-                        </p>
+                        </p><br />
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre></p>                        
                     </div>
                 </div>
             </div>
@@ -1347,6 +1358,10 @@
     }
   }
 }</pre>
+<br />
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the "desktop-commander" entry from your claude_desktop_config.json file</p>
                     </div>
                 </div>
             </div>
@@ -1359,6 +1374,10 @@
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/DesktopCommanderMCP
 cd DesktopCommanderMCP
 npm run setup</pre>
+<br />
+                      <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the cloned directory and remove MCP server entry from Claude config</p>
 </div>
 </div>
 </div>
@@ -1369,7 +1388,12 @@ npm run setup</pre>
 </div>
 <br />
 <p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>
-
+<br />
+<div>
+                            <h2>How to remove Desktop Commander</h2>
+                        <p>Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the cloned directory and remove MCP server entry from Claude config</p>
+</div>
+  
         </div>
     </section>
 
