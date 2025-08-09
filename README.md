@@ -22,7 +22,6 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Features](#features)
 - [How to install](#how-to-install)
 - [Usage](#usage)
-- [Docker Support](#docker-support)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#roadmap)
 - [Sponsors and Supporters](#support-desktop-commander)
@@ -161,11 +160,13 @@ The setup command will:
 
 ### Option 6: Docker Installation 🐳 ⭐ **Auto-Updates** **No Node.js Required**
 
-Perfect for users who want complete isolation or don't have Node.js installed. Desktop Commander runs in a sandboxed Docker container with clean, ephemeral execution.
+Perfect for users who want complete or partial isolation or don't have Node.js installed. Desktop Commander runs in a sandboxed Docker container with a persistent work environment.
 
 #### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed **and running**
 - Claude Desktop app installed
+
+**Important:** Make sure Docker Desktop is fully started before running the installer.
 
 #### Automated Installation (Recommended)
 
@@ -187,6 +188,15 @@ The automated installer will:
 - Prompt you to select folders for mounting
 - Configure Claude Desktop automatically
 - Restart Claude if possible
+
+#### How Docker Persistence Works
+Desktop Commander creates a persistent work environment that remembers everything between sessions:
+- **Your development tools**: Any software you install (Node.js, Python, databases, etc.) stays installed
+- **Your configurations**: Git settings, SSH keys, shell preferences, and other personal configs are preserved  
+- **Your work files**: Projects and files in the workspace area persist across restarts
+- **Package caches**: Downloaded packages and dependencies are cached for faster future installs
+
+Think of it like having your own dedicated development computer that never loses your setup, but runs safely isolated from your main system.
 
 #### Manual Docker Configuration
 
@@ -228,13 +238,53 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 }
 ```
 
+**Advanced folder mounting:**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "dc-system:/usr",
+        "-v", "dc-home:/root", 
+        "-v", "dc-workspace:/workspace",
+        "-v", "dc-packages:/var",
+        "-v", "/Users/username/Projects:/mnt/Projects",
+        "-v", "/Users/username/Downloads:/mnt/Downloads",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
 #### Docker Benefits
-✅ **Controlled Isolation:** Runs in sandboxed environment only with selected folders access
+✅ **Controlled Isolation:** Runs in sandboxed environment with persistent development state
 ✅ **No Node.js Required:** Everything included in the container
 ✅ **Cross-Platform:** Same experience on all operating systems
+✅ **Persistent Environment:** Your tools, files, configs, and work survives restarts
 
 **✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
 **🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
+
+#### Docker Management Commands
+```bash
+# Check installation status
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/docker-installation/install-docker.sh) --status
+
+# Reset all persistent data (removes all installed tools and configs)
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/docker-installation/install-docker.sh) --reset
+```
+
+**Windows PowerShell:**
+```powershell
+# Check status
+.\install-docker.ps1 -Status
+
+# Reset all data  
+.\install-docker.ps1 -Reset
+```  
 
 #### Troubleshooting Docker Installation
 If you broke the Docker container or need a fresh start:
