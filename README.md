@@ -177,9 +177,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommande
 
 **Windows PowerShell (Run as Administrator):**
 ```powershell
-# Download and run the installer
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1" -OutFile "install-docker.ps1"
-.\install-docker.ps1
+# Download and run the installer (one-liner)
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))
 ```
 
 The automated installer will:
@@ -269,21 +268,39 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 **🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
 
 #### Docker Management Commands
-```bash
-# Check installation status
-bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/docker-installation/install-docker.sh) --status
 
-# Reset all persistent data (removes all installed tools and configs)
-bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/docker-installation/install-docker.sh) --reset
+**macOS/Linux:**
+
+Check installation status:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
+```
+
+Reset all persistent data (removes all installed tools and configs):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset
 ```
 
 **Windows PowerShell:**
-```powershell
-# Check status
-.\install-docker.ps1 -Status
 
-# Reset all data  
-.\install-docker.ps1 -Reset
+Check status:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
+```
+
+Reset all data:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset
+```
+
+Show help:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Help
+```
+
+Verbose output:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -VerboseOutput
 ```  
 
 #### Troubleshooting Docker Installation
