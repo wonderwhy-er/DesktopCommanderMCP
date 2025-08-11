@@ -220,7 +220,7 @@ function Build-DockerArgs {
             $dockerPath = "/$($matches[1].ToLower())$($matches[2])"
         }
         $script:DockerArgs += "-v"
-        $script:DockerArgs += "${folder}:/mnt/${folderName}"
+        $script:DockerArgs += "${folder}:/home/${folderName}"
     }
 
     $script:DockerArgs += "mcp/desktop-commander:latest"

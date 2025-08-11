@@ -247,7 +247,7 @@ build_docker_args() {
     # Add user folder mounts (separate from system volumes)
     for folder in "${FOLDERS[@]}"; do
         folder_name=$(basename "$folder")
-        DOCKER_ARGS+=("-v" "$folder:/mnt/$folder_name")
+        DOCKER_ARGS+=("-v" "$folder:/home/$folder_name")
     done
 
     # Add the image

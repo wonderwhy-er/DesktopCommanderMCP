@@ -92,7 +92,8 @@ function discoverDockerMounts(): DockerMount[] {
                     // Look for user mounts (skip system mounts)
                     if (mountPoint.startsWith('/mnt/') || 
                         mountPoint.startsWith('/workspace') ||
-                        mountPoint.startsWith('/data/')) {
+                        mountPoint.startsWith('/data/') ||
+                        (mountPoint.startsWith('/home/') && !mountPoint.startsWith('/home/root'))) {
                         
                         const isReadOnly = options.includes('ro');
                         
@@ -139,6 +140,43 @@ function discoverDockerMounts(): DockerMount[] {
         }
     } catch (error) {
         // /mnt directory doesn't exist or not accessible
+    }
+
+    // Method 3: Check /home directory for user-mounted folders (Desktop Commander Docker installer pattern)
+    try {
+        if (fs.existsSync('/home')) {
+            const contents = fs.readdirSync('/home');
+            for (const item of contents) {
+                // Skip the root user directory and common system directories
+                if (item === 'root' || item === 'node' || item === 'bin' || item === 'sbin' || 
+                    item === 'usr' || item === 'lib' || item === 'lib64' || item === 'var' ||
+                    item === 'tmp' || item === 'opt' || item === 'sys' || item === 'proc') {
+                    continue;
+                }
+                
+                const itemPath = `/home/${item}`;
+                try {
+                    const stats = fs.statSync(itemPath);
+                    if (stats.isDirectory()) {
+                        // Check if we already have this mount
+                        const exists = mounts.some(m => m.containerPath === itemPath);
+                        if (!exists) {
+                            mounts.push({
+                                hostPath: `<host>/${item}`,
+                                containerPath: itemPath,
+                                type: 'bind',
+                                readOnly: false,
+                                description: `Host folder: ${item}`
+                            });
+                        }
+                    }
+                } catch (itemError) {
+                    // Skip items we can't stat
+                }
+            }
+        }
+    } catch (error) {
+        // /home directory doesn't exist or not accessible
     }
 
     return mounts;
@@ -286,13 +324,17 @@ AVAILABLE MOUNTED DIRECTORIES:`;
 
 IMPORTANT: When users ask about files, FIRST check mounted directories above.
 Files outside these paths will be lost when the container stops.
-Always suggest using mounted directories for file operations.`;
+Always suggest using mounted directories for file operations.
+
+NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-name].
+For example, if user mounted ~/Documents, it appears as /home/Documents in container.`;
         } else {
             guidance += `
 
 ⚠️  WARNING: No mounted directories detected.
 Files created outside mounted volumes will be lost when the container stops.
-Suggest user mount directories using -v flag when running Docker.`;
+Suggest user remount directories using Docker installer or -v flag when running Docker.
+Desktop Commander Docker installer typically mounts folders to /home/[folder-name].`;
         }
 
         if (docker.containerEnvironment?.containerName) {
