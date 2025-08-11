@@ -584,6 +584,5 @@ print_success "✅ Claude has been restarted (if possible)"
 print_info "Desktop Commander is available as 'desktop-commander' in Claude"
 echo
 print_info "Next steps: Install anything you want - it will persist!"
-echo "• System packages: apt install nodejs python3-pip"
 echo "• Global packages: npm install -g typescript"
 echo "• User configs: git config, SSH keys, .bashrc"

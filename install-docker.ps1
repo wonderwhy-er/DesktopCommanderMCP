@@ -861,7 +861,6 @@ function Start-Installation {
     
     Write-Host ""
     Write-Info "Next steps: Install anything you want - it will persist!"
-    Write-Info "- System packages: apt install nodejs python3-pip"
     Write-Info "- Global packages: npm install -g typescript"  
     Write-Info "- User configs: git config, SSH keys, .bashrc"
 }
