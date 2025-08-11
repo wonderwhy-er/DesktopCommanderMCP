@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, shrink-to-fit=no">
+    <title>Use Cases - Desktop Commander MCP</title>
+    
+    <!-- SEO Meta Tags -->
+    <meta name="description" content="Discover proven use cases and workflows for Desktop Commander MCP. Copy ready-to-use prompts and learn from community favorites.">
+    <meta name="keywords" content="Desktop Commander use cases, Claude prompts, MCP workflows, automation examples, coding prompts">
+    <meta name="author" content="Desktop Commander MCP Team">
+    <meta name="robots" content="index, follow">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://desktopcommander.app/use-cases.html">
+    <meta property="og:title" content="Use Cases - Desktop Commander MCP">
+    <meta property="og:description" content="Discover proven use cases and workflows for Desktop Commander MCP. Copy ready-to-use prompts and learn from community favorites.">
+    <meta property="og:image" content="https://desktopcommander.app/logo.png">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://desktopcommander.app/use-cases.html">
+    
+    <!-- Favicons -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+    
+    <!-- Stylesheets -->
+    <link rel="stylesheet" href="css/base.css">
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/header.css">
+    <link rel="stylesheet" href="css/footer.css">
+    <link rel="stylesheet" href="css/use-cases.css">
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#171717">
+</head>
+<body>
+    <!-- Header (will be populated by JS) -->
+    <header id="header-placeholder"></header>
+    
+    <!-- Main Content -->
+    <main class="use-cases-main">
+        <!-- Hero Section -->
+        <section class="use-cases-hero">
+            <div class="container">
+                <h1>Use Case Library</h1>
+                <p class="hero-subtitle">Discover proven workflows and copy ready-to-use prompts. Voted on by the community.</p>
+                
+                <!-- Filter Controls -->
+                <div class="filter-controls">
+                    <button class="filter-btn active" data-filter="all">All Use Cases</button>
+                    <button class="filter-btn" data-filter="beginner">Beginner</button>
+                    <button class="filter-btn" data-filter="developer">Developer</button>
+                    <button class="filter-btn" data-filter="data">Data Analysis</button>
+                    <button class="filter-btn" data-filter="automation">Automation</button>
+                </div>
+                
+                <!-- Sort Controls -->
+                <div class="sort-controls">
+                    <select id="sort-select">
+                        <option value="votes">Most Voted</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="difficulty">Difficulty</option>
+                    </select>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Use Cases Grid -->
+        <section class="use-cases-grid">
+            <div class="container">
+                <div id="use-cases-container" class="cases-grid">
+                    <!-- Use case cards will be populated by JavaScript -->
+                </div>
+                
+                <!-- Loading State -->
+                <div id="loading-state" class="loading-state">
+                    <div class="spinner"></div>
+                    <p>Loading use cases...</p>
+                </div>
+                
+                <!-- Empty State -->
+                <div id="empty-state" class="empty-state" style="display: none;">
+                    <h3>No use cases found</h3>
+                    <p>Try adjusting your filters or check back later for new content.</p>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Community Contribution CTA -->
+        <section class="community-cta">
+            <div class="container">
+                <h2>Have a Great Use Case?</h2>
+                <p>Share your workflow with the community and help others discover the power of Desktop Commander.</p>
+                <a href="https://discord.gg/kQ27sNnZr7" class="cta-button" target="_blank" rel="noopener">
+                    Share on Discord
+                </a>
+            </div>
+        </section>
+    </main>
+    
+    <!-- Footer (will be populated by JS) -->
+    <footer id="footer-placeholder"></footer>
+    
+    <!-- Scripts -->
+    <script src="js/main.js"></script>
+    <script src="js/use-cases.js"></script>
+</body>
+</html>
