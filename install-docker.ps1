@@ -581,7 +581,7 @@ function Update-ClaudeConfig {
     }
 
     # Check if our server already exists
-    if ($config.mcpServers.ContainsKey("desktop-commander-in-docker")) {
+    if ($config.mcpServers.ContainsKey("desktop-commander")) {
         Write-Info "Updating existing Desktop Commander configuration"
     } else {
         Write-Info "Adding new Desktop Commander configuration"
@@ -594,7 +594,7 @@ function Update-ClaudeConfig {
     }
 
     # Add/update our server configuration (this preserves all other servers)
-    $config.mcpServers["desktop-commander-in-docker"] = @{
+    $config.mcpServers["desktop-commander"] = @{
         command = "docker"
         args = $argsArray
     }
@@ -604,7 +604,7 @@ function Update-ClaudeConfig {
         $jsonConfig = $config | ConvertTo-Json -Depth 10
         [System.IO.File]::WriteAllText($configPath, $jsonConfig, [System.Text.UTF8Encoding]::new($false))
         Write-Success "Claude configuration updated successfully"
-        Write-Info "Server 'desktop-commander-in-docker' added to MCP servers"
+        Write-Info "Server 'desktop-commander' added to MCP servers"
         Write-Info "Total MCP servers configured: $($config.mcpServers.Count)"
         
         # List all configured servers
@@ -612,7 +612,7 @@ function Update-ClaudeConfig {
             Write-Host ""
             Write-Info "All configured MCP servers:"
             foreach ($serverName in $config.mcpServers.Keys) {
-                if ($serverName -eq "desktop-commander-in-docker") {
+                if ($serverName -eq "desktop-commander") {
                     Write-Info "  * $serverName (Desktop Commander) - UPDATED"
                 } else {
                     Write-Info "  * $serverName (preserved)"
@@ -658,7 +658,7 @@ function Show-Status {
     }
 
     try {
-        $null = docker image inspect mcp/desktop-commander:latest 2>$null
+        $null = docker image inspect desktop-commander:latest 2>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Docker image: Available"
         } else {
@@ -692,7 +692,7 @@ function Show-Status {
     if (Test-Path $configPath) {
         try {
             $config = Get-Content $configPath | ConvertFrom-Json
-            if ($config.mcpServers."desktop-commander-in-docker") {
+            if ($config.mcpServers."desktop-commander") {
                 Write-Success "Claude config: Desktop Commander configured"
             } else {
                 Write-Warning "Claude config: Missing Desktop Commander server"
@@ -857,7 +857,7 @@ function Start-Installation {
     Write-Info "- This will reset everything and reinstall from scratch"
     Write-Host ""
     Write-Info "Claude Desktop has been automatically restarted (if possible)"
-    Write-Success "Desktop Commander is available as 'desktop-commander-in-docker' in Claude"
+    Write-Success "Desktop Commander is available as 'desktop-commander' in Claude"
     
     Write-Host ""
     Write-Info "Next steps: Install anything you want - it will persist!"

@@ -304,7 +304,7 @@ if 'mcpServers' not in config:
     config['mcpServers'] = {}
 
 # Configure to use docker run with essential volumes
-config['mcpServers']['desktop-commander-in-docker'] = {
+config['mcpServers']['desktop-commander'] = {
     'command': 'docker',
     'args': docker_args
 }
@@ -319,7 +319,7 @@ print('Successfully updated Claude config')
     }
 
     print_verbose "Updated Claude config: $CLAUDE_CONFIG"
-    print_verbose "Desktop Commander will be available as 'desktop-commander-in-docker' in Claude"
+    print_verbose "Desktop Commander will be available as 'desktop-commander' in Claude"
 }
 
 # Test the persistent setup
@@ -581,7 +581,7 @@ show_management_info
 
 echo
 print_success "✅ Claude has been restarted (if possible)"
-print_info "Desktop Commander is available as 'desktop-commander-in-docker' in Claude"
+print_info "Desktop Commander is available as 'desktop-commander' in Claude"
 echo
 print_info "Next steps: Install anything you want - it will persist!"
 echo "• System packages: apt install nodejs python3-pip"
