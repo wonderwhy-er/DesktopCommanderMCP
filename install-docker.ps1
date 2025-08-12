@@ -214,13 +214,17 @@ function Build-DockerArgs {
     }
 
     foreach ($folder in $script:Folders) {
-        $folderName = Split-Path $folder -Leaf
-        $dockerPath = $folder.Replace('\', '/')
-        if ($dockerPath -match '^([A-Za-z]):(.*)') {
-            $dockerPath = "/$($matches[1].ToLower())$($matches[2])"
+        # Get the full path structure after drive letter for absolute mounting
+        if ($folder -match '^([A-Za-z]):(.+)$') {
+            $absolutePath = $matches[2].TrimStart('\').Replace('\', '/')
+            $script:DockerArgs += "-v"
+            $script:DockerArgs += "${folder}:/home/$absolutePath"
+        } else {
+            # Fallback for non-standard paths - use basename
+            $folderName = Split-Path $folder -Leaf
+            $script:DockerArgs += "-v"
+            $script:DockerArgs += "${folder}:/home/${folderName}"
         }
-        $script:DockerArgs += "-v"
-        $script:DockerArgs += "${folder}:/home/${folderName}"
     }
 
     $script:DockerArgs += "mcp/desktop-commander:latest"
@@ -626,7 +630,15 @@ function Update-ClaudeConfig {
             Write-Info "Folders accessible to Desktop Commander:"
             foreach ($folder in $script:Folders) {
                 $folderName = Split-Path $folder -Leaf
-                Write-Info "  Folder: $folder -> /mnt/$folderName"
+                Write-Info "  Folder: $folder"
+                Write-Info "    -> /home/$folderName (home-style path)"
+                
+                # Show Windows-style path too
+                $windowsPath = $folder.Replace('\', '/')
+                if ($windowsPath -match '^([A-Za-z]):(.*)') {
+                    $windowsStylePath = "/$($matches[1].ToLower())$($matches[2])"
+                    Write-Info "    -> $windowsStylePath (windows-style path)"
+                }
             }
         } else {
             Write-Warning "No folders mounted - limited file access"
@@ -839,11 +851,24 @@ function Start-Installation {
     
     if ($script:Folders.Count -gt 0) {
         Write-Host ""
-        Write-Info "Your accessible folders:"
+        Write-Info "Your accessible folders (dual mount paths):"
         foreach ($folder in $script:Folders) {
             $folderName = Split-Path $folder -Leaf
-            Write-Info "  Folder: $folder -> /mnt/$folderName"
+            Write-Info "  Folder: $folder"
+            Write-Info "    -> /home/$folderName (home-style)"
+            
+            # Show Windows-style path too
+            $windowsPath = $folder.Replace('\', '/')
+            if ($windowsPath -match '^([A-Za-z]):(.*)') {
+                $windowsStylePath = "/$($matches[1].ToLower())$($matches[2])"
+                Write-Info "    -> $windowsStylePath (windows-style)"
+            }
         }
+        Write-Host ""
+        Write-Info "💡 Path Translation Examples:"
+        Write-Info "  Windows: C:\Users\wonde\projects\file.txt"
+        Write-Info "  Docker:  /c/users/wonde/projects/file.txt  (windows-style)"
+        Write-Info "  Docker:  /home/wonde/projects/file.txt     (home-style)"
     }
     
     Write-Host ""

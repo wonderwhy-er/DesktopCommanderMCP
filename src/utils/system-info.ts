@@ -326,8 +326,15 @@ IMPORTANT: When users ask about files, FIRST check mounted directories above.
 Files outside these paths will be lost when the container stops.
 Always suggest using mounted directories for file operations.
 
-NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-name].
-For example, if user mounted ~/Documents, it appears as /home/Documents in container.`;
+PATH TRANSLATION IN DOCKER:
+When users provide host paths, translate to container paths:
+
+Windows: "C:\\projects\\data\\file.txt" → "/home/projects/data/file.txt"
+Linux/Mac: "/Users/john/projects/data/file.txt" → "/home/projects/data/file.txt"
+
+Rules: Remove drive letter/user prefix, keep full folder structure, mount to /home/
+
+NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-name].`;
         } else {
             guidance += `
 

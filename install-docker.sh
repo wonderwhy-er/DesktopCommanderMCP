@@ -244,10 +244,22 @@ build_docker_args() {
         DOCKER_ARGS+=("-v" "$volume")
     done
 
-    # Add user folder mounts (separate from system volumes)
+    # Add user folder mounts with absolute path structure
     for folder in "${FOLDERS[@]}"; do
-        folder_name=$(basename "$folder")
-        DOCKER_ARGS+=("-v" "$folder:/home/$folder_name")
+        # Remove leading /Users/username or /home/username and keep absolute structure
+        if [[ "$folder" =~ ^/Users/[^/]+(/.+)$ ]]; then
+            # Mac: /Users/john/projects/data → /home/projects/data  
+            absolute_path="${BASH_REMATCH[1]}"
+            DOCKER_ARGS+=("-v" "$folder:/home$absolute_path")
+        elif [[ "$folder" =~ ^/home/[^/]+(/.+)$ ]]; then
+            # Linux: /home/john/projects/data → /home/projects/data
+            absolute_path="${BASH_REMATCH[1]}"
+            DOCKER_ARGS+=("-v" "$folder:/home$absolute_path")
+        else
+            # Fallback for other paths - use basename
+            folder_name=$(basename "$folder")
+            DOCKER_ARGS+=("-v" "$folder:/home/$folder_name")
+        fi
     done
 
     # Add the image
