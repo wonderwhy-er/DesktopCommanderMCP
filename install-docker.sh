@@ -116,12 +116,13 @@ check_docker() {
 
 # Pull the Docker image
 pull_docker_image() {
-    print_info "Downloading Desktop Commander Docker image..."
+    print_info "Pulling latest Docker image (this may take a moment)..."
     
-    if docker pull "$DOCKER_IMAGE" >/dev/null 2>&1; then
-        print_success "Docker image downloaded"
+    if docker pull "$DOCKER_IMAGE"; then
+        print_success "Docker image ready: $DOCKER_IMAGE"
     else
-        print_error "Failed to download Docker image"
+        print_error "Failed to pull Docker image"
+        print_info "Check your internet connection and Docker Hub access"
         exit 1
     fi
 }
