@@ -580,7 +580,17 @@ async function restartClaude() {
             logToFile('\nThe server is available as "desktop-commander" in Claude\'s MCP server list');
             
             logToFile("Future updates will install automatically — no need to run this setup again.\n\n");
-            logToFile("💬 Need help or found an issue? Join our community: https://discord.com/invite/kQ27sNnZr7\n\n")
+            logToFile("🤔 Need help or have feedback? Happy to jump on a quick call: \n\n")
+            logToFile("https://calendar.app.google/SHMNZN5MJznJWC5A7 \n\n")
+            logToFile("or join our community: https://discord.com/invite/kQ27sNnZr7\n\n")
+
+
+            
+
+
+
+
+
             updateSetupStep(restartStep, 'completed');
             await trackEvent('npx_setup_restart_claude_success', { platform });
         } catch (startError) {

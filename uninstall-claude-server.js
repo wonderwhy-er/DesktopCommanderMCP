@@ -665,31 +665,6 @@ export default async function uninstall() {
     // Initial tracking (only if telemetry enabled)
     await ensureTrackingCompleted('uninstall_start');
 
-    // Print ASCII art for UNINSTALL
-    console.log('\n');
-    console.log('██╗   ██╗███╗   ██╗██╗███╗   ██╗███████╗████████╗ █████╗ ██╗     ██╗     ██╗███╗   ██╗ ██████╗ ');
-    console.log('██║   ██║████╗  ██║██║████╗  ██║██╔════╝╚══██╔══╝██╔══██╗██║     ██║     ██║████╗  ██║██╔════╝ ');
-    console.log('██║   ██║██╔██╗ ██║██║██╔██╗ ██║███████╗   ██║   ███████║██║     ██║     ██║██╔██╗ ██║██║  ███╗');
-    console.log('██║   ██║██║╚██╗██║██║██║╚██╗██║╚════██║   ██║   ██╔══██║██║     ██║     ██║██║╚██╗██║██║   ██║');
-    console.log('╚██████╔╝██║ ╚████║██║██║ ╚████║███████║   ██║   ██║  ██║███████╗███████╗██║██║ ╚████║╚██████╔╝');
-    console.log(' ╚═════╝ ╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝ ');
-    console.log('\n');
-    console.log('██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗   ');
-    console.log('██╔══██╗██╔════╝██╔════╝██║ ██╔╝╚══██╔══╝██╔═══██╗██╔══██╗  ');
-    console.log('██║  ██║█████╗  ███████╗█████╔╝    ██║   ██║   ██║██████╔╝  ');
-    console.log('██║  ██║██╔══╝  ╚════██║██╔═██╗    ██║   ██║   ██║██╔═══╝   ');
-    console.log('██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║       ');
-    console.log('╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝       ');
-    console.log('\n');
-    console.log(' ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗ ');
-    console.log('██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝██╔══██╗');
-    console.log('██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║█████╗  ██████╔╝');
-    console.log('██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗');
-    console.log('╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║');
-    console.log(' ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝');
-    console.log('\n');    
-    console.log('==============================\n');
-
     const mainStep = addUninstallStep('main_uninstall');
 
     try {
@@ -711,8 +686,11 @@ export default async function uninstall() {
             logToFile('\nIf you want to reinstall later, you can run:');
             logToFile('npx @wonderwhy-er/desktop-commander@latest setup');
 
-            logToFile('\n🚀 We\'re working on the next generation of Desktop Commander with exciting new features and improvements.');
-            logToFile('Would you like to stay updated? Take our short survey here: https://tally.so/r/w8lyRo');
+            logToFile('\n🎁 We\'re sorry to see you leaving, we’d love to understand your decision not to use Desktop Commander.')
+            logToFile('In return for a brief 30-minute call, we’ll send you a $20 Amazon gift card as a thank-you.');
+            logToFile('To get a gift card, pleaase fill out this form:');
+            logToFile(' https://tally.so/r/w8lyRo');
+
 
             logToFile('\nThank you for using Desktop Commander! 👋\n');
             
@@ -726,6 +704,11 @@ export default async function uninstall() {
             logToFile('\n❌ Uninstallation completed with errors.');
             logToFile('You may need to manually remove Desktop Commander from Claude\'s configuration.');
             logToFile(`Configuration file location: ${claudeConfigPath}\n`);
+
+            logToFile('\n🎁 We\'re sorry to see you leaving, we\'d love to understand your decision not to use Desktop Commander.')
+            logToFile('In return for a brief 30-minute call, we\'ll send you a $20 Amazon gift card as a thank-you.');
+            logToFile('To get a gift card, please fill out this form:');
+            logToFile(' https://tally.so/r/w8lyRo');
             
             await ensureTrackingCompleted('uninstall_partial_failure');
             
@@ -744,6 +727,11 @@ export default async function uninstall() {
         logToFile('\n❌ Uninstallation failed.');
         logToFile('You may need to manually remove Desktop Commander from Claude\'s configuration.');
         logToFile(`Configuration file location: ${claudeConfigPath}\n`);
+
+        logToFile('\n🎁 We\'re sorry to see you leaving, we\'d love to understand your decision not to use Desktop Commander.')
+        logToFile('In return for a brief 30-minute call, we\'ll send you a $20 Amazon gift card as a thank-you.');
+        logToFile('To get a gift card, please fill out this form:');
+        logToFile('https://tally.so/r/w8lyRo');
         return false;
     }
 }
