@@ -688,7 +688,7 @@ export default async function uninstall() {
 
             logToFile('\n🎁 We\'re sorry to see you leaving, we’d love to understand your decision not to use Desktop Commander.')
             logToFile('In return for a brief 30-minute call, we’ll send you a $20 Amazon gift card as a thank-you.');
-            logToFile('To get a gift card, pleaase fill out this form:');
+            logToFile('To get a gift card, please fill out this form:');
             logToFile(' https://tally.so/r/w8lyRo');
 
 
