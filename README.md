@@ -22,7 +22,6 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Features](#features)
 - [How to install](#how-to-install)
 - [Usage](#usage)
-- [Docker Support](#docker-support)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#roadmap)
 - [Sponsors and Supporters](#support-desktop-commander)
@@ -70,11 +69,12 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Detailed timestamps and arguments
 
 ## How to install
-First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
 
-> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1 and 3 have automatic updates**. Options 2, 4, and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+Desktop Commander offers multiple installation methods to fit different user needs and technical requirements.
 
-### Option 1: Install through npx ⭐ **Auto-Updates**
+> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1, 2, 3, and 6 have automatic updates**. Options 4 and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+
+### Option 1: Install through npx ⭐ **Auto-Updates** **Requires Node.js**
 Just run this in terminal:
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
@@ -90,7 +90,7 @@ Restart Claude if running.
 **🔄 Manual Update:** Run the setup command again  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates**
+### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates** **Installs Node.js if needed**
 For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
 ```
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
@@ -101,7 +101,7 @@ This script handles all dependencies and configuration automatically for a seaml
 **🔄 Manual Update:** Re-run the bash installer command above  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 3: Installing via Smithery ⭐ **Auto-Updates**
+### Option 3: Installing via Smithery ⭐ **Auto-Updates** **Requires Node.js**
 
 To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
@@ -113,7 +113,7 @@ npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
 **🔄 Manual Update:** Re-run the Smithery install command  
 **🗑️ Uninstall:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
 
-### Option 4: Add to claude_desktop_config manually ⭐ **Auto-Updates**
+### Option 4: Add to claude_desktop_config manually ⭐ **Auto-Updates** **Requires Node.js**
 Add this entry to your claude_desktop_config.json:
 
 - On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -139,7 +139,7 @@ Restart Claude if running.
 **🔄 Manual Update:** Run the setup command again  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or  remove the "desktop-commander" entry from your claude_desktop_config.json file
 
-### Option 5: Checkout locally ❌ **Manual Updates**
+### ### Option 5: Checkout locally ❌ **Manual Updates** **Requires Node.js** ❌ **Manual Updates** **Requires Node.js**
 1. Clone and build:
 ```bash
 git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
@@ -158,16 +158,168 @@ The setup command will:
 **🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the cloned directory and remove MCP server entry from Claude config
 
+### Option 6: Docker Installation 🐳 ⭐ **Auto-Updates** **No Node.js Required**
+
+Perfect for users who want complete or partial isolation or don't have Node.js installed. Desktop Commander runs in a sandboxed Docker container with a persistent work environment.
+
+#### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed **and running**
+- Claude Desktop app installed
+
+**Important:** Make sure Docker Desktop is fully started before running the installer.
+
+#### Automated Installation (Recommended)
+
+**macOS/Linux:**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
+```
+
+**Windows PowerShell (Run as Administrator):**
+```powershell
+# Download and run the installer (one-liner)
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))
+```
+
+The automated installer will:
+- Check Docker installation
+- Pull the latest Docker image 
+- Prompt you to select folders for mounting
+- Configure Claude Desktop automatically
+- Restart Claude if possible
+
+#### How Docker Persistence Works
+Desktop Commander creates a persistent work environment that remembers everything between sessions:
+- **Your development tools**: Any software you install (Node.js, Python, databases, etc.) stays installed
+- **Your configurations**: Git settings, SSH keys, shell preferences, and other personal configs are preserved  
+- **Your work files**: Projects and files in the workspace area persist across restarts
+- **Package caches**: Downloaded packages and dependencies are cached for faster future installs
+
+Think of it like having your own dedicated development computer that never loses your setup, but runs safely isolated from your main system.
+
+#### Manual Docker Configuration
+
+If you prefer manual setup, add this to your claude_desktop_config.json:
+
+**Basic setup (no file access):**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+**With folder mounting:**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v", "/Users/username/Desktop:/mnt/desktop",
+        "-v", "/Users/username/Documents:/mnt/documents",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+**Advanced folder mounting:**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "dc-system:/usr",
+        "-v", "dc-home:/root", 
+        "-v", "dc-workspace:/workspace",
+        "-v", "dc-packages:/var",
+        "-v", "/Users/username/Projects:/mnt/Projects",
+        "-v", "/Users/username/Downloads:/mnt/Downloads",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+#### Docker Benefits
+✅ **Controlled Isolation:** Runs in sandboxed environment with persistent development state
+✅ **No Node.js Required:** Everything included in the container
+✅ **Cross-Platform:** Same experience on all operating systems
+✅ **Persistent Environment:** Your tools, files, configs, and work survives restarts
+
+**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
+**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
+
+#### Docker Management Commands
+
+**macOS/Linux:**
+
+Check installation status:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
+```
+
+Reset all persistent data (removes all installed tools and configs):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset
+```
+
+**Windows PowerShell:**
+
+Check status:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
+```
+
+Reset all data:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset
+```
+
+Show help:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Help
+```
+
+Verbose output:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -VerboseOutput
+```  
+
+#### Troubleshooting Docker Installation
+If you broke the Docker container or need a fresh start:
+```bash
+# Reset and reinstall from scratch
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset && bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
+```
+This will completely reset your persistent environment and reinstall everything fresh with exception of not touching mounted folders
+
 ## Updating & Uninstalling Desktop Commander
 
-### Automatic Updates (Options 1, 2, 3 & 4)
-**Options 1 (npx), Option 2 (bash installer), 3 (Smithery) and Option 4 (manual config)** automatically update to the latest version whenever you restart Claude. No manual intervention needed.
+### Automatic Updates (Options 1, 2, 3, 4 & 6)
+**Options 1 (npx), Option 2 (bash installer), 3 (Smithery), 4 (manual config), and 6 (Docker)** automatically update to the latest version whenever you restart Claude. No manual intervention needed.
 
 ### Manual Updates (Option 5)
 - **Option 5 (local checkout):** `cd DesktopCommanderMCP && git pull && npm run setup`
 
 ### Uninstalling Desktop Commander
-
 #### 🤖 Automatic Uninstallation (Recommended)
 
 The easiest way to completely remove Desktop Commander:
