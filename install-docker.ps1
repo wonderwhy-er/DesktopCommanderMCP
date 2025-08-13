@@ -842,7 +842,7 @@ function Start-Installation {
     Restart-Claude
 
     Write-Host ""
-    Write-Success "Setup complete!"
+    Write-Success "🎉 Installation successfully completed! Thank you for using Desktop Commander!"
     Write-Host ""
     Write-Info "How it works:"
     Write-Info "- Desktop Commander runs in isolated containers"
@@ -888,6 +888,12 @@ function Start-Installation {
     Write-Info "Next steps: Install anything you want - it will persist!"
     Write-Info "- Global packages: npm install -g typescript"  
     Write-Info "- User configs: git config, SSH keys, .bashrc"
+
+    Write-Host ""
+    Write-Info "🤔 Need help or have feedback? Happy to jump on a quick call:"
+    Write-Info "   https://calendar.app.google/SHMNZN5MJznJWC5A7"
+    Write-Host ""
+    Write-Info "💬 Join our community: https://discord.com/invite/kQ27sNnZr7"
 }
 
 # Run installation

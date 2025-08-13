@@ -361,12 +361,17 @@ test_persistence() {
 # Show container management commands
 show_management_info() {
     echo
-    print_success "🎉 Setup complete!"
+    print_success "🎉 Installation successfully completed! Thank you for using Desktop Commander!"
     echo
     print_info "How it works:"
     echo "• Desktop Commander runs in isolated containers"
     echo "• Your development tools and configs persist between uses"
     echo "• Each command creates a fresh, clean container"
+    echo
+    print_info "🤔 Need help or have feedback? Happy to jump on a quick call:"
+    echo "   https://calendar.app.google/SHMNZN5MJznJWC5A7"
+    echo
+    print_info "💬 Join our community: https://discord.com/invite/kQ27sNnZr7"
     echo
     print_info "💡 If you broke the Docker container or need a fresh start:"
     echo "• Run: $0 --reset && $0"
@@ -590,7 +595,6 @@ build_docker_args
 update_claude_config
 test_persistence
 restart_claude
-show_management_info
 
 echo
 print_success "✅ Claude has been restarted (if possible)"
@@ -599,3 +603,5 @@ echo
 print_info "Next steps: Install anything you want - it will persist!"
 echo "• Global packages: npm install -g typescript"
 echo "• User configs: git config, SSH keys, .bashrc"
+
+show_management_info
