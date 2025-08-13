@@ -175,7 +175,7 @@ Perfect for users who want complete or partial isolation or don't have Node.js i
 bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
 ```
 
-**Windows PowerShell (Run as Administrator):**
+**Windows PowerShell:**
 ```powershell
 # Download and run the installer (one-liner)
 iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))

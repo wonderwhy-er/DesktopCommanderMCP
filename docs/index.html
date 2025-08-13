@@ -122,6 +122,26 @@
             
             // Make gtag available globally for our custom tracking
             window.gtag = gtag;
+            
+            // Track Docker Gateway campaign arrivals
+            const urlParams = new URLSearchParams(window.location.search);
+            const utmSource = urlParams.get('utm_source');
+            const utmMedium = urlParams.get('utm_medium');
+            const utmCampaign = urlParams.get('utm_campaign');
+            
+            // If this is a Docker Gateway referral, send specific event
+            if (utmSource === 'docker_gateway' && utmMedium === 'in_app_message' && utmCampaign === 'docker_to_native') {
+                gtag('event', 'docker_gateway_arrival', {
+                    'event_category': 'Docker_Gateway_Campaign',
+                    'event_label': 'user_arrived_from_docker_message',
+                    'custom_map': {
+                        'source': utmSource,
+                        'medium': utmMedium,
+                        'campaign': utmCampaign
+                    }
+                });
+                console.log('📊 Docker Gateway Campaign Arrival Tracked');
+            }
         }, 1000); // Reduced from 3000ms to 1000ms for faster initialization
     });
     </script>
@@ -1384,7 +1404,7 @@ npm run setup</pre>
 </div>
 
             <div id="docker" class="tab-content">
-                <div class="step">
+                <div class="step" id="docker-install">
                     <div class="step-content">
                         <h3>🐳 Docker Installation</h3>
                         <p><strong>Perfect for complete isolation and no Node.js required!</strong></p>
@@ -1404,7 +1424,7 @@ npm run setup</pre>
                         </div>
                         
                         <div style="margin-bottom: 20px;">
-                            <strong>Windows PowerShell (Run as Administrator):</strong>
+                            <strong>Windows PowerShell:</strong>
                             <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))</pre>
                         </div>
                         

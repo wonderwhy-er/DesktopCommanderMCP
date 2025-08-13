@@ -47,6 +47,7 @@ import {getUsageStats} from './tools/usage.js';
 import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
 import {usageTracker} from './utils/usageTracker.js';
+import {processDockerPrompt} from './utils/dockerPrompt.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
@@ -815,6 +816,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 // Mark that we've prompted (to prevent spam)
                 await usageTracker.markFeedbackPrompted();
             }
+
+            // Check if should prompt about Docker environment
+            result = await processDockerPrompt(result, name);
         }
 
         return result;
