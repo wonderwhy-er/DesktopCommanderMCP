@@ -103,15 +103,18 @@ This script handles all dependencies and configuration automatically for a seaml
 
 ### Option 3: Installing via Smithery ⭐ **Auto-Updates** **Requires Node.js**
 
-To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
+To install Desktop Commander for Claude Desktop via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
-```bash
-npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
-```
+1. **Visit the Smithery page:** https://smithery.ai/server/@wonderwhy-er/desktop-commander
+2. **Login to Smithery** if you haven't already
+3. **Select your client** (Claude Desktop) on the right side
+4. **Install with the provided key** that appears after selecting your client
+5. **Restart Claude Desktop**
+
+The old command-line installation method is no longer supported. Please use the web interface above for the most reliable installation experience.
 
 **✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Re-run the Smithery install command  
-**🗑️ Uninstall:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
+**🔄 Manual Update:** Visit the Smithery page and reinstall  
 
 ### Option 4: Add to claude_desktop_config manually ⭐ **Auto-Updates** **Requires Node.js**
 Add this entry to your claude_desktop_config.json:
