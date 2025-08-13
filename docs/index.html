@@ -1289,6 +1289,7 @@
                 <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 300;">Smithery Install</button>
                 <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 300;">Manual Configuration</button>
                 <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 300;">Local Installation</button>
+                <button class="tab-btn" onclick="openTab(event, 'docker')" style="color: #121212; font-weight: 300;">🐳 Docker Install</button>
             </div>
             
             <div id="smithery" class="tab-content">
@@ -1381,8 +1382,111 @@ npm run setup</pre>
 </div>
 </div>
 </div>
+
+            <div id="docker" class="tab-content">
+                <div class="step">
+                    <div class="step-content">
+                        <h3>🐳 Docker Installation</h3>
+                        <p><strong>Perfect for complete isolation and no Node.js required!</strong></p>
+                        <p>Desktop Commander runs in a sandboxed Docker container with persistent development environment.</p>
+                        
+                        <h4>Prerequisites</h4>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li><a href="https://www.docker.com/products/docker-desktop/" target="_blank">Docker Desktop</a> installed <strong>and running</strong></li>
+                            <li>Claude Desktop app installed</li>
+                        </ul>
+                        
+                        <h4>Automated Installation (Recommended)</h4>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <strong>macOS/Linux:</strong>
+                            <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)</pre>
+                        </div>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <strong>Windows PowerShell (Run as Administrator):</strong>
+                            <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))</pre>
+                        </div>
+                        
+                        <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <h4 style="margin-top: 0; color: #0078D7;">How Docker Persistence Works</h4>
+                            <p>Desktop Commander creates a persistent work environment that remembers everything between sessions:</p>
+                            <ul style="margin-bottom: 0; padding-left: 20px;">
+                                <li><strong>Your development tools:</strong> Any software you install stays installed</li>
+                                <li><strong>Your configurations:</strong> Git settings, SSH keys, shell preferences preserved</li>  
+                                <li><strong>Your work files:</strong> Projects and files in workspace persist across restarts</li>
+                                <li><strong>Package caches:</strong> Downloaded packages cached for faster installs</li>
+                            </ul>
+                        </div>
+                        
+                        <h4>Manual Docker Configuration</h4>
+                        <p>If you prefer manual setup, add this to your claude_desktop_config.json:</p>
+                        
+                        <strong>Basic setup (no file access):</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">{
+  "mcpServers": {
+    "desktop-commander-docker": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}</pre>
+
+                        <strong>With folder mounting:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">{
+  "mcpServers": {
+    "desktop-commander-docker": {
+      "command": "docker", 
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "dc-system:/usr",
+        "-v", "dc-home:/root", 
+        "-v", "dc-workspace:/workspace",
+        "-v", "dc-packages:/var",
+        "-v", "/Users/username/Projects:/home/Projects",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}</pre>
+
+                        <h4>Docker Benefits</h4>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li><strong>✅ Complete Isolation:</strong> Runs in sandboxed environment</li>
+                            <li><strong>✅ No Node.js Required:</strong> Everything included in container</li>
+                            <li><strong>✅ Cross-Platform:</strong> Same experience on all operating systems</li>
+                            <li><strong>✅ Persistent Environment:</strong> Your tools and files survive restarts</li>
+                        </ul>
+                        
+                        <h4>Management Commands</h4>
+                        
+                        <strong>macOS/Linux:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;"># Check status
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
+
+# Reset persistent data
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset</pre>
+
+                        <strong>Windows PowerShell:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;"># Check status
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
+
+# Reset data
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset</pre>
+
+                        <br />
+                        <p>✅ <strong>Auto-Updates:</strong> <code>latest</code> tag automatically gets newer versions</p>
+                        <p>🔄 <strong>Manual Update:</strong> <code>docker pull mcp/desktop-commander:latest</code> then restart Claude</p>
+                        <p>🗑️ <strong>Uninstall:</strong> Remove Docker configuration from Claude config and optionally run reset command to clear persistent data</p>
+                    </div>
+                </div>
+            </div>
+
 <div style="text-align: left; background: #f8f8f8; padding: 12px; overflow-x: auto; border-radius: 5px; margin-top: 15px; margin-bottom: 15px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <p style="margin-top: 0; color: #171717;">To install DesktopCommanderMCP you need to have Node.js v18.18.0+ and Claude Desktop installed on your system:</p>
+    <p style="margin-top: 0; color: #171717;">To install DesktopCommanderMCP you need to have Node.js v18.18.0+ and Claude Desktop installed on your system (except Docker installation which doesn't require Node.js but Docker):</p>
     <p><strong>Download Node.js:</strong> <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
     <p style="margin-bottom: 0;"><strong>Download Claude Desktop:</strong> <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
 </div>
