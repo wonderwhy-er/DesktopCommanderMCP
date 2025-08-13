@@ -424,3 +424,56 @@ function addCopyButtons() {
 }
 
 addCopyButtons();
+
+// Handle anchor links for tab navigation
+function handleAnchorNavigation() {
+    // Check if there's a hash in the URL on page load
+    if (window.location.hash) {
+        const hash = window.location.hash.substring(1); // Remove the #
+        
+        // Special handling for docker-install anchor
+        if (hash === 'docker-install') {
+            // Check for UTM parameters to confirm this came from Docker Gateway
+            const urlParams = new URLSearchParams(window.location.search);
+            const utmSource = urlParams.get('utm_source');
+            const utmMedium = urlParams.get('utm_medium');
+            const utmCampaign = urlParams.get('utm_campaign');
+
+            
+            // First scroll to the installation section
+            const installationSection = document.getElementById('installation');
+            if (installationSection) {
+                // Open the docker tab
+                const dockerTab = document.querySelector('[onclick*="docker"]');
+                if (dockerTab) {
+                    // Simulate click on docker tab
+                    dockerTab.click();
+                    
+                    // Wait a bit for tab to open, then scroll
+                    setTimeout(() => {
+                        installationSection.scrollIntoView({ 
+                            behavior: 'smooth',
+                            block: 'start'
+                        });
+                        
+                        // Highlight the docker section briefly
+                        const dockerSection = document.getElementById('docker');
+                        if (dockerSection) {
+                            dockerSection.style.transition = 'background-color 0.5s ease';
+                            dockerSection.style.backgroundColor = '#e3f2fd';
+                            setTimeout(() => {
+                                dockerSection.style.backgroundColor = '';
+                            }, 2000);
+                        }
+                    }, 100);
+                }
+            }
+        }
+    }
+}
+
+// Run on page load
+document.addEventListener('DOMContentLoaded', handleAnchorNavigation);
+
+// Also run when hash changes (for single page navigation)
+window.addEventListener('hashchange', handleAnchorNavigation);
