@@ -13,8 +13,9 @@ async function testReadCompletedProcessOutput() {
   
   // Start echo command with delay, but timeout before echo happens
   const startResult = await startProcess({
-    command: 'sleep 1 && echo "SUCCESS MESSAGE"',
-    timeout_ms: 500  // Returns before the echo happens
+    // Cross-platform delay + output using Node
+    command: 'node -e "setTimeout(() => console.log(\'SUCCESS MESSAGE\'), 1000)"',
+    timeout_ms: 500  // Returns before the output happens
   });
   
   // Extract PID
@@ -47,7 +48,7 @@ async function testImmediateCompletion() {
   console.log('Testing immediate completion...');
   
   const startResult = await startProcess({
-    command: 'echo "IMMEDIATE OUTPUT"',
+    command: 'node -e "console.log(\'IMMEDIATE OUTPUT\')"',
     timeout_ms: 2000
   });
   
