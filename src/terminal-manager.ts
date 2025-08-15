@@ -164,7 +164,7 @@ export class TerminalManager {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
             pid: childProcess.pid,
-            output: output + session.lastOutput, // Combine all output
+            output: output, // Use only the main output variable
             exitCode: code,
             startTime: session.startTime,
             endTime: new Date()
@@ -199,9 +199,15 @@ export class TerminalManager {
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      // Format completion message with exit code and runtime
+      // Format with output first, then completion info
       const runtime = (completedSession.endTime.getTime() - completedSession.startTime.getTime()) / 1000;
-      return `Process completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s\nFinal output:\n${completedSession.output}`;
+      const output = completedSession.output.trim();
+      
+      if (output) {
+        return `${output}\n\nProcess completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s`;
+      } else {
+        return `Process completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s\n(No output produced)`;
+      }
     }
 
     return null;

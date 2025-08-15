@@ -110,8 +110,20 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
   const session = terminalManager.getSession(pid);
   if (!session) {
+    // Check if this is a completed session
+    const completedOutput = terminalManager.getNewOutput(pid);
+    if (completedOutput) {
+      return {
+        content: [{
+          type: "text",
+          text: completedOutput
+        }],
+      };
+    }
+    
+    // Neither active nor completed session found
     return {
-      content: [{ type: "text", text: `No active session found for PID ${pid}` }],
+      content: [{ type: "text", text: `No session found for PID ${pid}` }],
       isError: true,
     };
   }
