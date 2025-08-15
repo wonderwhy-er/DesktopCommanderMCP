@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "MCP server for terminal operations and file editing",
   "license": "MIT",
   "author": "Eduards Ruzga",
@@ -35,7 +35,7 @@
     "remove": "npm install && npm run build && node uninstall-claude-server.js",
     "prepare": "npm run build",
     "clean": "shx rm -rf dist",
-    "test": "node test/run-all-tests.js",
+    "test": "npm run build && node test/run-all-tests.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
