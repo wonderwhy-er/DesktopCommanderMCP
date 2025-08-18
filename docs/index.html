@@ -221,6 +221,8 @@
             border-radius: 5px; 
             text-decoration: none; 
             font-weight: 300;
+            white-space: nowrap;
+            font-size: 14px;
         }
         .header-cta-btn:hover {
             color: white;
@@ -392,9 +394,15 @@
             align-items: center;
         }
         
+        @media (max-width: 1024px) {
+            .header-cta-btn {
+                padding: 6px 12px;
+                font-size: 13px;
+            }
+        }
         
         @media (max-width: 768px) {
-            .header-cta-btn, .header-consultation-btn {
+            .header-cta-btn {
                 display: none;
             }
             
@@ -927,15 +935,7 @@
                 <!-- Desktop Navigation -->
                 <nav class="desktop-nav" aria-label="Main Navigation">
                 <ul>
-                    <li class="dropdown">
-                        <a href="#cases" class="dropdown-toggle" aria-haspopup="true" aria-expanded="false">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
-                        <ul class="dropdown-menu" role="menu">
-                            <li><a href="#cases-software" role="menuitem">Software Engineer</a></li>
-                            <li><a href="#cases-devops" role="menuitem">DevOps</a></li>
-                            <li><a href="#cases-writer" role="menuitem">Technical Writer</a></li>
-                            <li><a href="#cases-uxui" role="menuitem">UX/UI Designer</a></li>
-                        </ul>
-                    </li>
+                    <li><a href="https://library.desktopcommander.app" target="_blank" rel="noopener">Prompts</a></li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li class="dropdown">
@@ -957,7 +957,7 @@
                 <!-- Mobile Navigation (no dropdowns) -->
                 <nav class="mobile-nav" aria-label="Mobile Navigation">
                 <ul>
-                    <li><a href="#cases">Use Cases</a></li>
+                    <li><a href="https://library.desktopcommander.app" target="_blank" rel="noopener">Prompts</a></li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener">Join Discord</a></li>
@@ -970,7 +970,7 @@
                 </ul>
                 </nav>
                 
-                <a href="https://go.desktopcommander.app/free-call" class="header-cta-btn" data-track="consultation-header">Free consultation</a>
+                <a href="#installation" class="header-cta-btn" data-track="install-header">Install Desktop Commander</a>
                 <div class="mobile-menu-btn" role="button" aria-expanded="false" aria-label="Toggle mobile menu" tabindex="0">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
