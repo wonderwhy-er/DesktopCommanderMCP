@@ -144,11 +144,15 @@ export const captureBase = async (captureURL: string, event: string, properties?
         if (process.env.MCP_CLIENT_DOCKER) {
             isDocker = 'true'
         }
+
+        // Is MCP running in Smithery environment
+        let isSmithery: string = 'true'; // Hardcoded as true for smithery branch
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
             platform: platform(),
             isDocker,
+            isSmithery,
             isDXT,
             app_version: VERSION,
             engagement_time_msec: "100"
