@@ -59,6 +59,99 @@
     <link rel="preconnect" href="https://miro.medium.com">
     <link rel="preconnect" href="https://img.shields.io">
     <link rel="preconnect" href="https://www.googletagmanager.com">
+    <link rel="preconnect" href="https://eu.i.posthog.com">
+    
+    <!-- PostHog Analytics - Load early for optimal tracking -->
+    <script>
+        !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init Re Ms Fs Pe Rs Cs capture Ve calculateEventProperties Ds register register_once register_for_session unregister unregister_for_session zs getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey canRenderSurveyAsync identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty Ls As createPersonProfile Ns Is Us opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing is_capturing clear_opt_in_out_capturing Os debug I js getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+        posthog.init('phc_SmlF1mKK199Blt4hUNL6V19IWydNNJ9o7Qbym2Y4zQa', {
+            api_host: 'https://eu.i.posthog.com',
+            defaults: '2025-05-24',
+            person_profiles: 'identified_only',
+            // Enhanced settings for better tracking
+            capture_pageview: true,
+            capture_pageleave: true,
+            disable_session_recording: false,
+            // Session recording and heatmaps
+            session_recording: {
+                recordCrossOriginIframes: true,
+                recordCanvas: true,
+                recordHeaders: true,
+                recordBody: true
+            },
+            // Autocapture settings for detailed interaction tracking
+            autocapture: {
+                dom_event_allowlist: ['click', 'change', 'submit'],
+                url_allowlist: ['desktopcommander.app'],
+                element_allowlist: ['a', 'button', 'form', 'input', 'select', 'textarea']
+            },
+            // Feature flags for A/B testing
+            bootstrap: {
+                featureFlags: {}
+            },
+            // Only load in production (desktopcommander.app)
+            loaded: function(posthog) {
+                if (window.location.hostname !== 'desktopcommander.app' && 
+                    window.location.hostname !== 'www.desktopcommander.app') {
+                    posthog.opt_out_capturing();
+                    console.log('🚫 PostHog opted out - not on production domain');
+                } else {
+                    console.log('✅ PostHog active on production domain');
+                    
+                    // Set up user identification based on unique browser fingerprint
+                    var userId = 'dc_user_' + posthog.get_distinct_id();
+                    
+                    // Register super properties that will be sent with all events
+                    posthog.register({
+                        app_name: 'Desktop Commander',
+                        app_version: '0.2.9',
+                        site_section: 'landing_page',
+                        user_type: 'anonymous'
+                    });
+                    
+                    // Capture initial session data
+                    window.DCPostHogSession = {
+                        session_start: Date.now(),
+                        user_id: userId,
+                        session_id: posthog.get_session_id(),
+                        initial_referrer: document.referrer,
+                        initial_utm: window.DCAnalytics ? window.DCAnalytics.getUTMParams() : null
+                    };
+                }
+            }
+        });
+        
+        // Global Analytics utilities (available before DOM ready)
+        window.DCAnalytics = {
+            // Extract UTM parameters for campaign tracking
+            getUTMParams: function() {
+                const urlParams = new URLSearchParams(window.location.search);
+                return {
+                    utm_source: urlParams.get('utm_source'),
+                    utm_medium: urlParams.get('utm_medium'),
+                    utm_campaign: urlParams.get('utm_campaign'),
+                    utm_term: urlParams.get('utm_term'),
+                    utm_content: urlParams.get('utm_content')
+                };
+            },
+            
+            // Get device and browser information
+            getDeviceInfo: function() {
+                return {
+                    screen_width: screen.width,
+                    screen_height: screen.height,
+                    viewport_width: window.innerWidth,
+                    viewport_height: window.innerHeight,
+                    device_pixel_ratio: window.devicePixelRatio || 1,
+                    user_agent: navigator.userAgent,
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    is_mobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+                    connection_type: navigator.connection ? navigator.connection.effectiveType : 'unknown'
+                };
+            }
+        };
+    </script>
     
     <!-- Google Fonts - Poppins and Roboto with font-display swap -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
