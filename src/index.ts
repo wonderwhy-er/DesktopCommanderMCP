@@ -56,7 +56,16 @@ async function runServer() {
       return;
     }
 
-
+      try {
+          console.error("Loading configuration...");
+          await configManager.loadConfig();
+          console.error("Configuration loaded successfully");
+      } catch (configError) {
+          console.error(`Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
+          console.error(configError instanceof Error && configError.stack ? configError.stack : 'No stack trace available');
+          console.error("Continuing with in-memory configuration only");
+          // Continue anyway - we'll use an in-memory config
+      }
 
     const transport = new FilteredStdioServerTransport();
     
@@ -99,17 +108,6 @@ async function runServer() {
     });
 
     capture('run_server_start');
-
-    try {
-      console.error("Loading configuration...");
-      await configManager.loadConfig();
-      console.error("Configuration loaded successfully");
-    } catch (configError) {
-      console.error(`Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
-      console.error(configError instanceof Error && configError.stack ? configError.stack : 'No stack trace available');
-      console.error("Continuing with in-memory configuration only");
-      // Continue anyway - we'll use an in-memory config
-    }
 
 
     console.error("Connecting server...");

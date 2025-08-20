@@ -1,8 +1,11 @@
 import {platform} from 'os';
 import {randomUUID} from 'crypto';
 import * as https from 'https';
+import * as fs from 'fs';
+import * as path from 'path';
 import {configManager} from '../config-manager.js';
 import { currentClient } from '../server.js';
+import { ANALYTICS_AUDIT_FILE, ANALYTICS_AUDIT_FILE_MAX_SIZE } from '../config.js';
 
 let VERSION = 'unknown';
 try {
@@ -70,6 +73,75 @@ export function sanitizeError(error: any): { message: string, code?: string } {
 }
 
 
+/**
+ * Log analytics data to local audit file for debugging and investigation
+ * Only logs if analyticsAuditEnabled is true in config (default: false)
+ * @param event Event name
+ * @param properties Event properties
+ * @param success Whether the analytics call succeeded
+ * @param error Any error that occurred
+ */
+async function logAnalyticsAudit(event: string, properties: any, success: boolean, error?: string) {
+    try {
+        // Check if analytics audit logging is enabled (default: false for production)
+        const analyticsAuditEnabled = await configManager.getValue('analyticsAuditEnabled');
+        if (!analyticsAuditEnabled) {
+            return; // Skip logging if not explicitly enabled
+        }
+
+        // Ensure analytics audit directory exists
+        const auditDir = path.dirname(ANALYTICS_AUDIT_FILE);
+        if (!fs.existsSync(auditDir)) {
+            await fs.promises.mkdir(auditDir, { recursive: true });
+        }
+
+        // Check if file size is approaching limit and rotate if needed
+        let fileSize = 0;
+        try {
+            const stats = await fs.promises.stat(ANALYTICS_AUDIT_FILE);
+            fileSize = stats.size;
+        } catch (error) {
+            // File doesn't exist yet, size remains 0
+        }
+
+        // If file size is at limit, rotate the log file
+        if (fileSize >= ANALYTICS_AUDIT_FILE_MAX_SIZE) {
+            const fileExt = path.extname(ANALYTICS_AUDIT_FILE);
+            const fileBase = path.basename(ANALYTICS_AUDIT_FILE, fileExt);
+            const dirName = path.dirname(ANALYTICS_AUDIT_FILE);
+            
+            // Create a timestamp-based filename for the old log
+            const date = new Date();
+            const rotateTimestamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}_${String(date.getHours()).padStart(2, '0')}-${String(date.getMinutes()).padStart(2, '0')}-${String(date.getSeconds()).padStart(2, '0')}`;
+            const newFileName = path.join(dirName, `${fileBase}_${rotateTimestamp}${fileExt}`);
+            
+            // Rename the current file
+            await fs.promises.rename(ANALYTICS_AUDIT_FILE, newFileName);
+        }
+
+        // Prepare audit log entry
+        const timestamp = new Date().toISOString();
+        const auditEntry = {
+            timestamp,
+            event,
+            properties,
+            success,
+            error: error || null,
+            client_id: uniqueUserId
+        };
+
+        // Format as readable JSON log entry
+        const logLine = `${timestamp} | ${success ? 'SUCCESS' : 'FAILED'} | ${event} | ${JSON.stringify(auditEntry)}\n`;
+        
+        // Append to audit log file
+        await fs.promises.appendFile(ANALYTICS_AUDIT_FILE, logLine, 'utf8');
+        
+    } catch (auditError) {
+        // Don't let audit logging errors affect the main functionality
+        console.error(`Analytics audit logging error: ${auditError instanceof Error ? auditError.message : String(auditError)}`);
+    }
+}
+
 
 /**
  * Send an event to Google Analytics
@@ -83,6 +155,8 @@ export const captureBase = async (captureURL: string, event: string, properties?
 
         // If telemetry is explicitly disabled or GA credentials are missing, don't send
         if (telemetryEnabled === false || !captureURL) {
+            // Log that telemetry was skipped
+            await logAnalyticsAudit(event, properties || {}, false, telemetryEnabled === false ? 'Telemetry disabled' : 'GA credentials missing');
             return;
         }
 
@@ -173,6 +247,22 @@ export const captureBase = async (captureURL: string, event: string, properties?
                     .substring(0, 100);               // Limit length
             }
         }
+        
+        // Detect if we're running through Smithery at runtime
+        let runtimeSource: string = 'unknown';
+        const processArgs = process.argv.join(' ');
+        try {
+            if (processArgs.includes('@smithery/cli') || processArgs.includes('smithery')) {
+                runtimeSource = 'smithery-runtime';
+            } else if (processArgs.includes('npx')) {
+                runtimeSource = 'npx-runtime';
+            } else {
+                runtimeSource = 'direct-runtime';
+            }
+        } catch (error) {
+            // Ignore detection errors
+        }
+        
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
@@ -182,6 +272,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             orchestrator,
             containerName,
             containerImage,
+            runtimeSource,
             isDXT,
             app_version: VERSION,
             engagement_time_msec: "100"
@@ -223,20 +314,27 @@ export const captureBase = async (captureURL: string, event: string, properties?
                 data += chunk;
             });
 
-            res.on('end', () => {
-                if (res.statusCode !== 200 && res.statusCode !== 204) {
-                    // Optional debug logging
-                    // console.debug(`GA tracking error: ${res.statusCode} ${data}`);
+            res.on('end', async () => {
+                const success = res.statusCode === 200 || res.statusCode === 204;
+                if (!success) {
+                    // Log failure to audit
+                    await logAnalyticsAudit(event, eventProperties, false, `HTTP ${res.statusCode}: ${data}`);
+                } else {
+                    // Log success to audit
+                    await logAnalyticsAudit(event, eventProperties, true);
                 }
             });
         });
 
-        req.on('error', () => {
+        req.on('error', async (error) => {
+            // Log error to audit
+            await logAnalyticsAudit(event, eventProperties, false, error.message);
             // Silently fail - we don't want analytics issues to break functionality
         });
 
         // Set timeout to prevent blocking the app
-        req.setTimeout(3000, () => {
+        req.setTimeout(3000, async () => {
+            await logAnalyticsAudit(event, eventProperties, false, 'Request timeout');
             req.destroy();
         });
 
@@ -244,7 +342,9 @@ export const captureBase = async (captureURL: string, event: string, properties?
         req.write(postData);
         req.end();
 
-    } catch {
+    } catch (error) {
+        // Log general error to audit
+        await logAnalyticsAudit(event, properties || {}, false, `General error: ${error instanceof Error ? error.message : String(error)}`);
         // Silently fail - we don't want analytics issues to break functionality
     }
 };
