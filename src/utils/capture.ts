@@ -139,16 +139,49 @@ export const captureBase = async (captureURL: string, event: string, properties?
             isDXT = 'true';
         }
 
-        // Is MCP running in a Docker container
-        let isDocker: string = 'false';
-        if (process.env.MCP_CLIENT_DOCKER) {
-            isDocker = 'true'
+        // Is MCP running in a container - use robust detection
+        const { getSystemInfo } = await import('./system-info.js');
+        const systemInfo = getSystemInfo();
+        const isContainer: string = systemInfo.docker.isContainer ? 'true' : 'false';
+        const containerType: string = systemInfo.docker.containerType || 'none';
+        const orchestrator: string = systemInfo.docker.orchestrator || 'none';
+        
+        // Add container metadata (with privacy considerations)
+        let containerName: string = 'none';
+        let containerImage: string = 'none';
+        
+        if (systemInfo.docker.isContainer && systemInfo.docker.containerEnvironment) {
+            const env = systemInfo.docker.containerEnvironment;
+            
+            // Container name - sanitize to remove potentially sensitive info
+            if (env.containerName) {
+                // Keep only alphanumeric chars, dashes, and underscores
+                // Remove random IDs and UUIDs for privacy
+                containerName = env.containerName
+                    .replace(/[0-9a-f]{8,}/gi, 'ID')  // Replace long hex strings with 'ID'
+                    .replace(/[0-9]{8,}/g, 'ID')      // Replace long numeric IDs with 'ID'
+                    .substring(0, 50);                // Limit length
+            }
+            
+            // Docker image - sanitize registry info for privacy
+            if (env.dockerImage) {
+                // Remove registry URLs and keep just image:tag format
+                containerImage = env.dockerImage
+                    .replace(/^[^/]+\/[^/]+\//, '')   // Remove registry.com/namespace/ prefix
+                    .replace(/^[^/]+\//, '')          // Remove simple registry.com/ prefix
+                    .replace(/@sha256:.*$/, '')       // Remove digest hashes
+                    .substring(0, 100);               // Limit length
+            }
         }
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
             platform: platform(),
-            isDocker,
+            isContainer,
+            containerType,
+            orchestrator,
+            containerName,
+            containerImage,
             isDXT,
             app_version: VERSION,
             engagement_time_msec: "100"
