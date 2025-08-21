@@ -4,7 +4,8 @@ import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server } from './server.js';
 import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
-import { runSetup, runUninstall } from './npm-scripts/index.js';
+import { runSetup } from './npm-scripts/setup.js';
+import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 
 async function runServer() {
