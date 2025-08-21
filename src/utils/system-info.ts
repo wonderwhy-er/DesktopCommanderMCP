@@ -10,13 +10,21 @@ export interface DockerMount {
     description: string;
 }
 
-export interface DockerInfo {
+export interface ContainerInfo {
+    // New enhanced detection
+    isContainer: boolean;
+    containerType: 'docker' | 'podman' | 'kubernetes' | 'lxc' | 'systemd-nspawn' | 'other' | null;
+    orchestrator: 'kubernetes' | 'docker-compose' | 'docker-swarm' | 'podman-compose' | null;
+    // Backward compatibility 
     isDocker: boolean;
     mountPoints: DockerMount[];
     containerEnvironment?: {
         dockerImage?: string;
         containerName?: string;
         hostPlatform?: string;
+        kubernetesNamespace?: string;
+        kubernetesPod?: string;
+        kubernetesNode?: string;
     };
 }
 
@@ -28,7 +36,7 @@ export interface SystemInfo {
     isWindows: boolean;
     isMacOS: boolean;
     isLinux: boolean;
-    docker: DockerInfo;
+    docker: ContainerInfo;
     examplePaths: {
         home: string;
         temp: string;
@@ -38,41 +46,130 @@ export interface SystemInfo {
 }
 
 /**
- * Detect if running inside Docker container
+ * Detect container environment and type
  */
-function isRunningInDocker(): boolean {
-    // Method 1: MCP_CLIENT_DOCKER environment variable (set in Dockerfile)
+function detectContainerEnvironment(): { isContainer: boolean; containerType: ContainerInfo['containerType']; orchestrator: ContainerInfo['orchestrator'] } {
+    // Method 1: Check environment variables first (most reliable when set)
+    
+    // Docker-specific
     if (process.env.MCP_CLIENT_DOCKER === 'true') {
-        return true;
+        return { isContainer: true, containerType: 'docker', orchestrator: null };
+    }
+    
+    // Kubernetes detection
+    if (process.env.KUBERNETES_SERVICE_HOST || process.env.KUBERNETES_PORT) {
+        return { isContainer: true, containerType: 'kubernetes', orchestrator: 'kubernetes' };
+    }
+    
+    // Podman detection
+    if (process.env.PODMAN_CONTAINER || process.env.CONTAINER_HOST?.includes('podman')) {
+        return { isContainer: true, containerType: 'podman', orchestrator: null };
     }
 
-    // Method 2: Check for .dockerenv file
+    // Method 2: Check for container indicator files
     if (fs.existsSync('/.dockerenv')) {
-        return true;
+        return { isContainer: true, containerType: 'docker', orchestrator: null };
     }
 
     // Method 3: Check /proc/1/cgroup for container indicators (Linux only)
     if (os.platform() === 'linux') {
         try {
             const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
-            if (cgroup.includes('docker') || cgroup.includes('containerd')) {
-                return true;
+            
+            // Docker detection
+            if (cgroup.includes('docker')) {
+                return { isContainer: true, containerType: 'docker', orchestrator: null };
+            }
+            
+            // Kubernetes detection (pods run in containerd/cri-o)
+            if (cgroup.includes('kubepods') || cgroup.includes('pod')) {
+                return { isContainer: true, containerType: 'kubernetes', orchestrator: 'kubernetes' };
+            }
+            
+            // Podman detection
+            if (cgroup.includes('podman') || cgroup.includes('libpod')) {
+                return { isContainer: true, containerType: 'podman', orchestrator: null };
+            }
+            
+            // LXC detection
+            if (cgroup.includes('lxc')) {
+                return { isContainer: true, containerType: 'lxc', orchestrator: null };
+            }
+            
+            // systemd-nspawn detection
+            if (cgroup.includes('machine.slice')) {
+                return { isContainer: true, containerType: 'systemd-nspawn', orchestrator: null };
+            }
+            
+            // Generic containerd detection
+            if (cgroup.includes('containerd')) {
+                return { isContainer: true, containerType: 'other', orchestrator: null };
             }
         } catch (error) {
             // /proc/1/cgroup might not exist
         }
     }
 
-    return false;
+    // Method 4: Check /proc/1/environ for container indicators
+    if (os.platform() === 'linux') {
+        try {
+            const environ = fs.readFileSync('/proc/1/environ', 'utf8');
+            
+            if (environ.includes('container=')) {
+                // systemd-nspawn sets container=systemd-nspawn
+                if (environ.includes('container=systemd-nspawn')) {
+                    return { isContainer: true, containerType: 'systemd-nspawn', orchestrator: null };
+                }
+                
+                // LXC sets container=lxc
+                if (environ.includes('container=lxc')) {
+                    return { isContainer: true, containerType: 'lxc', orchestrator: null };
+                }
+                
+                // Generic container detection
+                return { isContainer: true, containerType: 'other', orchestrator: null };
+            }
+        } catch (error) {
+            // /proc/1/environ might not exist or be accessible
+        }
+    }
+
+    // Method 5: Check hostname for Kubernetes patterns
+    try {
+        const hostname = os.hostname();
+        // Kubernetes pods often have hostnames like: podname-deploymentid-randomid
+        if (hostname && (hostname.includes('-') && hostname.split('-').length >= 3)) {
+            // Additional check for Kubernetes service account
+            if (fs.existsSync('/var/run/secrets/kubernetes.io')) {
+                return { isContainer: true, containerType: 'kubernetes', orchestrator: 'kubernetes' };
+            }
+        }
+    } catch (error) {
+        // Hostname check failed
+    }
+
+    // Method 6: Check for orchestrator-specific indicators
+    
+    // Docker Compose detection
+    if (process.env.COMPOSE_PROJECT_NAME || process.env.COMPOSE_SERVICE) {
+        return { isContainer: true, containerType: 'docker', orchestrator: 'docker-compose' };
+    }
+    
+    // Docker Swarm detection
+    if (process.env.DOCKER_SWARM_MODE || process.env.DOCKER_NODE_ID) {
+        return { isContainer: true, containerType: 'docker', orchestrator: 'docker-swarm' };
+    }
+
+    return { isContainer: false, containerType: null, orchestrator: null };
 }
 
 /**
- * Discover Docker mount points
+ * Discover container mount points
  */
-function discoverDockerMounts(): DockerMount[] {
+function discoverContainerMounts(isContainer: boolean): DockerMount[] {
     const mounts: DockerMount[] = [];
     
-    if (!isRunningInDocker()) {
+    if (!isContainer) {
         return mounts;
     }
 
@@ -185,8 +282,8 @@ function discoverDockerMounts(): DockerMount[] {
 /**
  * Get container environment information
  */
-function getContainerEnvironment(): DockerInfo['containerEnvironment'] {
-    const env: DockerInfo['containerEnvironment'] = {};
+function getContainerEnvironment(containerType: ContainerInfo['containerType']): ContainerInfo['containerEnvironment'] {
+    const env: ContainerInfo['containerEnvironment'] = {};
     
     // Try to get container name from hostname (often set to container ID/name)
     try {
@@ -198,9 +295,81 @@ function getContainerEnvironment(): DockerInfo['containerEnvironment'] {
         // Hostname not available
     }
     
-    // Try to get Docker image from environment variables
-    if (process.env.DOCKER_IMAGE) {
-        env.dockerImage = process.env.DOCKER_IMAGE;
+    // Docker-specific environment
+    if (containerType === 'docker') {
+        // Try multiple sources for Docker image name
+        if (process.env.DOCKER_IMAGE) {
+            env.dockerImage = process.env.DOCKER_IMAGE;
+        } else if (process.env.IMAGE_NAME) {
+            env.dockerImage = process.env.IMAGE_NAME;
+        } else if (process.env.CONTAINER_IMAGE) {
+            env.dockerImage = process.env.CONTAINER_IMAGE;
+        }
+        
+        // Try to read from Docker labels if available (less common but possible)
+        try {
+            if (fs.existsSync('/proc/self/cgroup')) {
+                const cgroup = fs.readFileSync('/proc/self/cgroup', 'utf8');
+                // Extract container ID from cgroup path
+                const containerIdMatch = cgroup.match(/docker\/([a-f0-9]{64})/);
+                if (containerIdMatch && !env.containerName) {
+                    // Use short container ID as fallback name
+                    env.containerName = containerIdMatch[1].substring(0, 12);
+                }
+            }
+        } catch (error) {
+            // Ignore errors reading cgroup
+        }
+    }
+    
+    // Kubernetes-specific environment
+    if (containerType === 'kubernetes') {
+        if (process.env.KUBERNETES_NAMESPACE || process.env.POD_NAMESPACE) {
+            env.kubernetesNamespace = process.env.KUBERNETES_NAMESPACE || process.env.POD_NAMESPACE;
+        }
+        
+        if (process.env.POD_NAME || process.env.HOSTNAME) {
+            env.kubernetesPod = process.env.POD_NAME || process.env.HOSTNAME;
+        }
+        
+        if (process.env.NODE_NAME || process.env.KUBERNETES_NODE_NAME) {
+            env.kubernetesNode = process.env.NODE_NAME || process.env.KUBERNETES_NODE_NAME;
+        }
+        
+        // Try to get container image from common Kubernetes environment variables
+        if (process.env.CONTAINER_IMAGE) {
+            env.dockerImage = process.env.CONTAINER_IMAGE;
+        } else if (process.env.IMAGE_NAME) {
+            env.dockerImage = process.env.IMAGE_NAME;
+        }
+        
+        // Try to read Kubernetes service account info
+        try {
+            if (fs.existsSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace')) {
+                const namespace = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf8').trim();
+                if (namespace && !env.kubernetesNamespace) {
+                    env.kubernetesNamespace = namespace;
+                }
+            }
+        } catch (error) {
+            // Service account info not available
+        }
+    }
+    
+    // Podman-specific environment
+    if (containerType === 'podman') {
+        // Podman uses similar environment variables to Docker
+        if (process.env.CONTAINER_IMAGE || process.env.PODMAN_IMAGE) {
+            env.dockerImage = process.env.CONTAINER_IMAGE || process.env.PODMAN_IMAGE;
+        }
+    }
+    
+    // LXC-specific environment
+    if (containerType === 'lxc') {
+        // LXC containers might have different naming conventions
+        if (process.env.LXC_NAME) {
+            env.containerName = process.env.LXC_NAME;
+        }
     }
     
     // Try to detect host platform
@@ -220,9 +389,9 @@ export function getSystemInfo(): SystemInfo {
     const isMacOS = platform === 'darwin';
     const isLinux = platform === 'linux';
     
-    // Docker detection
-    const dockerDetected = isRunningInDocker();
-    const mountPoints = dockerDetected ? discoverDockerMounts() : [];
+    // Container detection
+    const containerDetection = detectContainerEnvironment();
+    const mountPoints = containerDetection.isContainer ? discoverContainerMounts(containerDetection.isContainer) : [];
     
     let platformName: string;
     let defaultShell: string;
@@ -268,9 +437,33 @@ export function getSystemInfo(): SystemInfo {
         };
     }
     
-    // Adjust platform name for Docker
-    if (dockerDetected) {
-        platformName = `${platformName} (Docker)`;
+    // Adjust platform name for containers
+    if (containerDetection.isContainer) {
+        let containerLabel = '';
+        
+        if (containerDetection.containerType === 'kubernetes') {
+            containerLabel = 'Kubernetes';
+            if (containerDetection.orchestrator === 'kubernetes') {
+                containerLabel += ' Pod';
+            }
+        } else if (containerDetection.containerType === 'docker') {
+            containerLabel = 'Docker';
+            if (containerDetection.orchestrator === 'docker-compose') {
+                containerLabel += ' Compose';
+            } else if (containerDetection.orchestrator === 'docker-swarm') {
+                containerLabel += ' Swarm';
+            }
+        } else if (containerDetection.containerType === 'podman') {
+            containerLabel = 'Podman';
+        } else if (containerDetection.containerType === 'lxc') {
+            containerLabel = 'LXC';
+        } else if (containerDetection.containerType === 'systemd-nspawn') {
+            containerLabel = 'systemd-nspawn';
+        } else {
+            containerLabel = 'Container';
+        }
+        
+        platformName = `${platformName} (${containerLabel})`;
         
         // Add accessible paths from mounts
         if (mountPoints.length > 0) {
@@ -287,9 +480,14 @@ export function getSystemInfo(): SystemInfo {
         isMacOS,
         isLinux,
         docker: {
-            isDocker: dockerDetected,
+            // New container detection fields
+            isContainer: containerDetection.isContainer,
+            containerType: containerDetection.containerType,
+            orchestrator: containerDetection.orchestrator,
+            // Backward compatibility - keep old field
+            isDocker: containerDetection.isContainer && containerDetection.containerType === 'docker',
             mountPoints,
-            containerEnvironment: getContainerEnvironment()
+            containerEnvironment: getContainerEnvironment(containerDetection.containerType)
         },
         examplePaths
     };
@@ -303,12 +501,49 @@ export function getOSSpecificGuidance(systemInfo: SystemInfo): string {
     
     let guidance = `Running on ${platformName}. Default shell: ${defaultShell}.`;
     
-    // Docker-specific guidance
-    if (docker.isDocker) {
+    // Container-specific guidance
+    if (docker.isContainer) {
+        const containerTypeLabel = docker.containerType === 'kubernetes' ? 'KUBERNETES POD' :
+                                   docker.containerType === 'docker' ? 'DOCKER CONTAINER' :
+                                   docker.containerType === 'podman' ? 'PODMAN CONTAINER' :
+                                   docker.containerType === 'lxc' ? 'LXC CONTAINER' :
+                                   docker.containerType === 'systemd-nspawn' ? 'SYSTEMD-NSPAWN CONTAINER' :
+                                   'CONTAINER';
+        
         guidance += `
 
-🐳 DOCKER ENVIRONMENT DETECTED:
+🐳 ${containerTypeLabel} ENVIRONMENT DETECTED:`;
+
+        if (docker.containerType === 'kubernetes') {
+            guidance += `
+This Desktop Commander instance is running inside a Kubernetes pod.`;
+            
+            // Add Kubernetes-specific info
+            if (docker.containerEnvironment?.kubernetesNamespace) {
+                guidance += `
+Namespace: ${docker.containerEnvironment.kubernetesNamespace}`;
+            }
+            if (docker.containerEnvironment?.kubernetesPod) {
+                guidance += `
+Pod: ${docker.containerEnvironment.kubernetesPod}`;
+            }
+            if (docker.containerEnvironment?.kubernetesNode) {
+                guidance += `
+Node: ${docker.containerEnvironment.kubernetesNode}`;
+            }
+        } else if (docker.containerType === 'docker') {
+            guidance += `
 This Desktop Commander instance is running inside a Docker container.`;
+            
+            if (docker.orchestrator === 'docker-compose') {
+                guidance += ` (Docker Compose)`;
+            } else if (docker.orchestrator === 'docker-swarm') {
+                guidance += ` (Docker Swarm)`;
+            }
+        } else {
+            guidance += `
+This Desktop Commander instance is running inside a ${docker.containerType || 'container'} environment.`;
+        }
 
         if (docker.mountPoints.length > 0) {
             guidance += `
@@ -425,10 +660,15 @@ COMMON LINUX DEVELOPMENT TOOLS:
 export function getPathGuidance(systemInfo: SystemInfo): string {
     let guidance = `Always use absolute paths for reliability. Paths are automatically normalized regardless of slash direction.`;
     
-    if (systemInfo.docker.isDocker && systemInfo.docker.mountPoints.length > 0) {
+    if (systemInfo.docker.isContainer && systemInfo.docker.mountPoints.length > 0) {
+        const containerLabel = systemInfo.docker.containerType === 'kubernetes' ? 'KUBERNETES' :
+                              systemInfo.docker.containerType === 'docker' ? 'DOCKER' :
+                              systemInfo.docker.containerType === 'podman' ? 'PODMAN' :
+                              'CONTAINER';
+        
         guidance += ` 
 
-🐳 DOCKER: Prefer paths within mounted directories: ${systemInfo.docker.mountPoints.map(m => m.containerPath).join(', ')}.
+🐳 ${containerLabel}: Prefer paths within mounted directories: ${systemInfo.docker.mountPoints.map(m => m.containerPath).join(', ')}.
 When users ask about file locations, check these mounted paths first.`;
     }
     

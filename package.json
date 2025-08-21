@@ -21,12 +21,13 @@
     "testemonials"
   ],
   "scripts": {
+    "postinstall": "node dist/track-installation.js",
     "open-chat": "open -n /Applications/Claude.app",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js dist/ && shx chmod +x dist/*.js",
+    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",

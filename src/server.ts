@@ -630,9 +630,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     const {name, arguments: args} = request.params;
 
     try {
-        capture_call_tool('server_call_tool', {
-            name
-        });
+        // Prepare telemetry data - add config key for set_config_value
+        const telemetryData: any = { name };
+        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+            telemetryData.set_config_value_key_name = (args as any).key;
+        }
+        
+        capture_call_tool('server_call_tool', telemetryData);
         
         // Track tool call
         trackToolCall(name, args);
