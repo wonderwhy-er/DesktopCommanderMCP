@@ -4,49 +4,9 @@ import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server } from './server.js';
 import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
-import { join, dirname } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
-import { platform } from 'os';
+import { runSetup } from './npm-scripts/setup.js';
+import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
-
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const isWindows = platform() === 'win32';
-
-// Helper function to properly convert file paths to URLs, especially for Windows
-function createFileURL(filePath: string): URL {
-  if (isWindows) {
-    // Ensure path uses forward slashes for URL format
-    const normalizedPath = filePath.replace(/\\/g, '/');
-    // Ensure path has proper file:// prefix
-    if (normalizedPath.startsWith('/')) {
-      return new URL(`file://${normalizedPath}`);
-    } else {
-      return new URL(`file:///${normalizedPath}`);
-    }
-  } else {
-    // For non-Windows, we can use the built-in function
-    return pathToFileURL(filePath);
-  }
-}
-
-async function runSetup() {
-  try {
-    // Fix for Windows ESM path issue
-    const setupScriptPath = join(__dirname, 'setup-claude-server.js');
-    const setupScriptUrl = createFileURL(setupScriptPath);
-
-    // Now import using the URL format
-    const { default: setupModule } = await import(setupScriptUrl.href);
-    if (typeof setupModule === 'function') {
-      await setupModule();
-    }
-  } catch (error) {
-    console.error('Error running setup:', error);
-    process.exit(1);
-  }
-}
 
 async function runServer() {
   try {
@@ -56,7 +16,22 @@ async function runServer() {
       return;
     }
 
+    // Check if first argument is "remove"
+    if (process.argv[2] === 'remove') {
+      await runUninstall();
+      return;
+    }
 
+      try {
+          console.error("Loading configuration...");
+          await configManager.loadConfig();
+          console.error("Configuration loaded successfully");
+      } catch (configError) {
+          console.error(`Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
+          console.error(configError instanceof Error && configError.stack ? configError.stack : 'No stack trace available');
+          console.error("Continuing with in-memory configuration only");
+          // Continue anyway - we'll use an in-memory config
+      }
 
     const transport = new FilteredStdioServerTransport();
     
@@ -99,17 +74,6 @@ async function runServer() {
     });
 
     capture('run_server_start');
-
-    try {
-      console.error("Loading configuration...");
-      await configManager.loadConfig();
-      console.error("Configuration loaded successfully");
-    } catch (configError) {
-      console.error(`Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
-      console.error(configError instanceof Error && configError.stack ? configError.stack : 'No stack trace available');
-      console.error("Continuing with in-memory configuration only");
-      // Continue anyway - we'll use an in-memory config
-    }
 
 
     console.error("Connecting server...");

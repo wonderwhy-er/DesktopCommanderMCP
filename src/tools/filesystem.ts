@@ -4,6 +4,7 @@ import os from 'os';
 import fetch from 'cross-fetch';
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
+import { isBinaryFile } from 'isbinaryfile';
 import {capture} from '../utils/capture.js';
 import {withTimeout} from '../utils/withTimeout.js';
 import {configManager} from '../config-manager.js';
@@ -85,6 +86,22 @@ function getFileExtension(filePath: string): string {
 async function getDefaultReadLength(): Promise<number> {
     const config = await configManager.getConfig();
     return config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
+}
+
+/**
+ * Generate instructions for handling binary files
+ * @param filePath Path to the binary file
+ * @param mimeType MIME type of the file
+ * @returns Instruction message for the LLM
+ */
+function getBinaryFileInstructions(filePath: string, mimeType: string): string {
+    const fileName = path.basename(filePath);
+    
+    return `Cannot read binary file as text: ${fileName} (${mimeType})
+
+Use start_process + interact_with_process to analyze binary files with appropriate tools (Node.js or Python libraries, command-line utilities, etc.).
+
+The read_file tool only handles text files and images.`;
 }
 
 // Initialize allowed directories from configuration
@@ -383,6 +400,17 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
     const stats = await fs.stat(filePath);
     const fileSize = stats.size;
 
+    // Check if the file is binary (but allow images to pass through)
+    const { isImage } = await getMimeTypeInfo(filePath);
+    if (!isImage) {
+        const isBinary = await isBinaryFile(filePath);
+        if (isBinary) {
+            // Return instructions instead of trying to read binary content
+            const instructions = getBinaryFileInstructions(filePath, mimeType);
+            throw new Error(instructions);
+        }
+    }
+
     // Get total line count for enhanced status messages (only for smaller files)
     const totalLines = await getFileLineCount(filePath);
 
@@ -664,11 +692,20 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
             try {
                 return await readFileWithSmartPositioning(validPath, offset, length, mimeType, true);
             } catch (error) {
-                // If UTF-8 reading fails, treat as binary and return base64 but still as text
-                const buffer = await fs.readFile(validPath);
-                const content = `Binary file content (base64 encoded):\n${buffer.toString('base64')}`;
-
-                return { content, mimeType: 'text/plain', isImage: false };
+                // If it's our binary file instruction error, return it as content
+                if (error instanceof Error && error.message.includes('Cannot read binary file as text:')) {
+                    return { content: error.message, mimeType: 'text/plain', isImage: false };
+                }
+                
+                // If UTF-8 reading fails for other reasons, also check if it's binary
+                const isBinary = await isBinaryFile(validPath);
+                if (isBinary) {
+                    const instructions = getBinaryFileInstructions(validPath, mimeType);
+                    return { content: instructions, mimeType: 'text/plain', isImage: false };
+                }
+                
+                // Only if it's truly not binary, then we have a real UTF-8 reading error
+                throw error;
             }
         }
     };

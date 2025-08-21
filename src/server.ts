@@ -47,6 +47,7 @@ import {getUsageStats} from './tools/usage.js';
 import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
 import {usageTracker} from './utils/usageTracker.js';
+import {processDockerPrompt} from './utils/dockerPrompt.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
@@ -415,6 +416,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("wc -l /path/file.csv") → Line counting
                         • start_process("head -10 /path/file.csv") → File preview
                         
+                        BINARY FILE SUPPORT:
+                        For PDF, Excel, Word, archives, databases, and other binary formats, use process tools with appropriate libraries or command-line utilities.
+                        
                         INTERACTIVE PROCESSES FOR DATA ANALYSIS:
                         1. start_process("python3 -i") - Start Python REPL for data work
                         2. start_process("node -i") - Start Node.js REPL for JSON/JS
@@ -487,6 +491,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
                         4. Analyze: interact_with_process(pid, "print(df.describe())")
                         5. Continue: interact_with_process(pid, "df.groupby('column').size()")
+                        
+                        BINARY FILE PROCESSING WORKFLOWS:
+                        Use appropriate Python libraries (PyPDF2, pandas, docx2txt, etc.) or command-line tools for binary file analysis.
                         
                         SMART DETECTION:
                         - Automatically waits for REPL prompt (>>>, >, etc.)
@@ -624,9 +631,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     const {name, arguments: args} = request.params;
 
     try {
-        capture_call_tool('server_call_tool', {
-            name
-        });
+        // Prepare telemetry data - add config key for set_config_value
+        const telemetryData: any = { name };
+        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+            telemetryData.set_config_value_key_name = (args as any).key;
+        }
+        
+        capture_call_tool('server_call_tool', telemetryData);
         
         // Track tool call
         trackToolCall(name, args);
@@ -810,6 +821,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 // Mark that we've prompted (to prevent spam)
                 await usageTracker.markFeedbackPrompted();
             }
+
+            // Check if should prompt about Docker environment
+            result = await processDockerPrompt(result, name);
         }
 
         return result;

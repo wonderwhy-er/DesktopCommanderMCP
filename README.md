@@ -2,6 +2,7 @@
 ### Search, update, manage files and run terminal commands with AI
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
+[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/wonderwhy-er/DesktopCommanderMCP)](https://archestra.ai/mcp-catalog/wonderwhy-er__desktopcommandermcp)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://www.buymeacoffee.com/wonderwhyer)
 
@@ -20,12 +21,11 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 
 ## Table of Contents
 - [Features](#features)
-- [Installation](#installation)
+- [How to install](#how-to-install)
 - [Usage](#usage)
-- [Docker Support](#docker-support)
 - [Handling Long-Running Commands](#handling-long-running-commands)
-- [Work in Progress and TODOs](#work-in-progress-and-todos)
-- [Sponsors and Supporters](#sponsors-and-supporters)
+- [Work in Progress and TODOs](#roadmap)
+- [Sponsors and Supporters](#support-desktop-commander)
 - [Website](#website)
 - [Media](#media)
 - [Testimonials](#testimonials)
@@ -69,12 +69,13 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Log rotation with 10MB size limit
   - Detailed timestamps and arguments
 
-## Installation
-First, ensure you've downloaded and installed the [Claude Desktop app](https://claude.ai/download) and you have [npm installed](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm).
+## How to install
 
-> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1 and 3 have automatic updates**. Options 2, 4, and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+Desktop Commander offers multiple installation methods to fit different user needs and technical requirements.
 
-### Option 1: Install through npx ⭐ **Auto-Updates**
+> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1, 2, 3, and 6 have automatic updates**. Options 4 and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+
+### Option 1: Install through npx ⭐ **Auto-Updates** **Requires Node.js**
 Just run this in terminal:
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
@@ -88,9 +89,9 @@ Restart Claude if running.
 
 **✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
 **🔄 Manual Update:** Run the setup command again  
-**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates**
+### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates** **Installs Node.js if needed**
 For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
 ```
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
@@ -99,21 +100,24 @@ This script handles all dependencies and configuration automatically for a seaml
 
 **✅ Auto-Updates:** Yes - requires manual updates  
 **🔄 Manual Update:** Re-run the bash installer command above  
-**🗑️ Uninstall:** Remove the MCP server entry from your Claude config file and delete the cloned repository if it exists
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 3: Installing via Smithery ⭐ **Auto-Updates**
+### Option 3: Installing via Smithery ⭐ **Auto-Updates** **Requires Node.js**
 
-To install Desktop Commander for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
+To install Desktop Commander for Claude Desktop via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
 
-```bash
-npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude
-```
+1. **Visit the Smithery page:** https://smithery.ai/server/@wonderwhy-er/desktop-commander
+2. **Login to Smithery** if you haven't already
+3. **Select your client** (Claude Desktop) on the right side
+4. **Install with the provided key** that appears after selecting your client
+5. **Restart Claude Desktop**
+
+The old command-line installation method is no longer supported. Please use the web interface above for the most reliable installation experience.
 
 **✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Re-run the Smithery install command  
-**🗑️ Uninstall:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
+**🔄 Manual Update:** Visit the Smithery page and reinstall  
 
-### Option 4: Add to claude_desktop_config manually ❌ **Manual Updates**
+### Option 4: Add to claude_desktop_config manually ⭐ **Auto-Updates** **Requires Node.js**
 Add this entry to your claude_desktop_config.json:
 
 - On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
@@ -135,11 +139,11 @@ Add this entry to your claude_desktop_config.json:
 ```
 Restart Claude if running.
 
-**❌ Auto-Updates:** No - uses npx but config might not update automatically  
-**🔄 Manual Update:** Usually automatic via npx, but if issues occur, update your config file or re-add the entry  
-**🗑️ Uninstall:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
+**🔄 Manual Update:** Run the setup command again  
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or  remove the "desktop-commander" entry from your claude_desktop_config.json file
 
-### Option 5: Checkout locally ❌ **Manual Updates**
+### ### Option 5: Checkout locally ❌ **Manual Updates** **Requires Node.js** ❌ **Manual Updates** **Requires Node.js**
 1. Clone and build:
 ```bash
 git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
@@ -156,26 +160,223 @@ The setup command will:
 
 **❌ Auto-Updates:** No - requires manual git updates  
 **🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
-**🗑️ Uninstall:** Remove the cloned directory and remove MCP server entry from Claude config
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the cloned directory and remove MCP server entry from Claude config
+
+### Option 6: Docker Installation 🐳 ⭐ **Auto-Updates** **No Node.js Required**
+
+Perfect for users who want complete or partial isolation or don't have Node.js installed. Desktop Commander runs in a sandboxed Docker container with a persistent work environment.
+
+#### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed **and running**
+- Claude Desktop app installed
+
+**Important:** Make sure Docker Desktop is fully started before running the installer.
+
+#### Automated Installation (Recommended)
+
+**macOS/Linux:**
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
+```
+
+**Windows PowerShell:**
+```powershell
+# Download and run the installer (one-liner)
+iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))
+```
+
+The automated installer will:
+- Check Docker installation
+- Pull the latest Docker image 
+- Prompt you to select folders for mounting
+- Configure Claude Desktop automatically
+- Restart Claude if possible
+
+#### How Docker Persistence Works
+Desktop Commander creates a persistent work environment that remembers everything between sessions:
+- **Your development tools**: Any software you install (Node.js, Python, databases, etc.) stays installed
+- **Your configurations**: Git settings, SSH keys, shell preferences, and other personal configs are preserved  
+- **Your work files**: Projects and files in the workspace area persist across restarts
+- **Package caches**: Downloaded packages and dependencies are cached for faster future installs
+
+Think of it like having your own dedicated development computer that never loses your setup, but runs safely isolated from your main system.
+
+#### Manual Docker Configuration
+
+If you prefer manual setup, add this to your claude_desktop_config.json:
+
+**Basic setup (no file access):**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+**With folder mounting:**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v", "/Users/username/Desktop:/mnt/desktop",
+        "-v", "/Users/username/Documents:/mnt/documents",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+**Advanced folder mounting:**
+```json
+{
+  "mcpServers": {
+    "desktop-commander-in-docker": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "dc-system:/usr",
+        "-v", "dc-home:/root", 
+        "-v", "dc-workspace:/workspace",
+        "-v", "dc-packages:/var",
+        "-v", "/Users/username/Projects:/mnt/Projects",
+        "-v", "/Users/username/Downloads:/mnt/Downloads",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}
+```
+
+#### Docker Benefits
+✅ **Controlled Isolation:** Runs in sandboxed environment with persistent development state
+✅ **No Node.js Required:** Everything included in the container
+✅ **Cross-Platform:** Same experience on all operating systems
+✅ **Persistent Environment:** Your tools, files, configs, and work survives restarts
+
+**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
+**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
+
+#### Docker Management Commands
+
+**macOS/Linux:**
+
+Check installation status:
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
+```
+
+Reset all persistent data (removes all installed tools and configs):
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset
+```
+
+**Windows PowerShell:**
+
+Check status:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
+```
+
+Reset all data:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset
+```
+
+Show help:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Help
+```
+
+Verbose output:
+```powershell
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -VerboseOutput
+```  
+
+#### Troubleshooting Docker Installation
+If you broke the Docker container or need a fresh start:
+```bash
+# Reset and reinstall from scratch
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset && bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
+```
+This will completely reset your persistent environment and reinstall everything fresh with exception of not touching mounted folders
 
 ## Updating & Uninstalling Desktop Commander
 
-### Automatic Updates (Options 1 & 3 only)
-**Options 1 (npx) and 3 (Smithery)** automatically update to the latest version whenever you restart Claude. No manual intervention needed.
+### Automatic Updates (Options 1, 2, 3, 4 & 6)
+**Options 1 (npx), Option 2 (bash installer), 3 (Smithery), 4 (manual config), and 6 (Docker)** automatically update to the latest version whenever you restart Claude. No manual intervention needed.
 
-### Manual Updates (Options 2, 4 & 5)
-- **Option 2 (bash installer):** Re-run the curl command
-- **Option 4 (manual config):** Usually automatic via npx, but re-add config entry if issues occur
+### Manual Updates (Option 5)
 - **Option 5 (local checkout):** `cd DesktopCommanderMCP && git pull && npm run setup`
 
 ### Uninstalling Desktop Commander
-- **Option 1:** `npx @wonderwhy-er/desktop-commander@latest setup --uninstall`
-- **Option 2:** Remove MCP server entry from Claude config and delete any cloned repositories
-- **Option 3:** `npx -y @smithery/cli uninstall @wonderwhy-er/desktop-commander --client claude`
-- **Option 4:** Remove the "desktop-commander" entry from your claude_desktop_config.json file
-- **Option 5:** Delete the cloned directory and remove MCP server entry from Claude config
+#### 🤖 Automatic Uninstallation (Recommended)
 
-After uninstalling, restart Claude Desktop to complete the removal.
+The easiest way to completely remove Desktop Commander:
+
+```bash
+npx @wonderwhy-er/desktop-commander@latest remove
+```
+
+This automatic uninstaller will:
+- ✅ Remove Desktop Commander from Claude's MCP server configuration
+- ✅ Create a backup of your Claude config before making changes
+- ✅ Provide guidance for complete package removal
+- ✅ Restore from backup if anything goes wrong
+
+#### 🔧 Manual Uninstallation
+
+If the automatic uninstaller doesn't work or you prefer manual removal:
+
+##### Remove from Claude Configuration
+
+1. **Locate your Claude Desktop config file:**
+  - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+  - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+  - **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+2. **Edit the config file:**
+  - Open the file in a text editor
+  - Find and remove the `"desktop-commander"` entry from the `"mcpServers"` section
+  - Save the file
+
+  **Example - Remove this section:**
+  ```json
+  {
+      "desktop-commander": {
+        "command": "npx",
+        "args": ["@wonderwhy-er/desktop-commander@latest"]
+      }
+  }
+  ```
+
+Close and restart Claude Desktop to complete the removal.
+
+#### 🆘 Troubleshooting
+
+**If automatic uninstallation fails:**
+- Use manual uninstallation as a fallback
+
+**If Claude won't start after uninstalling:**
+- Restore the backup config file created by the uninstaller
+- Or manually fix the JSON syntax in your claude_desktop_config.json
+
+**Need help?**
+- Join our Discord community: https://discord.com/invite/kQ27sNnZr7
 
 ## Usage
 
@@ -502,7 +703,7 @@ Terminal still can access files ignoring allowed directories.
 - **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
 - **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeServerCommander/pull/17)) - Enhanced code exploration with context-aware results
 
-## Work in Progress/TODOs/Roadmap
+## Roadmap
 
 The following features are currently being explored:
 
@@ -514,7 +715,7 @@ The following features are currently being explored:
 - **Interactive shell support** - ssh, node/python repl
 - **Improve large file reading and writing**
 
-## ❤️ Support Desktop Commander
+## Support Desktop Commander
 
 <div align="center">
   <h3>📢 SUPPORT THIS PROJECT</h3>
@@ -533,7 +734,7 @@ The following features are currently being explored:
 </div>
 
 
-### Supporters Hall of Fame
+### ❤️ Supporters Hall of Fame
 
 Generous supporters are featured here. Thank you for helping make this project possible!
 
