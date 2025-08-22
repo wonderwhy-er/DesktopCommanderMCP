@@ -10,6 +10,9 @@ export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
   allowedDirectories?: string[];
+  readOnlyDirectories?: string[]; // Directories that can be read but not modified
+  requireExplicitPermission?: boolean; // Require explicit flag for destructive commands
+  allowedSudoCommands?: string[]; // Whitelist of allowed sudo commands with pattern support
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
@@ -131,6 +134,9 @@ class ConfigManager {
       ],
       defaultShell: os.platform() === 'win32' ? 'powershell.exe' : '/bin/sh',
       allowedDirectories: [],
+      readOnlyDirectories: [], // Empty by default - no directories are read-only
+      requireExplicitPermission: false, // Default to false for backward compatibility
+      allowedSudoCommands: [], // Empty array allows no sudo commands by default
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000  // Default line limit for file read operations (changed from character-based)
