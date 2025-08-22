@@ -4,18 +4,25 @@ import {
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
     ListPromptsRequestSchema,
+    InitializeRequestSchema,
     type CallToolRequest,
+    type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import {zodToJsonSchema} from "zod-to-json-schema";
+import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
 
-// Shared constants for tool descriptions
-const PATH_GUIDANCE = `IMPORTANT: Always use absolute paths (starting with '/' or drive letter like 'C:\\') for reliability. Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
+// Get system information once at startup
+const SYSTEM_INFO = getSystemInfo();
+const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
+const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
+const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
 import {
-    ExecuteCommandArgsSchema,
-    ReadOutputArgsSchema,
+    StartProcessArgsSchema,
+    ReadProcessOutputArgsSchema,
+    InteractWithProcessArgsSchema,
     ForceTerminateArgsSchema,
     ListSessionsArgsSchema,
     KillProcessArgsSchema,
@@ -32,14 +39,21 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    GetUsageStatsArgsSchema,
+    GiveFeedbackArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
+import {getUsageStats} from './tools/usage.js';
+import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
 import {trackToolCall} from './utils/trackTools.js';
+import {usageTracker} from './utils/usageTracker.js';
+import {processDockerPrompt} from './utils/dockerPrompt.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
+import { logToStderr, logger } from './utils/logger.js';
 
-console.error("Loading server.ts");
+logToStderr('info', 'Loading server.ts');
 
 export const server = new Server(
     {
@@ -51,6 +65,7 @@ export const server = new Server(
             tools: {},
             resources: {},  // Add empty resources capability
             prompts: {},    // Add empty prompts capability
+            logging: {},    // Add logging capability for console redirection
         },
     },
 );
@@ -71,11 +86,51 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
     };
 });
 
-console.error("Setting up request handlers...");
+// Store current client info (simple variable)
+let currentClient = { name: 'uninitialized', version: 'uninitialized' };
+
+// Add handler for initialization method - capture client info
+server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
+    try {
+        // Extract and store current client information
+        const clientInfo = request.params?.clientInfo;
+        if (clientInfo) {
+            currentClient = {
+                name: clientInfo.name || 'unknown',
+                version: clientInfo.version || 'unknown'
+            };
+            // Send JSON-RPC notification about client connection
+            logToStderr('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
+        }
+
+        // Return standard initialization response
+        return {
+            protocolVersion: "2024-11-05",
+            capabilities: {
+                tools: {},
+                resources: {},
+                prompts: {},
+                logging: {},
+            },
+            serverInfo: {
+                name: "desktop-commander",
+                version: VERSION,
+            },
+        };
+    } catch (error) {
+        logToStderr('error', `Error in initialization handler: ${error}`);
+        throw error;
+    }
+});
+
+// Export current client info for access by other modules
+export { currentClient };
+
+logToStderr('info', 'Setting up request handlers...');
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
-        console.error("Generating tools list...");
+        logToStderr('debug', 'Generating tools list...');
         return {
             tools: [
                 // Configuration tools
@@ -89,7 +144,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
-                        -  version (version of the DesktopCommander)
+                        - currentClient (information about the currently connected MCP client)
+                        - clientHistory (history of all clients that have connected)
+                        - version (version of the DesktopCommander)
+                        - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 },
@@ -175,7 +233,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Write or append to file contents. 
 
-                        🎯 CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
+                        CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
 
                         STANDARD PROCESS FOR ANY FILE:
@@ -183,7 +241,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         2. THEN → write_file(filePath, secondChunk, {mode: 'append'})   [≤30 lines]
                         3. CONTINUE → write_file(filePath, nextChunk, {mode: 'append'}) [≤30 lines]
 
-                        ⚠️ ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
+                        ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
 
                         WHEN TO CHUNK (always be proactive):
                         1. Any file expected to be longer than 25-30 lines
@@ -333,27 +391,138 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 
                 // Terminal tools
                 {
-                    name: "execute_command",
+                    name: "start_process",
                     description: `
-                        Execute a terminal command with timeout.
+                        Start a new terminal process with intelligent state detection.
                         
-                        Command will continue running in background if it doesn't complete within timeout.
+                        PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
+                        This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
+                        The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
                         
-                        NOTE: For file operations, prefer specialized tools like read_file, search_code, 
-                        list_directory instead of cat, grep, or ls commands.
+                        CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
+                        
+                        ${OS_GUIDANCE}
+                        
+                        REQUIRED WORKFLOW FOR LOCAL FILES:
+                        1. start_process("python3 -i") - Start Python REPL for data analysis
+                        2. interact_with_process(pid, "import pandas as pd, numpy as np")
+                        3. interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
+                        4. interact_with_process(pid, "print(df.describe())")
+                        5. Continue analysis with pandas, matplotlib, seaborn, etc.
+                        
+                        COMMON FILE ANALYSIS PATTERNS:
+                        • start_process("python3 -i") → Python REPL for data analysis (RECOMMENDED)
+                        • start_process("node -i") → Node.js for JSON processing  
+                        • start_process("cut -d',' -f1 file.csv | sort | uniq -c") → Quick CSV analysis
+                        • start_process("wc -l /path/file.csv") → Line counting
+                        • start_process("head -10 /path/file.csv") → File preview
+                        
+                        BINARY FILE SUPPORT:
+                        For PDF, Excel, Word, archives, databases, and other binary formats, use process tools with appropriate libraries or command-line utilities.
+                        
+                        INTERACTIVE PROCESSES FOR DATA ANALYSIS:
+                        1. start_process("python3 -i") - Start Python REPL for data work
+                        2. start_process("node -i") - Start Node.js REPL for JSON/JS
+                        3. start_process("bash") - Start interactive bash shell
+                        4. Use interact_with_process() to send commands
+                        5. Use read_process_output() to get responses
+                        
+                        SMART DETECTION:
+                        - Detects REPL prompts (>>>, >, $, etc.)
+                        - Identifies when process is waiting for input
+                        - Recognizes process completion vs timeout
+                        - Early exit prevents unnecessary waiting
+                        
+                        STATES DETECTED:
+                        Process waiting for input (shows prompt)
+                        Process finished execution  
+                        Process running (use read_process_output)
+                        
+                        ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
+                        NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ExecuteCommandArgsSchema),
+                    inputSchema: zodToJsonSchema(StartProcessArgsSchema),
                 },
                 {
-                    name: "read_output",
+                    name: "read_process_output",
                     description: `
-                        Read new output from a running terminal session.
-                        Set timeout_ms for long running commands.
+                        Read output from a running process with intelligent completion detection.
+                        
+                        Automatically detects when process is ready for more input instead of timing out.
+                        
+                        SMART FEATURES:
+                        - Early exit when REPL shows prompt (>>>, >, etc.)
+                        - Detects process completion vs still running
+                        - Prevents hanging on interactive prompts
+                        - Clear status messages about process state
+                        
+                        REPL USAGE:
+                        - Stops immediately when REPL prompt detected
+                        - Shows clear status: waiting for input vs finished
+                        - Shorter timeouts needed due to smart detection
+                        - Works with Python, Node.js, R, Julia, etc.
+                        
+                        DETECTION STATES:
+                        Process waiting for input (ready for interact_with_process)
+                        Process finished execution
+                        Timeout reached (may still be running)
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ReadOutputArgsSchema),
+                    inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                },
+                {
+                    name: "interact_with_process", 
+                    description: `
+                        Send input to a running process and automatically receive the response.
+                        
+                        CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
+                        For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
+                        The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
+                        
+                        FILE ANALYSIS PRIORITY ORDER (MANDATORY):
+                        1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
+                        2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
+                        3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
+                        
+                        REQUIRED INTERACTIVE WORKFLOW FOR FILE ANALYSIS:
+                        1. Start REPL: start_process("python3 -i")
+                        2. Load libraries: interact_with_process(pid, "import pandas as pd, numpy as np")
+                        3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
+                        4. Analyze: interact_with_process(pid, "print(df.describe())")
+                        5. Continue: interact_with_process(pid, "df.groupby('column').size()")
+                        
+                        BINARY FILE PROCESSING WORKFLOWS:
+                        Use appropriate Python libraries (PyPDF2, pandas, docx2txt, etc.) or command-line tools for binary file analysis.
+                        
+                        SMART DETECTION:
+                        - Automatically waits for REPL prompt (>>>, >, etc.)
+                        - Detects errors and completion states
+                        - Early exit prevents timeout delays
+                        - Clean output formatting (removes prompts)
+                        
+                        SUPPORTED REPLs:
+                        - Python: python3 -i (RECOMMENDED for data analysis)
+                        - Node.js: node -i  
+                        - R: R
+                        - Julia: julia
+                        - Shell: bash, zsh
+                        - Database: mysql, postgres
+                        
+                        PARAMETERS:
+                        - pid: Process ID from start_process
+                        - input: Code/command to execute
+                        - timeout_ms: Max wait (default: 8000ms)
+                        - wait_for_prompt: Auto-wait for response (default: true)
+                        
+                        Returns execution result with status indicators.
+                        
+                        ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
+                        NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                 },
                 {
                     name: "force_terminate",
@@ -367,6 +536,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     name: "list_sessions",
                     description: `
                         List all active terminal sessions.
+                        
+                        Shows session status including:
+                        - PID: Process identifier  
+                        - Blocked: Whether session is waiting for input
+                        - Runtime: How long the session has been running
+                        
+                        DEBUGGING REPLs:
+                        - "Blocked: true" often means REPL is waiting for input
+                        - Use this to verify sessions are running before sending input
+                        - Long runtime with blocked status may indicate stuck process
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
@@ -391,10 +570,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 },
+                {
+                    name: "get_usage_stats",
+                    description: `
+                        Get usage statistics for debugging and analysis.
+                        
+                        Returns summary of tool usage, success/failure rates, and performance metrics.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                },
+                {
+                    name: "give_feedback_to_desktop_commander",
+                    description: `
+                        Open feedback form in browser to provide feedback about Desktop Commander.
+                        
+                        IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
+                        The user will fill out the form manually in their browser.
+                        
+                        WORKFLOW:
+                        1. When user agrees to give feedback, just call this tool immediately
+                        2. No need to ask questions or collect information
+                        3. Tool opens form with only usage statistics pre-filled automatically:
+                           - tool_call_count: Number of commands they've made
+                           - days_using: How many days they've used Desktop Commander
+                           - platform: Their operating system (Mac/Windows/Linux)
+                           - client_id: Analytics identifier
+                        
+                        All survey questions will be answered directly in the form:
+                        - Job title and technical comfort level
+                        - Company URL for industry context
+                        - Other AI tools they use
+                        - Desktop Commander's biggest advantage
+                        - How they typically use it
+                        - Recommendation likelihood (0-10)
+                        - User study participation interest
+                        - Email and any additional feedback
+                        
+                        EXAMPLE INTERACTION:
+                        User: "sure, I'll give feedback"
+                        Claude: "Perfect! Let me open the feedback form for you."
+                        [calls tool immediately]
+                        
+                        No parameters are needed - just call the tool to open the form.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                },
             ],
         };
     } catch (error) {
-        console.error("Error in list_tools request handler:", error);
+        logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
     }
 });
@@ -403,99 +629,211 @@ import * as handlers from './handlers/index.js';
 import {ServerResult} from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
+    const {name, arguments: args} = request.params;
+
     try {
-        const {name, arguments: args} = request.params;
-        capture_call_tool('server_call_tool', {
-            name
-        });
+        // Prepare telemetry data - add config key for set_config_value
+        const telemetryData: any = { name };
+        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+            telemetryData.set_config_value_key_name = (args as any).key;
+        }
+        
+        capture_call_tool('server_call_tool', telemetryData);
         
         // Track tool call
         trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
+        let result: ServerResult;
+
         switch (name) {
             // Config tools
             case "get_config":
                 try {
-                    return await getConfig();
+                    result = await getConfig();
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_config handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to get configuration`}],
                         isError: true,
                     };
                 }
+                break;
             case "set_config_value":
                 try {
-                    return await setConfigValue(args);
+                    result = await setConfigValue(args);
                 } catch (error) {
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
-                    return {
+                    result = {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
                         isError: true,
                     };
                 }
+                break;
+
+            case "get_usage_stats":
+                try {
+                    result = await getUsageStats();
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "give_feedback_to_desktop_commander":
+                try {
+                    result = await giveFeedbackToDesktopCommander(args);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to open feedback form`}],
+                        isError: true,
+                    };
+                }
+                break;
 
             // Terminal tools
-            case "execute_command":
-                return await handlers.handleExecuteCommand(args);
+            case "start_process":
+                result = await handlers.handleStartProcess(args);
+                break;
 
-            case "read_output":
-                return await handlers.handleReadOutput(args);
+            case "read_process_output":
+                result = await handlers.handleReadProcessOutput(args);
+                break;
+                
+            case "interact_with_process":
+                result = await handlers.handleInteractWithProcess(args);
+                break;
 
             case "force_terminate":
-                return await handlers.handleForceTerminate(args);
+                result = await handlers.handleForceTerminate(args);
+                break;
 
             case "list_sessions":
-                return await handlers.handleListSessions();
+                result = await handlers.handleListSessions();
+                break;
 
             // Process tools
             case "list_processes":
-                return await handlers.handleListProcesses();
+                result = await handlers.handleListProcesses();
+                break;
 
             case "kill_process":
-                return await handlers.handleKillProcess(args);
+                result = await handlers.handleKillProcess(args);
+                break;
+
+            // Note: REPL functionality removed in favor of using general terminal commands
 
             // Filesystem tools
             case "read_file":
-                return await handlers.handleReadFile(args);
+                result = await handlers.handleReadFile(args);
+                break;
 
             case "read_multiple_files":
-                return await handlers.handleReadMultipleFiles(args);
+                result = await handlers.handleReadMultipleFiles(args);
+                break;
 
             case "write_file":
-                return await handlers.handleWriteFile(args);
+                result = await handlers.handleWriteFile(args);
+                break;
 
             case "create_directory":
-                return await handlers.handleCreateDirectory(args);
+                result = await handlers.handleCreateDirectory(args);
+                break;
 
             case "list_directory":
-                return await handlers.handleListDirectory(args);
+                result = await handlers.handleListDirectory(args);
+                break;
 
             case "move_file":
-                return await handlers.handleMoveFile(args);
+                result = await handlers.handleMoveFile(args);
+                break;
 
             case "search_files":
-                return await handlers.handleSearchFiles(args);
+                result = await handlers.handleSearchFiles(args);
+                break;
 
             case "search_code":
-                return await handlers.handleSearchCode(args);
+                result = await handlers.handleSearchCode(args);
+                break;
 
             case "get_file_info":
-                return await handlers.handleGetFileInfo(args);
+                result = await handlers.handleGetFileInfo(args);
+                break;
 
             case "edit_block":
-                return await handlers.handleEditBlock(args);
+                result = await handlers.handleEditBlock(args);
+                break;
 
             default:
                 capture('server_unknown_tool', {name});
-                return {
+                result = {
                     content: [{type: "text", text: `Error: Unknown tool: ${name}`}],
                     isError: true,
                 };
         }
+
+        // Track success or failure based on result
+        if (result.isError) {
+            await usageTracker.trackFailure(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
+        } else {
+            await usageTracker.trackSuccess(name);
+            console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
+
+            // Check if should prompt for feedback (only on successful operations)
+            const shouldPrompt = await usageTracker.shouldPromptForFeedback();
+            console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
+
+            if (shouldPrompt) {
+                console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
+                const feedbackResult = await usageTracker.getFeedbackPromptMessage();
+                console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
+
+                // Capture feedback prompt injection event
+                const stats = await usageTracker.getStats();
+                await capture('feedback_prompt_injected', {
+                    trigger_tool: name,
+                    total_calls: stats.totalToolCalls,
+                    successful_calls: stats.successfulCalls,
+                    failed_calls: stats.failedCalls,
+                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+                    total_sessions: stats.totalSessions,
+                    message_variant: feedbackResult.variant
+                });
+
+                // Inject feedback instruction for the LLM
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                    const currentContent = result.content[0].text || '';
+                    result.content[0].text = `${currentContent}${feedbackResult.message}`;
+               } else {
+                    result.content = [
+                        ...(result.content || []),
+                        {
+                            type: "text",
+                            text: feedbackResult.message
+                        }
+                    ];
+                }
+
+                // Mark that we've prompted (to prevent spam)
+                await usageTracker.markFeedbackPrompted();
+            }
+
+            // Check if should prompt about Docker environment
+            result = await processDockerPrompt(result, name);
+        }
+
+        return result;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
+
+        // Track the failure
+        await usageTracker.trackFailure(name);
+
         capture('server_request_error', {
             error: errorMessage
         });

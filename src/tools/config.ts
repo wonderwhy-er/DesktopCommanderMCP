@@ -1,18 +1,39 @@
 import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
+import { getSystemInfo } from '../utils/system-info.js';
+import { currentClient } from '../server.js';
 
 /**
- * Get the entire config
+ * Get the entire config including system information
  */
 export async function getConfig() {
   console.error('getConfig called');
   try {
     const config = await configManager.getConfig();
-    console.error(`getConfig result: ${JSON.stringify(config, null, 2)}`);
+    
+    // Add system information and current client to the config response
+    const systemInfo = getSystemInfo();
+    const configWithSystemInfo = {
+      ...config,
+      currentClient,
+      systemInfo: {
+        platform: systemInfo.platform,
+        platformName: systemInfo.platformName,
+        defaultShell: systemInfo.defaultShell,
+        pathSeparator: systemInfo.pathSeparator,
+        isWindows: systemInfo.isWindows,
+        isMacOS: systemInfo.isMacOS,
+        isLinux: systemInfo.isLinux,
+        docker: systemInfo.docker,
+        examplePaths: systemInfo.examplePaths
+      }
+    };
+    
+    console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
       content: [{
         type: "text",
-        text: `Current configuration:\n${JSON.stringify(config, null, 2)}`
+        text: `Current configuration:\n${JSON.stringify(configWithSystemInfo, null, 2)}`
       }],
     };
   } catch (error) {

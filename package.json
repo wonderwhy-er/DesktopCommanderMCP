@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.3",
+  "version": "0.2.9",
   "description": "MCP server for terminal operations and file editing",
   "license": "MIT",
   "author": "Eduards Ruzga",
@@ -12,7 +12,8 @@
   },
   "bin": {
     "desktop-commander": "dist/index.js",
-    "setup": "dist/setup-claude-server.js"
+    "setup": "dist/setup-claude-server.js",
+    "remove": "dist/uninstall-claude-server.js"
   },
   "files": [
     "dist",
@@ -20,18 +21,22 @@
     "testemonials"
   ],
   "scripts": {
+    "postinstall": "node dist/track-installation.js",
+    "open-chat": "open -n /Applications/Claude.app",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js dist/ && shx chmod +x dist/*.js",
+    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",
     "setup": "npm install && npm run build && node setup-claude-server.js",
     "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
+    "remove": "npm install && npm run build && node uninstall-claude-server.js",
     "prepare": "npm run build",
-    "test": "node test/run-all-tests.js",
+    "clean": "shx rm -rf dist",
+    "test": "npm run build && node test/run-all-tests.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
@@ -69,6 +74,7 @@
     "cross-fetch": "^4.1.0",
     "fastest-levenshtein": "^1.0.16",
     "glob": "^10.3.10",
+    "isbinaryfile": "^5.0.4",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },

@@ -1,4 +1,9 @@
 import { ChildProcess } from 'child_process';
+import { FilteredStdioServerTransport } from './custom-stdio.js';
+
+declare global {
+  var mcpTransport: FilteredStdioServerTransport | undefined;
+}
 
 export interface ProcessInfo {
   pid: number;

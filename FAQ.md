@@ -25,10 +25,19 @@ This document provides answers to the most commonly asked questions about Claude
 
 - [Features & Capabilities](#features--capabilities)
   - [What can I do with Claude Desktop Commander?](#what-can-i-do-with-claude-desktop-commander)
+  - [Can Claude analyze my CSV/Excel files directly?](#can-claude-analyze-my-csvexcel-files-directly)
+  - [Can Claude connect to remote servers?](#can-claude-connect-to-remote-servers)
+  - [Does Claude save temporary files when running code?](#does-claude-save-temporary-files-when-running-code)
+  - [What programming languages can Claude run interactively?](#what-programming-languages-can-claude-run-interactively)
+  - [Can Claude handle multi-step operations?](#can-claude-handle-multi-step-operations)
   - [How does it handle file editing?](#how-does-it-handle-file-editing)
   - [Can it help me understand complex codebases?](#can-it-help-me-understand-complex-codebases)
   - [How does it handle long-running commands?](#how-does-it-handle-long-running-commands)
   - [Can I use it for non-coding tasks?](#can-i-use-it-for-non-coding-tasks)
+  - [How does Desktop Commander collect feedback and usage data?](#how-does-desktop-commander-collect-feedback-and-usage-data)
+  - [Can I disable the new usage analytics?](#can-i-disable-the-new-usage-analytics)
+  - [How do I stop seeing feedback prompts?](#how-do-i-stop-seeing-feedback-prompts)
+  - [Does Desktop Commander work in Docker containers?](#does-desktop-commander-work-in-docker-containers)
 
 - [Security & Permissions](#security--permissions)
   - [Is it safe to give Claude access to my file system?](#is-it-safe-to-give-claude-access-to-my-file-system)
@@ -189,6 +198,26 @@ The tool enables a wide range of tasks:
 - Analyze and summarize codebases
 - Produce reports on code quality or structure
 
+### Can Claude analyze my CSV/Excel files directly?
+
+Yes! Just ask Claude to analyze any data file. It will write and execute Python/Node code in memory to process your data and show results instantly.
+
+### Can Claude connect to remote servers?
+
+Yes! Claude can start SSH connections, databases, or other programs and continue interacting with them throughout your conversation.
+
+### Does Claude save temporary files when running code?
+
+If you ask. Code can run in memory. When you ask for data analysis, Claude executes Python/R code directly without creating files on your disk. Or creating if you ask.
+
+### What programming languages can Claude run interactively?
+
+Python, Node.js, R, Julia, and shell commands. Any interactive terminal REPL environments. Perfect for data analysis, web development, statistics, and system administration.
+
+### Can Claude handle multi-step operations?
+
+Yes! Claude can start a program (like SSH or database connection) and send multiple commands to it, maintaining context throughout the session.
+
 ### How does it handle file editing and URL content?
 
 Claude Desktop Commander provides two main approaches to file editing and supports URL content:
@@ -254,6 +283,59 @@ Absolutely. While it excels at coding-related tasks, Claude Desktop Commander ca
 - System monitoring and maintenance
 - Running and managing any terminal-based tools
 - Data processing and analysis
+
+### How does Desktop Commander collect feedback and usage data?
+
+Desktop Commander has three separate data collection systems:
+
+**1. Personal Usage Analytics (Local Only, Always Active):**
+- Collects usage statistics stored **locally on your machine only**
+- Use the `get_usage_stats` tool to view your personal usage patterns, success rates, and performance metrics
+- **This data never leaves your computer** - it's for your own analysis and tool functionality
+- **Cannot be disabled** - these are needed for the tool to function properly
+
+**2. Anonymous Telemetry (External, Opt-Out Available):**
+- Sends anonymous usage data to analytics services to help improve the tool
+- No personal information, file contents, file paths, or command arguments are collected
+- **Can be disabled** by asking: **"Disable telemetry"**
+
+**3. Feedback System (User Controlled):**
+- Use the `give_feedback_to_desktop_commander` tool to provide feedback about Desktop Commander
+- Opens a browser-based feedback form to send suggestions and feedback to the development team
+- Pre-fills basic usage statistics (tool call count, days using, platform) for context
+- **You can edit or remove any pre-filled information** before submitting
+- **Completely optional** - you choose when and if to participate
+
+### Can I disable the new usage analytics?
+
+**Local usage analytics cannot be disabled** - they are required for the tool to function properly and power features like `get_usage_stats`.
+
+**Anonymous telemetry can be disabled** by asking in chat: **"Disable telemetry"**. This stops sending anonymous usage data to analytics services, but local usage tracking continues.
+
+**Feedback system is always optional** - you control when and if to use it, and can edit any pre-filled information.
+
+### How do I stop seeing feedback prompts?
+
+If you don't want to see periodic feedback requests, you can disable them:
+
+**Simple method:** Ask in chat: **"Set feedbackGiven to true"**
+
+This will stop Desktop Commander from showing feedback prompts while keeping all other functionality intact.
+
+### Does Desktop Commander work in Docker containers?
+
+Yes! Desktop Commander can be run in Docker containers for **complete isolation from your host system**, providing **zero risk to your computer**. This is perfect for testing, development, or when you want complete sandboxing.
+
+**Installation:**
+1. Install Docker for Windows/Mac from [docker.com](https://www.docker.com/products/docker-desktop/)
+2. Visit: https://hub.docker.com/mcp/server/desktop-commander/manual
+3. Choose Claude Desktop or other client you are using and copy the provided MCP toolkit commands to terminal or click "Standalone" to get the config JSON for your client
+
+**Benefits:**
+- Complete isolation from your host system
+- No risk to your computer or files
+- Consistent environment across different machines
+- Easy cleanup - just remove the container when done
 
 ### Can I read files from the end like Unix tail?
 

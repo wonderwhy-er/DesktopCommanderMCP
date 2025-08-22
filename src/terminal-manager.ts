@@ -3,6 +3,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import { analyzeProcessState } from './utils/process-detection.js';
 
 interface CompletedSession {
   pid: number;
@@ -15,6 +16,32 @@ interface CompletedSession {
 export class TerminalManager {
   private sessions: Map<number, TerminalSession> = new Map();
   private completedSessions: Map<number, CompletedSession> = new Map();
+  
+  /**
+   * Send input to a running process
+   * @param pid Process ID
+   * @param input Text to send to the process
+   * @returns Whether input was successfully sent
+   */
+  sendInputToProcess(pid: number, input: string): boolean {
+    const session = this.sessions.get(pid);
+    if (!session) {
+      return false;
+    }
+    
+    try {
+      if (session.process.stdin && !session.process.stdin.destroyed) {
+        // Ensure input ends with a newline for most REPLs
+        const inputWithNewline = input.endsWith('\n') ? input : input + '\n';
+        session.process.stdin.write(inputWithNewline);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error(`Error sending input to process ${pid}:`, error);
+      return false;
+    }
+  }
   
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
     // Get the shell from config if not specified
@@ -29,15 +56,30 @@ export class TerminalManager {
       }
     }
     
-    const spawnOptions = { 
-      shell: shellToUse
+    // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
+    // Note: No special stdio options needed here, Node.js handles pipes by default
+    
+    // Enhance SSH commands automatically
+    let enhancedCommand = command;
+    if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
+      enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
+      console.log(`Enhanced SSH command: ${enhancedCommand}`);
+    }
+    
+    const spawnOptions: any = { 
+      shell: shellToUse,
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color'  // Better terminal compatibility
+      }
     };
     
-    const process = spawn(command, [], spawnOptions);
+    // Spawn the process with an empty array of arguments and our options
+    const childProcess = spawn(enhancedCommand, [], spawnOptions);
     let output = '';
     
-    // Ensure process.pid is defined before proceeding
-    if (!process.pid) {
+    // Ensure childProcess.pid is defined before proceeding
+    if (!childProcess.pid) {
       // Return a consistent error object instead of throwing
       return {
         pid: -1,  // Use -1 to indicate an error state
@@ -47,43 +89,82 @@ export class TerminalManager {
     }
     
     const session: TerminalSession = {
-      pid: process.pid,
-      process,
+      pid: childProcess.pid,
+      process: childProcess,
       lastOutput: '',
       isBlocked: false,
       startTime: new Date()
     };
     
-    this.sessions.set(process.pid, session);
+    this.sessions.set(childProcess.pid, session);
 
     return new Promise((resolve) => {
-      process.stdout.on('data', (data) => {
+      let resolved = false;
+      let periodicCheck: NodeJS.Timeout | null = null;
+      
+      // Quick prompt patterns for immediate detection
+      const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
+      
+      const resolveOnce = (result: CommandExecutionResult) => {
+        if (resolved) return;
+        resolved = true;
+        if (periodicCheck) clearInterval(periodicCheck);
+        resolve(result);
+      };
+
+      childProcess.stdout.on('data', (data: any) => {
+        const text = data.toString();
+        output += text;
+        session.lastOutput += text;
+        
+        // Immediate check for obvious prompts
+        if (quickPromptPatterns.test(text)) {
+          session.isBlocked = true;
+          resolveOnce({
+            pid: childProcess.pid!,
+            output,
+            isBlocked: true
+          });
+        }
+      });
+
+      childProcess.stderr.on('data', (data: any) => {
         const text = data.toString();
         output += text;
         session.lastOutput += text;
       });
 
-      process.stderr.on('data', (data) => {
-        const text = data.toString();
-        output += text;
-        session.lastOutput += text;
-      });
+      // Periodic comprehensive check every 100ms
+      periodicCheck = setInterval(() => {
+        if (output.trim()) {
+          const processState = analyzeProcessState(output, childProcess.pid);
+          if (processState.isWaitingForInput) {
+            session.isBlocked = true;
+            resolveOnce({
+              pid: childProcess.pid!,
+              output,
+              isBlocked: true
+            });
+          }
+        }
+      }, 100);
 
+      // Timeout fallback
       setTimeout(() => {
         session.isBlocked = true;
-        resolve({
-          pid: process.pid!,
+        resolveOnce({
+          pid: childProcess.pid!,
           output,
           isBlocked: true
         });
       }, timeoutMs);
 
-      process.on('exit', (code) => {
-        if (process.pid) {
+      childProcess.on('exit', (code: any) => {
+        if (childProcess.pid) {
           // Store completed session before removing active session
-          this.completedSessions.set(process.pid, {
-            pid: process.pid,
-            output: output + session.lastOutput, // Combine all output
+          this.completedSessions.set(childProcess.pid, {
+            pid: childProcess.pid,
+            output: output, // Use only the main output variable
             exitCode: code,
             startTime: session.startTime,
             endTime: new Date()
@@ -95,10 +176,10 @@ export class TerminalManager {
             this.completedSessions.delete(oldestKey);
           }
           
-          this.sessions.delete(process.pid);
+          this.sessions.delete(childProcess.pid);
         }
-        resolve({
-          pid: process.pid!,
+        resolveOnce({
+          pid: childProcess.pid!,
           output,
           isBlocked: false
         });
@@ -118,9 +199,15 @@ export class TerminalManager {
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      // Format completion message with exit code and runtime
+      // Format with output first, then completion info
       const runtime = (completedSession.endTime.getTime() - completedSession.startTime.getTime()) / 1000;
-      return `Process completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s\nFinal output:\n${completedSession.output}`;
+      const output = completedSession.output.trim();
+      
+      if (output) {
+        return `${output}\n\nProcess completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s`;
+      } else {
+        return `Process completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s\n(No output produced)`;
+      }
     }
 
     return null;

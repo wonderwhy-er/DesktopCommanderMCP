@@ -13,7 +13,14 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  clientId?: string; // Unique client identifier for analytics
+  currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys
+}
+
+export interface ClientInfo {
+  name: string;
+  version: string;
 }
 
 /**
@@ -122,7 +129,7 @@ class ConfigManager {
         "cipher",    // Encrypt/decrypt files or wipe data
         "takeown"    // Take ownership of files
       ],
-      defaultShell: os.platform() === 'win32' ? 'powershell.exe' : 'bash',
+      defaultShell: os.platform() === 'win32' ? 'powershell.exe' : '/bin/sh',
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)

@@ -12,13 +12,13 @@ export const SetConfigValueArgsSchema = z.object({
 export const ListProcessesArgsSchema = z.object({});
 
 // Terminal tools schemas
-export const ExecuteCommandArgsSchema = z.object({
+export const StartProcessArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number(),
   shell: z.string().optional(),
 });
 
-export const ReadOutputArgsSchema = z.object({
+export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
   timeout_ms: z.number().optional(),
 });
@@ -92,4 +92,25 @@ export const EditBlockArgsSchema = z.object({
   old_string: z.string(),
   new_string: z.string(),
   expected_replacements: z.number().optional().default(1),
+});
+
+// Send input to process schema
+export const InteractWithProcessArgsSchema = z.object({
+  pid: z.number(),
+  input: z.string(),
+  timeout_ms: z.number().optional(),
+  wait_for_prompt: z.boolean().optional(),
+});
+
+// Usage stats schema
+export const GetUsageStatsArgsSchema = z.object({});
+
+// Feedback tool schema - no pre-filled parameters, all user input
+export const GiveFeedbackArgsSchema = z.object({
+  // No parameters needed - form will be filled manually by user
+  // Only auto-filled hidden fields remain:
+  // - tool_call_count (auto)
+  // - days_using (auto) 
+  // - platform (auto)
+  // - client_id (auto)
 });

@@ -59,6 +59,99 @@
     <link rel="preconnect" href="https://miro.medium.com">
     <link rel="preconnect" href="https://img.shields.io">
     <link rel="preconnect" href="https://www.googletagmanager.com">
+    <link rel="preconnect" href="https://eu.i.posthog.com">
+    
+    <!-- PostHog Analytics - Load early for optimal tracking -->
+    <script>
+        !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init Re Ms Fs Pe Rs Cs capture Ve calculateEventProperties Ds register register_once register_for_session unregister unregister_for_session zs getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey canRenderSurveyAsync identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty Ls As createPersonProfile Ns Is Us opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing is_capturing clear_opt_in_out_capturing Os debug I js getPageViewId captureTraceFeedback captureTraceMetric".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+        posthog.init('phc_SmlF1mKK199Blt4hUNL6V19IWydNNJ9o7Qbym2Y4zQa', {
+            api_host: 'https://eu.i.posthog.com',
+            defaults: '2025-05-24',
+            person_profiles: 'identified_only',
+            // Enhanced settings for better tracking
+            capture_pageview: true,
+            capture_pageleave: true,
+            disable_session_recording: false,
+            // Session recording and heatmaps
+            session_recording: {
+                recordCrossOriginIframes: true,
+                recordCanvas: true,
+                recordHeaders: true,
+                recordBody: true
+            },
+            // Autocapture settings for detailed interaction tracking
+            autocapture: {
+                dom_event_allowlist: ['click', 'change', 'submit'],
+                url_allowlist: ['desktopcommander.app'],
+                element_allowlist: ['a', 'button', 'form', 'input', 'select', 'textarea']
+            },
+            // Feature flags for A/B testing
+            bootstrap: {
+                featureFlags: {}
+            },
+            // Only load in production (desktopcommander.app)
+            loaded: function(posthog) {
+                if (window.location.hostname !== 'desktopcommander.app' && 
+                    window.location.hostname !== 'www.desktopcommander.app') {
+                    posthog.opt_out_capturing();
+                    console.log('🚫 PostHog opted out - not on production domain');
+                } else {
+                    console.log('✅ PostHog active on production domain');
+                    
+                    // Set up user identification based on unique browser fingerprint
+                    var userId = 'dc_user_' + posthog.get_distinct_id();
+                    
+                    // Register super properties that will be sent with all events
+                    posthog.register({
+                        app_name: 'Desktop Commander',
+                        app_version: '0.2.9',
+                        site_section: 'landing_page',
+                        user_type: 'anonymous'
+                    });
+                    
+                    // Capture initial session data
+                    window.DCPostHogSession = {
+                        session_start: Date.now(),
+                        user_id: userId,
+                        session_id: posthog.get_session_id(),
+                        initial_referrer: document.referrer,
+                        initial_utm: window.DCAnalytics ? window.DCAnalytics.getUTMParams() : null
+                    };
+                }
+            }
+        });
+        
+        // Global Analytics utilities (available before DOM ready)
+        window.DCAnalytics = {
+            // Extract UTM parameters for campaign tracking
+            getUTMParams: function() {
+                const urlParams = new URLSearchParams(window.location.search);
+                return {
+                    utm_source: urlParams.get('utm_source'),
+                    utm_medium: urlParams.get('utm_medium'),
+                    utm_campaign: urlParams.get('utm_campaign'),
+                    utm_term: urlParams.get('utm_term'),
+                    utm_content: urlParams.get('utm_content')
+                };
+            },
+            
+            // Get device and browser information
+            getDeviceInfo: function() {
+                return {
+                    screen_width: screen.width,
+                    screen_height: screen.height,
+                    viewport_width: window.innerWidth,
+                    viewport_height: window.innerHeight,
+                    device_pixel_ratio: window.devicePixelRatio || 1,
+                    user_agent: navigator.userAgent,
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    is_mobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent),
+                    connection_type: navigator.connection ? navigator.connection.effectiveType : 'unknown'
+                };
+            }
+        };
+    </script>
     
     <!-- Google Fonts - Poppins and Roboto with font-display swap -->
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300&family=Roboto:wght@200;300&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -92,10 +185,14 @@
     <!-- Web Components Loader - Dynamically loads all sponsorship components -->
     <script src="components/component-loader.js" defer></script>
     
-    <!-- Defer Google Analytics until page is loaded -->
+    <!-- Analytics Tracking - Button and interaction tracking -->
+    <script src="js/analytics-tracking.js" defer></script>
+    
+    <!-- Enhanced Google Analytics with faster loading for event tracking -->
     <script>
-    // Defer Google Analytics loading
+    // Load Google Analytics immediately for better event tracking
     document.addEventListener('DOMContentLoaded', function() {
+        // Reduced delay for faster analytics initialization
         setTimeout(function() {
             var analyticsScript = document.createElement('script');
             analyticsScript.async = true;
@@ -105,8 +202,40 @@
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
             gtag('js', new Date());
-            gtag('config', 'G-HXL4Y3Y62N');
-        }, 3000); // 3 second delay
+            gtag('config', 'G-HXL4Y3Y62N', {
+                // Enhanced measurement for better tracking
+                enhanced_measurement: true,
+                // Track outbound clicks automatically
+                track_outbound_links: true,
+                // Track file downloads
+                track_downloads: true,
+                // Track scroll depth
+                track_scroll: true
+            });
+            
+            // Make gtag available globally for our custom tracking
+            window.gtag = gtag;
+            
+            // Track Docker Gateway campaign arrivals
+            const urlParams = new URLSearchParams(window.location.search);
+            const utmSource = urlParams.get('utm_source');
+            const utmMedium = urlParams.get('utm_medium');
+            const utmCampaign = urlParams.get('utm_campaign');
+            
+            // If this is a Docker Gateway referral, send specific event
+            if (utmSource === 'docker_gateway' && utmMedium === 'in_app_message' && utmCampaign === 'docker_to_native') {
+                gtag('event', 'docker_gateway_arrival', {
+                    'event_category': 'Docker_Gateway_Campaign',
+                    'event_label': 'user_arrived_from_docker_message',
+                    'custom_map': {
+                        'source': utmSource,
+                        'medium': utmMedium,
+                        'campaign': utmCampaign
+                    }
+                });
+                console.log('📊 Docker Gateway Campaign Arrival Tracked');
+            }
+        }, 1000); // Reduced from 3000ms to 1000ms for faster initialization
     });
     </script>
 
@@ -185,10 +314,31 @@
             border-radius: 5px; 
             text-decoration: none; 
             font-weight: 300;
+            white-space: nowrap;
+            font-size: 14px;
         }
         .header-cta-btn:hover {
             color: white;
             background-color: #0056a0;
+        }
+        
+        .header-consultation-btn {
+            background-color: #ff6b35; 
+            color: white; 
+            padding: 8px 15px; 
+            border-radius: 5px; 
+            text-decoration: none; 
+            font-weight: 500;
+            margin-right: 10px;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+        
+        .header-consultation-btn:hover {
+            color: white;
+            background-color: #e55a2b;
+            transform: translateY(-1px);
         }
         /* Constrain header layout */
         .header-container { 
@@ -304,6 +454,24 @@
             background-color: #0056a0 !important;
         }
         
+        /* Consultation Button Styles */
+        .consultation-btn {
+            background-color: #ff6b35 !important; /* Distinctive orange color */
+            border: none !important;
+            color: white !important;
+            font-weight: 500 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+        }
+        
+        .consultation-btn:hover {
+            background-color: #e55a2b !important;
+            color: white !important;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(255, 107, 53, 0.4);
+        }
+        
         /* Promotion Bar Styles */
         .promotion-bar {
             background-color: #0078D7;
@@ -319,6 +487,12 @@
             align-items: center;
         }
         
+        @media (max-width: 1024px) {
+            .header-cta-btn {
+                padding: 6px 12px;
+                font-size: 13px;
+            }
+        }
         
         @media (max-width: 768px) {
             .header-cta-btn {
@@ -787,6 +961,12 @@
                 gap: 15px;
             }
             
+            .hero-content .hero-btns .btn {
+                flex: 1;
+                min-width: 140px;
+                text-align: center;
+            }
+            
             /* Mobile menu when active */
             .mobile-nav.active {
                 display: block;
@@ -848,15 +1028,7 @@
                 <!-- Desktop Navigation -->
                 <nav class="desktop-nav" aria-label="Main Navigation">
                 <ul>
-                    <li class="dropdown">
-                        <a href="#cases" class="dropdown-toggle" aria-haspopup="true" aria-expanded="false">Use Cases <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></a>
-                        <ul class="dropdown-menu" role="menu">
-                            <li><a href="#cases-software" role="menuitem">Software Engineer</a></li>
-                            <li><a href="#cases-devops" role="menuitem">DevOps</a></li>
-                            <li><a href="#cases-writer" role="menuitem">Technical Writer</a></li>
-                            <li><a href="#cases-uxui" role="menuitem">UX/UI Designer</a></li>
-                        </ul>
-                    </li>
+                    <li><a href="https://library.desktopcommander.app" target="_blank" rel="noopener">Prompts</a></li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li class="dropdown">
@@ -878,7 +1050,7 @@
                 <!-- Mobile Navigation (no dropdowns) -->
                 <nav class="mobile-nav" aria-label="Mobile Navigation">
                 <ul>
-                    <li><a href="#cases">Use Cases</a></li>
+                    <li><a href="https://library.desktopcommander.app" target="_blank" rel="noopener">Prompts</a></li>
                     <li><a href="#installation">Installation</a></li>
                     <li><a href="#testimonials">Testimonials</a></li>
                     <li><a href="https://discord.gg/kQ27sNnZr7" target="_blank" rel="noopener">Join Discord</a></li>
@@ -891,7 +1063,7 @@
                 </ul>
                 </nav>
                 
-                <a href="#installation" class="header-cta-btn">Install</a>
+                <a href="#installation" class="header-cta-btn" data-track="install-header">Install Desktop Commander</a>
                 <div class="mobile-menu-btn" role="button" aria-expanded="false" aria-label="Toggle mobile menu" tabindex="0">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-menu" aria-hidden="true"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
@@ -942,10 +1114,13 @@
                         </div>
                     </div>
                     <div class="hero-btns">
-                        <a href="#installation" class="btn primary-btn blue_btn">
+                        <a href="https://go.desktopcommander.app/free-call" target="_blank" class="btn primary-btn consultation-btn" data-track="consultation-hero">
+                            FREE CONSULTATION
+                        </a>
+                        <a href="#installation" class="btn primary-btn blue_btn" data-track="install-hero">
                             INSTALL
                         </a>
-                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn secondary-btn contact-btn" style="background-color: transparent; border: 2px solid #ffffff; color: #ffffff;">
+                        <a href="https://discord.gg/kQ27sNnZr7" target="_blank" class="btn secondary-btn contact-btn" style="background-color: transparent; border: 2px solid #ffffff; color: #ffffff;" data-track="discord-hero">
                             JOIN DISCORD
                         </a>
                     </div>
@@ -1015,8 +1190,8 @@
                     <div class="benefit-icon">
                         <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                     </div>
-                    <h3>Full terminal access</h3>
-                    <p>Execute any command line operation directly through Claude's interface for seamless development, testing, and deployment workflows.</p>
+                    <h3>Interactive code execution</h3>
+                    <p>Execute Python, Node.js, R code in memory for instant data analysis. Connect to SSH, databases, and maintain persistent sessions for complex workflows.</p>
                 </div>
                 
                 <div class="benefit-card">
@@ -1083,6 +1258,25 @@
                         </ul>
                     </div>
                     <!-- <a href="segments/user-segments.html#devops-professionals" class="segment-link">Learn More</a> -->
+                </div>
+                
+                <!-- Data Analyst Segment -->
+                <div class="segment-card" id="cases-data">
+                    <div class="segment-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3"></path></svg>
+                    </div>
+                    <h3>AI Data Analyst</h3>
+                    <p>Analyze CSV files, databases, and datasets instantly with Python and R.</p>
+                    <div class="segment-jobs">
+                        <ul>
+                            <li>Instant CSV/Excel analysis</li>
+                            <li>Database queries with persistent connections</li>
+                            <li>Statistical analysis with R</li>
+                            <li>Data visualization</li>
+                            <li>Report generation</li>
+                        </ul>
+                    </div>
+                    <!-- <a href="segments/user-segments.html#data-professionals" class="segment-link">Learn More</a> -->
                 </div>
                 
                 <!-- Tech Writer Segment -->
@@ -1208,15 +1402,26 @@
                 <button class="tab-btn" onclick="openTab(event, 'smithery')" style="color: #121212; font-weight: 300;">Smithery Install</button>
                 <button class="tab-btn" onclick="openTab(event, 'manual')" style="color: #121212; font-weight: 300;">Manual Configuration</button>
                 <button class="tab-btn" onclick="openTab(event, 'local')" style="color: #121212; font-weight: 300;">Local Installation</button>
+                <button class="tab-btn" onclick="openTab(event, 'docker')" style="color: #121212; font-weight: 300;">🐳 Docker Install</button>
             </div>
             
             <div id="smithery" class="tab-content">
                 <div class="step">
                     <div class="step-content">
                         <h3>Smithery Install</h3>
-                        <p>Install automatically via Smithery:</p>
-                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx -y @smithery/cli install @wonderwhy-er/desktop-commander --client claude</pre>
-                    </div>
+                        <p>Install via the Smithery web interface:</p>
+                        
+                        <ol style="color: #121212; margin: 15px 0; padding-left: 20px;">
+                            <li><strong>Visit the Smithery page:</strong> <a href="https://smithery.ai/server/@wonderwhy-er/desktop-commander" target="_blank" style="color: #0078D7;">https://smithery.ai/server/@wonderwhy-er/desktop-commander</a></li>
+                            <li><strong>Login to Smithery</strong> if you haven't already</li>
+                            <li><strong>Select your client</strong> (Claude Desktop) on the right side</li>
+                            <li><strong>Install with the provided key</strong> that appears after selecting your client</li>
+                            <li><strong>Restart Claude Desktop</strong></li>
+                        </ol>
+
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Visit the Smithery page and reinstall</p>
+                   </div>
                 </div>
             </div>
             
@@ -1228,6 +1433,10 @@
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest setup</pre>
                         <p>For macOS users, you can also use this bash script:</p>
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash</pre>
+                        
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre></p>
                     </div>
                 </div>
             </div>
@@ -1245,7 +1454,10 @@
                         <pre
                             style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash</pre>
                         <p style="margin-top: 10px; font-style: italic;">This is the simplest installation method for macOS users.
-                        </p>
+                        </p><br />
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre></p>                        
                     </div>
                 </div>
             </div>
@@ -1266,6 +1478,10 @@
     }
   }
 }</pre>
+<br />
+                        <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the "desktop-commander" entry from your claude_desktop_config.json file</p>
                     </div>
                 </div>
             </div>
@@ -1278,17 +1494,129 @@
                         <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">git clone https://github.com/wonderwhy-er/DesktopCommanderMCP
 cd DesktopCommanderMCP
 npm run setup</pre>
+<br />
+                      <p>✅ <strong>Auto-Updates:</strong> Automatically updates when you restart Claude</p>
+                        <p>🔄 <strong>Manual Update:</strong> Run this command in terminal: <code style="background: #f4f4f4; padding: 2px 6px; border-radius: 3px;">npx @wonderwhy-er/desktop-commander@latest setup</code></p>
+                        <p>🗑️ <strong>Uninstall:</strong> Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the cloned directory and remove MCP server entry from Claude config</p>
 </div>
 </div>
 </div>
+
+            <div id="docker" class="tab-content">
+                <div class="step" id="docker-install">
+                    <div class="step-content">
+                        <h3>🐳 Docker Installation</h3>
+                        <p><strong>Perfect for complete isolation and no Node.js required!</strong></p>
+                        <p>Desktop Commander runs in a sandboxed Docker container with persistent development environment.</p>
+                        
+                        <h4>Prerequisites</h4>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li><a href="https://www.docker.com/products/docker-desktop/" target="_blank">Docker Desktop</a> installed <strong>and running</strong></li>
+                            <li>Claude Desktop app installed</li>
+                        </ul>
+                        
+                        <h4>Automated Installation (Recommended)</h4>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <strong>macOS/Linux:</strong>
+                            <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)</pre>
+                        </div>
+                        
+                        <div style="margin-bottom: 20px;">
+                            <strong>Windows PowerShell:</strong>
+                            <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))</pre>
+                        </div>
+                        
+                        <div style="background: #e8f4f8; padding: 15px; border-radius: 8px; margin: 15px 0;">
+                            <h4 style="margin-top: 0; color: #0078D7;">How Docker Persistence Works</h4>
+                            <p>Desktop Commander creates a persistent work environment that remembers everything between sessions:</p>
+                            <ul style="margin-bottom: 0; padding-left: 20px;">
+                                <li><strong>Your development tools:</strong> Any software you install stays installed</li>
+                                <li><strong>Your configurations:</strong> Git settings, SSH keys, shell preferences preserved</li>  
+                                <li><strong>Your work files:</strong> Projects and files in workspace persist across restarts</li>
+                                <li><strong>Package caches:</strong> Downloaded packages cached for faster installs</li>
+                            </ul>
+                        </div>
+                        
+                        <h4>Manual Docker Configuration</h4>
+                        <p>If you prefer manual setup, add this to your claude_desktop_config.json:</p>
+                        
+                        <strong>Basic setup (no file access):</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">{
+  "mcpServers": {
+    "desktop-commander-docker": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}</pre>
+
+                        <strong>With folder mounting:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">{
+  "mcpServers": {
+    "desktop-commander-docker": {
+      "command": "docker", 
+      "args": [
+        "run", "-i", "--rm",
+        "-v", "dc-system:/usr",
+        "-v", "dc-home:/root", 
+        "-v", "dc-workspace:/workspace",
+        "-v", "dc-packages:/var",
+        "-v", "/Users/username/Projects:/home/Projects",
+        "mcp/desktop-commander:latest"
+      ]
+    }
+  }
+}</pre>
+
+                        <h4>Docker Benefits</h4>
+                        <ul style="margin-bottom: 15px; padding-left: 20px;">
+                            <li><strong>✅ Complete Isolation:</strong> Runs in sandboxed environment</li>
+                            <li><strong>✅ No Node.js Required:</strong> Everything included in container</li>
+                            <li><strong>✅ Cross-Platform:</strong> Same experience on all operating systems</li>
+                            <li><strong>✅ Persistent Environment:</strong> Your tools and files survive restarts</li>
+                        </ul>
+                        
+                        <h4>Management Commands</h4>
+                        
+                        <strong>macOS/Linux:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;"># Check status
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
+
+# Reset persistent data
+bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset</pre>
+
+                        <strong>Windows PowerShell:</strong>
+                        <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;"># Check status
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
+
+# Reset data
+$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset</pre>
+
+                        <br />
+                        <p>✅ <strong>Auto-Updates:</strong> <code>latest</code> tag automatically gets newer versions</p>
+                        <p>🔄 <strong>Manual Update:</strong> <code>docker pull mcp/desktop-commander:latest</code> then restart Claude</p>
+                        <p>🗑️ <strong>Uninstall:</strong> Remove Docker configuration from Claude config and optionally run reset command to clear persistent data</p>
+                    </div>
+                </div>
+            </div>
+
 <div style="text-align: left; background: #f8f8f8; padding: 12px; overflow-x: auto; border-radius: 5px; margin-top: 15px; margin-bottom: 15px; border: 1px solid #ccc; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-    <p style="margin-top: 0; color: #171717;">To install DesktopCommanderMCP you need to have Node.js v18.18.0+ and Claude Desktop installed on your system:</p>
+    <p style="margin-top: 0; color: #171717;">To install DesktopCommanderMCP you need to have Node.js v18.18.0+ and Claude Desktop installed on your system (except Docker installation which doesn't require Node.js but Docker):</p>
     <p><strong>Download Node.js:</strong> <a href="https://nodejs.org/en/download" target="_blank">https://nodejs.org/en/download</a></p>
     <p style="margin-bottom: 0;"><strong>Download Claude Desktop:</strong> <a href="https://claude.ai/download" target="_blank">https://claude.ai/download</a></p>
 </div>
 <br />
 <p style="margin-top: 10px; font-style: italic;">Remember to restart Claude after installation.</p>
-
+<br />
+<div>
+                            <h2>How to remove Desktop Commander</h2>
+                        <p>Run this command in terminal: <pre style="background: #f4f4f4; padding: 10px; overflow-x: auto; border-radius: 5px; margin-top: 10px; white-space: pre-wrap; word-break: break-word;">npx @wonderwhy-er/desktop-commander@latest remove</pre> or remove the cloned directory and remove MCP server entry from Claude config</p>
+</div>
+  
         </div>
     </section>
 
@@ -1318,7 +1646,7 @@ npm run setup</pre>
             </div>
             
             <div class="trusted-by-cta">
-                <a href="#installation" class="btn ">Install</a>
+                <a href="#installation" class="btn" data-track="install-trusted-section">Install</a>
             </div>
         </div>
     </section>
@@ -1712,6 +2040,58 @@ npm run setup</pre>
                         </div>
                     </div>
                 </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How does Desktop Commander collect feedback and usage data?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Desktop Commander has three separate data collection systems:</p>
+                            <ul>
+                                <li><strong>Personal Usage Analytics (Local Only, Always Active):</strong> Collects usage statistics stored locally on your machine only. Use the <code>get_usage_stats</code> tool to view your personal usage patterns. This data never leaves your computer without actions from your side.</li>
+                                <li><strong>Anonymous Telemetry (External, Opt-Out Available):</strong> Sends anonymous usage data to analytics services to help improve the tool. No personal information is collected. Can be disabled by asking: "Disable telemetry in Desktop Commander Config".</li>
+                                <li><strong>Feedback System (User Controlled):</strong> Use the <code>give_feedback_to_desktop_commander</code> tool to provide feedback. Opens a browser-based form where you can edit or remove any pre-filled information. Completely optional.</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>How do I stop seeing feedback prompts?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>If you don't want to see periodic feedback requests, you can disable them.</p>
+                            <ul>
+                                <li>Ask in chat: "Set in Desktop Commander Config feedbackGiven to true"</li>
+                            </ul>
+                            <p>This will stop Desktop Commander from showing feedback prompts while keeping all other functionality intact.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion-item">
+                    <div class="accordion-header">
+                        <span>Does Desktop Commander work in Docker containers?</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-chevron-down"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </div>
+                    <div class="accordion-body">
+                        <div class="accordion-body-inner">
+                            <p>Yes! Desktop Commander can be run in Docker containers for complete isolation from your host system, providing zero risk to your computer. This is perfect for testing, development, or when you want complete sandboxing.</p>
+                            <p><strong>Installation:</strong></p>
+                            <ol>
+                                <li>Install Docker for Windows/Mac from <a href="https://www.docker.com/products/docker-desktop/" target="_blank">docker.com</a></li>
+                                <li>Visit: <a href="https://hub.docker.com/mcp/server/desktop-commander/manual" target="_blank">https://hub.docker.com/mcp/server/desktop-commander/manual</a></li>
+                                <li>Use the provided terminal command or click "Standalone" to get the config JSON</li>
+                            </ol>
+                            <p><strong>Benefits:</strong> Complete isolation, no risk to your files, consistent environment, and easy cleanup.</p>
+                        </div>
+                    </div>
+                </div>
             </div>
 
 
@@ -1990,6 +2370,7 @@ npm run setup</pre>
                     <ul>
                         <li><a href="#cases-software">AI Software Engineer</a></li>
                         <li><a href="#cases-devops">AI DevOps</a></li>
+                        <li><a href="#cases-data">AI Data Analyst</a></li>
                         <li><a href="#cases-writer">AI Technical Writer</a></li>
                         <li><a href="#cases-uxui">AI UX/UI Designer</a></li>
                     </ul>
@@ -1998,6 +2379,7 @@ npm run setup</pre>
                 <div class="footer-column">
                     <h3>Resources</h3>
                     <ul>
+                        <li><a href="https://go.desktopcommander.app/free-call">Free consultation</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP" target="_blank">GitHub Repository</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/wiki" target="_blank">Documentation</a></li>
                         <li><a href="https://github.com/wonderwhy-er/DesktopCommanderMCP/issues" target="_blank">Issue Tracker</a></li>
