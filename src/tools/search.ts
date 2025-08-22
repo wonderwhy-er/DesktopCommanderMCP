@@ -58,7 +58,17 @@ export async function searchCode(options: {
   }
   
   if (filePattern) {
-    args.push('-g', filePattern);
+    const patterns = filePattern
+      .split('|')
+      .map(p => p.trim())      // remove surrounding spaces
+      .filter(Boolean);        // drop empty tokens
+    
+    // If all patterns were empty, return no results
+    if (patterns.length === 0) {
+      return [];
+    }
+    
+    patterns.forEach(p => args.push('-g', p));
   }
   
   // Add pattern and path
@@ -116,6 +126,12 @@ export async function searchCode(options: {
               });
             }
           } catch (error) {
+
+
+
+
+
+
             const errorMessage = error instanceof Error ? error.message : String(error);
             capture('server_request_error', {error: `Error parsing ripgrep output: ${errorMessage}`});
             console.error(`Error parsing ripgrep output: ${errorMessage}`);    
@@ -152,7 +168,26 @@ export async function searchCodeFallback(options: {
   const validPath = await validatePath(rootPath);
   const results: SearchResult[] = [];
   const regex = new RegExp(pattern, ignoreCase ? 'i' : '');
-  const fileRegex = filePattern ? new RegExp(filePattern) : null;
+  
+  // Handle filePattern similarly to main implementation
+  let fileRegex: RegExp | null = null;
+  if (filePattern) {
+    const patterns = filePattern
+      .split('|')
+      .map(p => p.trim())
+      .filter(Boolean);
+    
+    // If all patterns were empty, return no results
+    if (patterns.length === 0) {
+      return [];
+    }
+    
+    // Create a regex that matches any of the patterns
+    const combinedPattern = patterns.map(p => 
+      p.replace(/\./g, '\\.').replace(/\*/g, '.*').replace(/\?/g, '.')
+    ).join('|');
+    fileRegex = new RegExp(`^(${combinedPattern})$`);
+  }
   
   async function searchDir(dirPath: string) {
     if (results.length >= maxResults) return;
