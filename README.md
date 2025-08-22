@@ -565,9 +565,15 @@ For commands that may take a while:
 
 ### ⚠️ Important Security Warnings
 
-1. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions.
+> **For comprehensive security information and vulnerability reporting**: See [SECURITY.md](SECURITY.md)
 
-2. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories. Full terminal sandboxing is on the roadmap.
+1. **Known security limitations**: Directory restrictions and command blocking can be bypassed through various methods including symlinks, command substitution, and absolute paths or code execution
+
+2. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions.
+
+3. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories.
+
+4. **For production security**: Use the [Docker installation](#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) which provides complete isolation from your host system.
 
 ### Configuration Tools
 
@@ -853,6 +859,9 @@ Yes, when installed through npx or Smithery, Desktop Commander automatically upd
 
 ### I'm having trouble installing or using the tool. Where can I get help?
 Join our [Discord server](https://discord.gg/kQ27sNnZr7) for community support, check the [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) for known problems, or review the [full FAQ](FAQ.md) for troubleshooting tips. You can also visit our [website FAQ section](https://desktopcommander.app#faq) for a more user-friendly experience. If you encounter a new issue, please consider [opening a GitHub issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/new) with details about your problem.
+
+### How do I report security vulnerabilities?
+Please create a [GitHub Issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) with detailed information about any security vulnerabilities you discover. See our [Security Policy](SECURITY.md) for complete guidelines on responsible disclosure.
 
 ## Data Collection & Privacy
 
