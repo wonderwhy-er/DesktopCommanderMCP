@@ -51,8 +51,9 @@ import {processDockerPrompt} from './utils/dockerPrompt.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
+import { logToStderr, logger } from './utils/logger.js';
 
-console.error("Loading server.ts");
+logToStderr('info', 'Loading server.ts');
 
 export const server = new Server(
     {
@@ -98,7 +99,8 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
             };
-            console.log(`Client connected: ${currentClient.name} v${currentClient.version}`);
+            // Send JSON-RPC notification about client connection
+            logToStderr('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
         }
 
         // Return standard initialization response
@@ -116,7 +118,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             },
         };
     } catch (error) {
-        console.error("Error in initialization handler:", error);
+        logToStderr('error', `Error in initialization handler: ${error}`);
         throw error;
     }
 });
@@ -124,11 +126,11 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 // Export current client info for access by other modules
 export { currentClient };
 
-console.error("Setting up request handlers...");
+logToStderr('info', 'Setting up request handlers...');
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
-        console.error("Generating tools list...");
+        logToStderr('debug', 'Generating tools list...');
         return {
             tools: [
                 // Configuration tools
@@ -618,7 +620,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             ],
         };
     } catch (error) {
-        console.error("Error in list_tools request handler:", error);
+        logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
     }
 });
