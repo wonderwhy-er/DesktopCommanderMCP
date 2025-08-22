@@ -372,21 +372,29 @@ We welcome feedback from users who try Desktop Commander with other MCP clients 
 
 ## Security & Permissions
 
+> **Important**: For current security limitations and vulnerability reporting, see our [Security Policy](SECURITY.md).
+
 ### Is it safe to give Claude access to my file system?
 
-Claude Desktop Commander operates within certain safety boundaries:
+Claude Desktop Commander has known security limitations:
 
-- While file restrictions are currently disabled, Claude typically only works with files in folders you specifically direct it to
+- Directory restrictions can be bypassed via symlinks and terminal commands
+- Command blocking can be bypassed via command substitution and absolute paths  
 - Claude can only perform actions that your user account has permission to do
-- No data is sent to external servers beyond what you share in Claude conversations
 
-> **Note:** Command blocking features are still in development. You should always review the actions Claude proposes before allowing it to make system changes, especially when working with important files or system configurations.
+> **For production use requiring security**: Use the [Docker installation](#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) with selective folder mounting for complete isolation from your host system.
 
 ### Can I control which directories Claude can access?
 
-Recent updates have removed path limitations, and work is in progress to add configuration options that will allow you to specify which directories the tool can access. This feature is being developed in [PR #16](https://github.com/wonderwhy-er/ClaudeDesktopCommander/pull/16).
+Directory access controls exist but have known bypass vulnerabilities. For secure usage, we recommend the Docker installation which provides complete isolation with controlled folder mounting.
 
 ### What commands are blocked by default?
+
+Command blocking exists but can be bypassed through various methods. The current system blocks dangerous commands like `rm`, `sudo`, `format`, etc., but these restrictions can be circumvented.
+
+### How do I report security vulnerabilities?
+
+Please create a [GitHub Issue](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues) with detailed information about any security vulnerabilities you discover. See our [Security Policy](SECURITY.md) for full guidelines.
 
 Claude Desktop Commander doesn't have a pre-defined blocklist, but you can use the `block_command` and `unblock_command` functions to manage which commands Claude can execute. It's recommended to block commands that could potentially be destructive, such as `rm -rf` or `format`.
 
