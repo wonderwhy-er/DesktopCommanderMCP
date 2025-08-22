@@ -41,6 +41,10 @@ import {
     EditBlockArgsSchema,
     GetUsageStatsArgsSchema,
     GiveFeedbackArgsSchema,
+    StartSearchArgsSchema,
+    GetMoreSearchResultsArgsSchema,
+    StopSearchArgsSchema,
+    ListSearchesArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
@@ -328,6 +332,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
+                },
+                {
+                    name: "start_search",
+                    description: `
+                        Start a streaming search that can return results progressively.
+                        
+                        Unlike regular search tools, this starts a background search process and returns
+                        immediately with a session ID. Use get_more_search_results to get results as they
+                        come in, and stop_search to stop the search early if needed.
+                        
+                        Perfect for large directories where you want to see results immediately and
+                        have the option to cancel if the search takes too long or you find what you need.
+                        
+                        Supports both file name search and content search with all the same filtering
+                        options as the regular search tools, but with progressive results.
+                        
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+                },
+                {
+                    name: "get_more_search_results",
+                    description: `
+                        Get more results from an active search.
+                        
+                        Returns only results found since the last read, along with search status.
+                        Works like read_process_output - call this repeatedly to get progressive
+                        results from a search started with start_search.
+                        
+                        Shows total results found, new results since last read, and whether the
+                        search is complete. Can be called multiple times to get updates.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                },
+                {
+                    name: "stop_search", 
+                    description: `
+                        Stop an active search.
+                        
+                        Stops the background search process gracefully. Use this when you've found
+                        what you need or if a search is taking too long. Similar to force_terminate
+                        for terminal processes.
+                        
+                        The search will still be available for reading final results until it's
+                        automatically cleaned up after 5 minutes.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+                },
+                {
+                    name: "list_searches",
+                    description: `
+                        List all active searches.
+                        
+                        Shows search IDs, search types, patterns, status, and runtime.
+                        Similar to list_sessions for terminal processes. Useful for managing
+                        multiple concurrent searches.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
                 },
                 {
                     name: "get_file_info",
@@ -758,6 +823,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "search_code":
                 result = await handlers.handleSearchCode(args);
+                break;
+
+            case "start_search":
+                result = await handlers.handleStartSearch(args);
+                break;
+
+            case "get_more_search_results":
+                result = await handlers.handleGetMoreSearchResults(args);
+                break;
+
+            case "stop_search":
+                result = await handlers.handleStopSearch(args);
+                break;
+
+            case "list_searches":
+                result = await handlers.handleListSearches();
                 break;
 
             case "get_file_info":

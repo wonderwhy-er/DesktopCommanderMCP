@@ -114,3 +114,26 @@ export const GiveFeedbackArgsSchema = z.object({
   // - platform (auto)
   // - client_id (auto)
 });
+
+// Search schemas (renamed for natural language)
+export const StartSearchArgsSchema = z.object({
+  path: z.string(),
+  pattern: z.string(),
+  searchType: z.enum(['files', 'content']).default('files'),
+  filePattern: z.string().optional(),
+  ignoreCase: z.boolean().optional().default(true),
+  maxResults: z.number().optional(),
+  includeHidden: z.boolean().optional().default(false),
+  contextLines: z.number().optional(),
+  timeout_ms: z.number().optional(), // Match process naming convention
+});
+
+export const GetMoreSearchResultsArgsSchema = z.object({
+  sessionId: z.string(),
+});
+
+export const StopSearchArgsSchema = z.object({
+  sessionId: z.string(),
+});
+
+export const ListSearchesArgsSchema = z.object({});
