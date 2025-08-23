@@ -91,6 +91,9 @@ export class SearchManager {
     // Set up process event handlers
     this.setupProcessHandlers(session);
 
+    // Start cleanup interval now that we have a session
+    startCleanupIfNeeded();
+
     // Set up timeout if specified and auto-terminate
     if (options.timeout) {
       setTimeout(() => {
@@ -235,10 +238,10 @@ export class SearchManager {
   }
 
   /**
-   * Get total number of active sessions
+   * Get total number of active sessions (excluding completed ones)
    */
   getActiveSessionCount(): number {
-    return this.sessions.size;
+    return Array.from(this.sessions.values()).filter(session => !session.isComplete).length;
   }
 
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
@@ -422,14 +425,29 @@ export class SearchManager {
 // Global search manager instance
 export const searchManager = new SearchManager();
 
-// Automatic cleanup every 5 minutes - make it clearable for tests
+// Lazy cleanup - only start interval when we actually have sessions to clean up
 let cleanupInterval: NodeJS.Timeout | null = null;
 
-// Only start cleanup interval in production (not during tests)
-if (!process.env.NODE_ENV || process.env.NODE_ENV !== 'test') {
-  cleanupInterval = setInterval(() => {
-    searchManager.cleanupSessions();
-  }, 5 * 60 * 1000);
+/**
+ * Start cleanup interval if we have sessions and no cleanup is running
+ */
+function startCleanupIfNeeded(): void {
+  if (!cleanupInterval && searchManager.getActiveSessionCount() > 0) {
+    cleanupInterval = setInterval(() => {
+      searchManager.cleanupSessions();
+      // Stop cleanup when no sessions remain
+      if (searchManager.getActiveSessionCount() === 0) {
+        stopSearchManagerCleanup();
+      }
+    }, 5 * 60 * 1000);
+    
+    // Also check immediately after a short delay (let search process finish)
+    setTimeout(() => {
+      if (searchManager.getActiveSessionCount() === 0) {
+        stopSearchManagerCleanup();
+      }
+    }, 1000);
+  }
 }
 
 // Export cleanup function for graceful shutdown
