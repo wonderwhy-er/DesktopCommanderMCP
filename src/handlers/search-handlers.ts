@@ -91,7 +91,11 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
   }
 
   try {
-    const results = searchManager.readSearchResults(parsed.data.sessionId);
+    const results = searchManager.readSearchResults(
+      parsed.data.sessionId,
+      parsed.data.offset || 0,
+      parsed.data.length || 100
+    );
     
     if (results.isError) {
       return {
@@ -108,11 +112,22 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
     output += `Status: ${results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
     output += `Runtime: ${Math.round(results.runtime / 1000)}s\n`;
     output += `Total results found: ${results.totalResults}\n`;
-    output += `New results since last read: ${results.newResultsCount}\n\n`;
+    
+    const offset = parsed.data.offset || 0;
+    
+    if (offset < 0) {
+      // Negative offset - tail behavior
+      output += `Showing last ${results.returnedCount} results\n\n`;
+    } else {
+      // Positive offset - range behavior
+      const startPos = offset;
+      const endPos = startPos + results.returnedCount - 1;
+      output += `Showing results ${startPos}-${endPos}\n\n`;
+    }
 
     if (results.results.length === 0) {
       if (results.isComplete) {
-        output += results.totalResults === 0 ? "No matches found." : "No new results since last read.";
+        output += results.totalResults === 0 ? "No matches found." : "No results in this range.";
       } else {
         output += "No results yet, search is still running...";
       }
@@ -120,9 +135,6 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
       output += "Results:\n";
       
       for (const result of results.results) {
-        // Skip the internal marker
-        if (result.file === '__LAST_READ_MARKER__') continue;
-        
         if (result.type === 'content') {
           output += `📄 ${result.file}:${result.line} - ${result.match?.substring(0, 100)}${result.match && result.match.length > 100 ? '...' : ''}\n`;
         } else {
@@ -131,8 +143,14 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
       }
     }
 
+    // Add pagination hints
+    if (offset >= 0 && results.hasMoreResults) {
+      const nextOffset = offset + results.returnedCount;
+      output += `\n📖 More results available. Use get_more_search_results with offset: ${nextOffset}`;
+    }
+
     if (results.isComplete) {
-      output += `\n✅ Search completed. Session will auto-cleanup in 2 minutes or use stop_search to clean up immediately.`;
+      output += `\n✅ Search completed.`;
     }
 
     return {

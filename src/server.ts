@@ -32,9 +32,7 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
-    SearchFilesArgsSchema,
     GetFileInfoArgsSchema,
-    SearchCodeArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
@@ -303,37 +301,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
                 },
                 {
-                    name: "search_files",
-                    description: `
-                        Finds files by name using a case-insensitive substring matching.
-                        
-                        Use this instead of 'execute_command' with find/dir/ls for locating files.
-                        Searches through all subdirectories from the starting path.
-                        
-                        Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter.
-                        Only searches within allowed directories.
-                        
-                        ${PATH_GUIDANCE}
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
-                },
-                {
-                    name: "search_code",
-                    description: `
-                        Search for text/code patterns within file contents using ripgrep.
-                        
-                        Use this instead of 'execute_command' with grep/find for searching code content.
-                        Fast and powerful search similar to VS Code search functionality.
-                        
-                        Supports regular expressions, file pattern filtering, and context lines.
-                        Has a default timeout of 30 seconds which can be customized.
-                        Only searches within allowed directories.
-                        
-                        ${PATH_GUIDANCE}
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
-                },
-                {
                     name: "start_search",
                     description: `
                         Start a streaming search that can return results progressively.
@@ -365,14 +332,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_more_search_results",
                     description: `
-                        Get more results from an active search.
+                        Get more results from an active search with offset-based pagination.
                         
-                        Returns only results found since the last read, along with search status.
+                        Supports partial result reading with:
+                        - 'offset' (start result index, default: 0)
+                          * Positive: Start from result N (0-based indexing)
+                          * Negative: Read last N results from end (tail behavior)
+                        - 'length' (max results to read, default: 100)
+                          * Used with positive offsets for range reading
+                          * Ignored when offset is negative (reads all requested tail results)
+                        
+                        Examples:
+                        - offset: 0, length: 100     → First 100 results
+                        - offset: 200, length: 50    → Results 200-249
+                        - offset: -20                → Last 20 results
+                        - offset: -5, length: 10     → Last 5 results (length ignored)
+                        
+                        Returns only results in the specified range, along with search status.
                         Works like read_process_output - call this repeatedly to get progressive
                         results from a search started with start_search.
-                        
-                        Shows total results found, new results since last read, and whether the
-                        search is complete. Can be called multiple times to get updates.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
@@ -825,14 +803,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "move_file":
                 result = await handlers.handleMoveFile(args);
-                break;
-
-            case "search_files":
-                result = await handlers.handleSearchFiles(args);
-                break;
-
-            case "search_code":
-                result = await handlers.handleSearchCode(args);
                 break;
 
             case "start_search":

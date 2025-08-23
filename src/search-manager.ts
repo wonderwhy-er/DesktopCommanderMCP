@@ -123,16 +123,21 @@ export class SearchManager {
   }
 
   /**
-   * Read new results from a search session (like read_process_output)
-   * Returns only results found since last read
+   * Read search results with offset-based pagination (like read_file)
+   * Supports both range reading and tail behavior
    */
-  readSearchResults(sessionId: string): {
+  readSearchResults(
+    sessionId: string, 
+    offset: number = 0, 
+    length: number = 100
+  ): {
     results: SearchResult[];
-    newResultsCount: number;
+    returnedCount: number;        // Renamed from newResultsCount
     totalResults: number;
     isComplete: boolean;
     isError: boolean;
     error?: string;
+    hasMoreResults: boolean;      // New field
     runtime: number;
   } {
     const session = this.sessions.get(sessionId);
@@ -141,39 +146,39 @@ export class SearchManager {
       throw new Error(`Search session ${sessionId} not found`);
     }
 
-    // Calculate new results since last read
-    const lastReadIndex = session.results.findIndex(r => 
-      r.file === '__LAST_READ_MARKER__'
-    );
+    // Get all results (excluding internal markers)
+    const allResults = session.results.filter(r => r.file !== '__LAST_READ_MARKER__');
     
-    let newResults: SearchResult[];
-    if (lastReadIndex === -1) {
-      // First read - return all results
-      newResults = [...session.results];
-    } else {
-      // Return results after the marker
-      newResults = session.results.slice(lastReadIndex + 1);
-      // Remove the old marker
-      session.results.splice(lastReadIndex, 1);
+    // Handle negative offsets (tail behavior) - like file reading
+    if (offset < 0) {
+      const tailCount = Math.abs(offset);
+      const tailResults = allResults.slice(-tailCount);
+      return {
+        results: tailResults,
+        returnedCount: tailResults.length,
+        totalResults: session.totalMatches,
+        isComplete: session.isComplete,
+        isError: session.isError,
+        error: session.error,
+        hasMoreResults: false, // Tail always returns what's available
+        runtime: Date.now() - session.startTime
+      };
     }
-
-    // Add new marker at the end
-    if (newResults.length > 0 && !session.isComplete) {
-      session.results.push({
-        file: '__LAST_READ_MARKER__',
-        type: 'file'
-      } as SearchResult);
-    }
-
+    
+    // Handle positive offsets (range behavior) - like file reading
+    const slicedResults = allResults.slice(offset, offset + length);
+    const hasMoreResults = offset + length < allResults.length || !session.isComplete;
+    
     session.lastReadTime = Date.now();
-
+    
     return {
-      results: newResults,
-      newResultsCount: newResults.length,
+      results: slicedResults,
+      returnedCount: slicedResults.length,
       totalResults: session.totalMatches,
       isComplete: session.isComplete,
       isError: session.isError,
       error: session.error,
+      hasMoreResults,
       runtime: Date.now() - session.startTime
     };
   }
