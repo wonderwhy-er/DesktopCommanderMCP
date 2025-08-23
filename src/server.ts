@@ -338,15 +338,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Start a streaming search that can return results progressively.
                         
+                        SEARCH TYPES:
+                        - searchType="files": Find files by name (pattern matches file names)
+                        - searchType="content": Search inside files for text patterns
+                        
+                        IMPORTANT PARAMETERS:
+                        - pattern: What to search for (file names OR content text)
+                        - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
+                        
+                        EXAMPLES:
+                        - Find package.json files: searchType="files", pattern="package.json", filePattern="package.json"
+                        - Find all JS files: searchType="files", pattern="*.js" (or use filePattern="*.js")
+                        - Search for "TODO" in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
+                        
                         Unlike regular search tools, this starts a background search process and returns
                         immediately with a session ID. Use get_more_search_results to get results as they
                         come in, and stop_search to stop the search early if needed.
                         
                         Perfect for large directories where you want to see results immediately and
                         have the option to cancel if the search takes too long or you find what you need.
-                        
-                        Supports both file name search and content search with all the same filtering
-                        options as the regular search tools, but with progressive results.
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
