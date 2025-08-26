@@ -440,6 +440,20 @@ function handleAnchorNavigation() {
     if (window.location.hash) {
         const hash = window.location.hash.substring(1); // Remove the #
         
+        // Handle general installation section link (just scroll, don't change tabs)
+        if (hash === 'installation') {
+            const installationSection = document.getElementById('installation');
+            if (installationSection) {
+                setTimeout(() => {
+                    installationSection.scrollIntoView({ 
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }, 100);
+            }
+            return; // Exit early, don't process as tab-specific
+        }
+        
         // Define valid installation tab anchors
         const validTabs = {
             'npx': 'npx',
