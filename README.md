@@ -131,7 +131,7 @@ Add this entry to your claude_desktop_config.json:
       "command": "npx",
       "args": [
         "-y",
-        "@wonderwhy-er/desktop-commander"
+        "@wonderwhy-er/desktop-commander@latest"
       ]
     }
   }
