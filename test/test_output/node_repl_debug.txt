@@ -36,9 +36,9 @@ for (let i = 0; i < 3; i++) {
 [32m[STDOUT] ...[0m
 [32m[STDOUT] Hello, User 0![0m
 [32m[STDOUT] Hello, User 1!
-Hello, User 2!
-undefined
->[0m
+Hello, User 2![0m
+[32m[STDOUT] undefined[0m
+[32m[STDOUT] >[0m
 [32m[STDOUT] >[0m
 [34mFinal output buffer: Welcome to Node.js v22.18.0.
 Type ".help" for more information.
