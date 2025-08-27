@@ -65,6 +65,15 @@ function openTab(evt, tabName) {
     // Show the selected tab and add an active class to the button
     document.getElementById(tabName).classList.add("active");
     evt.currentTarget.classList.add("active");
+    
+    // Update URL hash to match the selected tab (for shareable links)
+    if (tabName === 'docker') {
+        // Special case for docker - use docker-install anchor
+        history.replaceState(null, null, '#docker-install');
+    } else {
+        // For other tabs, use the tab name as anchor
+        history.replaceState(null, null, '#' + tabName);
+    }
 }
 
 // Make the openTab function available globally
@@ -314,11 +323,15 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
     anchor.addEventListener('click', function (e) {
         e.preventDefault();
         
-        const target = document.querySelector(this.getAttribute('href'));
+        const href = this.getAttribute('href');
+        const target = document.querySelector(href);
         if (target) {
             // Extra offset for section IDs that are inside the cases section
-            const isSubsection = this.getAttribute('href').startsWith('#cases-');
+            const isSubsection = href.startsWith('#cases-');
             const offset = isSubsection ? 120 : 80;
+            
+            // Update URL hash to match the clicked link
+            history.pushState(null, null, href);
             
             window.scrollTo({
                 top: target.offsetTop - offset,
@@ -431,23 +444,43 @@ function handleAnchorNavigation() {
     if (window.location.hash) {
         const hash = window.location.hash.substring(1); // Remove the #
         
-        // Special handling for docker-install anchor
-        if (hash === 'docker-install') {
-            // Check for UTM parameters to confirm this came from Docker Gateway
-            const urlParams = new URLSearchParams(window.location.search);
-            const utmSource = urlParams.get('utm_source');
-            const utmMedium = urlParams.get('utm_medium');
-            const utmCampaign = urlParams.get('utm_campaign');
-
+        // Handle general installation section link (just scroll, don't change tabs)
+        if (hash === 'installation') {
+            const installationSection = document.getElementById('installation');
+            if (installationSection) {
+                setTimeout(() => {
+                    installationSection.scrollIntoView({ 
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }, 100);
+            }
+            return; // Exit early, don't process as tab-specific
+        }
+        
+        // Define valid installation tab anchors
+        const validTabs = {
+            'npx': 'npx',
+            'bash': 'bash', 
+            'smithery': 'smithery',
+            'manual': 'manual',
+            'local': 'local',
+            'docker': 'docker',
+            'docker-install': 'docker' // Special case: docker-install maps to docker tab
+        };
+        
+        // Check if the hash corresponds to an installation tab
+        if (validTabs[hash]) {
+            const targetTab = validTabs[hash];
             
             // First scroll to the installation section
             const installationSection = document.getElementById('installation');
             if (installationSection) {
-                // Open the docker tab
-                const dockerTab = document.querySelector('[onclick*="docker"]');
-                if (dockerTab) {
-                    // Simulate click on docker tab
-                    dockerTab.click();
+                // Find and click the appropriate tab button
+                const tabButton = document.querySelector(`[onclick*="${targetTab}"]`);
+                if (tabButton) {
+                    // Simulate click on the tab
+                    tabButton.click();
                     
                     // Wait a bit for tab to open, then scroll
                     setTimeout(() => {
@@ -456,14 +489,23 @@ function handleAnchorNavigation() {
                             block: 'start'
                         });
                         
-                        // Highlight the docker section briefly
-                        const dockerSection = document.getElementById('docker');
-                        if (dockerSection) {
-                            dockerSection.style.transition = 'background-color 0.5s ease';
-                            dockerSection.style.backgroundColor = '#e3f2fd';
-                            setTimeout(() => {
-                                dockerSection.style.backgroundColor = '';
-                            }, 2000);
+                        // Special handling for docker-install anchor
+                        if (hash === 'docker-install') {
+                            // Check for UTM parameters to confirm this came from Docker Gateway
+                            const urlParams = new URLSearchParams(window.location.search);
+                            const utmSource = urlParams.get('utm_source');
+                            const utmMedium = urlParams.get('utm_medium');
+                            const utmCampaign = urlParams.get('utm_campaign');
+                            
+                            // Highlight the docker section briefly
+                            const dockerSection = document.getElementById('docker');
+                            if (dockerSection) {
+                                dockerSection.style.transition = 'background-color 0.5s ease';
+                                dockerSection.style.backgroundColor = '#e3f2fd';
+                                setTimeout(() => {
+                                    dockerSection.style.backgroundColor = '';
+                                }, 2000);
+                            }
                         }
                     }, 100);
                 }

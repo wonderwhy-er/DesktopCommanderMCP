@@ -141,7 +141,7 @@ Add the MCP server to your claude_desktop_config.json (on Mac, found at ~/Librar
       "command": "npx",
       "args": [
         "-y",
-        "@wonderwhy-er/desktop-commander"
+        "@wonderwhy-er/desktop-commander@latest"
       ]
     }
   }
