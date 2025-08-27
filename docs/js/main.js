@@ -323,11 +323,15 @@ document.querySelectorAll('a[href^="#"]').forEach(anchor => {
     anchor.addEventListener('click', function (e) {
         e.preventDefault();
         
-        const target = document.querySelector(this.getAttribute('href'));
+        const href = this.getAttribute('href');
+        const target = document.querySelector(href);
         if (target) {
             // Extra offset for section IDs that are inside the cases section
-            const isSubsection = this.getAttribute('href').startsWith('#cases-');
+            const isSubsection = href.startsWith('#cases-');
             const offset = isSubsection ? 120 : 80;
+            
+            // Update URL hash to match the clicked link
+            history.pushState(null, null, href);
             
             window.scrollTo({
                 top: target.offsetTop - offset,
