@@ -40,7 +40,7 @@ const TOOL_CATEGORIES = {
   filesystem: ['read_file', 'read_multiple_files', 'write_file', 'create_directory', 'list_directory', 'move_file', 'get_file_info'],
   terminal: ['execute_command', 'read_output', 'force_terminate', 'list_sessions'],
   edit: ['edit_block'],
-  search: ['search_files', 'search_code'],
+  search: ['start_search', 'get_more_search_results', 'stop_search', 'list_searches'],
   config: ['get_config', 'set_config_value'],
   process: ['list_processes', 'kill_process']
 };

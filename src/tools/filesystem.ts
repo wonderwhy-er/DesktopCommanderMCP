@@ -903,6 +903,73 @@ export async function moveFile(sourcePath: string, destinationPath: string): Pro
 }
 
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
+    // Use the new search manager for better performance
+    // This provides a temporary compatibility layer until we fully migrate to search sessions
+    const { searchManager } = await import('../search-manager.js');
+    
+    try {
+        const result = await searchManager.startSearch({
+            rootPath,
+            pattern,
+            searchType: 'files',
+            ignoreCase: true,
+            maxResults: 5000, // Higher limit for compatibility
+        });
+
+        const sessionId = result.sessionId;
+
+        // Poll for results until complete
+        let allResults: string[] = [];
+        let isComplete = result.isComplete;
+        let startTime = Date.now();
+        
+        // Add initial results
+        for (const searchResult of result.results) {
+            if (searchResult.type === 'file') {
+                allResults.push(searchResult.file);
+            }
+        }
+        
+        while (!isComplete) {
+            await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+            
+            const results = searchManager.readSearchResults(sessionId);
+            isComplete = results.isComplete;
+            
+            // Add new file paths to results
+            for (const searchResult of results.results) {
+                if (searchResult.file !== '__LAST_READ_MARKER__' && searchResult.type === 'file') {
+                    allResults.push(searchResult.file);
+                }
+            }
+            
+            // Safety check to prevent infinite loops (30 second timeout)
+            if (Date.now() - startTime > 30000) {
+                searchManager.terminateSearch(sessionId);
+                break;
+            }
+        }
+
+        // Log only the count of found files, not their paths
+        capture('server_search_files_complete', {
+            resultsCount: allResults.length,
+            patternLength: pattern.length,
+            usedRipgrep: true
+        });
+
+        return allResults;
+    } catch (error) {
+        // Fallback to original Node.js implementation if ripgrep fails
+        capture('server_search_files_ripgrep_fallback', {
+            error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        
+        return await searchFilesNodeJS(rootPath, pattern);
+    }
+}
+
+// Keep the original Node.js implementation as fallback
+async function searchFilesNodeJS(rootPath: string, pattern: string): Promise<string[]> {
     const results: string[] = [];
 
     async function search(currentPath: string): Promise<void> {
@@ -940,7 +1007,8 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
         // Log only the count of found files, not their paths
         capture('server_search_files_complete', {
             resultsCount: results.length,
-            patternLength: pattern.length
+            patternLength: pattern.length,
+            usedRipgrep: false
         });
 
         return results;

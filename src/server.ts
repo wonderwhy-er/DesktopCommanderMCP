@@ -32,15 +32,17 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
-    SearchFilesArgsSchema,
     GetFileInfoArgsSchema,
-    SearchCodeArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
     GetUsageStatsArgsSchema,
     GiveFeedbackArgsSchema,
+    StartSearchArgsSchema,
+    GetMoreSearchResultsArgsSchema,
+    StopSearchArgsSchema,
+    ListSearchesArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
@@ -299,35 +301,86 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
                 },
                 {
-                    name: "search_files",
+                    name: "start_search",
                     description: `
-                        Finds files by name using a case-insensitive substring matching.
+                        Start a streaming search that can return results progressively.
                         
-                        Use this instead of 'execute_command' with find/dir/ls for locating files.
-                        Searches through all subdirectories from the starting path.
+                        SEARCH TYPES:
+                        - searchType="files": Find files by name (pattern matches file names)
+                        - searchType="content": Search inside files for text patterns
                         
-                        Has a default timeout of 30 seconds which can be customized using the timeoutMs parameter.
-                        Only searches within allowed directories.
+                        IMPORTANT PARAMETERS:
+                        - pattern: What to search for (file names OR content text)
+                        - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
+                        
+                        EXAMPLES:
+                        - Find package.json files: searchType="files", pattern="package.json", filePattern="package.json"
+                        - Find all JS files: searchType="files", pattern="*.js" (or use filePattern="*.js")
+                        - Search for "TODO" in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
+                        
+                        Unlike regular search tools, this starts a background search process and returns
+                        immediately with a session ID. Use get_more_search_results to get results as they
+                        come in, and stop_search to stop the search early if needed.
+                        
+                        Perfect for large directories where you want to see results immediately and
+                        have the option to cancel if the search takes too long or you find what you need.
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SearchFilesArgsSchema),
+                    inputSchema: zodToJsonSchema(StartSearchArgsSchema),
                 },
                 {
-                    name: "search_code",
+                    name: "get_more_search_results",
                     description: `
-                        Search for text/code patterns within file contents using ripgrep.
+                        Get more results from an active search with offset-based pagination.
                         
-                        Use this instead of 'execute_command' with grep/find for searching code content.
-                        Fast and powerful search similar to VS Code search functionality.
+                        Supports partial result reading with:
+                        - 'offset' (start result index, default: 0)
+                          * Positive: Start from result N (0-based indexing)
+                          * Negative: Read last N results from end (tail behavior)
+                        - 'length' (max results to read, default: 100)
+                          * Used with positive offsets for range reading
+                          * Ignored when offset is negative (reads all requested tail results)
                         
-                        Supports regular expressions, file pattern filtering, and context lines.
-                        Has a default timeout of 30 seconds which can be customized.
-                        Only searches within allowed directories.
+                        Examples:
+                        - offset: 0, length: 100     → First 100 results
+                        - offset: 200, length: 50    → Results 200-249
+                        - offset: -20                → Last 20 results
+                        - offset: -5, length: 10     → Last 5 results (length ignored)
                         
-                        ${PATH_GUIDANCE}
+                        Returns only results in the specified range, along with search status.
+                        Works like read_process_output - call this repeatedly to get progressive
+                        results from a search started with start_search.
+                        
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SearchCodeArgsSchema),
+                    inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                },
+                {
+                    name: "stop_search", 
+                    description: `
+                        Stop an active search.
+                        
+                        Stops the background search process gracefully. Use this when you've found
+                        what you need or if a search is taking too long. Similar to force_terminate
+                        for terminal processes.
+                        
+                        The search will still be available for reading final results until it's
+                        automatically cleaned up after 5 minutes.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+                },
+                {
+                    name: "list_searches",
+                    description: `
+                        List all active searches.
+                        
+                        Shows search IDs, search types, patterns, status, and runtime.
+                        Similar to list_sessions for terminal processes. Useful for managing
+                        multiple concurrent searches.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
                 },
                 {
                     name: "get_file_info",
@@ -752,12 +805,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 result = await handlers.handleMoveFile(args);
                 break;
 
-            case "search_files":
-                result = await handlers.handleSearchFiles(args);
+            case "start_search":
+                result = await handlers.handleStartSearch(args);
                 break;
 
-            case "search_code":
-                result = await handlers.handleSearchCode(args);
+            case "get_more_search_results":
+                result = await handlers.handleGetMoreSearchResults(args);
+                break;
+
+            case "stop_search":
+                result = await handlers.handleStopSearch(args);
+                break;
+
+            case "list_searches":
+                result = await handlers.handleListSearches();
                 break;
 
             case "get_file_info":

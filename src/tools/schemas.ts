@@ -64,26 +64,8 @@ export const MoveFileArgsSchema = z.object({
   destination: z.string(),
 });
 
-export const SearchFilesArgsSchema = z.object({
-  path: z.string(),
-  pattern: z.string(),
-  timeoutMs: z.number().optional(),
-});
-
 export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
-});
-
-// Search tools schema
-export const SearchCodeArgsSchema = z.object({
-  path: z.string(),
-  pattern: z.string(),
-  filePattern: z.string().optional(),
-  ignoreCase: z.boolean().optional(),
-  maxResults: z.number().optional(),
-  includeHidden: z.boolean().optional(),
-  contextLines: z.number().optional(),
-  timeoutMs: z.number().optional(),
 });
 
 // Edit tools schema
@@ -114,3 +96,28 @@ export const GiveFeedbackArgsSchema = z.object({
   // - platform (auto)
   // - client_id (auto)
 });
+
+// Search schemas (renamed for natural language)
+export const StartSearchArgsSchema = z.object({
+  path: z.string(),
+  pattern: z.string(),
+  searchType: z.enum(['files', 'content']).default('files'),
+  filePattern: z.string().optional(),
+  ignoreCase: z.boolean().optional().default(true),
+  maxResults: z.number().optional(),
+  includeHidden: z.boolean().optional().default(false),
+  contextLines: z.number().optional().default(5),
+  timeout_ms: z.number().optional(), // Match process naming convention
+});
+
+export const GetMoreSearchResultsArgsSchema = z.object({
+  sessionId: z.string(),
+  offset: z.number().optional().default(0),    // Same as file reading
+  length: z.number().optional().default(100),  // Same as file reading (but smaller default)
+});
+
+export const StopSearchArgsSchema = z.object({
+  sessionId: z.string(),
+});
+
+export const ListSearchesArgsSchema = z.object({});
