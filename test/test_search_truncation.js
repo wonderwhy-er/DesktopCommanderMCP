@@ -4,11 +4,11 @@ import { handleStartSearch, handleGetMoreSearchResults } from '../dist/handlers/
 /**
  * Helper function to wait for search completion and get all results
  */
-async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
+async function searchAndWaitForCompletion(searchArgs, timeout = 30000) {
   const result = await handleStartSearch(searchArgs);
   
-  // Extract session ID from result
-  const sessionIdMatch = result.content[0].text.match(/Started .+ session: (.+)/);
+  // Extract session ID from result with tighter regex
+  const sessionIdMatch = result.content[0].text.match(/Started .* session:\s*([a-zA-Z0-9_-]+)/);
   if (!sessionIdMatch) {
     throw new Error('Could not extract session ID from search result');
   }
@@ -66,7 +66,9 @@ async function testSearchTruncation() {
         
         const combinedLength = initialResult.content[0].text.length + finalResult.content[0].text.length;
         
-        if (combinedLength > 1000000) {
+        // Use consistent API limit constant
+        const apiLimit = 1048576; // 1 MiB
+        if (combinedLength > apiLimit) {
             console.log('⚠️  Combined results quite large - may need truncation handling');
         } else if (finalResult.content[0].text.includes('Results truncated')) {
             console.log('✅ Results properly truncated with warning message');

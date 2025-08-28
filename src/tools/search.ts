@@ -274,9 +274,10 @@ export async function searchTextInFiles(options: {
     capture('searchTextInFiles_ripgrep_fallback', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
+    // Use consistent exclusions - remove 'dist' to match ripgrep behavior
     return searchCodeFallback({
       ...options,
-      excludeDirs: ['node_modules', '.git', 'dist']
+      excludeDirs: ['node_modules', '.git']
     });
   }
 }

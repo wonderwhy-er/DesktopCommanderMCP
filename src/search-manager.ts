@@ -23,6 +23,7 @@ export interface SearchSession {
   options: SearchSessionOptions;
   buffer: string;  // For processing incomplete JSON lines
   totalMatches: number;
+  totalContextLines: number;  // Track context lines separately
 }
 
 export interface SearchSessionOptions {
@@ -40,8 +41,7 @@ export interface SearchSessionOptions {
 /**
  * Search Session Manager - handles ripgrep processes like terminal sessions
  * Supports both file search and content search with progressive results
- */
-export class SearchManager {
+ */export class SearchManager {
   private sessions = new Map<string, SearchSession>();
   private sessionCounter = 0;
 
@@ -83,7 +83,8 @@ export class SearchManager {
       lastReadTime: Date.now(),
       options,
       buffer: '',
-      totalMatches: 0
+      totalMatches: 0,
+      totalContextLines: 0
     };
 
     this.sessions.set(sessionId, session);
@@ -96,26 +97,49 @@ export class SearchManager {
 
     // Set up timeout if specified and auto-terminate
     // For exact filename searches, use a shorter default timeout
-    const timeoutMs = options.timeout || (this.isExactFilename(options.pattern) ? 1000 : undefined);
+    const timeoutMs = options.timeout ?? (this.isExactFilename(options.pattern) ? 1500 : undefined);
     
+    let killTimer: NodeJS.Timeout | null = null;
     if (timeoutMs) {
-      setTimeout(() => {
+      killTimer = setTimeout(() => {
         if (!session.isComplete && !session.process.killed) {
           session.process.kill('SIGTERM');
         }
       }, timeoutMs);
     }
 
+    // Clear timer on process completion
+    session.process.once('close', () => {
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+    });
+
+    session.process.once('error', () => {
+      if (killTimer) {
+        clearTimeout(killTimer);
+        killTimer = null;
+      }
+    });
+
     capture('search_session_started', {
       sessionId,
       searchType: options.searchType,
-      hasTimeout: !!options.timeout
+      hasTimeout: !!timeoutMs,
+      timeoutMs
     });
 
-    // Wait a brief moment for initial results or completion
-    // Use shorter wait for exact filename searches since they're typically fast
-    const waitTime = this.isExactFilename(options.pattern) ? 50 : 100;
-    await new Promise(resolve => setTimeout(resolve, waitTime));
+    // Wait for first chunk of data or early completion instead of fixed delay
+    const firstChunk = new Promise<void>(resolve => {
+      const onData = () => { 
+        session.process.stdout?.off('data', onData); 
+        resolve(); 
+      };
+      session.process.stdout?.once('data', onData);
+      setTimeout(resolve, 40); // cap at 40ms instead of 50-100ms
+    });
+    await firstChunk;
 
     return {
       sessionId,
@@ -139,6 +163,7 @@ export class SearchManager {
     results: SearchResult[];
     returnedCount: number;        // Renamed from newResultsCount
     totalResults: number;
+    totalMatches: number;         // Actual matches (excluding context)
     isComplete: boolean;
     isError: boolean;
     error?: string;
@@ -161,7 +186,8 @@ export class SearchManager {
       return {
         results: tailResults,
         returnedCount: tailResults.length,
-        totalResults: session.totalMatches,
+        totalResults: session.totalMatches + session.totalContextLines,
+        totalMatches: session.totalMatches, // Actual matches only
         isComplete: session.isComplete,
         isError: session.isError,
         error: session.error,
@@ -179,7 +205,8 @@ export class SearchManager {
     return {
       results: slicedResults,
       returnedCount: slicedResults.length,
-      totalResults: session.totalMatches,
+      totalResults: session.totalMatches + session.totalContextLines,
+      totalMatches: session.totalMatches, // Actual matches only
       isComplete: session.isComplete,
       isError: session.isError,
       error: session.error,
@@ -228,7 +255,7 @@ export class SearchManager {
       isComplete: session.isComplete,
       isError: session.isError,
       runtime: Date.now() - session.startTime,
-      totalResults: session.totalMatches
+      totalResults: session.totalMatches + session.totalContextLines
     }));
   }
 
@@ -290,8 +317,8 @@ export class SearchManager {
       args.push('--files');
     }
     
-    // Common options
-    if (options.ignoreCase !== false) {
+    // Case-insensitive: only meaningful for content searches
+    if (options.searchType === 'content' && options.ignoreCase !== false) {
       args.push('-i');
     }
     
@@ -310,31 +337,35 @@ export class SearchManager {
         .map(p => p.trim())
         .filter(Boolean);
       
-      patterns.forEach(pattern => {
-        args.push('-g', pattern);
-      });
+      for (const p of patterns) {
+        if (options.searchType === 'content') {
+          args.push('-g', p);
+        } else {
+          args.push('--glob', p);
+        }
+      }
     }
     
     // Handle the main search pattern
     if (options.searchType === 'files') {
       // For file search: determine how to treat the pattern
       if (this.isExactFilename(options.pattern)) {
-        // Exact filename: use -g with the exact pattern
-        args.push('-g', options.pattern);
+        // Exact filename: use --glob with the exact pattern
+        args.push('--glob', options.pattern);
       } else if (this.isGlobPattern(options.pattern)) {
-        // Already a glob pattern: use -g as-is
-        args.push('-g', options.pattern);
+        // Already a glob pattern: use --glob as-is
+        args.push('--glob', options.pattern);
       } else {
         // Substring/fuzzy search: wrap with wildcards
-        args.push('-g', `*${options.pattern}*`);
+        args.push('--glob', `*${options.pattern}*`);
       }
+      // Add the root path for file mode
+      args.push(options.rootPath);
     } else {
-      // Content search: pattern is the search term
-      args.push(options.pattern);
+      // Content search: terminate options before the pattern to prevent 
+      // patterns starting with '-' being interpreted as flags
+      args.push('--', options.pattern, options.rootPath);
     }
-    
-    // Add the root path
-    args.push(options.rootPath);
     
     return args;
   }
@@ -373,15 +404,12 @@ export class SearchManager {
       capture('search_session_completed', {
         sessionId: session.id,
         exitCode: code,
-        totalResults: session.totalMatches,
+        totalResults: session.totalMatches + session.totalContextLines,
+        totalMatches: session.totalMatches,
         runtime: Date.now() - session.startTime
       });
 
-      // Auto-cleanup completed sessions after 2 minutes
-      setTimeout(() => {
-        this.sessions.delete(session.id);
-        capture('search_session_auto_cleaned', { sessionId: session.id });
-      }, 2 * 60 * 1000);
+      // Rely on cleanupSessions(maxAge) only; no per-session timer
     });
 
     process.on('error', (error: Error) => {
@@ -394,11 +422,7 @@ export class SearchManager {
         error: error.message
       });
 
-      // Auto-cleanup error sessions after 2 minutes
-      setTimeout(() => {
-        this.sessions.delete(session.id);
-        capture('search_session_auto_cleaned', { sessionId: session.id });
-      }, 2 * 60 * 1000);
+      // Rely on cleanupSessions(maxAge) only; no per-session timer
     });
   }
 
@@ -418,7 +442,12 @@ export class SearchManager {
       const result = this.parseLine(line, session.options.searchType);
       if (result) {
         session.results.push(result);
-        session.totalMatches++;
+        // Separate counting of matches vs context lines
+        if (result.type === 'content' && line.includes('"type":"context"')) {
+          session.totalContextLines++;
+        } else {
+          session.totalMatches++;
+        }
       }
     }
   }
@@ -430,8 +459,8 @@ export class SearchManager {
         const parsed = JSON.parse(line);
         
         if (parsed.type === 'match') {
-          // Return first submatch (ripgrep can have multiple matches per line)
-          const submatch = parsed.data.submatches[0];
+          // Handle multiple submatches per line - return first submatch
+          const submatch = parsed.data?.submatches?.[0];
           return {
             file: parsed.data.path.text,
             line: parsed.data.line_number,
@@ -447,6 +476,12 @@ export class SearchManager {
             match: parsed.data.lines.text.trim(),
             type: 'content'
           };
+        }
+        
+        // Handle summary to reconcile totals
+        if (parsed.type === 'summary') {
+          // Optional: could reconcile totalMatches with parsed.data.stats?.matchedLines
+          return null;
         }
         
         return null;
@@ -467,27 +502,21 @@ export class SearchManager {
 // Global search manager instance
 export const searchManager = new SearchManager();
 
-// Lazy cleanup - only start interval when we actually have sessions to clean up
+// Cleanup management - run on fixed schedule
 let cleanupInterval: NodeJS.Timeout | null = null;
 
 /**
- * Start cleanup interval if we have sessions and no cleanup is running
+ * Start cleanup interval - now runs on fixed schedule
  */
 function startCleanupIfNeeded(): void {
-  if (!cleanupInterval && searchManager.getActiveSessionCount() > 0) {
+  if (!cleanupInterval) {
     cleanupInterval = setInterval(() => {
       searchManager.cleanupSessions();
-      // Stop cleanup when no sessions remain
-      if (searchManager.getActiveSessionCount() === 0) {
-        stopSearchManagerCleanup();
-      }
     }, 5 * 60 * 1000);
     
     // Also check immediately after a short delay (let search process finish)
     setTimeout(() => {
-      if (searchManager.getActiveSessionCount() === 0) {
-        stopSearchManagerCleanup();
-      }
+      searchManager.cleanupSessions();
     }, 1000);
   }
 }

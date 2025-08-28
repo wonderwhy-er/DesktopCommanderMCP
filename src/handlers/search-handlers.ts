@@ -2,8 +2,7 @@ import { searchManager } from '../search-manager.js';
 import {
   StartSearchArgsSchema,
   GetMoreSearchResultsArgsSchema,
-  StopSearchArgsSchema,
-  ListSearchesArgsSchema
+  StopSearchArgsSchema
 } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
 import { capture } from '../utils/capture.js';
@@ -11,7 +10,7 @@ import { capture } from '../utils/capture.js';
 /**
  * Handle start_search command
  */
-export async function handleStartSearch(args: any): Promise<ServerResult> {
+export async function handleStartSearch(args: unknown): Promise<ServerResult> {
   const parsed = StartSearchArgsSchema.safeParse(args);
   if (!parsed.success) {
     return {
@@ -81,7 +80,7 @@ export async function handleStartSearch(args: any): Promise<ServerResult> {
 /**
  * Handle get_more_search_results command
  */
-export async function handleGetMoreSearchResults(args: any): Promise<ServerResult> {
+export async function handleGetMoreSearchResults(args: unknown): Promise<ServerResult> {
   const parsed = GetMoreSearchResultsArgsSchema.safeParse(args);
   if (!parsed.success) {
     return {
@@ -93,8 +92,8 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
   try {
     const results = searchManager.readSearchResults(
       parsed.data.sessionId,
-      parsed.data.offset || 0,
-      parsed.data.length || 100
+      parsed.data.offset,
+      parsed.data.length
     );
     
     if (results.isError) {
@@ -111,9 +110,9 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
     let output = `Search session: ${parsed.data.sessionId}\n`;
     output += `Status: ${results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
     output += `Runtime: ${Math.round(results.runtime / 1000)}s\n`;
-    output += `Total results found: ${results.totalResults}\n`;
+    output += `Total results found: ${results.totalResults} (${results.totalMatches} matches)\n`;
     
-    const offset = parsed.data.offset || 0;
+    const offset = parsed.data.offset;
     
     if (offset < 0) {
       // Negative offset - tail behavior
@@ -169,7 +168,7 @@ export async function handleGetMoreSearchResults(args: any): Promise<ServerResul
 /**
  * Handle stop_search command
  */
-export async function handleStopSearch(args: any): Promise<ServerResult> {
+export async function handleStopSearch(args: unknown): Promise<ServerResult> {
   const parsed = StopSearchArgsSchema.safeParse(args);
   if (!parsed.success) {
     return {
