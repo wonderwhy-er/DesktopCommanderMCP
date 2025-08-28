@@ -267,11 +267,17 @@ export async function searchTextInFiles(options: {
   contextLines?: number,
 }): Promise<SearchResult[]> {
   try {
+    // For better performance and consistency, prefer the search session manager
+    // when doing content search, but keep the original direct ripgrep approach as primary
     return await searchCode(options);
   } catch (error) {
-   return searchCodeFallback({
+    capture('searchTextInFiles_ripgrep_fallback', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    // Use consistent exclusions - remove 'dist' to match ripgrep behavior
+    return searchCodeFallback({
       ...options,
-      excludeDirs: ['node_modules', '.git', 'dist']
+      excludeDirs: ['node_modules', '.git']
     });
   }
 }
