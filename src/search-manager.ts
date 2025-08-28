@@ -95,12 +95,15 @@ export class SearchManager {
     startCleanupIfNeeded();
 
     // Set up timeout if specified and auto-terminate
-    if (options.timeout) {
+    // For exact filename searches, use a shorter default timeout
+    const timeoutMs = options.timeout || (this.isExactFilename(options.pattern) ? 1000 : undefined);
+    
+    if (timeoutMs) {
       setTimeout(() => {
         if (!session.isComplete && !session.process.killed) {
           session.process.kill('SIGTERM');
         }
-      }, options.timeout);
+      }, timeoutMs);
     }
 
     capture('search_session_started', {
@@ -110,7 +113,9 @@ export class SearchManager {
     });
 
     // Wait a brief moment for initial results or completion
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Use shorter wait for exact filename searches since they're typically fast
+    const waitTime = this.isExactFilename(options.pattern) ? 50 : 100;
+    await new Promise(resolve => setTimeout(resolve, waitTime));
 
     return {
       sessionId,
@@ -249,6 +254,27 @@ export class SearchManager {
     return Array.from(this.sessions.values()).filter(session => !session.isComplete).length;
   }
 
+  /**
+   * Detect if pattern looks like an exact filename
+   * (has file extension and no glob wildcards)
+   */
+  private isExactFilename(pattern: string): boolean {
+    return /\.[a-zA-Z0-9]+$/.test(pattern) && 
+           !this.isGlobPattern(pattern);
+  }
+
+  /**
+   * Detect if pattern contains glob wildcards
+   */
+  private isGlobPattern(pattern: string): boolean {
+    return pattern.includes('*') || 
+           pattern.includes('?') || 
+           pattern.includes('[') || 
+           pattern.includes('{') ||
+           pattern.includes(']') ||
+           pattern.includes('}');
+  }
+
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
     const args: string[] = [];
     
@@ -277,7 +303,7 @@ export class SearchManager {
       args.push('-m', options.maxResults.toString());
     }
     
-    // File pattern filtering
+    // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
       const patterns = options.filePattern
         .split('|')
@@ -285,18 +311,29 @@ export class SearchManager {
         .filter(Boolean);
       
       patterns.forEach(pattern => {
-        if (options.searchType === 'content') {
-          args.push('-g', pattern);
-        } else {
-          args.push('--glob', pattern);
-        }
+        args.push('-g', pattern);
       });
     }
     
-    // Add pattern and path
-    if (options.searchType === 'content') {
+    // Handle the main search pattern
+    if (options.searchType === 'files') {
+      // For file search: determine how to treat the pattern
+      if (this.isExactFilename(options.pattern)) {
+        // Exact filename: use -g with the exact pattern
+        args.push('-g', options.pattern);
+      } else if (this.isGlobPattern(options.pattern)) {
+        // Already a glob pattern: use -g as-is
+        args.push('-g', options.pattern);
+      } else {
+        // Substring/fuzzy search: wrap with wildcards
+        args.push('-g', `*${options.pattern}*`);
+      }
+    } else {
+      // Content search: pattern is the search term
       args.push(options.pattern);
     }
+    
+    // Add the root path
     args.push(options.rootPath);
     
     return args;
