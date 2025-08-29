@@ -312,11 +312,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         IMPORTANT PARAMETERS:
                         - pattern: What to search for (file names OR content text)
                         - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
+                        - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         
                         EXAMPLES:
                         - Find package.json files: searchType="files", pattern="package.json", filePattern="package.json"
                         - Find all JS files: searchType="files", pattern="*.js" (or use filePattern="*.js")
                         - Search for "TODO" in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
+                        - Case-sensitive file search: searchType="files", pattern="README", ignoreCase=false
+                        - Case-insensitive file search: searchType="files", pattern="readme", ignoreCase=true
                         
                         Unlike regular search tools, this starts a background search process and returns
                         immediately with a session ID. Use get_more_search_results to get results as they
