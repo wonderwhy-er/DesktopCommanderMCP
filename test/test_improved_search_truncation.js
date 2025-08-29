@@ -1,5 +1,5 @@
 // Test script to verify improved search result behavior using new streaming API
-import { handleStartSearch, handleGetMoreSearchResults } from '../dist/handlers/search-handlers.js';
+import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
 
 /**
  * Helper function to wait for search completion and get all results
@@ -91,7 +91,6 @@ async function testImprovedSearchTruncation() {
         console.log(finalResult.content[0].text.substring(0, 200));
         
         // Check character length safety
-        const apiLimit = 1048576; // 1MB API limit
         const safetyMargin = apiLimit - totalLength;
         console.log(`\n📊 Safety Analysis:`);
         console.log(`   Initial response: ${initialResult.content[0].text.length.toLocaleString()} characters`);

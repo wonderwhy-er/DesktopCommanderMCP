@@ -317,7 +317,7 @@ export interface SearchSessionOptions {
       args.push('--files');
     }
     
-    // Case-insensitive: only meaningful for content searches
+    // Case-insensitive: content searches use -i flag, file searches use --iglob
     if (options.searchType === 'content' && options.ignoreCase !== false) {
       args.push('-i');
     }
@@ -341,7 +341,12 @@ export interface SearchSessionOptions {
         if (options.searchType === 'content') {
           args.push('-g', p);
         } else {
-          args.push('--glob', p);
+          // For file search: use --iglob for case-insensitive or --glob for case-sensitive
+          if (options.ignoreCase !== false) {
+            args.push('--iglob', p);
+          } else {
+            args.push('--glob', p);
+          }
         }
       }
     }
@@ -349,15 +354,17 @@ export interface SearchSessionOptions {
     // Handle the main search pattern
     if (options.searchType === 'files') {
       // For file search: determine how to treat the pattern
+      const globFlag = options.ignoreCase !== false ? '--iglob' : '--glob';
+      
       if (this.isExactFilename(options.pattern)) {
-        // Exact filename: use --glob with the exact pattern
-        args.push('--glob', options.pattern);
+        // Exact filename: use appropriate glob flag with the exact pattern
+        args.push(globFlag, options.pattern);
       } else if (this.isGlobPattern(options.pattern)) {
-        // Already a glob pattern: use --glob as-is
-        args.push('--glob', options.pattern);
+        // Already a glob pattern: use appropriate glob flag as-is
+        args.push(globFlag, options.pattern);
       } else {
         // Substring/fuzzy search: wrap with wildcards
-        args.push('--glob', `*${options.pattern}*`);
+        args.push(globFlag, `*${options.pattern}*`);
       }
       // Add the root path for file mode
       args.push(options.rootPath);
