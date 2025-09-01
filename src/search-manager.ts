@@ -36,6 +36,7 @@ export interface SearchSessionOptions {
   includeHidden?: boolean;
   contextLines?: number;
   timeout?: number;
+  earlyTermination?: boolean;  // Stop search early when exact filename match is found
 }
 
 /**
@@ -127,14 +128,16 @@ export interface SearchSessionOptions {
       sessionId,
       searchType: options.searchType,
       hasTimeout: !!timeoutMs,
-      timeoutMs
+      timeoutMs,
+      requestedPath: options.rootPath,
+      validatedPath: validPath
     });
 
     // Wait for first chunk of data or early completion instead of fixed delay
     const firstChunk = new Promise<void>(resolve => {
-      const onData = () => { 
-        session.process.stdout?.off('data', onData); 
-        resolve(); 
+      const onData = () => {
+        session.process.stdout?.off('data', onData);
+        resolve();
       };
       session.process.stdout?.once('data', onData);
       setTimeout(resolve, 40); // cap at 40ms instead of 50-100ms
@@ -189,27 +192,27 @@ export interface SearchSessionOptions {
         totalResults: session.totalMatches + session.totalContextLines,
         totalMatches: session.totalMatches, // Actual matches only
         isComplete: session.isComplete,
-        isError: session.isError,
-        error: session.error,
+        isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
+        error: session.error?.trim() || undefined,
         hasMoreResults: false, // Tail always returns what's available
         runtime: Date.now() - session.startTime
       };
     }
-    
+
     // Handle positive offsets (range behavior) - like file reading
     const slicedResults = allResults.slice(offset, offset + length);
     const hasMoreResults = offset + length < allResults.length || !session.isComplete;
-    
+
     session.lastReadTime = Date.now();
-    
+
     return {
       results: slicedResults,
       returnedCount: slicedResults.length,
       totalResults: session.totalMatches + session.totalContextLines,
       totalMatches: session.totalMatches, // Actual matches only
       isComplete: session.isComplete,
-      isError: session.isError,
-      error: session.error,
+      isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
+      error: session.error?.trim() || undefined,
       hasMoreResults,
       runtime: Date.now() - session.startTime
     };
@@ -387,11 +390,33 @@ export interface SearchSessionOptions {
 
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
-      session.error = (session.error || '') + errorText;
-      capture('search_session_error', { 
-        sessionId: session.id,
-        error: errorText.substring(0, 200) // Limit error length for telemetry
-      });
+
+      // Filter meaningful errors
+      const filteredErrors = errorText
+        .split('\n')
+        .filter(line => {
+          const trimmed = line.trim();
+
+          // Skip empty lines and lines with just symbols/numbers/colons
+          if (!trimmed || trimmed.match(/^[\)\(\s\d:]*$/)) return false;
+
+          // Skip all ripgrep system errors that start with "rg:"
+          if (trimmed.startsWith('rg:')) return false;
+
+          return true;
+        });
+
+      // Only add to session.error if there are actual meaningful errors after filtering
+      if (filteredErrors.length > 0) {
+        const meaningfulErrors = filteredErrors.join('\n').trim();
+        if (meaningfulErrors) {
+          session.error = (session.error || '') + meaningfulErrors + '\n';
+          capture('search_session_error', {
+            sessionId: session.id,
+            error: meaningfulErrors.substring(0, 200)
+          });
+        }
+      }
     });
 
     process.on('close', (code: number) => {
@@ -399,13 +424,24 @@ export interface SearchSessionOptions {
       if (session.buffer.trim()) {
         this.processBufferedOutput(session, true);
       }
-      
+
       session.isComplete = true;
-      
-      if (code !== 0 && code !== 1) {
-        // ripgrep returns 1 when no matches found, which is not an error
-        session.isError = true;
-        session.error = session.error || `ripgrep exited with code ${code}`;
+
+      // Only treat as error if:
+      // 1. Unexpected exit code (not 0, 1, or 2) AND
+      // 2. We have meaningful errors after filtering AND
+      // 3. We found no results at all
+      if (code !== 0 && code !== 1 && code !== 2) {
+        // Codes 0=success, 1=no matches, 2=some files couldn't be searched
+        if (session.error?.trim() && session.totalMatches === 0) {
+          session.isError = true;
+          session.error = session.error || `ripgrep exited with code ${code}`;
+        }
+      }
+
+      // If we have results, don't mark as error even if there were permission issues
+      if (session.totalMatches > 0) {
+        session.isError = false;
       }
 
       capture('search_session_completed', {
@@ -454,6 +490,27 @@ export interface SearchSessionOptions {
           session.totalContextLines++;
         } else {
           session.totalMatches++;
+        }
+
+        // Early termination for exact filename matches (if enabled)
+        if (session.options.earlyTermination !== false && // Default to true
+            session.options.searchType === 'files' &&
+            this.isExactFilename(session.options.pattern)) {
+          const pat = path.normalize(session.options.pattern);
+          const filePath = path.normalize(result.file);
+          const ignoreCase = session.options.ignoreCase !== false;
+          const ends = ignoreCase
+            ? filePath.toLowerCase().endsWith(pat.toLowerCase())
+            : filePath.endsWith(pat);
+          if (ends) {
+            // Found exact match, terminate search early
+            setTimeout(() => {
+              if (!session.process.killed) {
+                session.process.kill('SIGTERM');
+              }
+            }, 100); // Small delay to allow any remaining results
+            break;
+          }
         }
       }
     }

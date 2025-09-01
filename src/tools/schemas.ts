@@ -108,6 +108,7 @@ export const StartSearchArgsSchema = z.object({
   includeHidden: z.boolean().optional().default(false),
   contextLines: z.number().optional().default(5),
   timeout_ms: z.number().optional(), // Match process naming convention
+  earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
 });
 
 export const GetMoreSearchResultsArgsSchema = z.object({
