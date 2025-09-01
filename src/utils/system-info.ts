@@ -606,7 +606,8 @@ MACOS-SPECIFIC NOTES:
 - Python 3 might be 'python3' command, not 'python'
 - Some GNU tools have different names (e.g., gsed instead of sed)
 - System Integrity Protection (SIP) may block certain operations
-- Use 'open' command to open files/applications from terminal`;
+- Use 'open' command to open files/applications from terminal
+- For file search: Use mdfind (Spotlight) for fastest exact filename searches`;
     } else {
         guidance += `
         

@@ -30,6 +30,7 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
       includeHidden: parsed.data.includeHidden,
       contextLines: parsed.data.contextLines,
       timeout: parsed.data.timeout_ms,
+      earlyTermination: parsed.data.earlyTermination,
     });
 
     const searchTypeText = parsed.data.searchType === 'content' ? 'content search' : 'file search';
@@ -96,11 +97,13 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
       parsed.data.length
     );
     
-    if (results.isError) {
+    // Only return error if we have no results AND there's an actual error
+    // Permission errors should not block returning found results
+    if (results.isError && results.totalResults === 0 && results.error?.trim()) {
       return {
         content: [{
           type: "text",
-          text: `Search session ${parsed.data.sessionId} encountered an error: ${results.error || 'Unknown error'}`
+          text: `Search session ${parsed.data.sessionId} encountered an error: ${results.error}`
         }],
         isError: true,
       };
