@@ -495,15 +495,22 @@ export interface SearchSessionOptions {
         // Early termination for exact filename matches (if enabled)
         if (session.options.earlyTermination !== false && // Default to true
             session.options.searchType === 'files' &&
-            this.isExactFilename(session.options.pattern) &&
-            result.file.endsWith(session.options.pattern)) {
-          // Found exact match, terminate search early
-          setTimeout(() => {
-            if (!session.process.killed) {
-              session.process.kill('SIGTERM');
-            }
-          }, 100); // Small delay to allow any remaining results
-          break;
+            this.isExactFilename(session.options.pattern)) {
+          const pat = path.normalize(session.options.pattern);
+          const filePath = path.normalize(result.file);
+          const ignoreCase = session.options.ignoreCase !== false;
+          const ends = ignoreCase
+            ? filePath.toLowerCase().endsWith(pat.toLowerCase())
+            : filePath.endsWith(pat);
+          if (ends) {
+            // Found exact match, terminate search early
+            setTimeout(() => {
+              if (!session.process.killed) {
+                session.process.kill('SIGTERM');
+              }
+            }, 100); // Small delay to allow any remaining results
+            break;
+          }
         }
       }
     }
