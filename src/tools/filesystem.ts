@@ -914,6 +914,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             searchType: 'files',
             ignoreCase: true,
             maxResults: 5000, // Higher limit for compatibility
+            earlyTermination: true, // Use early termination for better performance
         });
 
         const sessionId = result.sessionId;

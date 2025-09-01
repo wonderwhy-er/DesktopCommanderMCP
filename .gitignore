@@ -40,3 +40,6 @@ server.log
 
 # Local planning/documentation directories
 plans/
+
+# Test output files
+test/test_output/
