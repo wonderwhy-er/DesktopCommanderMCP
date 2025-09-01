@@ -401,8 +401,10 @@ The server provides a comprehensive set of tools organized into several categori
 | | `create_directory` | Create a new directory or ensure it exists |
 | | `list_directory` | Get detailed listing of files and directories |
 | | `move_file` | Move or rename files and directories |
-| | `search_files` | Find files by name using case-insensitive substring matching |
-| | `search_code` | Search for text/code patterns within file contents using ripgrep |
+| | `start_search` | Start streaming search for files by name or content patterns (unified ripgrep-based search) |
+| | `get_more_search_results` | Get paginated results from active search with offset support |
+| | `stop_search` | Stop an active search gracefully |
+| | `list_searches` | List all active search sessions |
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
 | **Analytics** | `get_usage_stats` | Get usage statistics for your own insight |

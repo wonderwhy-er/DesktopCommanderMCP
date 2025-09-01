@@ -268,10 +268,10 @@ Claude Desktop Commander has a sophisticated system for managing commands and op
 4. You can use `force_terminate` to stop the command if needed
 
 For search operations:
-1. Both `search_files` and `search_code` have a default 30-second timeout
-2. This prevents searches from hanging indefinitely on large codebases
-3. You can customize the timeout duration with the `timeoutMs` parameter
-4. If a search times out, you'll receive a clear message indicating the timeout
+1. `start_search` begins a streaming search and returns immediately with a session ID
+2. `get_more_search_results` retrieves results progressively with pagination support
+3. `stop_search` allows you to cancel long-running searches
+4. Search sessions auto-cleanup after 5 minutes if not stopped manually
 
 This allows Claude to manage processes that would normally exceed conversation timeouts, such as video encoding, large file operations, complex builds, or extensive searches.
 
