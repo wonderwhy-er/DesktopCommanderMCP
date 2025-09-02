@@ -43,10 +43,12 @@ import {
     GetMoreSearchResultsArgsSchema,
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
+    GetPromptsArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
 import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
+import {getPrompts} from './tools/prompts.js';
 import {trackToolCall} from './utils/trackTools.js';
 import {usageTracker} from './utils/usageTracker.js';
 import {processDockerPrompt} from './utils/dockerPrompt.js';
@@ -676,6 +678,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
                 },
+                {
+                    name: "get_prompts",
+                    description: `
+                        Browse and retrieve curated Desktop Commander prompts for various tasks and workflows.
+                        
+                        IMPORTANT: When displaying prompt lists to users, do NOT show the internal prompt IDs (like 'onb_001'). 
+                        These IDs are for your reference only. Show users only the prompt titles and descriptions.
+                        The IDs will be provided in the response metadata for your use.
+                        
+                        ACTIONS:
+                        - list_categories: Show all available prompt categories
+                        - list_prompts: List prompts (optionally filtered by category)  
+                        - get_prompt: Retrieve and execute a specific prompt by ID
+                        
+                        WORKFLOW:
+                        1. Use list_categories to see available categories
+                        2. Use list_prompts to browse prompts in a category
+                        3. Use get_prompt with promptId to retrieve and start using a prompt
+                        
+                        EXAMPLES:
+                        - get_prompts(action='list_categories') - See all categories
+                        - get_prompts(action='list_prompts', category='onboarding') - See onboarding prompts
+                        - get_prompts(action='get_prompt', promptId='onb_001') - Get a specific prompt
+                        
+                        The get_prompt action will automatically inject the prompt content and begin execution.
+                        Perfect for discovering proven workflows and getting started with Desktop Commander.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                },
             ],
         };
     } catch (error) {
@@ -737,6 +769,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "get_prompts":
+                try {
+                    result = await getPrompts(args || {});
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to retrieve prompts`}],
                         isError: true,
                     };
                 }

@@ -1,0 +1,114 @@
+{
+  "version": "1.0.0",
+  "description": "Desktop Commander onboarding prompts for first-time users",
+  "prompts": [
+    {
+      "id": "onb_001",
+      "title": "Organize my Downloads folder",
+      "description": "Clean up and organize your messy Downloads folder into relevant subfolders automatically.",
+      "prompt": "I want you to help me organize my Downloads folder. Let's do this step by step:\n\n**Phase 1: Analysis**\n1. First, analyze what's in my Downloads folder to understand the types of files\n2. Show me what file types and categories I have\n\n**Phase 2: Planning** \n3. Based on what you find, propose a logical folder structure\n4. Ask for my approval of the organization plan before proceeding\n\n**Phase 3: Organization**\n5. After I approve, create the necessary subfolders\n6. Move files into appropriate categories (documents, images, videos, software, etc.)\n7. Provide a summary of what was organized\n\n**Important**: Don't move any files until I approve your proposed organization structure.\n\nStart by exploring my Downloads folder and showing me what you find, then wait for my approval before organizing.",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "FolderOpen",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_002",
+      "title": "Get my IP address and system info",
+      "description": "Quickly get your IP address and basic system information.",
+      "prompt": "Please help me get my system information:\n\n1. Get my current IP address (both local and public if possible)\n2. Show basic system information like:\n   - Operating system and version\n   - Available disk space\n   - Memory usage\n   - Current date and time\n   - Network connectivity status\n\nProvide this information in a clear, easy-to-read format.",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Monitor",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_003",
+      "title": "Create organized knowledge/documents folder",
+      "description": "Set up a well-structured knowledge base or document organization system with templates and suggested categories.",
+      "prompt": "I want to help you create a well-organized knowledge base and document system. Let me understand your needs first:\n\n**Option 1: Create New Knowledge Base**\n- What type of work or projects do you typically do?\n- What subjects or topics would you like to organize knowledge about?\n- Do you prefer a general-purpose system or something specialized?\n\n**Option 2: Organize Existing Documents**\n- Do you have an existing folder with documents that needs organization?\n- What's the path to the folder you'd like me to analyze?\n\n**My Process:**\n1. **Assessment**: Understand your needs and existing content\n2. **Structure Design**: Propose a folder hierarchy tailored to your work\n3. **Template Creation**: Create useful template files (notes, project plans, etc.)\n4. **Organization**: Set up the complete system with guidelines\n\nWhich option sounds better - creating a new knowledge base from scratch, or organizing existing documents? And what type of work/subjects do you focus on?",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "BookOpen",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_004",
+      "title": "Explain codebase or repository to me",
+      "description": "Analyze and explain any codebase - local project or GitHub repository - including architecture, dependencies, and how it works.",
+      "prompt": "I'll help you understand a codebase thoroughly. Let me know what you'd like to analyze:\n\n**Option 1: Local Project**\n- What's the folder path to your local project?\n\n**Option 2: GitHub Repository**\n- What's the GitHub repository URL you'd like me to analyze?\n- If you don't have git/gh installed, I'll help you set them up\n- If needed, I'll help you log in to GitHub\n\n**What I'll do:**\n1. **Setup**: Install git/gh CLI tools if needed and help with GitHub login\n2. **Code Retrieval**: Clone the repo or analyze your local folder\n3. **Initial Analysis**: Examine project structure, files, and technologies\n4. **Architecture Overview**: Explain the overall design and patterns\n5. **Key Components**: Break down main modules and features\n6. **Dependencies**: Document libraries and frameworks used\n7. **Setup Guide**: Provide step-by-step setup and running instructions\n8. **Code Flow**: Explain how the main functionality works\n9. **Summary Document**: Create comprehensive documentation\n\nPlease provide either:\n- Local folder path: `/path/to/your/project`\n- GitHub URL: `https://github.com/user/repo` or `git@github.com:user/repo.git`",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Code",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_005",
+      "title": "Clean up unused code in my project",
+      "description": "Scan your codebase to find unused imports, dead functions, and redundant code that can be safely removed.",
+      "prompt": "I'll help you clean up unused and dead code in your project. Let's start safely:\n\n**First, I need to know:**\n- What's the folder path to your project?\n- What programming language/framework is it? (JavaScript, Python, Java, etc.)\n\n**My systematic approach:**\n\n**Phase 1: Analysis**\n1. **Project Understanding**: Analyze structure and main technologies\n2. **Dependency Mapping**: Understand how files reference each other\n3. **Code Scanning**: Identify potential unused code:\n   - Unused imports and dependencies\n   - Dead/unreferenced functions and variables\n   - Unreachable code blocks\n   - Unused configuration files\n\n**Phase 2: Safety & Backup**\n4. **Impact Assessment**: Explain what each finding does and removal safety\n5. **Backup Strategy**: Recommend backup before making changes\n6. **Show Before Remove**: Present everything I plan to remove\n\n**Phase 3: Cleanup (Only with your approval)**\n7. **Selective Removal**: Remove only what you approve\n8. **Testing**: Suggest running tests after cleanup\n9. **Summary Report**: Document what was cleaned and space saved\n\n**Safety Promise**: I will NEVER remove code without your explicit approval for each change.\n\nWhat's the path to your project folder?",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Trash2",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_006",
+      "title": "Build shopping list app and deploy online",
+      "description": "Create a complete shopping list web application from scratch, run it locally, and deploy it to GitHub Pages.",
+      "prompt": "Let's build and deploy a complete shopping list web application! I'll guide you step-by-step:\n\n**Step 1: Project Setup**\nFirst, where would you like to work on this project? Please provide a folder path where I should create the shopping list app.\n\n**My Complete Process:**\n\n**Phase 1: Planning & Setup**\n1. Create project folder and basic structure\n2. Plan app features (add/remove items, mark as bought, categories)\n3. Set up HTML, CSS, and JavaScript foundation\n\n**Phase 2: Development**\n4. Build clean, modern user interface\n5. Implement core functionality (CRUD operations)\n6. Add local storage for persistence\n7. Create a simple local development server\n8. Open the app in your browser for testing\n\n**Phase 3: GitHub & Deployment** \n9. Check if you have git/gh CLI installed (install if needed)\n10. Help you log in to GitHub\n11. Create a new GitHub repository\n12. Commit and push your code\n13. Set up GitHub Pages hosting\n14. Deploy your app online with a live URL\n\n**App Features:**\n- Add/remove shopping items\n- Mark items as purchased with checkboxes\n- Organize items by categories\n- Persistent storage (survives browser refresh)\n- Responsive design (works on mobile)\n- Modern, clean interface\n\nReady to start? What folder should I use for your shopping list app project?",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "ShoppingCart",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_007",
+      "title": "Analyze my data file",
+      "description": "Upload or point to any data file (CSV, JSON, Excel, etc.) and get comprehensive analysis including patterns, insights, and summary reports.",
+      "prompt": "I have a data file that I'd like to understand better. Please help me analyze it:\n\n1. **File Examination**: First, let me know the path to your data file or describe what kind of data it contains\n2. **Data Overview**: Analyze the structure, size, and format of the data\n3. **Content Analysis**: Examine what columns/fields exist and their data types\n4. **Pattern Detection**: Look for interesting patterns, trends, or anomalies\n5. **Statistical Summary**: Provide key statistics (counts, averages, distributions, etc.)\n6. **Data Quality**: Identify any missing data, duplicates, or quality issues\n7. **Key Insights**: Highlight the most interesting findings\n8. **Summary Report**: Create a clear, non-technical summary of what the data shows\n\nWhat's the path to your data file, or would you like to tell me what kind of data you're working with first?",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "BarChart3",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_008",
+      "title": "Check system health and resources",
+      "description": "Analyze your system's health, resource usage, running processes, and generate a comprehensive system status report.",
+      "prompt": "Let me perform a comprehensive system health check and resource analysis:\n\n**System Resource Analysis:**\n1. **CPU Usage**: Current and recent CPU utilization patterns\n2. **Memory Usage**: RAM usage, available memory, swap usage\n3. **Disk Space**: Storage usage across all drives/partitions\n4. **Network Status**: Network interfaces, connectivity, and usage\n\n**Process Analysis:**\n5. **Running Processes**: Top resource-consuming processes\n6. **System Services**: Critical service status\n7. **Port Usage**: Open ports and listening services\n\n**Health Indicators:**\n8. **System Load**: Overall system performance indicators\n9. **Uptime**: System uptime and stability\n10. **Temperature**: System temperature if available\n11. **Logs**: Recent system errors or warnings\n\n**Deliverable:**\n- Comprehensive system health report\n- Resource usage summary with recommendations\n- Identification of potential issues\n- Performance optimization suggestions\n\nI'll gather all this information using system commands and present it in a clear, actionable format.",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Activity",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_009",
+      "title": "Find Patterns and Errors in Log Files",
+      "description": "Analyze log files to identify errors, patterns, performance issues, and security concerns with detailed insights and recommendations.",
+      "prompt": "I'll help you analyze log files to find patterns, errors, and insights. Let me know which approach you prefer:\n\n**Option 1: Analyze Specific Log File**\n- Do you have a specific log file you want me to analyze?\n- What's the full path to your log file?\n\n**Option 2: Find Log Files on Your System**\n- I can search your system for common log file locations\n- What type of application/service logs are you interested in? (web server, database, application, system logs, etc.)\n\n**What I'll analyze:**\n\n**Error Detection:**\n1. **Critical Errors**: Fatal errors, exceptions, crashes\n2. **Warning Patterns**: Recurring warnings that might indicate issues\n3. **Error Frequency**: How often specific errors occur\n4. **Error Trends**: Are errors increasing over time?\n\n**Performance Analysis:**\n5. **Response Times**: Slow queries, long-running operations\n6. **Resource Usage**: Memory, CPU, disk I/O patterns\n7. **Traffic Patterns**: Peak usage times, load distribution\n8. **Bottlenecks**: Identify performance constraints\n\n**Security & Anomalies:**\n9. **Failed Login Attempts**: Potential security threats\n10. **Unusual Access Patterns**: Suspicious activity\n11. **IP Analysis**: Frequent visitors, geographic patterns\n12. **Rate Limiting**: Abuse detection\n\n**Deliverables:**\n- **Error Summary Report**: Top errors with occurrence counts\n- **Timeline Analysis**: When issues happen most frequently\n- **Pattern Recognition**: Recurring themes and root causes\n- **Actionable Recommendations**: Specific steps to fix identified issues\n- **Monitoring Suggestions**: What to watch for in the future\n\nWhich option would you prefer? Please provide either:\n- **Specific file**: `/path/to/your/logfile.log`\n- **Search request**: \"Find web server logs\" or \"Look for application logs\"",
+      "categories": ["onboarding"],
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Search",
+      "author": "DC team",
+      "verified": true
+    }
+  ]
+}
