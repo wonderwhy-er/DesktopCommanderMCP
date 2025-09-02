@@ -352,15 +352,6 @@ class UsageTracker {
 • Config: ${stats.configOperations}
 • Process: ${stats.processOperations}`;
   }
-
-  /**
-   * Mark that user has used a specific prompt (for analytics)
-   */
-  async markPromptUsed(promptId: string, category: string): Promise<void> {
-    // This could be expanded later to track detailed prompt usage
-    // For now, we'll just rely on the capture analytics
-    console.log(`[PROMPT USAGE] User retrieved prompt: ${promptId} (category: ${category})`);
-  }
 }
 
 // Export singleton instance
