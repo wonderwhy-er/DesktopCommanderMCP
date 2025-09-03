@@ -27,6 +27,15 @@ export interface ToolUsageStats {
   lastFeedbackPrompt: number; // timestamp
 }
 
+export interface OnboardingState {
+  onboardingShown: boolean;
+  onboardingAccepted: boolean;
+  onboardingDismissed: boolean;
+  onboardingShownAt: number; // timestamp
+  variant?: string; // For A/B testing
+  cohort?: string; // Cohort assignment
+}
+
 export interface UsageSession {
   sessionStart: number;
   lastActivity: number;
@@ -351,6 +360,97 @@ class UsageTracker {
 • Search: ${stats.searchOperations}
 • Config: ${stats.configOperations}
 • Process: ${stats.processOperations}`;
+  }
+
+  /**
+   * Get onboarding state from config
+   */
+  async getOnboardingState(): Promise<OnboardingState> {
+    const stored = await configManager.getValue('onboardingState');
+    return stored || {
+      onboardingShown: false,
+      onboardingAccepted: false,
+      onboardingDismissed: false,
+      onboardingShownAt: 0
+    };
+  }
+
+  /**
+   * Save onboarding state to config
+   */
+  async saveOnboardingState(state: OnboardingState): Promise<void> {
+    await configManager.setValue('onboardingState', state);
+  }
+
+  /**
+   * Check if user should see onboarding invitation
+   */
+  async shouldShowOnboarding(): Promise<boolean> {
+    const stats = await this.getStats();
+    const onboardingState = await this.getOnboardingState();
+    
+    // Don't show if already shown
+    if (onboardingState.onboardingShown) {
+      return false;
+    }
+    
+    // Show after 3 successful tool calls (sweet spot for first-time users)
+    // They're engaged but still new
+    return stats.successfulCalls >= 3 && stats.successfulCalls <= 10;
+  }
+
+  /**
+   * Get onboarding message for first-time users
+   */
+  async getOnboardingMessage(): Promise<{variant: string, message: string}> {
+    // Using Variant A: "Welcome & Guidance"
+    const message = `\n\n---\n\n👋 **Using Desktop Commander for the first time?**
+
+Welcome! I can see you're getting started - I have beginner-friendly examples designed specifically for new users like you.
+
+**→ Want to see what's possible?** \`get_prompts action='list_prompts' category='onboarding'\`
+
+*Quick wins • No experience needed • Learn the basics*
+
+---\n\n`;
+
+    return {
+      variant: 'welcome_guidance',
+      message
+    };
+  }
+
+  /**
+   * Mark that onboarding message was shown
+   */
+  async markOnboardingShown(variant: string): Promise<void> {
+    const state = await this.getOnboardingState();
+    state.onboardingShown = true;
+    state.onboardingShownAt = Date.now();
+    state.variant = variant;
+    state.cohort = `onb_${variant}_${Date.now()}`;
+    
+    await this.saveOnboardingState(state);
+  }
+
+  /**
+   * Mark that user accepted onboarding invitation
+   */
+  async markOnboardingAccepted(): Promise<void> {
+    const state = await this.getOnboardingState();
+    state.onboardingAccepted = true;
+    
+    await this.saveOnboardingState(state);
+  }
+
+  /**
+   * Mark that user dismissed onboarding invitation
+   */
+  async markOnboardingDismissed(): Promise<void> {
+    const state = await this.getOnboardingState();
+    state.onboardingDismissed = true;
+    
+    await this.saveOnboardingState(state);
   }
 
   /**

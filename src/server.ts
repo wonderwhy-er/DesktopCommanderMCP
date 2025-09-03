@@ -777,6 +777,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_prompts":
                 try {
                     result = await getPrompts(args || {});
+                    
+                    // Track if this might be onboarding acceptance
+                    const onboardingState = await usageTracker.getOnboardingState();
+                    if (onboardingState.onboardingShown && !onboardingState.onboardingAccepted) {
+                        // User used get_prompts after seeing onboarding - mark as accepted
+                        await usageTracker.markOnboardingAccepted();
+                        await capture('onboarding_message_accepted', {
+                            variant: onboardingState.variant,
+                            time_since_shown: Date.now() - onboardingState.onboardingShownAt,
+                            action_taken: args?.action || 'unknown',
+                            category_requested: args?.category
+                        });
+                    }
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
                     result = {
@@ -894,6 +907,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         } else {
             await usageTracker.trackSuccess(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
+
+            // Check if should show onboarding (before feedback - first-time users are priority)
+            const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
+            console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
+
+            if (shouldShowOnboarding) {
+                console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
+                const onboardingResult = await usageTracker.getOnboardingMessage();
+                console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
+
+                // Capture onboarding prompt injection event
+                const stats = await usageTracker.getStats();
+                await capture('onboarding_message_shown', {
+                    trigger_tool: name,
+                    total_calls: stats.totalToolCalls,
+                    successful_calls: stats.successfulCalls,
+                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+                    total_sessions: stats.totalSessions,
+                    message_variant: onboardingResult.variant
+                });
+
+                // Inject onboarding message for the LLM
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                    const currentContent = result.content[0].text || '';
+                    result.content[0].text = `${currentContent}${onboardingResult.message}`;
+                } else {
+                    result.content = [
+                        ...(result.content || []),
+                        {
+                            type: "text",
+                            text: onboardingResult.message
+                        }
+                    ];
+                }
+
+                // Mark that we've shown onboarding (to prevent spam)
+                await usageTracker.markOnboardingShown(onboardingResult.variant);
+            }
 
             // Check if should prompt for feedback (only on successful operations)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
