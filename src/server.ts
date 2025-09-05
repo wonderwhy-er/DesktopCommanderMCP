@@ -782,16 +782,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 try {
                     result = await getPrompts(args || {});
                     
-                    // Track if user used get_prompts after seeing onboarding invitation
+                    // Track if user used get_prompts after seeing onboarding invitation (for state management only)
                     const onboardingState = await usageTracker.getOnboardingState();
                     if (onboardingState.onboardingShown && !onboardingState.onboardingUsedPrompts) {
-                        // User used get_prompts after seeing onboarding - mark that they used prompts
+                        // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
                         await usageTracker.markOnboardingPromptsUsed();
-                        await capture('user_asked_for_prompts', {
-                            time_since_shown: Date.now() - onboardingState.onboardingShownAt,
-                            action_taken: args?.action || 'unknown',
-                            category_requested: args?.category
-                        });
                     }
                 } catch (error) {
                     capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
