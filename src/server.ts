@@ -802,7 +802,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                             const promptsData = await loadPromptsData();
                             const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
                             if (prompt) {
-                                await capture('prompt_retrieved', {
+                                await capture('server_prompt_retrieved', {
                                     prompt_id: prompt.id,
                                     prompt_title: prompt.title,
                                     category: prompt.categories[0] || 'uncategorized',
@@ -950,7 +950,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
                 // Capture onboarding prompt injection event
                 const stats = await usageTracker.getStats();
-                await capture('onboarding_message_shown', {
+                await capture('server_onboarding_shown', {
                     trigger_tool: name,
                     total_calls: stats.totalToolCalls,
                     successful_calls: stats.successfulCalls,
