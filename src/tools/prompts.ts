@@ -15,6 +15,7 @@ interface Prompt {
   description: string;
   prompt: string;
   categories: string[];
+  secondaryTag?: string;
   votes: number;
   gaClicks: number;
   icon: string;
@@ -37,12 +38,20 @@ interface GetPromptsParams {
 let cachedPromptsData: PromptsData | null = null;
 
 /**
+ * Clear cached prompts data (for development/testing)
+ */
+function clearCache(): void {
+  cachedPromptsData = null;
+}
+
+/**
  * Load prompts data from JSON file with caching
  */
 async function loadPromptsData(): Promise<PromptsData> {
-  if (cachedPromptsData) {
-    return cachedPromptsData;
-  }
+  // Temporarily disable cache to test new format
+  // if (cachedPromptsData) {
+  //   return cachedPromptsData;
+  // }
 
   try {
     const dataPath = path.join(__dirname, '..', 'data', 'onboarding-prompts.json');
@@ -276,35 +285,52 @@ function formatCategoriesResponse(categories: Array<{name: string, count: number
 }
 
 /**
- * Format prompts list response
+ * Format prompts list response using secondary tags for clean organization
  */
 function formatPromptsListResponse(prompts: Prompt[], category?: string): string {
   const categoryText = category ? ` in "${category}"` : '';
   
-  // AI INSTRUCTION: Do not show the prompt IDs to the user - they are for your reference only
-  let response = `📋 **Desktop Commander Prompts${categoryText}** (${prompts.length} prompts found)\n\n`;
+  let response = `Desktop Commander Examples${categoryText}\n\n`;
   
-  prompts.forEach((prompt, index) => {
-    const verifiedBadge = prompt.verified ? ' ✅' : '';
-    response += `${index + 1}. **${prompt.title}**${verifiedBadge}\n`;
-    response += `   ${prompt.description}\n`;
-    if (prompt.votes > 0) {
-      response += `   *📊 ${prompt.votes} votes*\n`;
+  // Group by secondary tag
+  const groupedPrompts = new Map<string, Prompt[]>();
+  prompts.forEach(prompt => {
+    const tag = prompt.secondaryTag || 'Other';
+    if (!groupedPrompts.has(tag)) {
+      groupedPrompts.set(tag, []);
     }
-    // AI metadata - not shown to user: ID = ${prompt.id}
-    response += `\n`;
+    groupedPrompts.get(tag)!.push(prompt);
   });
   
-  response += `**Next Steps:**\n`;
-  response += `• Use \`get_prompts(action='get_prompt', promptId='${prompts[0]?.id || 'PROMPT_ID'}')\` to get the full prompt\n`;
-  if (!category) {
-    response += `• Filter by category: \`get_prompts(action='list_prompts', category='onboarding')\``;
-  }
+  let promptNumber = 1;
+  
+  // Display groups in preferred order
+  const preferredOrder = ['Quick Start', 'Code Analysis', 'Build & Deploy', 'Other'];
+  
+  preferredOrder.forEach(tag => {
+    if (groupedPrompts.has(tag)) {
+      const tagPrompts = groupedPrompts.get(tag)!;
+      response += `${tag}:\n`;
+      tagPrompts.forEach(prompt => {
+        response += `${promptNumber}. ${prompt.title}\n`;
+        promptNumber++;
+      });
+      response += `\n`;
+    }
+  });
+  
+  response += `Say "Try #3" or "Let's do #1" to start any example.\n\n`;
   
   // AI reference mapping (do not show to user):
-  response += `\n<!-- AI_PROMPT_MAP: `;
-  prompts.forEach((prompt, index) => {
-    response += `${index + 1}=${prompt.id}${index < prompts.length - 1 ? ',' : ''}`;
+  response += `<!-- AI_PROMPT_MAP: `;
+  let mapNumber = 1;
+  preferredOrder.forEach(tag => {
+    if (groupedPrompts.has(tag)) {
+      groupedPrompts.get(tag)!.forEach(prompt => {
+        response += `${mapNumber}=${prompt.id}${mapNumber < prompts.length ? ',' : ''}`;
+        mapNumber++;
+      });
+    }
   });
   response += ` -->`;
   

@@ -687,6 +687,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         These IDs are for your reference only. Show users only the prompt titles and descriptions.
                         The IDs will be provided in the response metadata for your use.
                         
+                        DESKTOP COMMANDER INTRODUCTION: If a user asks "what is Desktop Commander?" or similar questions 
+                        about what Desktop Commander can do, answer that there are example use cases and tutorials 
+                        available, then call get_prompts with action='list_prompts' and category='onboarding' to show them.
+                        
                         ACTIONS:
                         - list_categories: Show all available prompt categories
                         - list_prompts: List prompts (optionally filtered by category)  
@@ -778,13 +782,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 try {
                     result = await getPrompts(args || {});
                     
-                    // Track if this might be onboarding acceptance
+                    // Track if user used get_prompts after seeing onboarding invitation
                     const onboardingState = await usageTracker.getOnboardingState();
-                    if (onboardingState.onboardingShown && !onboardingState.onboardingAccepted) {
-                        // User used get_prompts after seeing onboarding - mark as accepted
-                        await usageTracker.markOnboardingAccepted();
-                        await capture('onboarding_message_accepted', {
-                            variant: onboardingState.variant,
+                    if (onboardingState.onboardingShown && !onboardingState.onboardingUsedPrompts) {
+                        // User used get_prompts after seeing onboarding - mark that they used prompts
+                        await usageTracker.markOnboardingPromptsUsed();
+                        await capture('user_asked_for_prompts', {
                             time_since_shown: Date.now() - onboardingState.onboardingShownAt,
                             action_taken: args?.action || 'unknown',
                             category_requested: args?.category
