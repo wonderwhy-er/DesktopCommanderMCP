@@ -23,7 +23,7 @@ interface Prompt {
   verified: boolean;
 }
 
-interface PromptsData {
+export interface PromptsData {
   version: string;
   description: string;
   prompts: Prompt[];
@@ -47,7 +47,7 @@ function clearCache(): void {
 /**
  * Load prompts data from JSON file with caching
  */
-async function loadPromptsData(): Promise<PromptsData> {
+export async function loadPromptsData(): Promise<PromptsData> {
   // Temporarily disable cache to test new format
   // if (cachedPromptsData) {
   //   return cachedPromptsData;
@@ -86,12 +86,7 @@ export async function getPrompts(params: any): Promise<ServerResult> {
       };
     }
 
-    // Track analytics for tool usage
-    await capture(`prompts_tool_${action}`, {
-      category: category,
-      prompt_id: promptId,
-      has_category_filter: !!category
-    });
+    // No separate analytics here - will be captured by server tool call tracking with parameters
 
     switch (action) {
       case 'list_categories':
@@ -122,11 +117,7 @@ export async function getPrompts(params: any): Promise<ServerResult> {
         };
     }
   } catch (error) {
-    await capture('prompts_tool_error', {
-      error_message: error instanceof Error ? error.message : String(error),
-      action: params?.action
-    });
-    
+    // Error will be captured by server tool call tracking
     return {
       content: [{
         type: "text",
@@ -219,15 +210,6 @@ async function getPrompt(promptId: string): Promise<ServerResult> {
       isError: true
     };
   }
-
-  // Track prompt retrieval and mark as used
-  await capture('prompt_retrieved', {
-    prompt_id: promptId,
-    prompt_title: prompt.title,
-    category: prompt.categories[0] || 'uncategorized',
-    author: prompt.author,
-    verified: prompt.verified
-  });
 
   // Mark prompt as used in user's onboarding state (for analytics)
   await usageTracker.markPromptUsed(promptId, prompt.categories[0] || 'uncategorized');

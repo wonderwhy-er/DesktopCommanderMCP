@@ -732,6 +732,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
         }
+        if (name === 'get_prompts' && args && typeof args === 'object') {
+            const promptArgs = args as any;
+            telemetryData.action = promptArgs.action;
+            if (promptArgs.category) {
+                telemetryData.category = promptArgs.category;
+                telemetryData.has_category_filter = true;
+            }
+            if (promptArgs.promptId) {
+                telemetryData.prompt_id = promptArgs.promptId;
+            }
+        }
         
         capture_call_tool('server_call_tool', telemetryData);
         
@@ -781,6 +792,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_prompts":
                 try {
                     result = await getPrompts(args || {});
+                    
+                    // If this was a get_prompt action and successful, capture prompt details
+                    if (args && typeof args === 'object' && (args as any).action === 'get_prompt' && 
+                        (args as any).promptId && !result.isError) {
+                        // Load prompt data to get details for analytics
+                        try {
+                            const { loadPromptsData } = await import('./tools/prompts.js');
+                            const promptsData = await loadPromptsData();
+                            const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
+                            if (prompt) {
+                                await capture('prompt_retrieved', {
+                                    prompt_id: prompt.id,
+                                    prompt_title: prompt.title,
+                                    category: prompt.categories[0] || 'uncategorized',
+                                    author: prompt.author,
+                                    verified: prompt.verified
+                                });
+                            }
+                        } catch (error) {
+                            // Don't fail the request if analytics fail
+                        }
+                    }
                     
                     // Track if user used get_prompts after seeing onboarding invitation (for state management only)
                     const onboardingState = await usageTracker.getOnboardingState();
