@@ -80,6 +80,22 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     }
                 ],
             };
+        } else if (fileResult.isPdf) {
+            // For PDF files, return using the same structure as images
+            // Claude should recognize the PDF MIME type and handle it appropriately
+            return {
+                content: [
+                    { 
+                        type: "text", 
+                        text: `PDF document: ${parsed.path} (${fileResult.mimeType})\n` 
+                    },
+                    {
+                        type: "image", // MCP uses image type for binary content with MIME types
+                        data: fileResult.content,
+                        mimeType: fileResult.mimeType
+                    }
+                ],
+            };
         } else {
             // For all other files, return as text
             return {

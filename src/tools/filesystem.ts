@@ -61,13 +61,14 @@ async function getFileLineCount(filePath: string): Promise<number | undefined> {
 /**
  * Get MIME type information for a file
  * @param filePath Path to the file
- * @returns Object with mimeType and isImage properties
+ * @returns Object with mimeType, isImage, and isPdf properties
  */
-async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; isImage: boolean }> {
-    const { getMimeType, isImageFile } = await import('./mime-types.js');
+async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; isImage: boolean; isPdf: boolean }> {
+    const { getMimeType, isImageFile, isPdfFile } = await import('./mime-types.js');
     const mimeType = getMimeType(filePath);
     const isImage = isImageFile(mimeType);
-    return { mimeType, isImage };
+    const isPdf = isPdfFile(mimeType);
+    return { mimeType, isImage, isPdf };
 }
 
 /**
@@ -285,6 +286,7 @@ export interface FileResult {
     content: string;
     mimeType: string;
     isImage: boolean;
+    isPdf?: boolean;
 }
 
 
@@ -400,9 +402,9 @@ async function readFileWithSmartPositioning(filePath: string, offset: number, le
     const stats = await fs.stat(filePath);
     const fileSize = stats.size;
 
-    // Check if the file is binary (but allow images to pass through)
-    const { isImage } = await getMimeTypeInfo(filePath);
-    if (!isImage) {
+    // Check if the file is binary (but allow images and PDFs to pass through)
+    const { isImage, isPdf } = await getMimeTypeInfo(filePath);
+    if (!isImage && !isPdf) {
         const isBinary = await isBinaryFile(filePath);
         if (isBinary) {
             // Return instructions instead of trying to read binary content
@@ -676,7 +678,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
     }
 
     // Detect the MIME type based on file extension
-    const { mimeType, isImage } = await getMimeTypeInfo(validPath);
+    const { mimeType, isImage, isPdf } = await getMimeTypeInfo(validPath);
     
     // Use withTimeout to handle potential hangs
     const readOperation = async () => {
@@ -687,6 +689,18 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
             const content = buffer.toString('base64');
 
             return { content, mimeType, isImage };
+        } else if (isPdf) {
+            // For PDF files, read as Buffer and convert to base64 (same as images)
+            // PDFs are always read in full, ignoring offset and length
+            const buffer = await fs.readFile(validPath);
+            const content = buffer.toString('base64');
+
+            return { 
+                content, 
+                mimeType, 
+                isImage: false, 
+                isPdf: true
+            };
         } else {
             // For all other files, use smart positioning approach
             try {

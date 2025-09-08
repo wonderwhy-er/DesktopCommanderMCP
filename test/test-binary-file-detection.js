@@ -6,7 +6,8 @@
  * 2. Instruction messages are returned instead of binary content
  * 3. Text files still work normally
  * 4. Images are handled correctly (allowed through as base64)
- * 5. Edge cases are handled properly
+ * 5. PDFs are handled correctly (now supported as documents)
+ * 6. Edge cases are handled properly
  */
 
 import { configManager } from '../dist/config-manager.js';
@@ -125,7 +126,8 @@ async function testBinaryFileDetection() {
 }
 
 /**
- * Test that PDF files are detected as binary and get proper instructions
+ * Test that PDF files are now handled as supported documents (not binary)
+ * Since we added native PDF support, PDFs should be processed like images
  */
 async function testPdfFileDetection() {
     console.log('\n🧪 Testing PDF file detection...');
@@ -136,12 +138,19 @@ async function testPdfFileDetection() {
         length: 10
     });
     
-    assert.ok(!result.isError, 'PDF file should not error, but return instructions');
-    assert.ok(result.content[0].text.includes('Cannot read binary file as text'), 'Should contain binary file detection message');
-    assert.ok(result.content[0].text.includes('test.pdf'), 'Should mention the PDF filename');
-    assert.ok(result.content[0].text.includes('Use start_process + interact_with_process'), 'Should contain instruction to use processes');
+    assert.ok(!result.isError, 'PDF file should not error');
     
-    console.log('✓ PDF file detection works correctly');
+    // With native PDF support, PDFs should now be handled as documents
+    const hasTextContent = result.content.some(item => 
+        item.type === 'text' && item.text && item.text.includes('PDF document:')
+    );
+    const hasImageContent = result.content.some(item => item.type === 'image');
+    
+    // Should either have PDF document text or be handled as image type with PDF MIME
+    assert.ok(hasTextContent || hasImageContent, 'Should be handled as a supported PDF document');
+    assert.ok(!result.content[0].text || !result.content[0].text.includes('Cannot read binary file'), 'Should not show binary file message for PDFs (now supported)');
+    
+    console.log('✓ PDF file detection works correctly (now handled as supported document)');
 }
 
 /**

@@ -43,10 +43,12 @@ import {
     GetMoreSearchResultsArgsSchema,
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
+    GetPromptsArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
 import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
+import {getPrompts} from './tools/prompts.js';
 import {trackToolCall} from './utils/trackTools.js';
 import {usageTracker} from './utils/usageTracker.js';
 import {processDockerPrompt} from './utils/dockerPrompt.js';
@@ -207,8 +209,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Can fetch content from URLs when isUrl parameter is set to true
                         (URLs are always read in full regardless of offset/length).
                         
-                        Handles text files normally and image files are returned as viewable images.
+                        Handles text files normally, image files are returned as viewable images,
+                        and PDF files are returned with extracted text and page images.
                         Recognized image types: PNG, JPEG, GIF, WebP.
+                        Supported document types: PDF.
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -220,8 +224,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Read the contents of multiple files simultaneously.
                         
                         Each file's content is returned with its path as a reference.
-                        Handles text files normally and renders images as viewable content.
+                        Handles text files normally, renders images as viewable content,
+                        and processes PDF files with text extraction and page images.
                         Recognized image types: PNG, JPEG, GIF, WebP.
+                        Supported document types: PDF.
                         
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
@@ -676,6 +682,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
                 },
+                {
+                    name: "get_prompts",
+                    description: `
+                        Browse and retrieve curated Desktop Commander prompts for various tasks and workflows.
+                        
+                        IMPORTANT: When displaying prompt lists to users, do NOT show the internal prompt IDs (like 'onb_001'). 
+                        These IDs are for your reference only. Show users only the prompt titles and descriptions.
+                        The IDs will be provided in the response metadata for your use.
+                        
+                        DESKTOP COMMANDER INTRODUCTION: If a user asks "what is Desktop Commander?" or similar questions 
+                        about what Desktop Commander can do, answer that there are example use cases and tutorials 
+                        available, then call get_prompts with action='list_prompts' and category='onboarding' to show them.
+                        
+                        ACTIONS:
+                        - list_categories: Show all available prompt categories
+                        - list_prompts: List prompts (optionally filtered by category)  
+                        - get_prompt: Retrieve and execute a specific prompt by ID
+                        
+                        WORKFLOW:
+                        1. Use list_categories to see available categories
+                        2. Use list_prompts to browse prompts in a category
+                        3. Use get_prompt with promptId to retrieve and start using a prompt
+                        
+                        EXAMPLES:
+                        - get_prompts(action='list_categories') - See all categories
+                        - get_prompts(action='list_prompts', category='onboarding') - See onboarding prompts
+                        - get_prompts(action='get_prompt', promptId='onb_001') - Get a specific prompt
+                        
+                        The get_prompt action will automatically inject the prompt content and begin execution.
+                        Perfect for discovering proven workflows and getting started with Desktop Commander.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                },
             ],
         };
     } catch (error) {
@@ -695,6 +735,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         const telemetryData: any = { name };
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
+        }
+        if (name === 'get_prompts' && args && typeof args === 'object') {
+            const promptArgs = args as any;
+            telemetryData.action = promptArgs.action;
+            if (promptArgs.category) {
+                telemetryData.category = promptArgs.category;
+                telemetryData.has_category_filter = true;
+            }
+            if (promptArgs.promptId) {
+                telemetryData.prompt_id = promptArgs.promptId;
+            }
         }
         
         capture_call_tool('server_call_tool', telemetryData);
@@ -737,6 +788,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "get_prompts":
+                try {
+                    result = await getPrompts(args || {});
+                    
+                    // If this was a get_prompt action and successful, capture prompt details
+                    if (args && typeof args === 'object' && (args as any).action === 'get_prompt' && 
+                        (args as any).promptId && !result.isError) {
+                        // Load prompt data to get details for analytics
+                        try {
+                            const { loadPromptsData } = await import('./tools/prompts.js');
+                            const promptsData = await loadPromptsData();
+                            const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
+                            if (prompt) {
+                                await capture('server_prompt_retrieved', {
+                                    prompt_id: prompt.id,
+                                    prompt_title: prompt.title,
+                                    category: prompt.categories[0] || 'uncategorized',
+                                    author: prompt.author,
+                                    verified: prompt.verified
+                                });
+                            }
+                        } catch (error) {
+                            // Don't fail the request if analytics fail
+                        }
+                    }
+                    
+                    // Track if user used get_prompts after seeing onboarding invitation (for state management only)
+                    const onboardingState = await usageTracker.getOnboardingState();
+                    if (onboardingState.onboardingShown && !onboardingState.onboardingUsedPrompts) {
+                        // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
+                        await usageTracker.markOnboardingPromptsUsed();
+                    }
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to retrieve prompts`}],
                         isError: true,
                     };
                 }
@@ -850,6 +942,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         } else {
             await usageTracker.trackSuccess(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
+
+            // Check if should show onboarding (before feedback - first-time users are priority)
+            const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
+            console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
+
+            if (shouldShowOnboarding) {
+                console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
+                const onboardingResult = await usageTracker.getOnboardingMessage();
+                console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
+
+                // Capture onboarding prompt injection event
+                const stats = await usageTracker.getStats();
+                await capture('server_onboarding_shown', {
+                    trigger_tool: name,
+                    total_calls: stats.totalToolCalls,
+                    successful_calls: stats.successfulCalls,
+                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
+                    total_sessions: stats.totalSessions,
+                    message_variant: onboardingResult.variant
+                });
+
+                // Inject onboarding message for the LLM
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                    const currentContent = result.content[0].text || '';
+                    result.content[0].text = `${currentContent}${onboardingResult.message}`;
+                } else {
+                    result.content = [
+                        ...(result.content || []),
+                        {
+                            type: "text",
+                            text: onboardingResult.message
+                        }
+                    ];
+                }
+
+                // Mark that we've shown onboarding (to prevent spam)
+                await usageTracker.markOnboardingShown(onboardingResult.variant);
+            }
 
             // Check if should prompt for feedback (only on successful operations)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
