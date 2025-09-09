@@ -86,18 +86,20 @@ export async function setConfigValue(args: unknown) {
       if ((parsed.data.key === 'allowedDirectories' || parsed.data.key === 'blockedCommands') && 
           !Array.isArray(valueToStore)) {
         if (typeof valueToStore === 'string') {
+          const originalString = valueToStore;
           try {
-            valueToStore = JSON.parse(valueToStore);
+            const parsedValue = JSON.parse(originalString);
+            valueToStore = parsedValue;
           } catch (parseError) {
             console.error(`Failed to parse string as array for ${parsed.data.key}: ${parseError}`);
             // If parsing failed and it's a single value, convert to an array with one item
-            if (!valueToStore.includes('[')) {
-              valueToStore = [valueToStore];
+            if (!originalString.includes('[')) {
+              valueToStore = [originalString];
             }
           }
-        } else {
-          // If not a string or array, convert to an array with one item
-          valueToStore = [valueToStore];
+        } else if (valueToStore !== null) {
+          // If not a string or array (and not null), convert to an array with one item
+          valueToStore = [String(valueToStore)];
         }
         
         // Ensure the value is an array after all our conversions
