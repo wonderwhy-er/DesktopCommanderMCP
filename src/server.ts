@@ -817,7 +817,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     
                     // Track if user used get_prompts after seeing onboarding invitation (for state management only)
                     const onboardingState = await usageTracker.getOnboardingState();
-                    if (onboardingState.onboardingShown && !onboardingState.onboardingUsedPrompts) {
+                    if (onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
                         // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
                         await usageTracker.markOnboardingPromptsUsed();
                     }
