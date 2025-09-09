@@ -48,10 +48,9 @@ function clearCache(): void {
  * Load prompts data from JSON file with caching
  */
 export async function loadPromptsData(): Promise<PromptsData> {
-  // Temporarily disable cache to test new format
-  // if (cachedPromptsData) {
-  //   return cachedPromptsData;
-  // }
+   if (cachedPromptsData) {
+     return cachedPromptsData;
+   }
 
   try {
     const dataPath = path.join(__dirname, '..', 'data', 'onboarding-prompts.json');
