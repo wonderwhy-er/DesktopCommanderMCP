@@ -291,7 +291,7 @@ function formatPromptsListResponse(prompts: Prompt[], category?: string): string
   preferredOrder.forEach(tag => {
     if (groupedPrompts.has(tag)) {
       const tagPrompts = groupedPrompts.get(tag)!;
-      response += `${tag}:\n`;
+      response += `**${tag}:**\n`;
       tagPrompts.forEach(prompt => {
         response += `${promptNumber}. ${prompt.title}\n`;
         promptNumber++;
@@ -301,7 +301,9 @@ function formatPromptsListResponse(prompts: Prompt[], category?: string): string
   });
   
   response += `Say "Try #3" or "Let's do #1" to start any example.\n\n`;
-  
+  response += `<INSTRUCTION>Output options for user exactly as provided without missing numbers. 
+Its important so user can choose an options by entering number only. Also do not forget new lines between numbers for easy reading</INSTRUCTION>\n\n`;
+
   // AI reference mapping (do not show to user):
   response += `<!-- AI_PROMPT_MAP: `;
   let mapNumber = 1;
