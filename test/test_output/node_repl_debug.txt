@@ -29,8 +29,8 @@ for (let i = 0; i < 3; i++) {
 [32m[STDOUT] >[0m
 [32m[STDOUT] ...[0m
 [32m[STDOUT] ...[0m
-[32m[STDOUT] undefined
->[0m
+[32m[STDOUT] undefined[0m
+[32m[STDOUT] >[0m
 [32m[STDOUT] >[0m
 [32m[STDOUT] ...[0m
 [32m[STDOUT] ...[0m

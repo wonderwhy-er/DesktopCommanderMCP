@@ -50,56 +50,6 @@ export interface SearchSessionOptions {
    * Start a new search session (like start_process)
    * Returns immediately with initial state and results
    */
-  /**
-   * Check if a path should be excluded from search due to being in a problematic directory
-   * @param searchPath Path to check
-   * @returns true if path should be excluded
-   */
-  private isProblematicPath(searchPath: string): boolean {
-    // Convert to lowercase and normalize for comparison
-    const normalizedPath = searchPath.toLowerCase().replace(/\\/g, '/');
-    
-    // macOS problematic paths
-    const macOSProblematic = [
-      '/users/',  // Catch any user directory - let's be more specific below
-      '/system/library/application support',
-      'photos library.photoslibrary',
-      '/library/application support',
-      '/private/',
-      '/volumes/',
-      '/.fseventsd',
-      '/.spotlight',
-      '/.trashes'
-    ];
-    
-    // Windows problematic paths  
-    const windowsProblematic = [
-      'program files/windows defender',
-      'programdata/microsoft/windows defender',
-      'windows/system32',
-      'windows/syswow64',
-      '$recycle.bin',
-      'system volume information',
-      'pagefile.sys',
-      'hiberfil.sys'
-    ];
-    
-    // Common problematic patterns
-    const problematicPatterns = [
-      ...macOSProblematic,
-      ...windowsProblematic,
-      'node_modules',  // Usually too many files
-      '.git',          // Usually not useful for content search
-      'temp',
-      'tmp',
-      'cache',
-      '__pycache__'
-    ];
-    
-    // Check if path contains any problematic patterns
-    return problematicPatterns.some(pattern => normalizedPath.includes(pattern));
-  }
-
   async startSearch(options: SearchSessionOptions): Promise<{
     sessionId: string;
     isComplete: boolean;
@@ -112,11 +62,6 @@ export interface SearchSessionOptions {
     
     // Validate path first
     const validPath = await validatePath(options.rootPath);
-    
-    // Check if this is a problematic path that should be excluded
-    if (this.isProblematicPath(validPath)) {
-      throw new Error(`Search not allowed in system directory: ${options.rootPath}. This directory is protected to prevent system issues.`);
-    }
     
     // Build ripgrep arguments
     const args = this.buildRipgrepArgs({ ...options, rootPath: validPath });
@@ -388,25 +333,6 @@ export interface SearchSessionOptions {
       args.push('-m', options.maxResults.toString());
     }
     
-    // Add default exclusions for system and problematic directories
-    const excludePatterns = [
-      'Photos Library.photoslibrary/**',
-      'Application Support/**',
-      'Windows Defender/**',
-      'System Volume Information/**',
-      '$RECYCLE.BIN/**',
-      '.Spotlight*/**',
-      '.fseventsd/**',
-      '.Trashes/**',
-      'node_modules/**',
-      '.git/**',
-      '__pycache__/**'
-    ];
-    
-    for (const pattern of excludePatterns) {
-      args.push('--glob', `!${pattern}`);
-    }
-    
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
       const patterns = options.filePattern
@@ -465,7 +391,7 @@ export interface SearchSessionOptions {
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
 
-      // Filter meaningful errors - be more aggressive about what we ignore
+      // Filter meaningful errors
       const filteredErrors = errorText
         .split('\n')
         .filter(line => {
@@ -477,31 +403,10 @@ export interface SearchSessionOptions {
           // Skip all ripgrep system errors that start with "rg:"
           if (trimmed.startsWith('rg:')) return false;
 
-          // Skip common system permission errors that aren't actionable
-          if (trimmed.includes('Permission denied') || 
-              trimmed.includes('Operation not permitted') ||
-              trimmed.includes('Accesso negato') ||
-              trimmed.includes('Das System kann auf die Datei nicht zugreifen') ||
-              trimmed.includes('Operation timed out')) {
-            return false;
-          }
-
-          // Skip macOS Photos library errors specifically
-          if (trimmed.includes('Photos Library.photoslibrary') ||
-              trimmed.includes('Application State')) {
-            return false;
-          }
-
-          // Skip Windows Defender and system directories
-          if (trimmed.includes('Windows Defender') ||
-              trimmed.includes('Defender Advanced Threat Protection')) {
-            return false;
-          }
-
           return true;
         });
 
-      // Only add to session.error and capture if there are actual meaningful errors after filtering
+      // Only add to session.error if there are actual meaningful errors after filtering
       if (filteredErrors.length > 0) {
         const meaningfulErrors = filteredErrors.join('\n').trim();
         if (meaningfulErrors) {

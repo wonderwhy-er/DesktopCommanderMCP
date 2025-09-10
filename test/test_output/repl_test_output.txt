@@ -1,8 +1,9 @@
 Python REPL output:
-Python 3.13.7 (main, Aug 14 2025, 11:12:11) [Clang 17.0.0 (clang-1700.0.13.3)] on darwin
+Python 3.9.6 (default, Apr 30 2025, 02:07:17) 
+[Clang 17.0.0 (clang-1700.0.13.5)] on darwin
 Type "help", "copyright", "credits" or "license" for more information.
 >>> STARTING PYTHON TEST
->>> REPL_TEST_VALUE: 54
+>>> REPL_TEST_VALUE: 138
 >>> 
 
 Node.js REPL output:
@@ -10,6 +11,6 @@ Welcome to Node.js v22.18.0.
 Type ".help" for more information.
 > STARTING NODE TEST
 undefined
-> NODE_REPL_TEST_VALUE: 147
+> NODE_REPL_TEST_VALUE: 114
 undefined
 > 
