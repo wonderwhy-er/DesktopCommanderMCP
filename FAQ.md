@@ -22,6 +22,7 @@ This document provides answers to the most commonly asked questions about Claude
   - [How do I install Claude Desktop Commander?](#how-do-i-install-claude-desktop-commander)
   - [How do I update to the latest version?](#how-do-i-update-to-the-latest-version)
   - [Which operating systems does it support?](#which-operating-systems-does-it-support)
+  - [How do I get started after installing Desktop Commander?](#how-do-i-get-started-after-installing-desktop-commander)
 
 - [Features & Capabilities](#features--capabilities)
   - [What can I do with Claude Desktop Commander?](#what-can-i-do-with-claude-desktop-commander)
@@ -171,6 +172,24 @@ Claude Desktop Commander works with:
 - Linux (with ongoing enhancements for various distributions)
 
 Work is in progress to improve WSL (Windows Subsystem for Linux) integration and add SSH support for remote servers.
+
+### How do I get started after installing Desktop Commander?
+
+After installation, Desktop Commander includes intelligent onboarding to help new users discover its capabilities:
+
+**Automatic Onboarding:** When you're a new user (fewer than 10 successful commands), Claude will automatically offer helpful getting-started guidance and tutorials after you use Desktop Commander successfully.
+
+**Manual Onboarding:** You can also request onboarding help at any time by simply asking Claude:
+- "Help me get started with Desktop Commander"
+- "Show me Desktop Commander examples"
+- "What can I do with Desktop Commander?"
+
+**Starter Examples:** Claude will show you beginner-friendly tutorials like:
+- Organizing your Downloads folder
+- Analyzing CSV files
+- Setting up GitHub Actions
+- Exploring codebases
+- And more hands-on examples
 
 ## Features & Capabilities
 
