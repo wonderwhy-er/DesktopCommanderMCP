@@ -51,53 +51,72 @@ export interface SearchSessionOptions {
    * Returns immediately with initial state and results
    */
   /**
-   * Check if a path should be excluded from search due to being in a problematic directory
-   * @param searchPath Path to check
-   * @returns true if path should be excluded
+   * Determine if a search error should be captured in analytics
+   * Based on actual error patterns from production analytics
+   * @param errorText Raw error text from ripgrep stderr
+   * @returns true if error should be captured, false if it should be filtered out
    */
-  private isProblematicPath(searchPath: string): boolean {
-    // Convert to lowercase and normalize for comparison
-    const normalizedPath = searchPath.toLowerCase().replace(/\\/g, '/');
+  private shouldCaptureSearchError(errorText: string): boolean {
+    const lines = errorText.split('\n');
     
-    // macOS problematic paths
-    const macOSProblematic = [
-      '/users/',  // Catch any user directory - let's be more specific below
-      '/system/library/application support',
-      'photos library.photoslibrary',
-      '/library/application support',
-      '/private/',
-      '/volumes/',
-      '/.fseventsd',
-      '/.spotlight',
-      '/.trashes'
-    ];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Skip empty lines
+      if (!trimmed) continue;
+      
+      // Skip ripgrep internal messages that start with "rg:"
+      if (trimmed.startsWith('rg:')) continue;
+      
+      // Filter out permission-related errors (expected system behavior)
+      const permissionPatterns = [
+        'Permission denied',
+        'Operation not permitted', 
+        'Accesso negato',  // Italian
+        'Das System kann auf die Datei nicht zugreifen',  // German
+        'Access is denied'  // Windows
+      ];
+      
+      if (permissionPatterns.some(pattern => trimmed.includes(pattern))) {
+        continue; // Skip this line, don't capture
+      }
+      
+      // Filter out timeout errors (expected for large directories)
+      const timeoutPatterns = [
+        'Operation timed out',
+        'os error 60',  // macOS timeout
+        'os error 4'    // Interrupted system call
+      ];
+      
+      if (timeoutPatterns.some(pattern => trimmed.includes(pattern))) {
+        continue; // Skip this line, don't capture
+      }
+      
+      // Filter out specific protected system directories
+      const systemDirPatterns = [
+        'Photos Library.photoslibrary',
+        'Application State',
+        'Windows Defender',
+        'Defender Advanced Threat Protection',
+        'System Volume Information'
+      ];
+      
+      if (systemDirPatterns.some(pattern => trimmed.includes(pattern))) {
+        continue; // Skip this line, don't capture
+      }
+      
+      // Filter out interrupts (user or system initiated)
+      if (trimmed.includes('Interrupt') || trimmed.includes('Interrupted')) {
+        continue;
+      }
+      
+      // If we get here, this line represents a potentially meaningful error
+      // that should be captured for analytics
+      return true;
+    }
     
-    // Windows problematic paths  
-    const windowsProblematic = [
-      'program files/windows defender',
-      'programdata/microsoft/windows defender',
-      'windows/system32',
-      'windows/syswow64',
-      '$recycle.bin',
-      'system volume information',
-      'pagefile.sys',
-      'hiberfil.sys'
-    ];
-    
-    // Common problematic patterns
-    const problematicPatterns = [
-      ...macOSProblematic,
-      ...windowsProblematic,
-      'node_modules',  // Usually too many files
-      '.git',          // Usually not useful for content search
-      'temp',
-      'tmp',
-      'cache',
-      '__pycache__'
-    ];
-    
-    // Check if path contains any problematic patterns
-    return problematicPatterns.some(pattern => normalizedPath.includes(pattern));
+    // If all lines were filtered out, don't capture this error
+    return false;
   }
 
   async startSearch(options: SearchSessionOptions): Promise<{
@@ -112,11 +131,6 @@ export interface SearchSessionOptions {
     
     // Validate path first
     const validPath = await validatePath(options.rootPath);
-    
-    // Check if this is a problematic path that should be excluded
-    if (this.isProblematicPath(validPath)) {
-      throw new Error(`Search not allowed in system directory: ${options.rootPath}. This directory is protected to prevent system issues.`);
-    }
     
     // Build ripgrep arguments
     const args = this.buildRipgrepArgs({ ...options, rootPath: validPath });
@@ -388,25 +402,6 @@ export interface SearchSessionOptions {
       args.push('-m', options.maxResults.toString());
     }
     
-    // Add default exclusions for system and problematic directories
-    const excludePatterns = [
-      'Photos Library.photoslibrary/**',
-      'Application Support/**',
-      'Windows Defender/**',
-      'System Volume Information/**',
-      '$RECYCLE.BIN/**',
-      '.Spotlight*/**',
-      '.fseventsd/**',
-      '.Trashes/**',
-      'node_modules/**',
-      '.git/**',
-      '__pycache__/**'
-    ];
-    
-    for (const pattern of excludePatterns) {
-      args.push('--glob', `!${pattern}`);
-    }
-    
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
       const patterns = options.filePattern
@@ -465,52 +460,18 @@ export interface SearchSessionOptions {
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
 
-      // Filter meaningful errors - be more aggressive about what we ignore
-      const filteredErrors = errorText
-        .split('\n')
-        .filter(line => {
-          const trimmed = line.trim();
-
-          // Skip empty lines and lines with just symbols/numbers/colons
-          if (!trimmed || trimmed.match(/^[\)\(\s\d:]*$/)) return false;
-
-          // Skip all ripgrep system errors that start with "rg:"
-          if (trimmed.startsWith('rg:')) return false;
-
-          // Skip common system permission errors that aren't actionable
-          if (trimmed.includes('Permission denied') || 
-              trimmed.includes('Operation not permitted') ||
-              trimmed.includes('Accesso negato') ||
-              trimmed.includes('Das System kann auf die Datei nicht zugreifen') ||
-              trimmed.includes('Operation timed out')) {
-            return false;
-          }
-
-          // Skip macOS Photos library errors specifically
-          if (trimmed.includes('Photos Library.photoslibrary') ||
-              trimmed.includes('Application State')) {
-            return false;
-          }
-
-          // Skip Windows Defender and system directories
-          if (trimmed.includes('Windows Defender') ||
-              trimmed.includes('Defender Advanced Threat Protection')) {
-            return false;
-          }
-
-          return true;
+      // Filter errors - only capture meaningful ones for analytics
+      const shouldCaptureError = this.shouldCaptureSearchError(errorText);
+      
+      if (shouldCaptureError) {
+        // Store the filtered error text for potential user display
+        session.error = (session.error || '') + errorText;
+        
+        // Capture for analytics only if it's a meaningful error
+        capture('search_session_error', {
+          sessionId: session.id,
+          error: errorText.substring(0, 200)
         });
-
-      // Only add to session.error and capture if there are actual meaningful errors after filtering
-      if (filteredErrors.length > 0) {
-        const meaningfulErrors = filteredErrors.join('\n').trim();
-        if (meaningfulErrors) {
-          session.error = (session.error || '') + meaningfulErrors + '\n';
-          capture('search_session_error', {
-            sessionId: session.id,
-            error: meaningfulErrors.substring(0, 200)
-          });
-        }
       }
     });
 
