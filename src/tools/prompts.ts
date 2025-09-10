@@ -291,9 +291,11 @@ function formatPromptsListResponse(prompts: Prompt[], category?: string): string
   preferredOrder.forEach(tag => {
     if (groupedPrompts.has(tag)) {
       const tagPrompts = groupedPrompts.get(tag)!;
-      response += `**${tag}:**\n`;
+      // Add emoji for each section
+      const emoji = tag === 'Quick Start' ? '🚀' : tag === 'Code Analysis' ? '💻' : tag === 'Build & Deploy' ? '🔨' : '📋';
+      response += `**${emoji} ${tag}**\n`;
       tagPrompts.forEach(prompt => {
-        response += `${promptNumber}. ${prompt.title}\n`;
+        response += `• ${promptNumber}. ${prompt.title}\n`;
         promptNumber++;
       });
       response += `\n`;
