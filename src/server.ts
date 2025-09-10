@@ -3,6 +3,7 @@ import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
+    ListResourceTemplatesRequestSchema,
     ListPromptsRequestSchema,
     InitializeRequestSchema,
     type CallToolRequest,
@@ -1078,3 +1079,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
     }
 });
+
+// Add no-op handlers so Visual Studio initialization succeeds
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
