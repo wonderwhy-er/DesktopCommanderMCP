@@ -793,21 +793,63 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 try {
                     result = await getPrompts(args || {});
                     
-                    // If this was a get_prompt action and successful, capture prompt details
-                    if (args && typeof args === 'object' && (args as any).action === 'get_prompt' && 
-                        (args as any).promptId && !result.isError) {
-                        // Load prompt data to get details for analytics
+                    // Capture detailed analytics for all successful get_prompts actions
+                    if (args && typeof args === 'object' && !result.isError) {
+                        const action = (args as any).action;
+                        
                         try {
-                            const { loadPromptsData } = await import('./tools/prompts.js');
-                            const promptsData = await loadPromptsData();
-                            const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
-                            if (prompt) {
-                                await capture('server_prompt_retrieved', {
-                                    prompt_id: prompt.id,
-                                    prompt_title: prompt.title,
-                                    category: prompt.categories[0] || 'uncategorized',
-                                    author: prompt.author,
-                                    verified: prompt.verified
+                            if (action === 'get_prompt' && (args as any).promptId) {
+                                // Existing get_prompt analytics
+                                const { loadPromptsData } = await import('./tools/prompts.js');
+                                const promptsData = await loadPromptsData();
+                                const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
+                                if (prompt) {
+                                    await capture('server_get_prompt', {
+                                        prompt_id: prompt.id,
+                                        prompt_title: prompt.title,
+                                        category: prompt.categories[0] || 'uncategorized',
+                                        author: prompt.author,
+                                        verified: prompt.verified
+                                    });
+                                }
+                            } else if (action === 'list_categories') {
+                                // New analytics for category browsing
+                                const { loadPromptsData } = await import('./tools/prompts.js');
+                                const promptsData = await loadPromptsData();
+                                
+                                // Extract unique categories and count prompts in each
+                                const categoryMap = new Map<string, number>();
+                                promptsData.prompts.forEach(prompt => {
+                                    prompt.categories.forEach(category => {
+                                        categoryMap.set(category, (categoryMap.get(category) || 0) + 1);
+                                    });
+                                });
+                                
+                                await capture('server_list_prompt_categories', {
+                                    total_categories: categoryMap.size,
+                                    total_prompts: promptsData.prompts.length,
+                                    categories_available: Array.from(categoryMap.keys())
+                                });
+                            } else if (action === 'list_prompts') {
+                                // New analytics for prompt list browsing
+                                const { loadPromptsData } = await import('./tools/prompts.js');
+                                const promptsData = await loadPromptsData();
+                                
+                                const category = (args as any).category;
+                                let filteredPrompts = promptsData.prompts;
+                                
+                                if (category) {
+                                    filteredPrompts = promptsData.prompts.filter(prompt => 
+                                        prompt.categories.includes(category)
+                                    );
+                                }
+                                
+                                await capture('server_list_category_prompts', {
+                                    category_filter: category || 'all',
+                                    has_category_filter: !!category,
+                                    prompts_shown: filteredPrompts.length,
+                                    total_prompts_available: promptsData.prompts.length,
+                                    prompt_ids_shown: filteredPrompts.map(p => p.id)
                                 });
                             }
                         } catch (error) {
