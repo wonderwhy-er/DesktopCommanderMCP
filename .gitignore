@@ -44,3 +44,9 @@ planning/
 
 # Test output files
 test/test_output/
+
+# Registry tokens and server configs (should not be committed)
+.mcpregistry_github_token
+.mcpregistry_registry_token
+server.json
+server.yaml
