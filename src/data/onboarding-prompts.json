@@ -1,0 +1,123 @@
+{
+  "version": "1.0.0",
+  "description": "Desktop Commander onboarding prompts for first-time users",
+  "prompts": [
+    {
+      "id": "onb_001",
+      "title": "Organize my Downloads folder",
+      "description": "Clean up and organize your messy Downloads folder into relevant subfolders automatically.",
+      "prompt": "Let's organize your Downloads folder! \n\nFirst, let me check what we're working with. I'll look at your Downloads folder to see how many files are there and what types.\n\nShould I start by analyzing your Downloads folder?",
+      "categories": ["onboarding"],
+      "secondaryTag": "Quick Start",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "FolderOpen",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_002",
+      "title": "Set up GitHub Actions CI/CD",
+      "description": "Set up GitHub Actions for your project to automatically run tests on every push with proper CI/CD workflow.",
+      "prompt": "Let's set up GitHub Actions CI/CD for your project! 🚀\n\n**What's the path to your project folder?**\n\n*Try: `~/work/my-project` (replace with your path) or give me a different path.*\n\nI'll analyze your project type and set up automated testing and deployment in about 15 minutes!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Build & Deploy",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "GitBranch",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_003",
+      "title": "Create organized knowledge/documents folder",
+      "description": "Set up a well-structured knowledge base or document organization system with templates and suggested categories.",
+      "prompt": "Let's create an organized knowledge base! 📚\n\n**Where should I set it up?**\n\n*I suggest: `~/Documents/Knowledge-Base` (replace with your path) or give me a different location.*\n\nI'll create a clean folder structure with templates and organize any existing documents you have!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Quick Start",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "BookOpen",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_004",
+      "title": "Explain codebase or repository to me",
+      "description": "Analyze and explain any codebase - local project or GitHub repository - including architecture, dependencies, and how it works.",
+      "prompt": "I'll analyze and explain any codebase for you! 🔍\n\n**What should I analyze?**\n\n*Local project:* `~/work/my-project` (replace with your path)\n*GitHub repo:* `https://github.com/user/repo`\n\nI'll break down the architecture, dependencies, and how everything works together!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Code Analysis",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Code",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_005",
+      "title": "Clean up unused code in my project",
+      "description": "Scan your codebase to find unused imports, dead functions, and redundant code that can be safely removed.",
+      "prompt": "Let's clean up unused code in your project! 🧹\n\n**What's your project folder path?**\n\n*Try: `~/work/my-project` (replace with your path)*\n\nI'll safely scan for dead code and unused imports, then show you exactly what can be removed before making any changes!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Code Analysis",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Trash2",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_006",
+      "title": "Build shopping list app and deploy online",
+      "description": "Create a simple shopping list web app from scratch and deploy it online - perfect for learning web development basics.",
+      "prompt": "Let's build a simple shopping list web app and deploy it online! 🛒\n\n**Quick question:** Where should I create the project folder?\n\n*I suggest using `~/Downloads/shopping-app` for quick testing, or give me a different path if you prefer.*\n\nOnce I have the folder, I'll build a working app step-by-step and get it online in about 20 minutes!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Build & Deploy",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "ShoppingCart",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_007",
+      "title": "Analyze my data file",
+      "description": "Upload or point to any data file (CSV, JSON, Excel, etc.) and get comprehensive analysis including patterns, insights, and summary reports.",
+      "prompt": "I'll help you analyze your data file! \n\nWhat's the path to your data file? (e.g., `/Users/yourname/data.csv`)\n\nOnce you give me the path, I'll start by checking what type of file it is and show you a quick preview, then we can dive deeper step by step.",
+      "categories": ["onboarding"],
+      "secondaryTag": "Quick Start",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "BarChart3",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_008",
+      "title": "Check system health and resources",
+      "description": "Analyze your system's health, resource usage, running processes, and generate a comprehensive system status report.",
+      "prompt": "Let me check your system health and resources!\n\nI'll start by looking at your CPU, memory, and disk usage, then check for any performance issues.\n\nShould I begin the system analysis?",
+      "categories": ["onboarding"],
+      "secondaryTag": "Quick Start",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Activity",
+      "author": "DC team",
+      "verified": true
+    },
+    {
+      "id": "onb_009",
+      "title": "Find Patterns and Errors in Log Files",
+      "description": "Analyze log files to identify errors, patterns, performance issues, and security concerns with detailed insights and recommendations.",
+      "prompt": "I'll analyze your log files to find errors and patterns! 🔍\n\n**What log file should I analyze?**\n\n*Try: `/var/log/system.log` (macOS/Linux) or `~/app.log`, or I can search for logs on your system.*\n\nI'll find errors, performance issues, and suspicious patterns with actionable recommendations!",
+      "categories": ["onboarding"],
+      "secondaryTag": "Code Analysis",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "Search",
+      "author": "DC team",
+      "verified": true
+    }
+  ]
+}

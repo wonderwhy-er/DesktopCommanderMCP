@@ -128,3 +128,10 @@ export const StopSearchArgsSchema = z.object({
 });
 
 export const ListSearchesArgsSchema = z.object({});
+
+// Prompts tool schema
+export const GetPromptsArgsSchema = z.object({
+  action: z.enum(['list_categories', 'list_prompts', 'get_prompt']),
+  category: z.string().optional(),
+  promptId: z.string().optional(),
+});
