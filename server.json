@@ -1,0 +1,80 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.wonderwhy-er/desktop-commander",
+  "description": "Advanced terminal and file operations MCP server that enables AI to execute commands, manage processes, search/edit files, and perform data analysis with full interactive process control",
+  "version": "0.2.13",
+  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Eduards Ruzga",
+    "url": "https://github.com/wonderwhy-er"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "terminal",
+    "command-line",
+    "file-operations",
+    "process-management",
+    "data-analysis",
+    "file-editing",
+    "search",
+    "automation"
+  ],
+  "categories": [
+    "development-tools",
+    "file-system",
+    "automation"
+  ],
+  "packages": [
+    {
+      "registry_type": "npm",
+      "identifier": "@wonderwhy-er/desktop-commander",
+      "version": "0.2.13"
+    }
+  ],
+  "capabilities": {
+    "tools": true,
+    "resources": false,
+    "prompts": true
+  },
+  "usage": {
+    "installation": {
+      "npm": "npx @wonderwhy-er/desktop-commander@latest setup",
+      "manual": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@wonderwhy-er/desktop-commander"
+        ]
+      }
+    },
+    "environment_variables": [
+      {
+        "name": "DEBUG",
+        "description": "Enable debug mode for detailed logging",
+        "required": false
+      }
+    ]
+  },
+  "compatibility": {
+    "runtime": {
+      "node": ">=18.0.0"
+    },
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ]
+  },
+  "security": {
+    "sandbox": false,
+    "file_access": "full",
+    "network_access": true,
+    "notes": "This server requires full file system access and terminal execution capabilities. It operates with the same permissions as the user running it."
+  }
+}
