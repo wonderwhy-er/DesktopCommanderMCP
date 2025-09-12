@@ -74,7 +74,7 @@
   "security": {
     "sandbox": false,
     "file_access": "full",
-    "network_access": false,
+    "network_access": true,
     "notes": "This server requires full file system access and terminal execution capabilities. It operates with the same permissions as the user running it."
   }
 }
