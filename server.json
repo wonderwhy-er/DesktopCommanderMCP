@@ -47,7 +47,10 @@
       "npm": "npx @wonderwhy-er/desktop-commander@latest setup",
       "manual": {
         "command": "npx",
-        "args": ["-y", "@wonderwhy-er/desktop-commander"]
+        "args": [
+          "-y",
+          "@wonderwhy-er/desktop-commander"
+        ]
       }
     },
     "environment_variables": [
@@ -62,7 +65,11 @@
     "runtime": {
       "node": ">=18.0.0"
     },
-    "platforms": ["windows", "macos", "linux"]
+    "platforms": [
+      "windows",
+      "macos",
+      "linux"
+    ]
   },
   "security": {
     "sandbox": false,
