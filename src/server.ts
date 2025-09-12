@@ -312,8 +312,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - searchType="files": Find files by name (pattern matches file names)
                         - searchType="content": Search inside files for text patterns
                         
+                        PATTERN MATCHING MODES:
+                        - Default (literalSearch=false): Patterns are treated as regular expressions
+                        - Literal (literalSearch=true): Patterns are treated as exact strings
+                        
+                        WHEN TO USE literalSearch=true:
+                        Use literal search when searching for code patterns with special characters:
+                        - Function calls with parentheses and quotes
+                        - Array access with brackets
+                        - Object methods with dots and parentheses
+                        - File paths with backslashes
+                        - Any pattern containing: . * + ? ^ $ { } [ ] | \\ ( )
+                        
                         IMPORTANT PARAMETERS:
                         - pattern: What to search for (file names OR content text)
+                        - literalSearch: Use exact string matching instead of regex (default: false)
                         - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
                         - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         - earlyTermination: Stop search early when exact filename match is found (optional: defaults to true for file searches, false for content searches)
@@ -322,6 +335,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Find package.json files: searchType="files", pattern="package.json", filePattern="package.json"
                         - Find all JS files: searchType="files", pattern="*.js" (or use filePattern="*.js")
                         - Search for "TODO" in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
+                        - Search for exact code: searchType="content", pattern="toast.error('test')", literalSearch=true
+                        - Search for function calls: searchType="content", pattern="console.log()", literalSearch=true
+                        - Regex pattern search: searchType="content", pattern="error.*test", literalSearch=false
                         - Case-sensitive file search: searchType="files", pattern="README", ignoreCase=false
                         - Case-insensitive file search: searchType="files", pattern="readme", ignoreCase=true
                         - Find exact file, stop after first match: searchType="files", pattern="config.json", earlyTermination=true
