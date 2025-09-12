@@ -308,24 +308,72 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Start a streaming search that can return results progressively.
                         
+                        SEARCH STRATEGY GUIDE:
+                        Choose the right search type based on what the user is looking for:
+                        
+                        USE searchType="files" WHEN:
+                        - User asks for specific files: "find package.json", "locate config files"
+                        - Pattern looks like a filename: "*.js", "README.md", "test-*.tsx" 
+                        - User wants to find files by name/extension: "all TypeScript files", "Python scripts"
+                        - Looking for configuration/setup files: ".env", "dockerfile", "tsconfig.json"
+                        
+                        USE searchType="content" WHEN:
+                        - User asks about code/logic: "authentication logic", "error handling", "API calls"
+                        - Looking for functions/variables: "getUserData function", "useState hook"
+                        - Searching for text/comments: "TODO items", "FIXME comments", "documentation"
+                        - Finding patterns in code: "console.log statements", "import statements"
+                        - User describes functionality: "components that handle login", "files with database queries"
+                        
+                        WHEN UNSURE OR USER REQUEST IS AMBIGUOUS:
+                        Run TWO searches in parallel - one for files and one for content:
+                        
+                        Example approach for ambiguous queries like "find authentication stuff":
+                        1. Start file search: searchType="files", pattern="auth"
+                        2. Simultaneously start content search: searchType="content", pattern="authentication"  
+                        3. Present combined results: "Found 3 auth-related files and 8 files containing authentication code"
+                        
                         SEARCH TYPES:
                         - searchType="files": Find files by name (pattern matches file names)
                         - searchType="content": Search inside files for text patterns
                         
+                        PATTERN MATCHING MODES:
+                        - Default (literalSearch=false): Patterns are treated as regular expressions
+                        - Literal (literalSearch=true): Patterns are treated as exact strings
+                        
+                        WHEN TO USE literalSearch=true:
+                        Use literal search when searching for code patterns with special characters:
+                        - Function calls with parentheses and quotes
+                        - Array access with brackets
+                        - Object methods with dots and parentheses
+                        - File paths with backslashes
+                        - Any pattern containing: . * + ? ^ $ { } [ ] | \\ ( )
+                        
                         IMPORTANT PARAMETERS:
                         - pattern: What to search for (file names OR content text)
+                        - literalSearch: Use exact string matching instead of regex (default: false)
                         - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
                         - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         - earlyTermination: Stop search early when exact filename match is found (optional: defaults to true for file searches, false for content searches)
                         
-                        EXAMPLES:
-                        - Find package.json files: searchType="files", pattern="package.json", filePattern="package.json"
-                        - Find all JS files: searchType="files", pattern="*.js" (or use filePattern="*.js")
-                        - Search for "TODO" in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
-                        - Case-sensitive file search: searchType="files", pattern="README", ignoreCase=false
-                        - Case-insensitive file search: searchType="files", pattern="readme", ignoreCase=true
-                        - Find exact file, stop after first match: searchType="files", pattern="config.json", earlyTermination=true
-                        - Find all matching files: searchType="files", pattern="test.js", earlyTermination=false
+                        DECISION EXAMPLES:
+                        - "find package.json" → searchType="files", pattern="package.json" (specific file)
+                        - "find authentication components" → searchType="content", pattern="authentication" (looking for functionality)
+                        - "locate all React components" → searchType="files", pattern="*.tsx" or "*.jsx" (file pattern)
+                        - "find TODO comments" → searchType="content", pattern="TODO" (text in files)
+                        - "show me login files" → AMBIGUOUS → run both: files with "login" AND content with "login"
+                        - "find config" → AMBIGUOUS → run both: config files AND files containing config code
+                        
+                        COMPREHENSIVE SEARCH EXAMPLES:
+                        - Find package.json files: searchType="files", pattern="package.json"
+                        - Find all JS files: searchType="files", pattern="*.js"
+                        - Search for TODO in code: searchType="content", pattern="TODO", filePattern="*.js|*.ts"
+                        - Search for exact code: searchType="content", pattern="toast.error('test')", literalSearch=true
+                        - Ambiguous request "find auth stuff": Run two searches:
+                          1. searchType="files", pattern="auth"
+                          2. searchType="content", pattern="authentication"
+                        
+                        PRO TIP: When user requests are ambiguous about whether they want files or content,
+                        run both searches concurrently and combine results for comprehensive coverage.
                         
                         Unlike regular search tools, this starts a background search process and returns
                         immediately with a session ID. Use get_more_search_results to get results as they

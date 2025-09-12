@@ -37,6 +37,7 @@ export interface SearchSessionOptions {
   contextLines?: number;
   timeout?: number;
   earlyTermination?: boolean;  // Stop search early when exact filename match is found
+  literalSearch?: boolean;     // Force literal string matching (-F flag) instead of regex
 }
 
 /**
@@ -311,6 +312,11 @@ export interface SearchSessionOptions {
     if (options.searchType === 'content') {
       // Content search mode
       args.push('--json', '--line-number');
+      
+      // Add literal search support for content searches
+      if (options.literalSearch) {
+        args.push('-F'); // Fixed string matching (literal)
+      }
       
       if (options.contextLines && options.contextLines > 0) {
         args.push('-C', options.contextLines.toString());
