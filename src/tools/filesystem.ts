@@ -215,15 +215,46 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
 }
 
 /**
+ * Check if a path is within a read-only directory
+ * @param checkPath The path to check
+ * @returns Promise<boolean> True if the path is read-only
+ */
+async function isPathReadOnly(checkPath: string): Promise<boolean> {
+    const config = await configManager.getConfig();
+    const readOnlyDirs = config.readOnlyDirectories || [];
+    
+    if (readOnlyDirs.length === 0) {
+        return false; // No read-only directories configured
+    }
+
+    const normalizedCheckPath = path.normalize(checkPath).toLowerCase();
+    
+    for (const dir of readOnlyDirs) {
+        const expandedDir = expandHome(dir);
+        const normalizedDir = path.normalize(expandedDir).toLowerCase();
+        
+        // Check if the path is within the read-only directory
+        if (normalizedCheckPath === normalizedDir || 
+            normalizedCheckPath.startsWith(normalizedDir + path.sep)) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
  * Validates a path to ensure it can be accessed or created.
  * For existing paths, returns the real path (resolving symlinks).
  * For non-existent paths, validates parent directories to ensure they exist.
+ * For write operations, also checks if the path is read-only.
  *
  * @param requestedPath The path to validate
+ * @param isWriteOperation Whether this is a write operation (default: false)
  * @returns Promise<string> The validated path
- * @throws Error if the path or its parent directories don't exist or if the path is not allowed
+ * @throws Error if the path or its parent directories don't exist or if the path is not allowed or read-only
  */
-export async function validatePath(requestedPath: string): Promise<string> {
+export async function validatePath(requestedPath: string, isWriteOperation: boolean = false): Promise<string> {
     const validationOperation = async (): Promise<string> => {
         // Expand home directory if present
         const expandedPath = expandHome(requestedPath);
@@ -241,6 +272,16 @@ export async function validatePath(requestedPath: string): Promise<string> {
             });
 
             throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
+        }
+
+        // Check if path is read-only for write operations
+        if (isWriteOperation && await isPathReadOnly(absolute)) {
+            capture('server_path_validation_error', {
+                error: 'Path is read-only',
+                operation: 'write'
+            });
+
+            throw new Error(`Path is read-only: ${requestedPath}. This directory is protected from modifications.`);
         }
 
         // Check if path exists
@@ -828,7 +869,7 @@ function splitLinesPreservingEndings(content: string): string[] {
 }
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
-    const validPath = await validatePath(filePath);
+    const validPath = await validatePath(filePath, true); // Mark as write operation
 
     // Get file extension for telemetry
     const fileExtension = getFileExtension(validPath);
@@ -886,7 +927,7 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
 }
 
 export async function createDirectory(dirPath: string): Promise<void> {
-    const validPath = await validatePath(dirPath);
+    const validPath = await validatePath(dirPath, true); // Creating directory is a write operation
     await fs.mkdir(validPath, { recursive: true });
 }
 
@@ -897,8 +938,8 @@ export async function listDirectory(dirPath: string): Promise<string[]> {
 }
 
 export async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
-    const validSourcePath = await validatePath(sourcePath);
-    const validDestPath = await validatePath(destinationPath);
+    const validSourcePath = await validatePath(sourcePath, true); // Source needs write permission (to delete)
+    const validDestPath = await validatePath(destinationPath, true); // Destination needs write permission
     await fs.rename(validSourcePath, validDestPath);
 }
 

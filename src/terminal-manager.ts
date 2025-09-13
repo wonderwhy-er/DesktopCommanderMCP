@@ -5,6 +5,32 @@ import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState } from './utils/process-detection.js';
 
+// The permission flag for destructive commands
+const PERMISSION_FLAG = '--i-have-explicit-permission-from-user';
+
+// Patterns for destructive commands
+const DESTRUCTIVE_PATTERNS = [
+    /\brm\s+(-rf?|-fr?)\s+/,       // rm -rf or rm -fr
+    /\brm\s+.*\*/,                  // rm with wildcards
+    /\bfind\s+.*-delete/,           // find with -delete
+    /\bfind\s+.*-exec\s+rm/,        // find with -exec rm
+    /\b(dd|mkfs|format|fdisk)\b/,   // Disk operations
+];
+
+/**
+ * Check if a command is destructive and needs explicit permission
+ */
+function isDestructiveCommand(command: string): boolean {
+    return DESTRUCTIVE_PATTERNS.some(pattern => pattern.test(command));
+}
+
+/**
+ * Check if command has permission flag
+ */
+function hasPermissionFlag(command: string): boolean {
+    return command.includes(PERMISSION_FLAG);
+}
+
 interface CompletedSession {
   pid: number;
   output: string;
@@ -44,6 +70,35 @@ export class TerminalManager {
   }
   
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
+    // Check for destructive commands if protection is enabled
+    try {
+      const config = await configManager.getConfig();
+      if (config.requireExplicitPermission !== false) { // Default to true if not set
+        if (isDestructiveCommand(command) && !hasPermissionFlag(command)) {
+          return {
+            pid: -1,
+            output: `🚨 DESTRUCTIVE OPERATION BLOCKED! 🚨
+
+This command requires explicit permission.
+To execute, you MUST:
+1. Ask the user what specifically they want deleted
+2. Show them what will be affected
+3. Get explicit confirmation
+4. Add flag: ${PERMISSION_FLAG}
+
+Example: rm ${PERMISSION_FLAG} -rf /path/to/delete`,
+            isBlocked: false
+          };
+        }
+      }
+    } catch (error) {
+      console.error('Error checking destructive command protection:', error);
+      // Continue execution if config check fails
+    }
+
+    // Remove the permission flag before executing
+    const cleanCommand = command.replace(PERMISSION_FLAG, '').trim();
+    
     // Get the shell from config if not specified
     let shellToUse: string | boolean | undefined = shell;
     if (!shellToUse) {
@@ -60,9 +115,9 @@ export class TerminalManager {
     // Note: No special stdio options needed here, Node.js handles pipes by default
     
     // Enhance SSH commands automatically
-    let enhancedCommand = command;
-    if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
-      enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
+    let enhancedCommand = cleanCommand;
+    if (cleanCommand.trim().startsWith('ssh ') && !cleanCommand.includes(' -t')) {
+      enhancedCommand = cleanCommand.replace(/^ssh /, 'ssh -t ');
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
     
