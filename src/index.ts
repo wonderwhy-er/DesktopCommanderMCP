@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 
 import { FilteredStdioServerTransport } from './custom-stdio.js';
-import { server } from './server.js';
+import { server, flushDeferredMessages } from './server.js';
 import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
 import { runSetup } from './npm-scripts/setup.js';
 import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
+
+// Store messages to defer until after initialization
+const deferredMessages: Array<{level: string, message: string}> = [];
+function deferLog(level: string, message: string) {
+    deferredMessages.push({level, message});
+}
 
 async function runServer() {
   try {
@@ -24,15 +30,15 @@ async function runServer() {
     }
 
       try {
-          logToStderr('info', 'Loading configuration...');
+          deferLog('info', 'Loading configuration...');
           await configManager.loadConfig();
-          logToStderr('info', 'Configuration loaded successfully');
+          deferLog('info', 'Configuration loaded successfully');
       } catch (configError) {
-          logToStderr('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
+          deferLog('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
           if (configError instanceof Error && configError.stack) {
-              logToStderr('debug', `Stack trace: ${configError.stack}`);
+              deferLog('debug', `Stack trace: ${configError.stack}`);
           }
-          logToStderr('warning', 'Continuing with in-memory configuration only');
+          deferLog('warning', 'Continuing with in-memory configuration only');
           // Continue anyway - we'll use an in-memory config
       }
 
@@ -78,20 +84,27 @@ async function runServer() {
 
     capture('run_server_start');
 
-
-    logToStderr('info', 'Connecting server...');
+    deferLog('info', 'Connecting server...');
 
     // Set up event-driven initialization completion handler
     server.oninitialized = () => {
       // This callback is triggered after the client sends the "initialized" notification
       // At this point, the MCP protocol handshake is fully complete
       transport.enableNotifications();
-      // Use the transport to send a proper JSON-RPC notification
-      transport.sendLog('info', 'MCP fully initialized, notifications enabled');
+      
+      // Flush all deferred messages from both index.ts and server.ts
+      while (deferredMessages.length > 0) {
+        const msg = deferredMessages.shift()!;
+        transport.sendLog('info', msg.message);
+      }
+      flushDeferredMessages();
+      
+      // Now we can send regular logging messages
+      transport.sendLog('info', 'Server connected successfully');
+      transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
     };
 
     await server.connect(transport);
-    logToStderr('info', 'Server connected successfully');
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`FATAL ERROR: ${errorMessage}`);
