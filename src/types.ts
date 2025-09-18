@@ -3,6 +3,7 @@ import { FilteredStdioServerTransport } from './custom-stdio.js';
 
 declare global {
   var mcpTransport: FilteredStdioServerTransport | undefined;
+  var disableOnboarding: boolean | undefined;
 }
 
 export interface ProcessInfo {

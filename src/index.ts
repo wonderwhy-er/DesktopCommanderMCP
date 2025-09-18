@@ -23,6 +23,15 @@ async function runServer() {
       return;
     }
 
+    // Parse command line arguments for onboarding control
+    const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');
+    if (DISABLE_ONBOARDING) {
+      logToStderr('info', 'Onboarding disabled via --no-onboarding flag');
+    }
+    
+    // Set global flag for onboarding control
+    (global as any).disableOnboarding = DISABLE_ONBOARDING;
+
       try {
           logToStderr('info', 'Loading configuration...');
           await configManager.loadConfig();

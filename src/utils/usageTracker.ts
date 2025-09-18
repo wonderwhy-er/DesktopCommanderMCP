@@ -382,6 +382,22 @@ class UsageTracker {
    * Check if user should see onboarding invitation - SIMPLE VERSION
    */
   async shouldShowOnboarding(): Promise<boolean> {
+    // Check if onboarding is disabled via command line argument
+    if ((global as any).disableOnboarding) {
+      return false;
+    }
+    
+    // Check if client is desktop-commander (disable for this client)
+    try {
+      const { currentClient } = await import('../server.js');
+      if (currentClient?.name === 'desktop-commander') {
+        return false;
+      }
+    } catch (error) {
+      // If we can't import server, continue with other checks
+      console.log('[ONBOARDING DEBUG] Could not check client name, continuing...');
+    }
+
     const stats = await this.getStats();
     const onboardingState = await this.getOnboardingState();
     const now = Date.now();
