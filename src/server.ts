@@ -58,7 +58,21 @@ import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 
-logToStderr('info', 'Loading server.ts');
+// Store startup messages to send after initialization
+const deferredMessages: Array<{level: string, message: string}> = [];
+function deferLog(level: string, message: string) {
+    deferredMessages.push({level, message});
+}
+
+// Function to flush deferred messages after initialization
+export function flushDeferredMessages() {
+    while (deferredMessages.length > 0) {
+        const msg = deferredMessages.shift()!;
+        logger.info(msg.message);
+    }
+}
+
+deferLog('info', 'Loading server.ts');
 
 export const server = new Server(
     {
@@ -104,8 +118,8 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
             };
-            // Send JSON-RPC notification about client connection
-            logToStderr('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
+            // Defer client connection message until after initialization
+            deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
         }
 
         // Return standard initialization response
@@ -131,7 +145,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 // Export current client info for access by other modules
 export { currentClient };
 
-logToStderr('info', 'Setting up request handlers...');
+deferLog('info', 'Setting up request handlers...');
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {

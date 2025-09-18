@@ -51,8 +51,8 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     // Setup stdout filtering for any other output
     this.setupStdoutFiltering();
     
-    // Send initialization notification
-    this.sendLogNotification('info', ['Enhanced FilteredStdioServerTransport initialized']);
+    // Note: We defer the initialization notification until enableNotifications() is called
+    // to ensure MCP protocol compliance - notifications must not be sent before initialization
   }
 
   /**
@@ -60,6 +60,9 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
    */
   public enableNotifications() {
     this.isInitialized = true;
+    
+    // Send the deferred initialization notification first
+    this.sendLogNotification('info', ['Enhanced FilteredStdioServerTransport initialized']);
     
     // Replay all buffered messages in chronological order
     if (this.messageBuffer.length > 0) {
