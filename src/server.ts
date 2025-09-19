@@ -169,6 +169,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetConfigArgsSchema),
+                    annotations: {
+                        title: "Get Configuration",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "set_config_value",
@@ -191,6 +195,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
+                    annotations: {
+                        title: "Set Configuration Value",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
 
                 // Filesystem tools
@@ -230,6 +240,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                    annotations: {
+                        title: "Read File or URL",
+                        readOnlyHint: true,
+                        openWorldHint: true,
+                    },
                 },
                 {
                     name: "read_multiple_files",
@@ -246,6 +261,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
+                    annotations: {
+                        title: "Read Multiple Files",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "write_file",
@@ -279,6 +298,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(WriteFileArgsSchema),
+                    annotations: {
+                        title: "Write File",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
                 {
                     name: "create_directory",
@@ -304,6 +329,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
+                    annotations: {
+                        title: "List Directory Contents",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "move_file",
@@ -316,6 +345,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(MoveFileArgsSchema),
+                    annotations: {
+                        title: "Move/Rename File",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
                 {
                     name: "start_search",
@@ -425,6 +460,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                    annotations: {
+                        title: "Get Search Results",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "stop_search", 
@@ -452,6 +491,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
+                    annotations: {
+                        title: "List Active Searches",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "get_file_info",
@@ -471,6 +514,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
+                    annotations: {
+                        title: "Get File Information",
+                        readOnlyHint: true,
+                    },
                 },
                 // Note: list_allowed_directories removed - use get_config to check allowedDirectories
 
@@ -511,6 +558,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(EditBlockArgsSchema),
+                    annotations: {
+                        title: "Edit Text Block",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
                 
                 // Terminal tools
@@ -568,6 +621,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(StartProcessArgsSchema),
+                    annotations: {
+                        title: "Start Terminal Process",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: true,
+                    },
                 },
                 {
                     name: "read_process_output",
@@ -595,6 +654,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                    annotations: {
+                        title: "Read Process Output",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "interact_with_process", 
@@ -647,6 +710,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
+                    annotations: {
+                        title: "Send Input to Process",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: true,
+                    },
                 },
                 {
                     name: "force_terminate",
@@ -655,6 +724,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
+                    annotations: {
+                        title: "Force Terminate Process",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
                 {
                     name: "list_sessions",
@@ -673,6 +748,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
+                    annotations: {
+                        title: "List Terminal Sessions",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "list_processes",
@@ -683,6 +762,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
+                    annotations: {
+                        title: "List Running Processes",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "kill_process",
@@ -693,6 +776,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(KillProcessArgsSchema),
+                    annotations: {
+                        title: "Kill Process",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: false,
+                    },
                 },
                 {
                     name: "get_usage_stats",
@@ -703,6 +792,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                    annotations: {
+                        title: "Get Usage Statistics",
+                        readOnlyHint: true,
+                    },
                 },
                 {
                     name: "give_feedback_to_desktop_commander",
