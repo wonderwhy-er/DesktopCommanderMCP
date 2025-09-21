@@ -842,7 +842,7 @@ function Start-Installation {
     Restart-Claude
 
     Write-Host ""
-    Write-Success "🎉 Installation successfully completed! Thank you for using Desktop Commander!"
+    Write-Success "Installation successfully completed! Thank you for using Desktop Commander!"
     Write-Host ""
     Write-Info "How it works:"
     Write-Info "- Desktop Commander runs in isolated containers"
@@ -865,7 +865,7 @@ function Start-Installation {
             }
         }
         Write-Host ""
-        Write-Info "💡 Path Translation Examples:"
+        Write-Info "Path Translation Examples:"
         Write-Info "  Windows: C:\Users\wonde\projects\file.txt"
         Write-Info "  Docker:  /c/users/wonde/projects/file.txt  (windows-style)"
         Write-Info "  Docker:  /home/wonde/projects/file.txt     (home-style)"
@@ -890,10 +890,10 @@ function Start-Installation {
     Write-Info "- User configs: git config, SSH keys, .bashrc"
 
     Write-Host ""
-    Write-Info "🤔 Need help or have feedback? Happy to jump on a quick call:"
+    Write-Info "Need help or have feedback? Happy to jump on a quick call:"
     Write-Info "   https://calendar.app.google/SHMNZN5MJznJWC5A7"
     Write-Host ""
-    Write-Info "💬 Join our community: https://discord.com/invite/kQ27sNnZr7"
+    Write-Info "Join our community: https://discord.com/invite/kQ27sNnZr7"
 }
 
 # Run installation
