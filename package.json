@@ -43,6 +43,7 @@
     "unlink:local": "npm unlink",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js",
     "build:mcpb": "node scripts/build-mcpb.cjs",
+    "build:mcpb:future": "node scripts/build-mcpb.cjs --future",
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",

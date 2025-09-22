@@ -40,53 +40,37 @@ fs.mkdirSync(BUNDLE_DIR, { recursive: true });
 // Step 3: Read package.json for version and metadata
 const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
 
-// Step 4: Create MCPB manifest with privacy policy
-const manifest = {
-    manifest_version: "0.1",
-    
-    // Basic metadata
-    name: "desktop-commander",
-    display_name: "Desktop Commander",
-    version: packageJson.version,
-    description: "Execute long-running terminal commands and manage processes through Model Context Protocol (MCP)",
-    
-    // Author information as object
-    author: {
-        name: "Desktop Commander Team",
-        url: "https://github.com/wonderwhy-er/DesktopCommanderMCP"
-    },
+// Step 4: Load and process manifest template
+console.log('📝 Processing manifest template...');
 
-    // Privacy policies - REQUIRED for Anthropic submission
-    privacy_policies: [
-        "https://legal.desktopcommander.app/privacy_desktop_commander_mcp"
-    ],
+// Check if we should use the future manifest (with privacy policies)
+const useFutureManifest = process.argv.includes('--future');
+const manifestTemplatePath = path.join(
+    PROJECT_ROOT, 
+    useFutureManifest ? 'manifest.future.json' : 'manifest.template.json'
+);
 
-    // Server configuration
-    server: {
-        type: "node",
-        entry_point: "dist/index.js",
-        mcp_config: {
-            command: "node",
-            args: ["${__dirname}/dist/index.js"],
-            env: {
-                NODE_ENV: "production"
-            }
-        }
-    },
+console.log(`📄 Using manifest: ${useFutureManifest ? 'manifest.future.json' : 'manifest.template.json'}`);
 
-    // Optional fields
-    homepage: "https://github.com/wonderwhy-er/DesktopCommanderMCP",
-    repository: {
-        type: "git",
-        url: "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
-    },
+let manifestTemplate;
+try {
+    manifestTemplate = fs.readFileSync(manifestTemplatePath, 'utf8');
+} catch (error) {
+    console.error('❌ Failed to read manifest template:', manifestTemplatePath);
+    process.exit(1);
+}
 
-    // License
-    license: "MIT",
+// Replace template variables
+const manifestContent = manifestTemplate.replace('{{VERSION}}', packageJson.version);
 
-    // Icon (if available)
-    icon: "logo.png"
-};
+// Parse and validate the resulting manifest
+let manifest;
+try {
+    manifest = JSON.parse(manifestContent);
+} catch (error) {
+    console.error('❌ Invalid JSON in manifest template:', error.message);
+    process.exit(1);
+}
 
 // Write manifest
 fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
@@ -168,7 +152,19 @@ console.log('   Settings → Extensions → Advanced Settings → Install Extens
 console.log(`2. Select the file: ${outputFile}`);
 console.log('3. Configure any settings and test the functionality');
 console.log('');
+console.log('Build options:');
+console.log('- Default: npm run build:mcpb (uses manifest.template.json)');
+console.log('- Future:  npm run build:mcpb -- --future (uses manifest.future.json with privacy policies)');
+console.log('');
+if (!useFutureManifest) {
+    console.log('📝 Note: Using basic manifest for Claude Desktop compatibility.');
+    console.log('   Use --future flag when privacy policies are supported.');
+} else {
+    console.log('🔮 Using future manifest with privacy policies for Anthropic submission.');
+}
+console.log('');
 console.log('To submit to Anthropic directory:');
+console.log('- Build with: npm run build:mcpb -- --future');
 console.log('- Ensure privacy policy is accessible at the GitHub URL');
 console.log('- Complete destructive operation annotations (✅ Done)');
 console.log('- Submit via Anthropic desktop extensions interest form');
