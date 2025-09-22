@@ -104,7 +104,7 @@ filesToCopy.forEach(file => {
     }
 });
 
-// Step 6: Create package.json in bundle for dependency info
+// Step 6: Create package.json in bundle with production dependencies
 const bundlePackageJson = {
     name: manifest.name,
     version: manifest.version,
@@ -112,13 +112,33 @@ const bundlePackageJson = {
     main: "dist/index.js",
     author: manifest.author,
     license: manifest.license,
-    repository: manifest.repository
+    repository: manifest.repository,
+    dependencies: {
+        "@modelcontextprotocol/sdk": "^1.9.0",
+        "@vscode/ripgrep": "^1.15.9", 
+        "cross-fetch": "^4.1.0",
+        "fastest-levenshtein": "^1.0.16",
+        "glob": "^10.3.10",
+        "isbinaryfile": "^5.0.4",
+        "zod": "^3.24.1",
+        "zod-to-json-schema": "^3.23.5"
+    }
 };
 
 fs.writeFileSync(
     path.join(BUNDLE_DIR, 'package.json'), 
     JSON.stringify(bundlePackageJson, null, 2)
 );
+
+// Step 6b: Install dependencies in bundle directory
+console.log('📦 Installing production dependencies in bundle...');
+try {
+    execSync('npm install --omit=dev --production', { cwd: BUNDLE_DIR, stdio: 'inherit' });
+    console.log('✅ Dependencies installed');
+} catch (error) {
+    console.error('❌ Failed to install dependencies:', error.message);
+    process.exit(1);
+}
 
 // Step 7: Validate manifest
 console.log('🔍 Validating manifest...');
