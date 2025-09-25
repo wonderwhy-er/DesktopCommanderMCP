@@ -1,13 +1,23 @@
 {
-  "dxt_version": "0.1",
+  "manifest_version": "0.1",
   "name": "desktop-commander",
   "display_name": "Desktop Commander",
   "version": "{{VERSION}}",
-  "description": "Execute long-running terminal commands and manage processes through Model Context Protocol (MCP)",
+  "description": "Complete AI development workflow orchestration - from file creation to testing and deployment through terminal and file operations",
+  "long_description": "Desktop Commander is the central orchestration hub for AI-powered development workflows. It enables AI assistants to seamlessly coordinate file operations, terminal commands, and system integration on your local machine. Whether you're a non-technical founder building your first prototype or a developer orchestrating complex multi-tool workflows, Desktop Commander provides the reliable foundation for end-to-end development. Trusted by thousands of users for rapid prototyping, system administration, and production workflows.",
   "author": {
     "name": "Desktop Commander Team",
-    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP"
+    "email": "er@desktopcommander.app",
+    "url": "https://desktopcommander.app/"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+  },
+  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "documentation": "https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md",
+  "support": "https://discord.com/channels/1353458235608137880/1361495231538921494",
+  "icon": "icon.png",
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
@@ -21,11 +31,31 @@
       }
     }
   },
-  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
-  },
+  "keywords": [
+    "orchestration",
+    "workflow", 
+    "development",
+    "prototyping",
+    "terminal",
+    "processes",
+    "file-management",
+    "automation",
+    "productivity",
+    "end-to-end",
+    "data-analysis"
+  ],
   "license": "MIT",
-  "icon": "logo.png"
+  "privacy_policies": [
+    "https://legal.desktopcommander.app/privacy_desktop_commander_mcp"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
 }

@@ -6,7 +6,7 @@
  * This script:
  * 1. Builds the TypeScript project
  * 2. Creates a bundle directory structure 
- * 3. Generates a proper MCPB manifest.json with privacy policy
+ * 3. Generates a proper MCPB manifest.json
  * 4. Copies the built server and dependencies
  * 5. Uses mcpb CLI to create the final .mcpb bundle
  */
@@ -34,8 +34,7 @@ try {
 // Step 2: Clean and create bundle directory
 if (fs.existsSync(BUNDLE_DIR)) {
     fs.rmSync(BUNDLE_DIR, { recursive: true });
-}
-fs.mkdirSync(BUNDLE_DIR, { recursive: true });
+}fs.mkdirSync(BUNDLE_DIR, { recursive: true });
 
 // Step 3: Read package.json for version and metadata
 const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
@@ -43,14 +42,8 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.
 // Step 4: Load and process manifest template
 console.log('📝 Processing manifest template...');
 
-// Check if we should use the future manifest (with privacy policies)
-const useFutureManifest = process.argv.includes('--future');
-const manifestTemplatePath = path.join(
-    PROJECT_ROOT, 
-    useFutureManifest ? 'manifest.future.json' : 'manifest.template.json'
-);
-
-console.log(`📄 Using manifest: ${useFutureManifest ? 'manifest.future.json' : 'manifest.template.json'}`);
+const manifestTemplatePath = path.join(PROJECT_ROOT, 'manifest.template.json');
+console.log(`📄 Using manifest: manifest.template.json`);
 
 let manifestTemplate;
 try {
@@ -75,7 +68,6 @@ try {
 // Write manifest
 fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 console.log('✅ Created manifest.json');
-
 // Step 5: Copy necessary files
 const filesToCopy = [
     'dist',
@@ -83,7 +75,7 @@ const filesToCopy = [
     'README.md',
     'LICENSE',
     'PRIVACY.md',
-    'logo.png'
+    'icon.png'
 ];
 
 filesToCopy.forEach(file => {
@@ -112,8 +104,7 @@ const bundlePackageJson = {
     main: "dist/index.js",
     author: manifest.author,
     license: manifest.license,
-    repository: manifest.repository,
-    dependencies: {
+    repository: manifest.repository,    dependencies: {
         "@modelcontextprotocol/sdk": "^1.9.0",
         "@vscode/ripgrep": "^1.15.9", 
         "cross-fetch": "^4.1.0",
@@ -149,7 +140,6 @@ try {
     console.error('❌ Manifest validation failed:', error.message);
     process.exit(1);
 }
-
 // Step 8: Pack the bundle
 console.log('📦 Creating .mcpb bundle...');
 const outputFile = path.join(PROJECT_ROOT, `${manifest.name}-${manifest.version}.mcpb`);
@@ -172,19 +162,7 @@ console.log('   Settings → Extensions → Advanced Settings → Install Extens
 console.log(`2. Select the file: ${outputFile}`);
 console.log('3. Configure any settings and test the functionality');
 console.log('');
-console.log('Build options:');
-console.log('- Default: npm run build:mcpb (uses manifest.template.json)');
-console.log('- Future:  npm run build:mcpb -- --future (uses manifest.future.json with privacy policies)');
-console.log('');
-if (!useFutureManifest) {
-    console.log('📝 Note: Using basic manifest for Claude Desktop compatibility.');
-    console.log('   Use --future flag when privacy policies are supported.');
-} else {
-    console.log('🔮 Using future manifest with privacy policies for Anthropic submission.');
-}
-console.log('');
 console.log('To submit to Anthropic directory:');
-console.log('- Build with: npm run build:mcpb -- --future');
 console.log('- Ensure privacy policy is accessible at the GitHub URL');
 console.log('- Complete destructive operation annotations (✅ Done)');
 console.log('- Submit via Anthropic desktop extensions interest form');
