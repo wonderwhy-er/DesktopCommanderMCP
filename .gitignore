@@ -44,3 +44,14 @@ planning/
 
 # Test output files
 test/test_output/
+
+# MCPB related files
+*.mcpb
+mcpb-bundle/
+.mcpregistry_github_token
+.mcpregistry_registry_token
+
+# Test files
+test_files/
+test_fix.js
+test_search.js

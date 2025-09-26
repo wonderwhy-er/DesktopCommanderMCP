@@ -16,17 +16,7 @@ export async function getConfig() {
     const configWithSystemInfo = {
       ...config,
       currentClient,
-      systemInfo: {
-        platform: systemInfo.platform,
-        platformName: systemInfo.platformName,
-        defaultShell: systemInfo.defaultShell,
-        pathSeparator: systemInfo.pathSeparator,
-        isWindows: systemInfo.isWindows,
-        isMacOS: systemInfo.isMacOS,
-        isLinux: systemInfo.isLinux,
-        docker: systemInfo.docker,
-        examplePaths: systemInfo.examplePaths
-      }
+      systemInfo
     };
     
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
