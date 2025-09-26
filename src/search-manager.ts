@@ -24,6 +24,7 @@ export interface SearchSession {
   buffer: string;  // For processing incomplete JSON lines
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
+  wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
 }
 
 export interface SearchSessionOptions {
@@ -51,6 +52,7 @@ export interface SearchSessionOptions {
    * Start a new search session (like start_process)
    * Returns immediately with initial state and results
    */
+
   async startSearch(options: SearchSessionOptions): Promise<{
     sessionId: string;
     isComplete: boolean;
@@ -63,7 +65,7 @@ export interface SearchSessionOptions {
     
     // Validate path first
     const validPath = await validatePath(options.rootPath);
-    
+
     // Build ripgrep arguments
     const args = this.buildRipgrepArgs({ ...options, rootPath: validPath });
     
@@ -173,6 +175,7 @@ export interface SearchSessionOptions {
     error?: string;
     hasMoreResults: boolean;      // New field
     runtime: number;
+    wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
   } {
     const session = this.sessions.get(sessionId);
     
@@ -196,7 +199,8 @@ export interface SearchSessionOptions {
         isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
         error: session.error?.trim() || undefined,
         hasMoreResults: false, // Tail always returns what's available
-        runtime: Date.now() - session.startTime
+        runtime: Date.now() - session.startTime,
+        wasIncomplete: session.wasIncomplete
       };
     }
 
@@ -215,7 +219,8 @@ export interface SearchSessionOptions {
       isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
       error: session.error?.trim() || undefined,
       hasMoreResults,
-      runtime: Date.now() - session.startTime
+      runtime: Date.now() - session.startTime,
+      wasIncomplete: session.wasIncomplete
     };
   }
 
@@ -231,7 +236,6 @@ export interface SearchSessionOptions {
 
     if (!session.process.killed) {
       session.process.kill('SIGTERM');
-      capture('search_session_terminated', { sessionId });
     }
 
     // Don't delete session immediately - let user read final results
@@ -273,7 +277,6 @@ export interface SearchSessionOptions {
     for (const [sessionId, session] of this.sessions) {
       if (session.isComplete && session.lastReadTime < cutoffTime) {
         this.sessions.delete(sessionId);
-        capture('search_session_cleaned_up', { sessionId });
       }
     }
   }
@@ -317,7 +320,7 @@ export interface SearchSessionOptions {
       if (options.literalSearch) {
         args.push('-F'); // Fixed string matching (literal)
       }
-      
+
       if (options.contextLines && options.contextLines > 0) {
         args.push('-C', options.contextLines.toString());
       }
@@ -338,7 +341,7 @@ export interface SearchSessionOptions {
     if (options.maxResults && options.maxResults > 0) {
       args.push('-m', options.maxResults.toString());
     }
-    
+
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
       const patterns = options.filePattern
@@ -397,6 +400,10 @@ export interface SearchSessionOptions {
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
 
+      // Store error text for potential user display, but don't capture individual errors
+      // We'll capture incomplete search status in the completion event instead
+      session.error = (session.error || '') + errorText;
+
       // Filter meaningful errors
       const filteredErrors = errorText
         .split('\n')
@@ -433,6 +440,12 @@ export interface SearchSessionOptions {
 
       session.isComplete = true;
 
+      // Track if search was incomplete due to access issues
+      // Ripgrep exit code 2 means "some files couldn't be searched"
+      if (code === 2) {
+        session.wasIncomplete = true;
+      }
+
       // Only treat as error if:
       // 1. Unexpected exit code (not 0, 1, or 2) AND
       // 2. We have meaningful errors after filtering AND
@@ -455,7 +468,8 @@ export interface SearchSessionOptions {
         exitCode: code,
         totalResults: session.totalMatches + session.totalContextLines,
         totalMatches: session.totalMatches,
-        runtime: Date.now() - session.startTime
+        runtime: Date.now() - session.startTime,
+        wasIncomplete: session.wasIncomplete || false  // NEW: Track incomplete searches
       });
 
       // Rely on cleanupSessions(maxAge) only; no per-session timer
@@ -465,11 +479,6 @@ export interface SearchSessionOptions {
       session.isComplete = true;
       session.isError = true;
       session.error = `Process error: ${error.message}`;
-      
-      capture('search_session_process_error', {
-        sessionId: session.id,
-        error: error.message
-      });
 
       // Rely on cleanupSessions(maxAge) only; no per-session timer
     });
@@ -588,13 +597,5 @@ function startCleanupIfNeeded(): void {
     setTimeout(() => {
       searchManager.cleanupSessions();
     }, 1000);
-  }
-}
-
-// Export cleanup function for graceful shutdown
-export function stopSearchManagerCleanup(): void {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
   }
 }
