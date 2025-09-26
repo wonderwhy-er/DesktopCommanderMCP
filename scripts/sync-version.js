@@ -38,7 +38,7 @@ serverJson.version = version;
 // Also update the package version in the packages array
 if (serverJson.packages && serverJson.packages.length > 0) {
     serverJson.packages.forEach(pkg => {
-        if (pkg.registry_type === 'npm' && pkg.identifier === '@wonderwhy-er/desktop-commander') {
+        if (pkg.registryType === 'npm' && pkg.identifier === '@wonderwhy-er/desktop-commander') {
             pkg.version = version;
         }
     });
