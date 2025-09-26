@@ -154,6 +154,11 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
 
     if (results.isComplete) {
       output += `\n✅ Search completed.`;
+      
+      // Warn users if search was incomplete due to permission issues
+      if (results.wasIncomplete) {
+        output += `\n⚠️  Warning: Some files were inaccessible due to permissions. Results may be incomplete.`;
+      }
     }
 
     return {
