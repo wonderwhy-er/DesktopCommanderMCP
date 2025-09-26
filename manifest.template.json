@@ -1,10 +1,11 @@
 {
+  "$schema": "../../dist/mcpb-manifest.schema.json",
   "manifest_version": "0.1",
   "name": "desktop-commander",
   "display_name": "Desktop Commander",
   "version": "{{VERSION}}",
-  "description": "Complete AI development workflow orchestration - from file creation to testing and deployment through terminal and file operations",
-  "long_description": "Desktop Commander is the central orchestration hub for AI-powered development workflows. It enables AI assistants to seamlessly coordinate file operations, terminal commands, and system integration on your local machine. Whether you're a non-technical founder building your first prototype or a developer orchestrating complex multi-tool workflows, Desktop Commander provides the reliable foundation for end-to-end development. Trusted by thousands of users for rapid prototyping, system administration, and production workflows.",
+  "description": "Build, explore, and automate on your local machine with access to files and terminal.",
+  "long_description": "Combine local filesystem access with full terminal control to handle technical tasks through natural language. Desktop Commander empowers you to build, explore, and automate - from organizing repositories to creating complete applications:\n* **Build from scratch** - Create features and applications with simple commands\n* **Manage development environments** - Set up servers, configure systems, and handle processes\n* **Manage context and documentation** - Keep track of project details and technical specifications\n* **Explore existing codebases and projects** - Navigate and understand complex repositories\n\nThis extension bridges technical skill gaps by providing full command-line superpowers through an interface that understands your intent and handles complexity automatically.",
   "author": {
     "name": "Desktop Commander Team",
     "email": "er@desktopcommander.app",
@@ -16,7 +17,7 @@
   },
   "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
   "documentation": "https://github.com/wonderwhy-er/DesktopCommanderMCP/blob/main/FAQ.md",
-  "support": "https://discord.com/channels/1353458235608137880/1361495231538921494",
+  "support": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "icon": "icon.png",
   "server": {
     "type": "node",
@@ -27,10 +28,109 @@
         "${__dirname}/dist/index.js"
       ],
       "env": {
+        "MCP_DXT": "true",
         "NODE_ENV": "production"
       }
     }
   },
+  "tools": [
+    {
+      "name": "get_config",
+      "description": "Get the complete server configuration including blocked commands, allowed directories, file limits, telemetry settings, client info, and system information."
+    },
+    {
+      "name": "set_config_value",
+      "description": "Set a specific configuration value by key. WARNING: Should be used in a separate chat from file operations to prevent security issues."
+    },
+    {
+      "name": "read_file",
+      "description": "Read the contents of a file from the file system or URL with optional offset and length parameters. Supports partial reading and handles images."
+    },
+    {
+      "name": "read_multiple_files",
+      "description": "Read the contents of multiple files simultaneously. Handles text files and renders images."
+    },
+    {
+      "name": "write_file",
+      "description": "Write or append to file contents. Always write files in chunks of 25-30 lines maximum for best performance."
+    },
+    {
+      "name": "create_directory",
+      "description": "Create a new directory or ensure a directory exists. Can create multiple nested directories in one operation."
+    },
+    {
+      "name": "list_directory",
+      "description": "Get a detailed listing of all files and directories in a specified path."
+    },
+    {
+      "name": "move_file",
+      "description": "Move or rename files and directories between locations."
+    },
+    {
+      "name": "start_search",
+      "description": "Start a streaming search for files by name or content within files. Returns results progressively with session ID."
+    },
+    {
+      "name": "get_more_search_results",
+      "description": "Get more results from an active search with offset-based pagination."
+    },
+    {
+      "name": "stop_search",
+      "description": "Stop an active search gracefully when you've found what you need."
+    },
+    {
+      "name": "list_searches",
+      "description": "List all active searches with their status and runtime information."
+    },
+    {
+      "name": "get_file_info",
+      "description": "Retrieve detailed metadata about a file or directory including size, timestamps, permissions, and line counts."
+    },
+    {
+      "name": "edit_block",
+      "description": "Apply surgical text replacements to files. Make small, focused edits with minimal context for precision."
+    },
+    {
+      "name": "start_process",
+      "description": "Start a new terminal process with intelligent state detection. Primary tool for local file analysis (CSV, JSON, logs, etc.)."
+    },
+    {
+      "name": "read_process_output",
+      "description": "Read output from a running process with intelligent completion detection and REPL prompt recognition."
+    },
+    {
+      "name": "interact_with_process",
+      "description": "Send input to a running process and automatically receive the response. Critical tool for all local file analysis."
+    },
+    {
+      "name": "force_terminate",
+      "description": "Force terminate a running terminal session."
+    },
+    {
+      "name": "list_sessions",
+      "description": "List all active terminal sessions with status information including blocked state and runtime."
+    },
+    {
+      "name": "list_processes",
+      "description": "List all running processes with PID, command name, CPU usage, and memory usage."
+    },
+    {
+      "name": "kill_process",
+      "description": "Terminate a running process by PID. Use with caution."
+    },
+    {
+      "name": "get_usage_stats",
+      "description": "Get usage statistics for debugging and analysis including tool usage and performance metrics."
+    },
+    {
+      "name": "give_feedback_to_desktop_commander",
+      "description": "Open feedback form in browser to provide feedback about Desktop Commander."
+    },
+    {
+      "name": "get_prompts",
+      "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
+    }
+  ],
   "keywords": [
     "orchestration",
     "workflow", 

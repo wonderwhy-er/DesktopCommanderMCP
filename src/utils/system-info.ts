@@ -37,6 +37,7 @@ export interface SystemInfo {
     isMacOS: boolean;
     isLinux: boolean;
     docker: ContainerInfo;
+    isDXT: boolean;
     nodeInfo?: {
         version: string;
         path: string;
@@ -535,6 +536,7 @@ export function getSystemInfo(): SystemInfo {
             mountPoints,
             containerEnvironment: getContainerEnvironment(containerDetection.containerType)
         },
+        isDXT: !!process.env.MCP_DXT,
         nodeInfo,
         processInfo,
         examplePaths
