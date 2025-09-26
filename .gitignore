@@ -45,8 +45,13 @@ planning/
 # Test output files
 test/test_output/
 
-# Registry tokens and server configs (should not be committed)
+# MCPB related files
+*.mcpb
+mcpb-bundle/
 .mcpregistry_github_token
 .mcpregistry_registry_token
-server.json
-server.yaml
+
+# Test files
+test_files/
+test_fix.js
+test_search.js

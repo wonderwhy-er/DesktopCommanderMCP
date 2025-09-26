@@ -31,6 +31,7 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
       contextLines: parsed.data.contextLines,
       timeout: parsed.data.timeout_ms,
       earlyTermination: parsed.data.earlyTermination,
+      literalSearch: parsed.data.literalSearch,
     });
 
     const searchTypeText = parsed.data.searchType === 'content' ? 'content search' : 'file search';

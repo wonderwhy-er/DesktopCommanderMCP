@@ -38,6 +38,7 @@ export interface SearchSessionOptions {
   contextLines?: number;
   timeout?: number;
   earlyTermination?: boolean;  // Stop search early when exact filename match is found
+  literalSearch?: boolean;     // Force literal string matching (-F flag) instead of regex
 }
 
 /**
@@ -64,7 +65,7 @@ export interface SearchSessionOptions {
     
     // Validate path first
     const validPath = await validatePath(options.rootPath);
-    
+
     // Build ripgrep arguments
     const args = this.buildRipgrepArgs({ ...options, rootPath: validPath });
     
@@ -315,6 +316,11 @@ export interface SearchSessionOptions {
       // Content search mode
       args.push('--json', '--line-number');
       
+      // Add literal search support for content searches
+      if (options.literalSearch) {
+        args.push('-F'); // Fixed string matching (literal)
+      }
+
       if (options.contextLines && options.contextLines > 0) {
         args.push('-C', options.contextLines.toString());
       }
@@ -335,7 +341,7 @@ export interface SearchSessionOptions {
     if (options.maxResults && options.maxResults > 0) {
       args.push('-m', options.maxResults.toString());
     }
-    
+
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
       const patterns = options.filePattern
@@ -393,10 +399,37 @@ export interface SearchSessionOptions {
 
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
-      
+
       // Store error text for potential user display, but don't capture individual errors
       // We'll capture incomplete search status in the completion event instead
       session.error = (session.error || '') + errorText;
+
+      // Filter meaningful errors
+      const filteredErrors = errorText
+        .split('\n')
+        .filter(line => {
+          const trimmed = line.trim();
+
+          // Skip empty lines and lines with just symbols/numbers/colons
+          if (!trimmed || trimmed.match(/^[\)\(\s\d:]*$/)) return false;
+
+          // Skip all ripgrep system errors that start with "rg:"
+          if (trimmed.startsWith('rg:')) return false;
+
+          return true;
+        });
+
+      // Only add to session.error if there are actual meaningful errors after filtering
+      if (filteredErrors.length > 0) {
+        const meaningfulErrors = filteredErrors.join('\n').trim();
+        if (meaningfulErrors) {
+          session.error = (session.error || '') + meaningfulErrors + '\n';
+          capture('search_session_error', {
+            sessionId: session.id,
+            error: meaningfulErrors.substring(0, 200)
+          });
+        }
+      }
     });
 
     process.on('close', (code: number) => {

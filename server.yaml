@@ -1,0 +1,88 @@
+name: desktop-commander
+image: mcp/desktop-commander
+type: server
+meta:
+  category: devops
+  tags:
+    - desktop-commander
+    - devops
+    - filesystem
+    - terminal
+about:
+  title: Desktop Commander
+  description: Search, update, manage files and run terminal commands with AI. Configurable filesystem access and network permissions.
+  icon: https://avatars.githubusercontent.com/u/182288589?s=200&v=4
+source:
+  project: https://github.com/wonderwhy-er/DesktopCommanderMCP
+  branch: main
+  dockerfile: Dockerfile
+run:
+  command:
+    - '{{desktop-commander.paths|volume-target|into}}'
+  volumes:
+    - '{{desktop-commander.paths|volume|into}}'
+  disableNetwork: '{{desktop-commander.network_settings.disable_network}}'
+  environment:
+    - name: ALLOWED_DIRECTORIES
+      value: '{{desktop-commander.paths|join:,}}'
+    - name: DISABLE_NETWORK
+      value: '{{desktop-commander.network_settings.disable_network}}'
+    - name: NETWORK_TIMEOUT
+      value: '{{desktop-commander.network_settings.timeout_seconds}}'
+config:
+  description: Configure filesystem access and network permissions for Desktop Commander
+  parameters:
+    type: object
+    properties:
+      paths:
+        type: array
+        items:
+          type: string
+        title: Allowed Filesystem Paths
+        description: List of directories that Desktop Commander can access. Empty array allows full filesystem access.
+        default:
+          - /Users/username/Desktop
+          - /Users/username/Documents
+          - /Users/username/Downloads
+      network_settings:
+        type: object
+        title: Network Configuration
+        properties:
+          disable_network:
+            type: boolean
+            title: Disable Network Access
+            description: When enabled, prevents the container from accessing external networks
+            default: false
+          timeout_seconds:
+            type: integer
+            title: Network Timeout (seconds)
+            description: Timeout for network requests in seconds
+            default: 30
+            minimum: 1
+            maximum: 300
+        required:
+          - disable_network
+          - timeout_seconds
+      security_settings:
+        type: object
+        title: Security Configuration
+        properties:
+          enable_telemetry:
+            type: boolean
+            title: Enable Telemetry
+            description: Allow Desktop Commander to collect anonymous usage statistics
+            default: true
+          file_size_limit_mb:
+            type: integer
+            title: File Size Limit (MB)
+            description: Maximum file size that can be processed
+            default: 100
+            minimum: 1
+            maximum: 1000
+        required:
+          - enable_telemetry
+          - file_size_limit_mb
+    required:
+      - paths
+      - network_settings
+      - security_settings
