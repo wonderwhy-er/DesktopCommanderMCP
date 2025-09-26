@@ -37,6 +37,18 @@ export interface SystemInfo {
     isMacOS: boolean;
     isLinux: boolean;
     docker: ContainerInfo;
+    isDXT: boolean;
+    nodeInfo?: {
+        version: string;
+        path: string;
+        npmVersion?: string;
+    };
+    processInfo: {
+        pid: number;
+        arch: string;
+        platform: string;
+        versions: NodeJS.ProcessVersions;
+    };
     examplePaths: {
         home: string;
         temp: string;
@@ -381,6 +393,30 @@ function getContainerEnvironment(containerType: ContainerInfo['containerType']):
 }
 
 /**
+ * Detect Node.js installation and version from current process
+ */
+function detectNodeInfo(): SystemInfo['nodeInfo'] {
+    try {
+        // Get Node.js version from current process
+        const version = process.version.replace('v', ''); // Remove 'v' prefix
+        
+        // Get Node.js executable path from current process
+        const path = process.execPath;
+        
+        // Get npm version from environment if available
+        const npmVersion = process.env.npm_version;
+        
+        return {
+            version,
+            path,
+            ...(npmVersion && { npmVersion })
+        };
+    } catch (error) {
+        return undefined;
+    }
+}
+
+/**
  * Get comprehensive system information for tool prompts
  */
 export function getSystemInfo(): SystemInfo {
@@ -471,6 +507,17 @@ export function getSystemInfo(): SystemInfo {
         }
     }
     
+    // Detect Node.js installation from current process
+    const nodeInfo = detectNodeInfo();
+    
+    // Get process information
+    const processInfo = {
+        pid: process.pid,
+        arch: process.arch,
+        platform: process.platform,
+        versions: process.versions
+    };
+    
     return {
         platform,
         platformName,
@@ -489,6 +536,9 @@ export function getSystemInfo(): SystemInfo {
             mountPoints,
             containerEnvironment: getContainerEnvironment(containerDetection.containerType)
         },
+        isDXT: !!process.env.MCP_DXT,
+        nodeInfo,
+        processInfo,
         examplePaths
     };
 }
@@ -626,32 +676,52 @@ LINUX-SPECIFIC NOTES:
  * Get common development tool guidance based on OS
  */
 export function getDevelopmentToolGuidance(systemInfo: SystemInfo): string {
-    const { isWindows, isMacOS, isLinux, platformName } = systemInfo;
+    const { isWindows, isMacOS, isLinux, platformName, nodeInfo, processInfo } = systemInfo;
+    
+    // Add detected Node.js info to guidance
+    const nodeGuidance = nodeInfo 
+        ? `Node.js: v${nodeInfo.version} (${nodeInfo.path})${nodeInfo.npmVersion ? ` | npm: v${nodeInfo.npmVersion}` : ''}`
+        : 'Node.js: Not detected';
+    
+    // Add process environment info
+    const envInfo = `
+Current Process Environment:
+- Node: v${processInfo.versions.node}
+- V8: v${processInfo.versions.v8}
+- Architecture: ${processInfo.arch}
+- Platform: ${processInfo.platform}
+- Process ID: ${processInfo.pid}`;
     
     if (isWindows) {
         return `
 COMMON WINDOWS DEVELOPMENT TOOLS:
-- Node.js: Usually installed globally, accessible from any shell
+- ${nodeGuidance}
 - Python: May be 'python' or 'py' command, check both
 - Git: Git Bash provides Unix-like environment
 - WSL: Windows Subsystem for Linux available for Unix tools
-- Visual Studio tools: cl, msbuild for C++ compilation`;
+- Visual Studio tools: cl, msbuild for C++ compilation
+
+${envInfo}`;
     } else if (isMacOS) {
         return `
 COMMON MACOS DEVELOPMENT TOOLS:
 - Xcode Command Line Tools: Required for many development tools
 - Homebrew: Primary package manager for development tools
+- ${nodeGuidance}
 - Python: Usually python3, check if python points to Python 2
-- Node.js: Available via brew or direct installer
-- Ruby: System Ruby available, rbenv/rvm for version management`;
+- Ruby: System Ruby available, rbenv/rvm for version management
+
+${envInfo}`;
     } else {
         return `
 COMMON LINUX DEVELOPMENT TOOLS:
 - Package managers: Install tools via distribution package manager
 - Python: Usually python3, python may point to Python 2
-- Node.js: Available via package manager or NodeSource repository
+- ${nodeGuidance}
 - Build tools: gcc, make typically available or easily installed
-- Container tools: docker, podman common for development`;
+- Container tools: docker, podman common for development
+
+${envInfo}`;
     }
 }
 
