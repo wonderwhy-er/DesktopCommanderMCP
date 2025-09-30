@@ -427,7 +427,7 @@ The server provides a comprehensive set of tools organized into several categori
 | | `read_multiple_files` | Read multiple files simultaneously |
 | | `write_file` | Write file contents with options for rewrite or append mode (uses configurable line limits) |
 | | `create_directory` | Create a new directory or ensure it exists |
-| | `list_directory` | Get detailed listing of files and directories |
+| | `list_directory` | Get detailed recursive listing of files and directories (supports depth parameter, default depth=2) |
 | | `move_file` | Move or rename files and directories |
 | | `start_search` | Start streaming search for files by name or content patterns (unified ripgrep-based search) |
 | | `get_more_search_results` | Get paginated results from active search with offset support |
