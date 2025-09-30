@@ -45,6 +45,7 @@ import {
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
     GetPromptsArgsSchema,
+    GetRecentToolCallsArgsSchema,
 } from './tools/schemas.js';
 import {getConfig, setConfigValue} from './tools/config.js';
 import {getUsageStats} from './tools/usage.js';
@@ -53,6 +54,7 @@ import {getPrompts} from './tools/prompts.js';
 import {trackToolCall} from './utils/trackTools.js';
 import {usageTracker} from './utils/usageTracker.js';
 import {processDockerPrompt} from './utils/dockerPrompt.js';
+import {toolHistory} from './utils/toolHistory.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
@@ -812,6 +814,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                 },
                 {
+                    name: "get_recent_tool_calls",
+                    description: `
+                        Get recent tool call history with their arguments and outputs.
+                        Returns chronological list of tool calls made during this session.
+                        
+                        Useful for:
+                        - Onboarding new chats about work already done
+                        - Recovering context after chat history loss
+                        - Debugging tool call sequences
+                        
+                        Note: Does not track its own calls or other meta/query tools.
+                        History kept in memory (last 1000 calls, lost on restart).
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetRecentToolCallsArgsSchema),
+                    annotations: {
+                        title: "Get Recent Tool Calls",
+                        readOnlyHint: true,
+                    },
+                },
+                {
                     name: "give_feedback_to_desktop_commander",
                     description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
@@ -895,6 +918,7 @@ import {ServerResult} from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     const {name, arguments: args} = request.params;
+    const startTime = Date.now();
 
     try {
         // Prepare telemetry data - add config key for set_config_value
@@ -1042,6 +1066,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 }
                 break;
 
+            case "get_recent_tool_calls":
+                try {
+                    result = await handlers.handleGetRecentToolCalls(args);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in get_recent_tool_calls handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error: Failed to get tool call history`}],
+                        isError: true,
+                    };
+                }
+                break;
+
             case "give_feedback_to_desktop_commander":
                 try {
                     result = await giveFeedbackToDesktopCommander(args);
@@ -1141,6 +1177,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     content: [{type: "text", text: `Error: Unknown tool: ${name}`}],
                     isError: true,
                 };
+        }
+
+        // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
+        const duration = Date.now() - startTime;
+        const EXCLUDED_TOOLS = [
+            'get_recent_tool_calls'
+        ];
+        
+        if (!EXCLUDED_TOOLS.includes(name)) {
+            toolHistory.addCall(name, args, result, duration);
         }
 
         // Track success or failure based on result
