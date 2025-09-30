@@ -324,6 +324,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         Use this instead of 'execute_command' with ls/dir commands.
                         Results distinguish between files and directories with [FILE] and [DIR] prefixes.
+                        
+                        Supports recursive listing with the 'depth' parameter (default: 2):
+                        - depth=1: Only direct contents of the directory
+                        - depth=2: Contents plus one level of subdirectories
+                        - depth=3+: Multiple levels deep
+                        
+                        Results show full relative paths from the root directory being listed.
+                        Example output with depth=2:
+                        [DIR] src
+                        [FILE] src/index.ts
+                        [DIR] src/tools
+                        [FILE] src/tools/filesystem.ts
+                        
+                        If a directory cannot be accessed, it will show [DENIED] instead.
                         Only works within allowed directories.
                         
                         ${PATH_GUIDANCE}

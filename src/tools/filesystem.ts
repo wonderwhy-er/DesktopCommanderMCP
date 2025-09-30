@@ -890,10 +890,47 @@ export async function createDirectory(dirPath: string): Promise<void> {
     await fs.mkdir(validPath, { recursive: true });
 }
 
-export async function listDirectory(dirPath: string): Promise<string[]> {
+export async function listDirectory(dirPath: string, depth: number = 2): Promise<string[]> {
     const validPath = await validatePath(dirPath);
-    const entries = await fs.readdir(validPath, { withFileTypes: true });
-    return entries.map((entry) => `${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${entry.name}`);
+    const results: string[] = [];
+
+    async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = ''): Promise<void> {
+        if (currentDepth <= 0) return;
+
+        let entries;
+        try {
+            entries = await fs.readdir(currentPath, { withFileTypes: true });
+        } catch (error) {
+            // If we can't read this directory (permission denied), show as denied
+            const displayPath = relativePath || path.basename(currentPath);
+            results.push(`[DENIED] ${displayPath}`);
+            return;
+        }
+
+        for (const entry of entries) {
+            const fullPath = path.join(currentPath, entry.name);
+            const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
+
+            // Add this entry to results
+            results.push(`${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${displayPath}`);
+
+            // If it's a directory and we have depth remaining, recurse
+            if (entry.isDirectory() && currentDepth > 1) {
+                try {
+                    // Validate the path before recursing
+                    await validatePath(fullPath);
+                    await listRecursive(fullPath, currentDepth - 1, displayPath);
+                } catch (error) {
+                    // If validation fails or we can't access it, it will be marked as denied
+                    // when we try to read it in the recursive call
+                    continue;
+                }
+            }
+        }
+    }
+
+    await listRecursive(validPath, depth);
+    return results;
 }
 
 export async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
