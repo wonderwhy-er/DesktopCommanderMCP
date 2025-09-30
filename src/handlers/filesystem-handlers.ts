@@ -209,10 +209,15 @@ export async function handleCreateDirectory(args: unknown): Promise<ServerResult
  */
 export async function handleListDirectory(args: unknown): Promise<ServerResult> {
     try {
+        const startTime = Date.now();
         const parsed = ListDirectoryArgsSchema.parse(args);
-        const entries = await listDirectory(parsed.path);
+        const entries = await listDirectory(parsed.path, parsed.depth);
+        const duration = Date.now() - startTime;
+
+        const resultText = entries.join('\n');
+
         return {
-            content: [{ type: "text", text: entries.join('\n') }],
+            content: [{ type: "text", text: resultText }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
