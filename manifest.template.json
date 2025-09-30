@@ -60,7 +60,7 @@
     },
     {
       "name": "list_directory",
-      "description": "Get a detailed listing of all files and directories in a specified path."
+      "description": "Get a detailed recursive listing of all files and directories in a specified path. Supports depth parameter (default: 2) for multi-level directory traversal."
     },
     {
       "name": "move_file",
