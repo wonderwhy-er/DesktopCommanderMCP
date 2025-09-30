@@ -63,6 +63,7 @@ export const CreateDirectoryArgsSchema = z.object({
 
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
+  depth: z.number().optional().default(2),
 });
 
 export const MoveFileArgsSchema = z.object({
