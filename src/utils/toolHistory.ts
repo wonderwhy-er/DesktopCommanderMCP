@@ -31,6 +31,7 @@ class ToolHistory {
   private readonly historyFile: string;
   private writeQueue: ToolCallRecord[] = [];
   private isWriting = false;
+  private writeInterval?: NodeJS.Timeout;
 
   constructor() {
     // Store history in same directory as config to keep everything together
@@ -111,11 +112,14 @@ class ToolHistory {
    * Async write processor - batches writes to avoid blocking
    */
   private startWriteProcessor(): void {
-    setInterval(() => {
+    this.writeInterval = setInterval(() => {
       if (this.writeQueue.length > 0 && !this.isWriting) {
         this.flushToDisk();
       }
     }, 1000); // Flush every second
+    
+    // Prevent interval from keeping process alive during shutdown/tests
+    this.writeInterval.unref();
   }
 
   /**
@@ -223,6 +227,23 @@ class ToolHistory {
       historyFile: this.historyFile,
       queuedWrites: this.writeQueue.length
     };
+  }
+
+  /**
+   * Cleanup method - clears interval and flushes pending writes
+   * Call this during shutdown or in tests
+   */
+  async cleanup(): Promise<void> {
+    // Clear the interval
+    if (this.writeInterval) {
+      clearInterval(this.writeInterval);
+      this.writeInterval = undefined;
+    }
+    
+    // Flush any remaining writes
+    if (this.writeQueue.length > 0) {
+      await this.flushToDisk();
+    }
   }
 }
 
