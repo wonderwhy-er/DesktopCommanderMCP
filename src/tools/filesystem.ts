@@ -894,7 +894,9 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
     const validPath = await validatePath(dirPath);
     const results: string[] = [];
 
-    async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = ''): Promise<void> {
+    const MAX_NESTED_ITEMS = 100; // Maximum items to show per nested directory
+
+    async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = '', isTopLevel: boolean = true): Promise<void> {
         if (currentDepth <= 0) return;
 
         let entries;
@@ -907,7 +909,17 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             return;
         }
 
-        for (const entry of entries) {
+        // Apply filtering for nested directories (not top level)
+        const totalEntries = entries.length;
+        let entriesToShow = entries;
+        let filteredCount = 0;
+
+        if (!isTopLevel && totalEntries > MAX_NESTED_ITEMS) {
+            entriesToShow = entries.slice(0, MAX_NESTED_ITEMS);
+            filteredCount = totalEntries - MAX_NESTED_ITEMS;
+        }
+
+        for (const entry of entriesToShow) {
             const fullPath = path.join(currentPath, entry.name);
             const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
 
@@ -919,7 +931,7 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
                 try {
                     // Validate the path before recursing
                     await validatePath(fullPath);
-                    await listRecursive(fullPath, currentDepth - 1, displayPath);
+                    await listRecursive(fullPath, currentDepth - 1, displayPath, false);
                 } catch (error) {
                     // If validation fails or we can't access it, it will be marked as denied
                     // when we try to read it in the recursive call
@@ -927,9 +939,15 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
                 }
             }
         }
+
+        // Add warning message if items were filtered
+        if (filteredCount > 0) {
+            const displayPath = relativePath || path.basename(currentPath);
+            results.push(`[WARNING] ${displayPath}: ${filteredCount} items hidden (showing first ${MAX_NESTED_ITEMS} of ${totalEntries} total)`);
+        }
     }
 
-    await listRecursive(validPath, depth);
+    await listRecursive(validPath, depth, '', true);
     return results;
 }
 
