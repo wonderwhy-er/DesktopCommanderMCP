@@ -330,6 +330,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - depth=2: Contents plus one level of subdirectories
                         - depth=3+: Multiple levels deep
                         
+                        CONTEXT OVERFLOW PROTECTION:
+                        - Top-level directory shows ALL items
+                        - Nested directories are limited to 100 items maximum per directory
+                        - When a nested directory has more than 100 items, you'll see a warning like:
+                          [WARNING] node_modules: 500 items hidden (showing first 100 of 600 total)
+                        - This prevents overwhelming the context with large directories like node_modules
+                        
                         Results show full relative paths from the root directory being listed.
                         Example output with depth=2:
                         [DIR] src
