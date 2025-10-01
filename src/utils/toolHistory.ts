@@ -11,6 +11,10 @@ export interface ToolCallRecord {
   duration?: number;
 }
 
+interface FormattedToolCallRecord extends Omit<ToolCallRecord, 'timestamp'> {
+  timestamp: string; // formatted local time string
+}
+
 // Format timestamp in local timezone for display
 function formatLocalTimestamp(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
@@ -77,7 +81,8 @@ class ToolHistory {
       
       // Keep only last 1000 entries
       this.history = records.slice(-this.MAX_ENTRIES);
-      
+      console.error(`[ToolHistory] Loaded ${this.history.length} entries from disk`);
+
       // If file is getting too large, trim it
       if (lines.length > this.MAX_ENTRIES * 2) {
         this.trimHistoryFile();
@@ -205,7 +210,7 @@ class ToolHistory {
     maxResults?: number;
     toolName?: string;
     since?: string;
-  }): any[] {
+  }): FormattedToolCallRecord[] {
     const calls = this.getRecentCalls(options);
     
     // Format timestamps to local timezone
