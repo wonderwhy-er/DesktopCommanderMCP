@@ -436,6 +436,7 @@ The server provides a comprehensive set of tools organized into several categori
 | | `get_file_info` | Retrieve detailed metadata about a file or directory |
 | **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
 | **Analytics** | `get_usage_stats` | Get usage statistics for your own insight |
+| | `get_recent_tool_calls` | Get recent tool call history with arguments and outputs for debugging and context recovery |
 | | `give_feedback_to_desktop_commander` | Open feedback form in browser to provide feedback to Desktop Commander Team |
 
 ### Quick Examples

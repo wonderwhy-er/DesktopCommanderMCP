@@ -137,3 +137,10 @@ export const GetPromptsArgsSchema = z.object({
   category: z.string().optional(),
   promptId: z.string().optional(),
 });
+
+// Tool history schema
+export const GetRecentToolCallsArgsSchema = z.object({
+  maxResults: z.number().min(1).max(1000).optional().default(50),
+  toolName: z.string().optional(),
+  since: z.string().datetime().optional(),
+});
