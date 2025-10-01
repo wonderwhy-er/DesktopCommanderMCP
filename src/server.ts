@@ -332,6 +332,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - depth=2: Contents plus one level of subdirectories
                         - depth=3+: Multiple levels deep
                         
+                        GITIGNORE AND HIDDEN FILES SUPPORT:
+                        - respectGitignore (default: true): When enabled, automatically respects .gitignore, .git/info/exclude, and global git ignore rules
+                        - includeHidden (default: false): When enabled, includes hidden files and directories (those starting with '.')
+                        
+                        By default, this tool respects gitignore rules and skips:
+                        - node_modules/, .git/, dist/, build/, and other ignored directories
+                        - Hidden files and directories (unless includeHidden=true)
+                        - Files listed in .gitignore, .git/info/exclude, and global git config
+                        
+                        This behavior matches the search tools for consistency.
+                        
                         Results show full relative paths from the root directory being listed.
                         Example output with depth=2:
                         [DIR] src
@@ -339,7 +350,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         [DIR] src/tools
                         [FILE] src/tools/filesystem.ts
                         
-                        If a directory cannot be accessed, it will show [DENIED] instead.
                         Only works within allowed directories.
                         
                         ${PATH_GUIDANCE}

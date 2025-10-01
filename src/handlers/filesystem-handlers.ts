@@ -211,7 +211,12 @@ export async function handleListDirectory(args: unknown): Promise<ServerResult> 
     try {
         const startTime = Date.now();
         const parsed = ListDirectoryArgsSchema.parse(args);
-        const entries = await listDirectory(parsed.path, parsed.depth);
+        const entries = await listDirectory(
+            parsed.path, 
+            parsed.depth, 
+            parsed.respectGitignore,
+            parsed.includeHidden
+        );
         const duration = Date.now() - startTime;
 
         const resultText = entries.join('\n');

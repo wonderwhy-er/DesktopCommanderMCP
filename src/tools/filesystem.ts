@@ -5,6 +5,8 @@ import fetch from 'cross-fetch';
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
 import { isBinaryFile } from 'isbinaryfile';
+import { spawn } from 'child_process';
+import { rgPath } from '@vscode/ripgrep';
 import {capture} from '../utils/capture.js';
 import {withTimeout} from '../utils/withTimeout.js';
 import {configManager} from '../config-manager.js';
@@ -890,46 +892,161 @@ export async function createDirectory(dirPath: string): Promise<void> {
     await fs.mkdir(validPath, { recursive: true });
 }
 
-export async function listDirectory(dirPath: string, depth: number = 2): Promise<string[]> {
+export async function listDirectory(
+    dirPath: string, 
+    depth: number = 2,
+    respectGitignore: boolean = true,
+    includeHidden: boolean = false
+): Promise<string[]> {
     const validPath = await validatePath(dirPath);
-    const results: string[] = [];
-
-    async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = ''): Promise<void> {
-        if (currentDepth <= 0) return;
-
-        let entries;
-        try {
-            entries = await fs.readdir(currentPath, { withFileTypes: true });
-        } catch (error) {
-            // If we can't read this directory (permission denied), show as denied
-            const displayPath = relativePath || path.basename(currentPath);
-            results.push(`[DENIED] ${displayPath}`);
-            return;
-        }
-
-        for (const entry of entries) {
-            const fullPath = path.join(currentPath, entry.name);
-            const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
-
-            // Add this entry to results
-            results.push(`${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${displayPath}`);
-
-            // If it's a directory and we have depth remaining, recurse
-            if (entry.isDirectory() && currentDepth > 1) {
-                try {
-                    // Validate the path before recursing
-                    await validatePath(fullPath);
-                    await listRecursive(fullPath, currentDepth - 1, displayPath);
-                } catch (error) {
-                    // If validation fails or we can't access it, it will be marked as denied
-                    // when we try to read it in the recursive call
-                    continue;
-                }
+    
+    // Strategy: Run ripgrep with depth+1 to discover immediate subdirectories
+    // Then filter results back to the requested depth
+    const scanDepth = depth + 1;
+    
+    // Use ripgrep to get list of files respecting gitignore
+    const rgArgs: string[] = ['--files'];
+    
+    // Add max-depth flag (scan one level deeper to discover directories)
+    rgArgs.push('--max-depth', scanDepth.toString());
+    
+    // Handle gitignore respect
+    if (!respectGitignore) {
+        rgArgs.push('--no-ignore');
+    }
+    
+    // Handle hidden files
+    if (includeHidden) {
+        rgArgs.push('--hidden');
+    }
+    
+    // Add the path
+    rgArgs.push(validPath);
+    
+    // Execute ripgrep
+    const files = await new Promise<string[]>((resolve, reject) => {
+        const rgProcess = spawn(rgPath, rgArgs);
+        const output: string[] = [];
+        let errorOutput = '';
+        
+        rgProcess.stdout?.on('data', (data: Buffer) => {
+            output.push(data.toString());
+        });
+        
+        rgProcess.stderr?.on('data', (data: Buffer) => {
+            errorOutput += data.toString();
+        });
+        
+        rgProcess.on('close', (code: number) => {
+            // Code 0 = success, 1 = no matches, 2 = some files couldn't be searched
+            if (code === 0 || code === 1 || code === 2) {
+                const allOutput = output.join('');
+                const fileList = allOutput
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(Boolean);
+                resolve(fileList);
+            } else {
+                reject(new Error(`ripgrep failed with code ${code}: ${errorOutput}`));
             }
+        });
+        
+        rgProcess.on('error', (error: Error) => {
+            reject(error);
+        });
+    });
+    
+    // Extract directories and files from the file paths
+    const directories = new Set<string>();
+    const fileSet = new Set<string>();
+    
+    for (const filePath of files) {
+        // Get relative path from the root
+        const relativePath = path.relative(validPath, filePath);
+        if (!relativePath || relativePath.startsWith('..')) continue;
+        
+        const parts = relativePath.split(path.sep);
+        
+        // Add all parent directories up to the requested depth
+        for (let i = 1; i < parts.length && i <= depth; i++) {
+            const dirPath = parts.slice(0, i).join(path.sep);
+            directories.add(dirPath);
+        }
+        
+        // Add the file itself only if it's within the requested depth
+        if (parts.length <= depth) {
+            fileSet.add(relativePath);
         }
     }
-
-    await listRecursive(validPath, depth);
+    
+    // Build the result list
+    const results: string[] = [];
+    const allPaths = new Map<string, 'dir' | 'file'>();
+    
+    // Add all directories
+    for (const dir of directories) {
+        allPaths.set(dir, 'dir');
+    }
+    
+    // Add all files
+    for (const file of fileSet) {
+        allPaths.set(file, 'file');
+    }
+    
+    // Group paths by their parent directory
+    const MAX_ITEMS_PER_DIR = 100;
+    const pathsByParent = new Map<string, string[]>();
+    
+    for (const [pathStr, type] of allPaths) {
+        const parts = pathStr.split(path.sep);
+        const parentPath = parts.length > 1 ? parts.slice(0, -1).join(path.sep) : '';
+        
+        if (!pathsByParent.has(parentPath)) {
+            pathsByParent.set(parentPath, []);
+        }
+        pathsByParent.get(parentPath)!.push(pathStr);
+    }
+    
+    // Sort children within each parent directory alphabetically
+    for (const children of pathsByParent.values()) {
+        children.sort((a, b) => a.localeCompare(b));
+    }
+    
+    // Build a tree structure and output in hierarchical order
+    const outputPath = (pathStr: string, depth: number = 0) => {
+        const type = allPaths.get(pathStr);
+        if (!type) return;
+        
+        const prefix = type === 'dir' ? '[DIR]' : '[FILE]';
+        const indent = '  '.repeat(depth);
+        results.push(`${indent}${prefix} ${pathStr}`);
+        
+        // Get children of this directory
+        const children = pathsByParent.get(pathStr) || [];
+        
+        // Check if this directory should be trimmed
+        if (children.length > MAX_ITEMS_PER_DIR) {
+            const hiddenCount = children.length - MAX_ITEMS_PER_DIR;
+            results.push(`${indent}    ⚠️ ${pathStr}/ contains ${children.length} items (${hiddenCount} hidden). List this directory directly to see all.`);
+            
+            // Output only first MAX_ITEMS_PER_DIR children
+            for (let i = 0; i < MAX_ITEMS_PER_DIR; i++) {
+                outputPath(children[i], depth);
+            }
+        } else {
+            // Output all children
+            for (const child of children) {
+                outputPath(child, depth);
+            }
+        }
+    };
+    
+    // Start with root-level items (those with no parent path)
+    const rootItems = pathsByParent.get('') || [];
+    for (const item of rootItems) {
+        outputPath(item, 0);
+    }
+    
     return results;
 }
 

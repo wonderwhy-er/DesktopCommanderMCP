@@ -76,7 +76,6 @@ class ToolHistory {
       
       // Keep only last 1000 entries
       this.history = records.slice(-this.MAX_ENTRIES);
-      console.error(`[ToolHistory] Loaded ${this.history.length} entries from disk`);
       
       // If file is getting too large, trim it
       if (lines.length > this.MAX_ENTRIES * 2) {
