@@ -11,6 +11,10 @@ export interface ToolCallRecord {
   duration?: number;
 }
 
+interface FormattedToolCallRecord extends Omit<ToolCallRecord, 'timestamp'> {
+  timestamp: string; // formatted local time string
+}
+
 // Format timestamp in local timezone for display
 function formatLocalTimestamp(isoTimestamp: string): string {
   const date = new Date(isoTimestamp);
@@ -206,7 +210,7 @@ class ToolHistory {
     maxResults?: number;
     toolName?: string;
     since?: string;
-  }): any[] {
+  }): FormattedToolCallRecord[] {
     const calls = this.getRecentCalls(options);
     
     // Format timestamps to local timezone
