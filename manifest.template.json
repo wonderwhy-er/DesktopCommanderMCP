@@ -123,6 +123,10 @@
       "description": "Get usage statistics for debugging and analysis including tool usage and performance metrics."
     },
     {
+      "name": "get_recent_tool_calls",
+      "description": "Get recent tool call history with their arguments and outputs. Returns chronological list of tool calls made during this session for debugging, context recovery, and onboarding new chats."
+    },
+    {
       "name": "give_feedback_to_desktop_commander",
       "description": "Open feedback form in browser to provide feedback about Desktop Commander."
     },
