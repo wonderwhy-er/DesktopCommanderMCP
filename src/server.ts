@@ -149,11 +149,27 @@ export { currentClient };
 
 deferLog('info', 'Setting up request handlers...');
 
+/**
+ * Check if a tool should be included based on current client
+ */
+function shouldIncludeTool(toolName: string): boolean {
+    // Exclude give_feedback_to_desktop_commander for desktop-commander client
+    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
+        return false;
+    }
+
+    // Add more conditional tool logic here as needed
+    // Example: if (toolName === 'some_tool' && currentClient?.name === 'some_client') return false;
+
+    return true;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         logToStderr('debug', 'Generating tools list...');
-        return {
-            tools: [
+
+        // Build complete tools array
+        const allTools = [
                 // Configuration tools
                 {
                     name: "get_config",
@@ -912,7 +928,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
                 },
-            ],
+            ];
+
+        // Filter tools based on current client
+        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
+
+        logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
+
+        return {
+            tools: filteredTools,
         };
     } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
