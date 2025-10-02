@@ -5,9 +5,22 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
-// Get the directory path for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Get the directory path - handle both ESM and CommonJS
+let __dirname: string;
+try {
+  // ESM environment
+  if (typeof import.meta !== 'undefined' && import.meta.url) {
+    const __filename = fileURLToPath(import.meta.url);
+    __dirname = path.dirname(__filename);
+  } else {
+    // CommonJS fallback - use process.cwd() and navigate to data directory
+    // This works for both built version and source version
+    __dirname = process.cwd();
+  }
+} catch (error) {
+  // Fallback to current working directory
+  __dirname = process.cwd();
+}
 
 interface Prompt {
   id: string;
@@ -53,8 +66,38 @@ export async function loadPromptsData(): Promise<PromptsData> {
    }
 
   try {
-    const dataPath = path.join(__dirname, '..', 'data', 'onboarding-prompts.json');
-    const fileContent = await fs.readFile(dataPath, 'utf-8');
+    // Try multiple possible locations for the prompts file
+    let dataPath: string;
+    
+    // When bundled by Smithery, __dirname is process.cwd()
+    // When running from dist/, __dirname points to dist/tools/
+    // When running from source, __dirname points to src/tools/
+    
+    const possiblePaths = [
+      // Bundled location (Smithery, relative to CWD)
+      path.join(process.cwd(), 'dist', 'data', 'onboarding-prompts.json'),
+      // Built dist location (relative to tools directory)
+      path.join(__dirname, '..', 'data', 'onboarding-prompts.json'),
+      // Source location (relative to tools directory)
+      path.join(__dirname, '..', '..', 'src', 'data', 'onboarding-prompts.json'),
+    ];
+    
+    // Try each path until we find one that exists
+    let fileContent: string | null = null;
+    for (const tryPath of possiblePaths) {
+      try {
+        fileContent = await fs.readFile(tryPath, 'utf-8');
+        dataPath = tryPath;
+        break;
+      } catch {
+        // Continue to next path
+      }
+    }
+    
+    if (!fileContent) {
+      throw new Error(`Could not find onboarding-prompts.json in any of the expected locations: ${possiblePaths.join(', ')}`);
+    }
+    
     cachedPromptsData = JSON.parse(fileContent);
     
     if (!cachedPromptsData) {

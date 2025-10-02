@@ -4,7 +4,15 @@ import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
 
 // Ensure the directory for the log file exists
 const logDir = path.dirname(TOOL_CALL_FILE);
-await fs.promises.mkdir(logDir, { recursive: true });
+
+// Track directory creation promise to ensure it's only done once
+let dirCreationPromise: Promise<string | undefined> | null = null;
+async function ensureLogDir(): Promise<void> {
+  if (!dirCreationPromise) {
+    dirCreationPromise = fs.promises.mkdir(logDir, { recursive: true });
+  }
+  await dirCreationPromise;
+}
 
 /**
  * Track tool calls and save them to a log file
@@ -13,6 +21,9 @@ await fs.promises.mkdir(logDir, { recursive: true });
  */
 export async function trackToolCall(toolName: string, args?: unknown): Promise<void> {
   try {
+    // Ensure directory exists
+    await ensureLogDir();
+    
     // Get current timestamp
     const timestamp = new Date().toISOString();
     

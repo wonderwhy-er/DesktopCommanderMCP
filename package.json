@@ -8,6 +8,7 @@
   "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
   "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
+  "module": "./src/http-index.ts",
   "engines": {
     "node": ">=18.0.0"
   },
@@ -24,6 +25,8 @@
   "scripts": {
     "postinstall": "node dist/track-installation.js",
     "open-chat": "open -n /Applications/Claude.app",
+    "dev": "smithery dev",
+    "smithery:build": "npm run build && smithery build",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
@@ -81,6 +84,8 @@
     "zod-to-json-schema": "^3.23.5"
   },
   "devDependencies": {
+    "@smithery/cli": "^1.4.4",
+    "@smithery/sdk": "^1.6.7",
     "@types/node": "^20.17.24",
     "commander": "^13.1.0",
     "nexe": "^5.0.0-beta.4",

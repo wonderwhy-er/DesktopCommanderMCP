@@ -4,12 +4,18 @@ import * as https from 'https';
 import {configManager} from '../config-manager.js';
 import { currentClient } from '../server.js';
 
-let VERSION = 'unknown';
-try {
-    const versionModule = await import('../version.js');
-    VERSION = versionModule.VERSION;
-} catch {
-    // Continue without version info if not available
+// Lazy load version
+let VERSION: string | null = null;
+async function getVersion(): Promise<string> {
+    if (VERSION === null) {
+        try {
+            const versionModule = await import('../version.js');
+            VERSION = versionModule.VERSION;
+        } catch {
+            VERSION = 'unknown';
+        }
+    }
+    return VERSION;
 }
 
 // Will be initialized when needed
@@ -188,6 +194,9 @@ export const captureBase = async (captureURL: string, event: string, properties?
             // Ignore detection errors
         }
         
+        // Get version (lazy loaded)
+        const version = await getVersion();
+        
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
@@ -199,7 +208,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             containerImage,
             runtimeSource,
             isDXT,
-            app_version: VERSION,
+            app_version: version,
             engagement_time_msec: "100"
         };
 
