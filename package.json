@@ -47,6 +47,7 @@
     "release:minor": "node scripts/publish-release.cjs --minor",
     "release:major": "node scripts/publish-release.cjs --major",
     "release:dry": "node scripts/publish-release.cjs --dry-run",
+    "release:mcp": "node scripts/publish-release.cjs --mcp-only",
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",

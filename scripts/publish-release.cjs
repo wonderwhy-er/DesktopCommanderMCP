@@ -71,6 +71,11 @@ function parseArgs() {
         skipTests: false,
         dryRun: false,
         help: false,
+        skipBump: false,
+        skipBuild: false,
+        skipMcpb: false,
+        skipGit: false,
+        skipNpm: false,
     };
 
     for (const arg of args) {
@@ -83,6 +88,29 @@ function parseArgs() {
                 break;
             case '--skip-tests':
                 options.skipTests = true;
+                break;
+            case '--skip-bump':
+                options.skipBump = true;
+                break;
+            case '--skip-build':
+                options.skipBuild = true;
+                break;
+            case '--skip-mcpb':
+                options.skipMcpb = true;
+                break;
+            case '--skip-git':
+                options.skipGit = true;
+                break;
+            case '--skip-npm':
+                options.skipNpm = true;
+                break;
+            case '--mcp-only':
+                // Skip everything except MCP Registry publish
+                options.skipBump = true;
+                options.skipBuild = true;
+                options.skipMcpb = true;
+                options.skipGit = true;
+                options.skipNpm = true;
                 break;
             case '--dry-run':
                 options.dryRun = true;
@@ -109,6 +137,12 @@ function showHelp() {
     console.log('  --minor       Bump minor version (default: patch)');
     console.log('  --major       Bump major version (default: patch)');
     console.log('  --skip-tests  Skip running tests');
+    console.log('  --skip-bump   Skip version bumping');
+    console.log('  --skip-build  Skip building (if tests also skipped)');
+    console.log('  --skip-mcpb   Skip building MCPB bundle');
+    console.log('  --skip-git    Skip git commit and tag');
+    console.log('  --skip-npm    Skip NPM publishing');
+    console.log('  --mcp-only    Only publish to MCP Registry (skip all other steps)');
     console.log('  --dry-run     Simulate the release without publishing');
     console.log('  --help, -h    Show this help message');
     console.log('');
@@ -117,6 +151,7 @@ function showHelp() {
     console.log('  node scripts/publish-release.cjs --minor      # Minor release (0.2.16 -> 0.3.0)');
     console.log('  node scripts/publish-release.cjs --major      # Major release (0.2.16 -> 1.0.0)');
     console.log('  node scripts/publish-release.cjs --dry-run    # Test without publishing');
+    console.log('  node scripts/publish-release.cjs --mcp-only   # Only publish to MCP Registry');
 }
 
 // Main release function
@@ -153,116 +188,135 @@ async function publishRelease() {
     }
 
     try {
+        let newVersion = currentVersion;
+        
         // Step 1: Bump version
-        printStep('Step 1/7: Bumping version...');
-        const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
-                           options.bumpType === 'major' ? 'npm run bump:major' :
-                           'npm run bump';
-        exec(bumpCommand);
+        if (!options.skipBump) {
+            printStep('Step 1/6: Bumping version...');
+            const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
+                               options.bumpType === 'major' ? 'npm run bump:major' :
+                               'npm run bump';
+            exec(bumpCommand);
 
-        const newPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-        const newVersion = newPackageJson.version;
-        printSuccess(`Version bumped: ${currentVersion} → ${newVersion}`);
-        console.log('');
-
-        // Step 2: Build project
-        printStep('Step 2/7: Building project...');
-        exec('npm run build');
-        printSuccess('Project built successfully');
-        console.log('');
-
-        // Step 3: Run tests (unless skipped)
-        if (!options.skipTests) {
-            printStep('Step 3/7: Running tests...');
-            exec('npm test');
-            printSuccess('All tests passed');
+            const newPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+            newVersion = newPackageJson.version;
+            printSuccess(`Version bumped: ${currentVersion} → ${newVersion}`);
+            console.log('');
         } else {
-            printWarning('Step 3/7: Tests skipped');
+            printWarning('Step 1/6: Version bump skipped');
+            console.log('');
         }
         console.log('');
 
-        // Step 4: Build MCPB bundle
-        printStep('Step 4/7: Building MCPB bundle...');
-        exec('npm run build:mcpb');
-        printSuccess('MCPB bundle created');
+        // Step 2: Run tests (unless skipped) - tests also build the project
+        if (!options.skipTests && !options.skipBuild) {
+            printStep('Step 2/6: Running tests (includes build)...');
+            exec('npm test');
+            printSuccess('All tests passed');
+        } else if (!options.skipBuild) {
+            printWarning('Step 2/6: Tests skipped - building project...');
+            exec('npm run build');
+            printSuccess('Project built successfully');
+        } else {
+            printWarning('Step 2/6: Tests and build skipped');
+        }
         console.log('');
 
-        // Step 5: Commit and tag
-        printStep('Step 5/7: Creating git commit and tag...');
-        
-        // Check if there are changes to commit
-        const gitStatus = execSilent('git status --porcelain', { ignoreError: true });
-        const hasChanges = gitStatus.includes('package.json') || 
-                          gitStatus.includes('server.json') || 
-                          gitStatus.includes('src/version.ts');
-
-        if (!hasChanges) {
-            printWarning('No changes to commit (version files already committed)');
+        // Step 3: Build MCPB bundle
+        if (!options.skipMcpb) {
+            printStep('Step 3/6: Building MCPB bundle...');
+            exec('npm run build:mcpb');
+            printSuccess('MCPB bundle created');
         } else {
-            exec('git add package.json server.json src/version.ts');
-            
-            const commitMsg = `Release v${newVersion}
+            printWarning('Step 3/6: MCPB bundle build skipped');
+        }
+        console.log('');
+
+        // Step 4: Commit and tag
+        if (!options.skipGit) {
+            printStep('Step 4/6: Creating git commit and tag...');
+        
+            // Check if there are changes to commit
+            const gitStatus = execSilent('git status --porcelain', { ignoreError: true });
+            const hasChanges = gitStatus.includes('package.json') || 
+                              gitStatus.includes('server.json') || 
+                              gitStatus.includes('src/version.ts');
+
+            if (!hasChanges) {
+                printWarning('No changes to commit (version files already committed)');
+            } else {
+                exec('git add package.json server.json src/version.ts');
+                
+                const commitMsg = `Release v${newVersion}
 
 Automated release commit with version bump from ${currentVersion} to ${newVersion}`;
 
-            if (options.dryRun) {
-                printWarning(`Would commit: ${commitMsg.split('\n')[0]}`);
-            } else {
-                exec(`git commit -m "${commitMsg}"`);
-                printSuccess('Changes committed');
+                if (options.dryRun) {
+                    printWarning(`Would commit: ${commitMsg.split('\n')[0]}`);
+                } else {
+                    exec(`git commit -m "${commitMsg}"`);
+                    printSuccess('Changes committed');
+                }
             }
-        }
 
-        // Create and push tag
-        const tagName = `v${newVersion}`;
-        
-        if (options.dryRun) {
-            printWarning(`Would create tag: ${tagName}`);
-            printWarning(`Would push to origin: main and ${tagName}`);
-        } else {
-            exec(`git tag ${tagName}`);
-            exec('git push origin main');
-            exec(`git push origin ${tagName}`);
-            printSuccess(`Tag ${tagName} created and pushed`);
-        }
-        console.log('');
-
-        // Step 6: Publish to NPM
-        printStep('Step 6/7: Publishing to NPM...');
-        
-        // Check NPM authentication
-        const npmUser = execSilent('npm whoami', { ignoreError: true }).trim();
-        if (!npmUser) {
-            printError('Not logged into NPM. Please run "npm login" first.');
-            process.exit(1);
-        }
-        printSuccess(`NPM user: ${npmUser}`);
-
-        if (options.dryRun) {
-            printWarning('Would publish to NPM: npm publish');
-            printWarning('Skipping NPM publish (dry run)');
-        } else {
-            exec('npm publish');
-            printSuccess('Published to NPM');
+            // Create and push tag
+            const tagName = `v${newVersion}`;
             
-            // Verify NPM publication
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
-            const npmVersion = execSilent('npm view @wonderwhy-er/desktop-commander version', { ignoreError: true }).trim();
-            if (npmVersion === newVersion) {
-                printSuccess(`NPM publication verified: v${npmVersion}`);
+            if (options.dryRun) {
+                printWarning(`Would create tag: ${tagName}`);
+                printWarning(`Would push to origin: main and ${tagName}`);
             } else {
-                printWarning(`NPM version mismatch: expected ${newVersion}, got ${npmVersion} (may take a moment to propagate)`);
+                exec(`git tag ${tagName}`);
+                exec('git push origin main');
+                exec(`git push origin ${tagName}`);
+                printSuccess(`Tag ${tagName} created and pushed`);
             }
+        } else {
+            printWarning('Step 4/6: Git commit and tag skipped');
         }
         console.log('');
 
-        // Step 7: Publish to MCP Registry
-        printStep('Step 7/7: Publishing to MCP Registry...');
+        // Step 5: Publish to NPM
+        if (!options.skipNpm) {
+            printStep('Step 5/6: Publishing to NPM...');
+            
+            // Check NPM authentication
+            const npmUser = execSilent('npm whoami', { ignoreError: true }).trim();
+            if (!npmUser) {
+                printError('Not logged into NPM. Please run "npm login" first.');
+                process.exit(1);
+            }
+            printSuccess(`NPM user: ${npmUser}`);
+
+            if (options.dryRun) {
+                printWarning('Would publish to NPM: npm publish');
+                printWarning('Skipping NPM publish (dry run)');
+            } else {
+                exec('npm publish');
+                printSuccess('Published to NPM');
+                
+                // Verify NPM publication
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+                const npmVersion = execSilent('npm view @wonderwhy-er/desktop-commander version', { ignoreError: true }).trim();
+                if (npmVersion === newVersion) {
+                    printSuccess(`NPM publication verified: v${npmVersion}`);
+                } else {
+                    printWarning(`NPM version mismatch: expected ${newVersion}, got ${npmVersion} (may take a moment to propagate)`);
+                }
+            }
+        } else {
+            printWarning('Step 5/6: NPM publish skipped');
+        }
+        console.log('');
+
+        // Step 6: Publish to MCP Registry
+        printStep('Step 6/6: Publishing to MCP Registry...');
         
         // Check if mcp-publisher is installed
-        const hasMcpPublisher = execSilent('mcp-publisher --version', { ignoreError: true });
+        const hasMcpPublisher = execSilent('which mcp-publisher', { ignoreError: true });
         if (!hasMcpPublisher) {
             printError('mcp-publisher not found. Install it with: brew install mcp-publisher');
+            printError('Or check your PATH if already installed.');
             process.exit(1);
         }
 
@@ -270,23 +324,33 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
             printWarning('Would publish to MCP Registry: mcp-publisher publish');
             printWarning('Skipping MCP Registry publish (dry run)');
         } else {
-            exec('mcp-publisher publish');
-            printSuccess('Published to MCP Registry');
-            
-            // Verify MCP Registry publication
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
             try {
-                const mcpResponse = execSilent('curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander"');
-                const mcpData = JSON.parse(mcpResponse);
-                const mcpVersion = mcpData.servers?.[0]?.version || 'unknown';
+                exec('mcp-publisher publish');
+                printSuccess('Published to MCP Registry');
                 
-                if (mcpVersion === newVersion) {
-                    printSuccess(`MCP Registry publication verified: v${mcpVersion}`);
-                } else {
-                    printWarning(`MCP Registry version: ${mcpVersion} (expected ${newVersion}, may take a moment to propagate)`);
+                // Verify MCP Registry publication
+                await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+                try {
+                    const mcpResponse = execSilent('curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander"');
+                    const mcpData = JSON.parse(mcpResponse);
+                    const mcpVersion = mcpData.servers?.[0]?.version || 'unknown';
+                    
+                    if (mcpVersion === newVersion) {
+                        printSuccess(`MCP Registry publication verified: v${mcpVersion}`);
+                    } else {
+                        printWarning(`MCP Registry version: ${mcpVersion} (expected ${newVersion}, may take a moment to propagate)`);
+                    }
+                } catch (error) {
+                    printWarning('Could not verify MCP Registry publication');
                 }
             } catch (error) {
-                printWarning('Could not verify MCP Registry publication');
+                printError('MCP Registry publish failed!');
+                if (error.message.includes('401') || error.message.includes('expired')) {
+                    printError('Authentication token expired. Please run: mcp-publisher login github');
+                } else if (error.message.includes('422')) {
+                    printError('Validation error in server.json. Check the error message above for details.');
+                }
+                throw error;
             }
         }
         console.log('');
