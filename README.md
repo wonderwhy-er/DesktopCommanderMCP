@@ -5,7 +5,7 @@
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/wonderwhy-er/DesktopCommanderMCP)](https://archestra.ai/mcp-catalog/wonderwhy-er__desktopcommandermcp)
 [![smithery badge](https://smithery.ai/badge/@wonderwhy-er/desktop-commander)](https://smithery.ai/server/@wonderwhy-er/desktop-commander)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://www.buymeacoffee.com/wonderwhyer)
-
+[![MCP Marketplace User Review Rating Badge](https://www.deepnlp.org/api/marketplace/svg?name=wonderwhy-er/DesktopCommanderMCP)](https://www.deepnlp.org/store/ai-agent/mcp-server/pub-wonderwhy-er/DesktopCommanderMCP)
 
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
@@ -956,6 +956,33 @@ For complete details about data collection, please see our [Privacy Policy](http
 
 ## Verifications
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/25ff7a06-58bc-40b8-bd79-ebb715140f1a)
+
+## Resources 
+
+<details>
+<summary><b>Open MCP Marketplace API Support</b></summary>
+
+![MCP Marketplace User Review Rating Badge](http://www.deepnlp.org/api/marketplace/svg?wonderwhy-er/desktopcommandermcp)|[Reviews](http://www.deepnlp.org/store/ai-agent/mcp-server/pub-wonderwhy-er/desktopcommandermcp)|[GitHub](https://github.com/AI-Agent-Hub/mcp-marketplace)|[Doc](http://www.deepnlp.org/doc/mcp_marketplace)|[MCP Marketplace](http://www.deepnlp.org/store/ai-agent/mcp-server)
+
+Allow AI/Agent/LLM to find this MCP Server via common python/typescript API, search and explore relevant servers and tools
+
+***Example: Search Server and Tools***
+```python
+import anthropic
+import mcp_marketplace as mcpm
+
+result_q = mcpm.search(query="desktopcommandermcp", mode="list", page_id=0, count_per_page=100, config_name="deepnlp") # search server by category choose various endpoint
+result_id = mcpm.search(id="wonderwhy-er/desktopcommandermcp", mode="list", page_id=0, count_per_page=100, config_name="deepnlp")      # search server by id choose various endpoint 
+tools = mcpm.list_tools(id="wonderwhy-er/desktopcommandermcp", config_name="deepnlp_tool")
+# Call Claude to Choose Tools Function Calls 
+# client = anthropic.Anthropic()
+# response = client.messages.create(model="claude-opus-4-20250514", max_tokens=1024, tools=tools, messages=[])
+```
+
+</details>
+
+
+
 
 ## License
 
