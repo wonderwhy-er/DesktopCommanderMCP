@@ -22,11 +22,13 @@ export const StartProcessArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number(),
   shell: z.string().optional(),
+  verbose_timing: z.boolean().optional(),
 });
 
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
   timeout_ms: z.number().optional(),
+  verbose_timing: z.boolean().optional(),
 });
 
 export const ForceTerminateArgsSchema = z.object({
@@ -89,6 +91,7 @@ export const InteractWithProcessArgsSchema = z.object({
   input: z.string(),
   timeout_ms: z.number().optional(),
   wait_for_prompt: z.boolean().optional(),
+  verbose_timing: z.boolean().optional(),
 });
 
 // Usage stats schema
