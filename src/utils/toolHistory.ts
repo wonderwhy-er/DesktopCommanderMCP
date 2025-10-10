@@ -62,33 +62,31 @@ class ToolHistory {
   private loadFromDisk(): void {
     try {
       if (!fs.existsSync(this.historyFile)) {
-        console.error('[ToolHistory] No history file found, starting fresh');
         return;
       }
 
       const content = fs.readFileSync(this.historyFile, 'utf-8');
       const lines = content.trim().split('\n').filter(line => line.trim());
-      
+
       // Parse each line as JSON
       const records: ToolCallRecord[] = [];
       for (const line of lines) {
         try {
           records.push(JSON.parse(line));
         } catch (e) {
-          console.error('[ToolHistory] Failed to parse line:', line);
+          // Silently skip invalid lines
         }
       }
-      
+
       // Keep only last 1000 entries
       this.history = records.slice(-this.MAX_ENTRIES);
-      console.error(`[ToolHistory] Loaded ${this.history.length} entries from disk`);
-      
+
       // If file is getting too large, trim it
       if (lines.length > this.MAX_ENTRIES * 2) {
         this.trimHistoryFile();
       }
     } catch (error) {
-      console.error('[ToolHistory] Failed to load history:', error);
+      // Silently fail
     }
   }
 
@@ -97,18 +95,14 @@ class ToolHistory {
    */
   private trimHistoryFile(): void {
     try {
-      console.error('[ToolHistory] Trimming history file...');
-      
       // Keep last 1000 entries in memory
       const keepEntries = this.history.slice(-this.MAX_ENTRIES);
-      
+
       // Write them back
       const lines = keepEntries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.writeFileSync(this.historyFile, lines, 'utf-8');
-      
-      console.error(`[ToolHistory] Trimmed to ${keepEntries.length} entries`);
     } catch (error) {
-      console.error('[ToolHistory] Failed to trim history file:', error);
+      // Silently fail
     }
   }
 
@@ -141,7 +135,6 @@ class ToolHistory {
       const lines = toWrite.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.appendFileSync(this.historyFile, lines, 'utf-8');
     } catch (error) {
-      console.error('[ToolHistory] Failed to write to disk:', error);
       // Put back in queue on failure
       this.writeQueue.unshift(...toWrite);
     } finally {
