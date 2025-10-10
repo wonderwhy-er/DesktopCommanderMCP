@@ -44,7 +44,7 @@ async function initConfigFile() {
         // Ensure config directory exists
         const configDir = path.dirname(CONFIG_FILE);
         if (!existsSync(configDir)) {
-            await mkdir(configDir, { recursive: true });
+            mkdirSync(configDir, { recursive: true });
         }
 
         // Check if config file exists
