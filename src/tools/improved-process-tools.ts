@@ -63,7 +63,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   const result = await terminalManager.executeCommand(
     parsed.data.command,
     parsed.data.timeout_ms,
-    shellUsed
+    shellUsed,
+    parsed.data.verbose_timing || false
   );
 
   if (result.pid === -1) {
@@ -75,7 +76,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   // Analyze the process state to detect if it's waiting for input
   const processState = analyzeProcessState(result.output, result.pid);
-  
+
   let statusMessage = '';
   if (processState.isWaitingForInput) {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -85,12 +86,45 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
   }
 
+  // Add timing information if requested
+  let timingMessage = '';
+  if (result.timingInfo) {
+    timingMessage = formatTimingInfo(result.timingInfo);
+  }
+
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
     }],
   };
+}
+
+function formatTimingInfo(timing: any): string {
+  let msg = '\n\n📊 Timing Information:\n';
+  msg += `  Exit Reason: ${timing.exitReason}\n`;
+  msg += `  Total Duration: ${timing.totalDurationMs}ms\n`;
+
+  if (timing.timeToFirstOutputMs !== undefined) {
+    msg += `  Time to First Output: ${timing.timeToFirstOutputMs}ms\n`;
+  }
+
+  if (timing.firstOutputTime && timing.lastOutputTime) {
+    msg += `  Output Window: ${timing.lastOutputTime - timing.firstOutputTime}ms\n`;
+  }
+
+  if (timing.outputEvents && timing.outputEvents.length > 0) {
+    msg += `\n  Output Events (${timing.outputEvents.length} total):\n`;
+    timing.outputEvents.forEach((event: any, idx: number) => {
+      msg += `    [${idx + 1}] +${event.deltaMs}ms | ${event.source} | ${event.length}b`;
+      if (event.matchedPattern) {
+        msg += ` | 🎯 ${event.matchedPattern}`;
+      }
+      msg += `\n       "${event.snippet}"\n`;
+    });
+  }
+
+  return msg;
 }
 
 /**
@@ -106,7 +140,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     };
   }
 
-  const { pid, timeout_ms = 5000 } = parsed.data;
+  const { pid, timeout_ms = 5000, verbose_timing = false } = parsed.data;
 
   const session = terminalManager.getSession(pid);
   if (!session) {
@@ -120,7 +154,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
         }],
       };
     }
-    
+
     // Neither active nor completed session found
     return {
       content: [{ type: "text", text: `No session found for PID ${pid}` }],
@@ -133,15 +167,37 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   let earlyExit = false;
   let processState: ProcessState | undefined;
 
+  // Timing telemetry
+  const startTime = Date.now();
+  let firstOutputTime: number | undefined;
+  let lastOutputTime: number | undefined;
+  const outputEvents: any[] = [];
+  let exitReason: 'early_exit_quick_pattern' | 'early_exit_periodic_check' | 'process_finished' | 'timeout' = 'timeout';
+
   try {
     const outputPromise: Promise<string> = new Promise<string>((resolve) => {
       const initialOutput = terminalManager.getNewOutput(pid);
       if (initialOutput && initialOutput.length > 0) {
+        const now = Date.now();
+        if (!firstOutputTime) firstOutputTime = now;
+        lastOutputTime = now;
+
+        if (verbose_timing) {
+          outputEvents.push({
+            timestamp: now,
+            deltaMs: now - startTime,
+            source: 'initial_poll',
+            length: initialOutput.length,
+            snippet: initialOutput.slice(0, 50).replace(/\n/g, '\\n')
+          });
+        }
+
         // Immediate check on existing output
         const state = analyzeProcessState(initialOutput, pid);
         if (state.isWaitingForInput) {
           earlyExit = true;
           processState = state;
+          exitReason = 'early_exit_periodic_check';
         }
         resolve(initialOutput);
         return;
@@ -150,7 +206,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
       let resolved = false;
       let interval: NodeJS.Timeout | null = null;
       let timeout: NodeJS.Timeout | null = null;
-      
+
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
 
@@ -164,14 +220,30 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
         resolved = true;
         cleanup();
         timeoutReached = isTimeout;
+        if (isTimeout) exitReason = 'timeout';
         resolve(value);
       };
 
       // Monitor for new output with immediate detection
       const session = terminalManager.getSession(pid);
       if (session && session.process && session.process.stdout && session.process.stderr) {
-        const immediateDetector = (data: Buffer) => {
+        const immediateDetector = (data: Buffer, source: 'stdout' | 'stderr') => {
           const text = data.toString();
+          const now = Date.now();
+
+          if (!firstOutputTime) firstOutputTime = now;
+          lastOutputTime = now;
+
+          if (verbose_timing) {
+            outputEvents.push({
+              timestamp: now,
+              deltaMs: now - startTime,
+              source,
+              length: text.length,
+              snippet: text.slice(0, 50).replace(/\n/g, '\\n')
+            });
+          }
+
           // Immediate check for obvious prompts
           if (quickPromptPatterns.test(text)) {
             const newOutput = terminalManager.getNewOutput(pid) || text;
@@ -179,32 +251,40 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
             if (state.isWaitingForInput) {
               earlyExit = true;
               processState = state;
+              exitReason = 'early_exit_quick_pattern';
+
+              if (verbose_timing && outputEvents.length > 0) {
+                outputEvents[outputEvents.length - 1].matchedPattern = 'quick_pattern';
+              }
+
               resolveOnce(newOutput);
               return;
             }
           }
         };
-        
-        session.process.stdout.on('data', immediateDetector);
-        session.process.stderr.on('data', immediateDetector);
-        
+
+        const stdoutDetector = (data: Buffer) => immediateDetector(data, 'stdout');
+        const stderrDetector = (data: Buffer) => immediateDetector(data, 'stderr');
+        session.process.stdout.on('data', stdoutDetector);
+        session.process.stderr.on('data', stderrDetector);
+
         // Cleanup immediate detectors when done
         const originalResolveOnce = resolveOnce;
         const cleanupDetectors = () => {
           if (session.process.stdout) {
-            session.process.stdout.removeListener('data', immediateDetector);
+            session.process.stdout.off('data', stdoutDetector);
           }
           if (session.process.stderr) {
-            session.process.stderr.removeListener('data', immediateDetector);
+            session.process.stderr.off('data', stderrDetector);
           }
         };
-        
+
         // Override resolveOnce to include cleanup
         const resolveOnceWithCleanup = (value: string, isTimeout = false) => {
           cleanupDetectors();
           originalResolveOnce(value, isTimeout);
         };
-        
+
         // Replace the local resolveOnce reference
         resolveOnce = resolveOnceWithCleanup;
       }
@@ -212,29 +292,50 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
       interval = setInterval(() => {
         const newOutput = terminalManager.getNewOutput(pid);
         if (newOutput && newOutput.length > 0) {
+          const now = Date.now();
+          if (!firstOutputTime) firstOutputTime = now;
+          lastOutputTime = now;
+
+          if (verbose_timing) {
+            outputEvents.push({
+              timestamp: now,
+              deltaMs: now - startTime,
+              source: 'periodic_poll',
+              length: newOutput.length,
+              snippet: newOutput.slice(0, 50).replace(/\n/g, '\\n')
+            });
+          }
+
           const currentOutput = output + newOutput;
           const state = analyzeProcessState(currentOutput, pid);
-          
+
           // Early exit if process is clearly waiting for input
           if (state.isWaitingForInput) {
             earlyExit = true;
             processState = state;
+            exitReason = 'early_exit_periodic_check';
+
+            if (verbose_timing && outputEvents.length > 0) {
+              outputEvents[outputEvents.length - 1].matchedPattern = 'periodic_check';
+            }
+
             resolveOnce(newOutput);
             return;
           }
-          
+
           output = currentOutput;
-          
+
           // Continue collecting if still running
           if (!state.isFinished) {
             return;
           }
-          
+
           // Process finished
           processState = state;
+          exitReason = 'process_finished';
           resolveOnce(newOutput);
         }
-      }, 200); // Check every 200ms
+      }, 50); // Check every 50ms for faster response
 
       timeout = setTimeout(() => {
         const finalOutput = terminalManager.getNewOutput(pid) || "";
@@ -267,12 +368,29 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     statusMessage = '\n⏱️ Timeout reached - process may still be running';
   }
 
+  // Add timing information if requested
+  let timingMessage = '';
+  if (verbose_timing) {
+    const endTime = Date.now();
+    const timingInfo = {
+      startTime,
+      endTime,
+      totalDurationMs: endTime - startTime,
+      exitReason,
+      firstOutputTime,
+      lastOutputTime,
+      timeToFirstOutputMs: firstOutputTime ? firstOutputTime - startTime : undefined,
+      outputEvents: outputEvents.length > 0 ? outputEvents : undefined
+    };
+    timingMessage = formatTimingInfo(timingInfo);
+  }
+
   const responseText = output || 'No new output available';
-  
+
   return {
     content: [{
       type: "text",
-      text: `${responseText}${statusMessage}`
+      text: `${responseText}${statusMessage}${timingMessage}`
     }],
   };
 }
@@ -293,13 +411,21 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     };
   }
 
-  const { 
-    pid, 
-    input, 
+  const {
+    pid,
+    input,
     timeout_ms = 8000,
-    wait_for_prompt = true
+    wait_for_prompt = true,
+    verbose_timing = false
   } = parsed.data;
-  
+
+  // Timing telemetry
+  const startTime = Date.now();
+  let firstOutputTime: number | undefined;
+  let lastOutputTime: number | undefined;
+  const outputEvents: any[] = [];
+  let exitReason: 'early_exit_quick_pattern' | 'early_exit_periodic_check' | 'process_finished' | 'timeout' | 'no_wait' = 'timeout';
+
   try {
     capture('server_interact_with_process', {
       pid: pid,
@@ -307,7 +433,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     });
 
     const success = terminalManager.sendInputToProcess(pid, input);
-    
+
     if (!success) {
       return {
         content: [{ type: "text", text: `Error: Failed to send input to process ${pid}. The process may have exited or doesn't accept input.` }],
@@ -317,10 +443,26 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
 
     // If not waiting for response, return immediately
     if (!wait_for_prompt) {
+      exitReason = 'no_wait';
+      let timingMessage = '';
+      if (verbose_timing) {
+        const endTime = Date.now();
+        const timingInfo = {
+          startTime,
+          endTime,
+          totalDurationMs: endTime - startTime,
+          exitReason,
+          firstOutputTime,
+          lastOutputTime,
+          timeToFirstOutputMs: undefined,
+          outputEvents: undefined
+        };
+        timingMessage = formatTimingInfo(timingInfo);
+      }
       return {
         content: [{
           type: "text",
-          text: `✅ Input sent to process ${pid}. Use read_process_output to get the response.`
+          text: `✅ Input sent to process ${pid}. Use read_process_output to get the response.${timingMessage}`
         }],
       };
     }
@@ -329,7 +471,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     let output = "";
     let processState: ProcessState | undefined;
     let earlyExit = false;
-    
+
     // Quick prompt patterns for immediate detection
     const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
     
@@ -337,93 +479,69 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       return new Promise((resolve) => {
         let resolved = false;
         let attempts = 0;
-        const maxAttempts = Math.ceil(timeout_ms / 200);
+        const pollIntervalMs = 50; // Poll every 50ms for faster response
+        const maxAttempts = Math.ceil(timeout_ms / pollIntervalMs);
         let interval: NodeJS.Timeout | null = null;
-        
+
         let resolveOnce = () => {
           if (resolved) return;
           resolved = true;
           if (interval) clearInterval(interval);
           resolve();
         };
-        
-        // Set up immediate detection on the process streams
-        const session = terminalManager.getSession(pid);
-        if (session && session.process && session.process.stdout && session.process.stderr) {
-          const immediateDetector = (data: Buffer) => {
-            const text = data.toString();
-            // Immediate check for obvious prompts
-            if (quickPromptPatterns.test(text)) {
-              // Get the latest output and analyze
-              setTimeout(() => {
-                const newOutput = terminalManager.getNewOutput(pid);
-                if (newOutput) {
-                  output += newOutput;
-                  const state = analyzeProcessState(output, pid);
-                  if (state.isWaitingForInput) {
-                    processState = state;
-                    earlyExit = true;
-                    resolveOnce();
-                  }
-                }
-              }, 50); // Small delay to ensure output is captured
-            }
-          };
-          
-          session.process.stdout.on('data', immediateDetector);
-          session.process.stderr.on('data', immediateDetector);
-          
-          // Cleanup when done
-          const cleanupDetectors = () => {
-            if (session.process.stdout) {
-              session.process.stdout.removeListener('data', immediateDetector);
-            }
-            if (session.process.stderr) {
-              session.process.stderr.removeListener('data', immediateDetector);
-            }
-          };
-          
-          // Override resolveOnce to include cleanup
-          const originalResolveOnce = resolveOnce;
-          const resolveOnceWithCleanup = () => {
-            cleanupDetectors();
-            originalResolveOnce();
-          };
-          
-          // Replace the local resolveOnce reference
-          resolveOnce = resolveOnceWithCleanup;
-        }
-        
-        // Periodic check as fallback
+
+        // Fast-polling check - check every 50ms for quick responses
         interval = setInterval(() => {
           if (resolved) return;
-          
+
           const newOutput = terminalManager.getNewOutput(pid);
           if (newOutput && newOutput.length > 0) {
+            const now = Date.now();
+            if (!firstOutputTime) firstOutputTime = now;
+            lastOutputTime = now;
+
+            if (verbose_timing) {
+              outputEvents.push({
+                timestamp: now,
+                deltaMs: now - startTime,
+                source: 'periodic_poll',
+                length: newOutput.length,
+                snippet: newOutput.slice(0, 50).replace(/\n/g, '\\n')
+              });
+            }
+
             output += newOutput;
-            
+
             // Analyze current state
             processState = analyzeProcessState(output, pid);
-            
+
             // Exit early if we detect the process is waiting for input
             if (processState.isWaitingForInput) {
               earlyExit = true;
+              exitReason = 'early_exit_periodic_check';
+
+              if (verbose_timing && outputEvents.length > 0) {
+                outputEvents[outputEvents.length - 1].matchedPattern = 'periodic_check';
+              }
+
               resolveOnce();
               return;
             }
-            
+
             // Also exit if process finished
             if (processState.isFinished) {
+              exitReason = 'process_finished';
               resolveOnce();
               return;
             }
           }
-          
+
           attempts++;
           if (attempts >= maxAttempts) {
+            exitReason = 'timeout';
             resolveOnce();
           }
-        }, 200);
+        }, pollIntervalMs);
       });
     };
     
@@ -446,32 +564,53 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     } else if (timeoutReached) {
       statusMessage = '\n⏱️ Response may be incomplete (timeout reached)';
     }
-    
+
+    // Add timing information if requested
+    let timingMessage = '';
+    if (verbose_timing) {
+      const endTime = Date.now();
+      const timingInfo = {
+        startTime,
+        endTime,
+        totalDurationMs: endTime - startTime,
+        exitReason,
+        firstOutputTime,
+        lastOutputTime,
+        timeToFirstOutputMs: firstOutputTime ? firstOutputTime - startTime : undefined,
+        outputEvents: outputEvents.length > 0 ? outputEvents : undefined
+      };
+      timingMessage = formatTimingInfo(timingInfo);
+    }
+
     if (cleanOutput.trim().length === 0 && !timeoutReached) {
       return {
         content: [{
           type: "text",
-          text: `✅ Input executed in process ${pid}.\n📭 (No output produced)${statusMessage}`
+          text: `✅ Input executed in process ${pid}.\n📭 (No output produced)${statusMessage}${timingMessage}`
         }],
       };
     }
-    
+
     // Format response with better structure and consistent emojis
     let responseText = `✅ Input executed in process ${pid}`;
-    
+
     if (cleanOutput && cleanOutput.trim().length > 0) {
       responseText += `:\n\n📤 Output:\n${cleanOutput}`;
     } else {
       responseText += `.\n📭 (No output produced)`;
     }
-    
+
     if (statusMessage) {
       responseText += `\n\n${statusMessage}`;
     }
 
+    if (timingMessage) {
+      responseText += timingMessage;
+    }
+
     return {
       content: [{
-        type: "text", 
+        type: "text",
         text: responseText
       }],
     };
