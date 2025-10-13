@@ -149,11 +149,27 @@ export { currentClient };
 
 deferLog('info', 'Setting up request handlers...');
 
+/**
+ * Check if a tool should be included based on current client
+ */
+function shouldIncludeTool(toolName: string): boolean {
+    // Exclude give_feedback_to_desktop_commander for desktop-commander client
+    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
+        return false;
+    }
+
+    // Add more conditional tool logic here as needed
+    // Example: if (toolName === 'some_tool' && currentClient?.name === 'some_client') return false;
+
+    return true;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         logToStderr('debug', 'Generating tools list...');
-        return {
-            tools: [
+
+        // Build complete tools array
+        const allTools = [
                 // Configuration tools
                 {
                     name: "get_config",
@@ -635,12 +651,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         STATES DETECTED:
                         Process waiting for input (shows prompt)
-                        Process finished execution  
+                        Process finished execution
                         Process running (use read_process_output)
-                        
+
+                        PERFORMANCE DEBUGGING (verbose_timing parameter):
+                        Set verbose_timing: true to get detailed timing information including:
+                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_exit, timeout)
+                        - Total duration and time to first output
+                        - Complete timeline of all output events with timestamps
+                        - Which detection mechanism triggered early exit
+                        Use this to identify missed optimization opportunities and improve detection patterns.
+
                         ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
                         NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(StartProcessArgsSchema),
@@ -674,7 +698,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Process waiting for input (ready for interact_with_process)
                         Process finished execution
                         Timeout reached (may still be running)
-                        
+
+                        PERFORMANCE DEBUGGING (verbose_timing parameter):
+                        Set verbose_timing: true to get detailed timing information including:
+                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_finished, timeout)
+                        - Total duration and time to first output
+                        - Complete timeline of all output events with timestamps
+                        - Which detection mechanism triggered early exit
+                        Use this to identify when timeouts could be reduced or detection patterns improved.
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
                     annotations: {
@@ -725,12 +757,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - input: Code/command to execute
                         - timeout_ms: Max wait (default: 8000ms)
                         - wait_for_prompt: Auto-wait for response (default: true)
-                        
+                        - verbose_timing: Enable detailed performance telemetry (default: false)
+
                         Returns execution result with status indicators.
-                        
+
+                        PERFORMANCE DEBUGGING (verbose_timing parameter):
+                        Set verbose_timing: true to get detailed timing information including:
+                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_finished, timeout, no_wait)
+                        - Total duration and time to first output
+                        - Complete timeline of all output events with timestamps
+                        - Which detection mechanism triggered early exit
+                        Use this to identify slow interactions and optimize detection patterns.
+
                         ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
                         NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
                     annotations: {
@@ -912,7 +953,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
                 },
-            ],
+            ];
+
+        // Filter tools based on current client
+        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
+
+        logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
+
+        return {
+            tools: filteredTools,
         };
     } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);

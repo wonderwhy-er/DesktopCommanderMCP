@@ -10,10 +10,7 @@
 [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/kQ27sNnZr7)
 
 
-Work with code and text, run processes, and automate tasks, going far beyond other AI editors - without API token costs.
-
-
-![Desktop Commander MCP](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/docs/vertical_video_mobile.mp4)
+Work with code and text, run processes, and automate tasks, going far beyond other AI editors - while using host client subscriptions instead of API token costs.
 
 <a href="https://glama.ai/mcp/servers/zempur9oh4">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />

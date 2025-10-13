@@ -2,6 +2,41 @@
 
 This document outlines the complete process for publishing new versions of Desktop Commander to both NPM and the MCP Registry.
 
+## 🚀 Automated Release (Recommended)
+
+We now have an automated release script that handles the entire process!
+
+```bash
+# Patch release (0.2.16 → 0.2.17) - Bug fixes, small improvements
+npm run release
+
+# Minor release (0.2.16 → 0.3.0) - New features
+npm run release:minor
+
+# Major release (0.2.16 → 1.0.0) - Breaking changes
+npm run release:major
+
+# Test without publishing
+npm run release:dry
+```
+
+**See [scripts/README-RELEASE.md](scripts/README-RELEASE.md) for full documentation of the automated release process.**
+
+The script automatically handles:
+- ✅ Version bumping
+- ✅ Building project and MCPB bundle
+- ✅ Running tests
+- ✅ Git commit and tagging
+- ✅ NPM publishing
+- ✅ MCP Registry publishing
+- ✅ Publication verification
+
+---
+
+## Manual Release Process
+
+If you prefer to release manually or need to troubleshoot, follow these steps:
+
 ## Prerequisites
 
 - Node.js 18+ installed
