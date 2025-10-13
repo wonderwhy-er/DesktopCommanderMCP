@@ -263,17 +263,19 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
           }
         };
 
-        session.process.stdout.on('data', (data: Buffer) => immediateDetector(data, 'stdout'));
-        session.process.stderr.on('data', (data: Buffer) => immediateDetector(data, 'stderr'));
+        const stdoutDetector = (data: Buffer) => immediateDetector(data, 'stdout');
+        const stderrDetector = (data: Buffer) => immediateDetector(data, 'stderr');
+        session.process.stdout.on('data', stdoutDetector);
+        session.process.stderr.on('data', stderrDetector);
 
         // Cleanup immediate detectors when done
         const originalResolveOnce = resolveOnce;
         const cleanupDetectors = () => {
           if (session.process.stdout) {
-            session.process.stdout.removeAllListeners('data');
+            session.process.stdout.off('data', stdoutDetector);
           }
           if (session.process.stderr) {
-            session.process.stderr.removeAllListeners('data');
+            session.process.stderr.off('data', stderrDetector);
           }
         };
 
