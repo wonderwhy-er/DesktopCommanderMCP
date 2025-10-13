@@ -1,0 +1,26 @@
+{
+  "name": "minimal-oauth-test",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "auth-server": "node auth-server.js",
+    "resource-server": "node resource-server.js",
+    "client": "node client.js",
+    "mcp-auth": "node mcp-auth-server.js",
+    "mcp-resource": "node mcp-resource-server.js",
+    "unified": "node unified-mcp-server.js",
+    "unified-no-auth": "REQUIRE_AUTH=false node unified-mcp-server.js",
+    "unified-debug": "node unified-debug.js",
+    "sdk-server": "node mcp-sdk-oauth-server.js",
+    "sdk-server-no-auth": "REQUIRE_AUTH=false node mcp-sdk-oauth-server.js",
+    "tunnel": "node start-with-tunnel.js",
+    "tunnel-no-auth": "node start-with-tunnel.js --no-auth",
+    "tunnel-sdk": "node start-with-tunnel.js --sdk",
+    "tunnel-sdk-oauth": "node start-with-tunnel.js --sdk --oauth",
+    "test": "./test-flow.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.19.1",
+    "express": "^4.18.2"
+  }
+}

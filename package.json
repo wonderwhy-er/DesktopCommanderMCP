@@ -49,7 +49,9 @@
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
-    "logs:export": "npm run build && node scripts/export-fuzzy-logs.js"
+    "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
+    "start:tunnel": "npm run build && node dist/http-server-tunnel.js",
+    "start:named-tunnel": "npm run build && node dist/http-server-named-tunnel.js"
   },
   "publishConfig": {
     "access": "public"
@@ -76,7 +78,9 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
     "@vscode/ripgrep": "^1.15.9",
+    "cors": "^2.8.5",
     "cross-fetch": "^4.1.0",
+    "express": "^5.1.0",
     "fastest-levenshtein": "^1.0.16",
     "glob": "^10.3.10",
     "isbinaryfile": "^5.0.4",
@@ -86,6 +90,8 @@
   "devDependencies": {
     "@smithery/cli": "^1.4.4",
     "@smithery/sdk": "^1.6.7",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
     "@types/node": "^20.17.24",
     "commander": "^13.1.0",
     "nexe": "^5.0.0-beta.4",
