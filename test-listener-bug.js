@@ -143,18 +143,35 @@ async function runTest() {
       timeout_ms: 2000
     });
 
-    const hasOutput = !read2.content[0].text.includes('No new output') &&
-                      !read2.content[0].text.includes('Timeout reached');
+    const outputText = read2.content[0].text;
+    const hasOutput = !outputText.includes('No new output') &&
+                      !outputText.includes('Timeout reached');
 
     if (!hasOutput) {
       console.error('❌ BUG DETECTED: Second read_process_output returned no output!');
       console.error('   This means TerminalManager listeners were removed by removeAllListeners');
-      console.error(`   Full output: ${read2.content[0].text}`);
+      console.error(`   Full output: ${outputText}`);
+      process.exit(1);
+    }
+
+    // Validate output contains expected result from "2 + 2"
+    if (!outputText.includes('4')) {
+      console.error('❌ BUG DETECTED: Second read_process_output has corrupt output!');
+      console.error(`   Expected result "4" from "2 + 2" but got: ${outputText}`);
+      process.exit(1);
+    }
+
+    // Validate output contains REPL prompt (proves detection is working)
+    if (!outputText.includes('>')) {
+      console.error('❌ BUG DETECTED: Second read_process_output missing REPL prompt!');
+      console.error(`   Expected ">" prompt but got: ${outputText}`);
       process.exit(1);
     }
 
     console.log('✅ Second read_process_output succeeded!');
-    console.log(`   Output contains: ${read2.content[0].text.substring(0, 100)}...\n`);
+    console.log(`   ✓ Contains expected result: "4"`);
+    console.log(`   ✓ Contains REPL prompt: ">"`);
+    console.log(`   Full output: ${outputText.substring(0, 100)}...\n`);
 
     // Cleanup
     await callTool('force_terminate', { pid });
