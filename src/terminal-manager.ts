@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { TerminalSession, CommandExecutionResult, ActiveSession } from './types.js';
+import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
@@ -43,7 +43,7 @@ export class TerminalManager {
     }
   }
   
-  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string): Promise<CommandExecutionResult> {
+  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false): Promise<CommandExecutionResult> {
     // Get the shell from config if not specified
     let shellToUse: string | boolean | undefined = shell;
     if (!shellToUse) {
@@ -55,29 +55,29 @@ export class TerminalManager {
         shellToUse = true;
       }
     }
-    
+
     // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
     // Note: No special stdio options needed here, Node.js handles pipes by default
-    
+
     // Enhance SSH commands automatically
     let enhancedCommand = command;
     if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
       enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
-    
-    const spawnOptions: any = { 
+
+    const spawnOptions: any = {
       shell: shellToUse,
       env: {
         ...process.env,
         TERM: 'xterm-256color'  // Better terminal compatibility
       }
     };
-    
+
     // Spawn the process with an empty array of arguments and our options
     const childProcess = spawn(enhancedCommand, [], spawnOptions);
     let output = '';
-    
+
     // Ensure childProcess.pid is defined before proceeding
     if (!childProcess.pid) {
       // Return a consistent error object instead of throwing
@@ -87,7 +87,7 @@ export class TerminalManager {
         isBlocked: false
       };
     }
-    
+
     const session: TerminalSession = {
       pid: childProcess.pid,
       process: childProcess,
@@ -95,31 +95,76 @@ export class TerminalManager {
       isBlocked: false,
       startTime: new Date()
     };
-    
+
     this.sessions.set(childProcess.pid, session);
+
+    // Timing telemetry
+    const startTime = Date.now();
+    let firstOutputTime: number | undefined;
+    let lastOutputTime: number | undefined;
+    const outputEvents: OutputEvent[] = [];
+    let exitReason: TimingInfo['exitReason'] = 'timeout';
 
     return new Promise((resolve) => {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
-      
+
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
-      
+
       const resolveOnce = (result: CommandExecutionResult) => {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+
+        // Add timing info if requested
+        if (collectTiming) {
+          const endTime = Date.now();
+          result.timingInfo = {
+            startTime,
+            endTime,
+            totalDurationMs: endTime - startTime,
+            exitReason,
+            firstOutputTime,
+            lastOutputTime,
+            timeToFirstOutputMs: firstOutputTime ? firstOutputTime - startTime : undefined,
+            outputEvents: outputEvents.length > 0 ? outputEvents : undefined
+          };
+        }
+
         resolve(result);
       };
 
       childProcess.stdout.on('data', (data: any) => {
         const text = data.toString();
+        const now = Date.now();
+
+        if (!firstOutputTime) firstOutputTime = now;
+        lastOutputTime = now;
+
         output += text;
         session.lastOutput += text;
-        
+
+        // Record output event if collecting timing
+        if (collectTiming) {
+          outputEvents.push({
+            timestamp: now,
+            deltaMs: now - startTime,
+            source: 'stdout',
+            length: text.length,
+            snippet: text.slice(0, 50).replace(/\n/g, '\\n')
+          });
+        }
+
         // Immediate check for obvious prompts
         if (quickPromptPatterns.test(text)) {
           session.isBlocked = true;
+          exitReason = 'early_exit_quick_pattern';
+
+          if (collectTiming && outputEvents.length > 0) {
+            outputEvents[outputEvents.length - 1].matchedPattern = 'quick_pattern';
+          }
+
           resolveOnce({
             pid: childProcess.pid!,
             output,
@@ -130,8 +175,24 @@ export class TerminalManager {
 
       childProcess.stderr.on('data', (data: any) => {
         const text = data.toString();
+        const now = Date.now();
+
+        if (!firstOutputTime) firstOutputTime = now;
+        lastOutputTime = now;
+
         output += text;
         session.lastOutput += text;
+
+        // Record output event if collecting timing
+        if (collectTiming) {
+          outputEvents.push({
+            timestamp: now,
+            deltaMs: now - startTime,
+            source: 'stderr',
+            length: text.length,
+            snippet: text.slice(0, 50).replace(/\n/g, '\\n')
+          });
+        }
       });
 
       // Periodic comprehensive check every 100ms
@@ -140,6 +201,7 @@ export class TerminalManager {
           const processState = analyzeProcessState(output, childProcess.pid);
           if (processState.isWaitingForInput) {
             session.isBlocked = true;
+            exitReason = 'early_exit_periodic_check';
             resolveOnce({
               pid: childProcess.pid!,
               output,
@@ -152,6 +214,7 @@ export class TerminalManager {
       // Timeout fallback
       setTimeout(() => {
         session.isBlocked = true;
+        exitReason = 'timeout';
         resolveOnce({
           pid: childProcess.pid!,
           output,
@@ -169,15 +232,16 @@ export class TerminalManager {
             startTime: session.startTime,
             endTime: new Date()
           });
-          
+
           // Keep only last 100 completed sessions
           if (this.completedSessions.size > 100) {
             const oldestKey = Array.from(this.completedSessions.keys())[0];
             this.completedSessions.delete(oldestKey);
           }
-          
+
           this.sessions.delete(childProcess.pid);
         }
+        exitReason = 'process_exit';
         resolveOnce({
           pid: childProcess.pid!,
           output,

@@ -25,6 +25,27 @@ export interface CommandExecutionResult {
   pid: number;
   output: string;
   isBlocked: boolean;
+  timingInfo?: TimingInfo;
+}
+
+export interface TimingInfo {
+  startTime: number;
+  endTime: number;
+  totalDurationMs: number;
+  exitReason: 'early_exit_quick_pattern' | 'early_exit_periodic_check' | 'process_exit' | 'timeout';
+  firstOutputTime?: number;
+  lastOutputTime?: number;
+  timeToFirstOutputMs?: number;
+  outputEvents?: OutputEvent[];
+}
+
+export interface OutputEvent {
+  timestamp: number;
+  deltaMs: number;
+  source: 'stdout' | 'stderr';
+  length: number;
+  snippet: string;
+  matchedPattern?: string;
 }
 
 export interface ActiveSession {
