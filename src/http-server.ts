@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryEventStore } from '@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import { server as createBaseServer } from './server.js';
+import { server as baseServer } from './server.js';
 import { configManager } from './config-manager.js';
 
 // Configuration
@@ -90,8 +90,9 @@ app.post('/mcp', async (req, res) => {
         }
       };
       
-      const server = createBaseServer;
-      await server.connect(transport);
+      // Connect the shared base server to this transport
+      // Note: MCP SDK allows one server to be connected to multiple transports
+      await baseServer.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return;
     } 
@@ -193,17 +194,22 @@ async function startServer() {
     console.log(`\n📝 Mode: Session-based (like oauth-test working server)`);
     console.log(`\n🔒 Sessions are created per-client for better security`);
     console.log(``);
+  }).on('error', (error) => {
+    console.error('❌ Failed to start HTTP server:', error);
+    process.exit(1);
   });
 }
 
 // Handle errors
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught exception:', error);
+  console.error('Stack trace:', error.stack);
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ Unhandled rejection:', reason);
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled rejection at:', promise);
+  console.error('Reason:', reason);
   process.exit(1);
 });
 
