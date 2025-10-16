@@ -17,6 +17,8 @@
     "tunnel-no-auth": "node start-with-tunnel.js --no-auth",
     "tunnel-sdk": "node start-with-tunnel.js --sdk",
     "tunnel-sdk-oauth": "node start-with-tunnel.js --sdk --oauth",
+    "tunnel-sdk-named": "node start-with-named-tunnel.js",
+    "tunnel-sdk-named-no-auth": "REQUIRE_AUTH=false node start-with-named-tunnel.js",
     "test": "./test-flow.sh"
   },
   "dependencies": {

@@ -145,6 +145,27 @@ app.use(cors({
   exposedHeaders: ['Mcp-Session-Id']
 }));
 
+// Log ALL requests
+app.use((req, res, next) => {
+  console.log(`\n🌐 ${req.method} ${req.path}`);
+  if (Object.keys(req.query).length > 0) {
+    console.log(`   Query:`, req.query);
+  }
+  if (req.headers.authorization) {
+    console.log(`   Auth: Bearer token present`);
+  }
+  
+  // Capture response
+  const originalJson = res.json.bind(res);
+  res.json = function(data) {
+    const preview = JSON.stringify(data, null, 2).substring(0, 300);
+    console.log(`   📤 Response ${res.statusCode}: ${preview}${preview.length >= 300 ? '...' : ''}`);
+    return originalJson(data);
+  };
+  
+  next();
+});
+
 // ==================== OAUTH ENDPOINTS ====================
 
 // Authorization Server Metadata
@@ -168,6 +189,20 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
 
 // Protected Resource Metadata
 app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  if (!REQUIRE_AUTH) {
+    return res.status(404).json({ error: 'OAuth disabled' });
+  }
+  
+  res.json({
+    resource: BASE_URL,
+    authorization_servers: [BASE_URL],
+    scopes_supported: ['mcp:tools'],
+    bearer_methods_supported: ['header']
+  });
+});
+
+// MCP-specific Protected Resource Metadata (ChatGPT queries this)
+app.get('/.well-known/oauth-protected-resource/mcp', (req, res) => {
   if (!REQUIRE_AUTH) {
     return res.status(404).json({ error: 'OAuth disabled' });
   }
@@ -393,6 +428,7 @@ app.post('/mcp', authMiddleware, async (req, res) => {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         eventStore,
+        enableJsonResponse: true,  // CRITICAL: Avoid SSE through cloudflare tunnel
         onsessioninitialized: (sid) => {
           console.log(`✅ Session initialized: ${sid}`);
           transports[sid] = transport;
