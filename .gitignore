@@ -54,4 +54,5 @@ mcpb-bundle/
 # Test files
 test_files/
 test_fix.js
-test_search.js.ripgrep-downloads/
+test_search.js
+.ripgrep-downloads/
