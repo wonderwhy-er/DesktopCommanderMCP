@@ -31,12 +31,13 @@ function getTarget() {
 const target = getTarget();
 const isWindows = os.platform() === 'win32';
 const binaryName = isWindows ? `rg-${target}.exe` : `rg-${target}`;
-const rgPath = path.join(__dirname, 'bin', binaryName);
+// __dirname is lib/, so go up one level to reach bin/
+const rgPath = path.join(__dirname, '..', 'bin', binaryName);
 
 // Verify binary exists
 if (!fs.existsSync(rgPath)) {
   // Try fallback to original rg location
-  const fallbackPath = path.join(__dirname, 'bin', isWindows ? 'rg.exe' : 'rg');
+  const fallbackPath = path.join(__dirname, '..', 'bin', isWindows ? 'rg.exe' : 'rg');
   if (fs.existsSync(fallbackPath)) {
     module.exports.rgPath = fallbackPath;
   } else {
