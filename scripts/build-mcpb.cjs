@@ -21,6 +21,16 @@ const MANIFEST_PATH = path.join(BUNDLE_DIR, 'manifest.json');
 
 console.log('🏗️  Building Desktop Commander MCPB Bundle...');
 
+// Step 0: Download all ripgrep binaries for cross-platform support
+console.log('🌍 Downloading ripgrep binaries for all platforms...');
+try {
+    execSync('node scripts/download-all-ripgrep.cjs', { cwd: PROJECT_ROOT, stdio: 'inherit' });
+    console.log('✅ Ripgrep binaries downloaded');
+} catch (error) {
+    console.error('❌ Failed to download ripgrep binaries:', error.message);
+    process.exit(1);
+}
+
 // Step 1: Build the TypeScript project
 console.log('📦 Building TypeScript project...');
 try {
@@ -128,6 +138,40 @@ try {
     console.log('✅ Dependencies installed');
 } catch (error) {
     console.error('❌ Failed to install dependencies:', error.message);
+    process.exit(1);
+}
+
+// Step 6c: Copy platform-specific ripgrep binaries and wrapper
+console.log('🔧 Setting up cross-platform ripgrep support...');
+try {
+    const ripgrepBinSrc = path.join(PROJECT_ROOT, 'node_modules/@vscode/ripgrep/bin');
+    const ripgrepBinDest = path.join(BUNDLE_DIR, 'node_modules/@vscode/ripgrep/bin');
+    const ripgrepWrapperSrc = path.join(PROJECT_ROOT, 'scripts/ripgrep-wrapper.js');
+    const ripgrepIndexDest = path.join(BUNDLE_DIR, 'node_modules/@vscode/ripgrep/lib/index.js');
+    
+    // Ensure bin directory exists
+    if (!fs.existsSync(ripgrepBinDest)) {
+        fs.mkdirSync(ripgrepBinDest, { recursive: true });
+    }
+    
+    // Copy all platform-specific ripgrep binaries
+    const binaries = fs.readdirSync(ripgrepBinSrc).filter(f => f.startsWith('rg-'));
+    binaries.forEach(binary => {
+        const src = path.join(ripgrepBinSrc, binary);
+        const dest = path.join(ripgrepBinDest, binary);
+        fs.copyFileSync(src, dest);
+        // Preserve executable permissions
+        if (!binary.endsWith('.exe')) {
+            fs.chmodSync(dest, 0o755);
+        }
+    });
+    console.log(`✅ Copied ${binaries.length} ripgrep binaries`);
+    
+    // Replace index.js with our wrapper
+    fs.copyFileSync(ripgrepWrapperSrc, ripgrepIndexDest);
+    console.log('✅ Installed ripgrep runtime wrapper');
+} catch (error) {
+    console.error('❌ Failed to setup ripgrep:', error.message);
     process.exit(1);
 }
 
