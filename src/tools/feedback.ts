@@ -88,7 +88,7 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
       content: [{
         type: "text",
         text: `❌ **Error opening feedback form**: ${error instanceof Error ? error.message : String(error)}\n\n` +
-              `You can still access our feedback form directly at: https://tally.so/r/mYB6av\n\n` +
+              `You can still access our feedback form directly at: https://tally.so/r/mKqoKg\n\n` +
               `We appreciate your willingness to provide feedback!`
       }],
       isError: true
@@ -100,7 +100,7 @@ export async function giveFeedbackToDesktopCommander(params: FeedbackParams = {}
  * Build Tally.so URL with pre-filled parameters
  */
 async function buildTallyUrl(params: FeedbackParams, stats: any): Promise<string> {
-  const baseUrl = 'https://tally.so/r/mYB6av';
+  const baseUrl = 'https://tally.so/r/mKqoKg';
   const urlParams = new URLSearchParams();
   
   // Only auto-filled hidden fields remain

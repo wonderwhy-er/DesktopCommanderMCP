@@ -4,6 +4,7 @@ import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server, flushDeferredMessages } from './server.js';
 import { commandManager } from './command-manager.js';
 import { configManager } from './config-manager.js';
+import { featureFlagManager } from './utils/feature-flags.js';
 import { runSetup } from './npm-scripts/setup.js';
 import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
@@ -42,6 +43,10 @@ async function runServer() {
           deferLog('info', 'Loading configuration...');
           await configManager.loadConfig();
           deferLog('info', 'Configuration loaded successfully');
+          
+          // Initialize feature flags (non-blocking)
+          deferLog('info', 'Initializing feature flags...');
+          await featureFlagManager.initialize();
       } catch (configError) {
           deferLog('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
           if (configError instanceof Error && configError.stack) {
