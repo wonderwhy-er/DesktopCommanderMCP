@@ -208,22 +208,65 @@ function detectShell() {
 
 // Function to get the package spec that was used to run this script
 function getPackageSpec() {
-  // Check if running via npx - look for the package spec in process.argv
-  // e.g., npx @wonderwhy-er/desktop-commander@0.2.18-alpha setup
-  const argv = process.argv;
+  console.log('\n[DEBUG getPackageSpec] Starting detection...');
+  console.log('[DEBUG getPackageSpec] process.argv:', process.argv);
+  console.log('[DEBUG getPackageSpec] __dirname:', __dirname);
+  console.log('[DEBUG getPackageSpec] __filename:', __filename);
   
-  // Look for the package name in argv
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg.includes('@wonderwhy-er/desktop-commander')) {
-      // Extract just the package spec (e.g., @wonderwhy-er/desktop-commander@0.2.18-alpha)
-      const match = arg.match(/(@wonderwhy-er\/desktop-commander(@[^\/\s]+)?)/);
-      if (match) {
-        return match[1];
-      }
-    }
+  // Strategy: Check multiple sources to detect the version
+  // 1. Check process.argv[1] which contains the actual script path  
+  // 2. Check package.json in the script's directory
+  // 3. Fall back to @latest for stable, keep version for pre-release
+  
+  // Method 1: Check the script path (process.argv[1] or __dirname)
+  // npx extracts packages to: ~/.npm/_npx/<hash>/node_modules/@scope/package-name/
+  // The actual script path will contain this structure
+  const scriptPath = __dirname;
+  console.log('[DEBUG getPackageSpec] Checking script path for version...');
+  
+  // Look for node_modules/@wonderwhy-er/desktop-commander in the path
+  // This works because npx extracts to a predictable location
+  const nodeModulesMatch = scriptPath.match(/node_modules\/@wonderwhy-er\/desktop-commander/);
+  if (nodeModulesMatch) {
+    console.log('[DEBUG getPackageSpec] Script is in node_modules, reading package.json...');
   }
   
+  // Method 2: Read package.json to get the actual installed version
+  try {
+    const packageJsonPath = join(__dirname, 'package.json');
+    console.log('[DEBUG getPackageSpec] Trying to read:', packageJsonPath);
+    
+    if (existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+      const version = packageJson.version;
+      console.log('[DEBUG getPackageSpec] Found version in package.json:', version);
+      
+      if (version) {
+        // Always use the exact version if it's a pre-release
+        if (version.includes('alpha') || version.includes('beta') || version.includes('rc')) {
+          const spec = `@wonderwhy-er/desktop-commander@${version}`;
+          console.log('[DEBUG getPackageSpec] ✓ Using pre-release version:', spec);
+          return spec;
+        }
+        
+        // For stable versions, use @latest tag
+        console.log('[DEBUG getPackageSpec] ✓ Stable version, using @latest');
+        return '@wonderwhy-er/desktop-commander@latest';
+      }
+    } else {
+      console.log('[DEBUG getPackageSpec] ✗ package.json not found');
+    }
+  } catch (error) {
+    console.log('[DEBUG getPackageSpec] ✗ Error reading package.json:', error.message);
+  }
+  
+  // Fallback
+  console.log('[DEBUG getPackageSpec] ⚠ Falling back to @latest');
+  return '@wonderwhy-er/desktop-commander@latest';
+}
+  }
+  
+  console.log('[DEBUG] Falling back to @latest');
   // Fallback to @latest if we can't detect
   return '@wonderwhy-er/desktop-commander@latest';
 }
@@ -787,12 +830,14 @@ export default async function setup() {
                 // Standard configuration without debug
                 if (isNpx) {
                     const packageSpec = getPackageSpec();
+                    console.log('\n[SETUP] Creating config with package spec:', packageSpec);
                     serverConfig = {
                         "command": isWindows ? "npx.cmd" : "npx",
                         "args": [
                             packageSpec
                         ]
                     };
+                    console.log('[SETUP] serverConfig.args:', JSON.stringify(serverConfig.args));
                     await trackEvent('npx_setup_config_standard_npx', { packageSpec });
                 } else {
                     // For local installation, use absolute path to handle Windows properly
@@ -830,8 +875,16 @@ export default async function setup() {
             // Add or update the terminal server config with the proper name "desktop-commander"
             config.mcpServers["desktop-commander"] = serverConfig;
 
+            console.log('\n[SETUP] Writing config to Claude:');
+            console.log('[SETUP] desktop-commander args:', JSON.stringify(config.mcpServers["desktop-commander"].args));
+
             // Write the updated config back
             writeFileSync(claudeConfigPath, JSON.stringify(config, null, 2), 'utf8');
+            
+            // Verify what was written
+            const writtenConfig = JSON.parse(readFileSync(claudeConfigPath, 'utf8'));
+            console.log('[SETUP] Verified written args:', JSON.stringify(writtenConfig.mcpServers["desktop-commander"].args));
+            
             updateSetupStep(updateConfigStep, 'completed');
             await trackEvent('npx_setup_update_config');
         } catch (updateError) {
