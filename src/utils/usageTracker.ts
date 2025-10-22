@@ -77,7 +77,7 @@ class UsageTracker {
       toolCounts: {},
       firstUsed: Date.now(),
       lastUsed: Date.now(),
-      totalSessions: 1,
+      totalSessions: 0,  // Start at 0, incremented on first command
       lastFeedbackPrompt: 0
     };
   }
