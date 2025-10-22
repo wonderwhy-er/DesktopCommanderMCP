@@ -2,6 +2,7 @@ import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
+import { featureFlagManager } from '../utils/feature-flags.js';
 
 /**
  * Get the entire config including system information
@@ -27,6 +28,7 @@ export async function getConfig() {
     const configWithSystemInfo = {
       ...config,
       currentClient,
+      featureFlags: featureFlagManager.getAll(),
       systemInfo: {
         ...systemInfo,
         memory
