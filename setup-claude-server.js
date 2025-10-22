@@ -206,6 +206,28 @@ function detectShell() {
   return 'unknown-shell';
 }
 
+// Function to get the package spec that was used to run this script
+function getPackageSpec() {
+  // Check if running via npx - look for the package spec in process.argv
+  // e.g., npx @wonderwhy-er/desktop-commander@0.2.18-alpha setup
+  const argv = process.argv;
+  
+  // Look for the package name in argv
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.includes('@wonderwhy-er/desktop-commander')) {
+      // Extract just the package spec (e.g., @wonderwhy-er/desktop-commander@0.2.18-alpha)
+      const match = arg.match(/(@wonderwhy-er\/desktop-commander(@[^\/\s]+)?)/);
+      if (match) {
+        return match[1];
+      }
+    }
+  }
+  
+  // Fallback to @latest if we can't detect
+  return '@wonderwhy-er/desktop-commander@latest';
+}
+
 // Function to determine execution context
 function getExecutionContext() {
   // Check if running from npx
@@ -728,6 +750,7 @@ export default async function setup() {
                         "DEBUG": "*"
                     };
 
+                    const packageSpec = getPackageSpec();
                     serverConfig = {
                         "command": isWindows ? "node.exe" : "node",
                         "args": [
@@ -735,11 +758,11 @@ export default async function setup() {
                             isWindows ?
                                 join(process.env.APPDATA || '', "npm", "npx.cmd").replace(/\\/g, '\\\\') :
                                 "$(which npx)",
-                            "@wonderwhy-er/desktop-commander@latest"
+                            packageSpec
                         ],
                         "env": debugEnv
                     };
-                    await trackEvent('npx_setup_config_debug_npx');
+                    await trackEvent('npx_setup_config_debug_npx', { packageSpec });
                 } else {
                     // Debug with local installation path
                     const indexPath = join(__dirname, 'dist', 'index.js');
@@ -763,13 +786,14 @@ export default async function setup() {
             } else {
                 // Standard configuration without debug
                 if (isNpx) {
+                    const packageSpec = getPackageSpec();
                     serverConfig = {
                         "command": isWindows ? "npx.cmd" : "npx",
                         "args": [
-                            "@wonderwhy-er/desktop-commander@latest"
+                            packageSpec
                         ]
                     };
-                    await trackEvent('npx_setup_config_standard_npx');
+                    await trackEvent('npx_setup_config_standard_npx', { packageSpec });
                 } else {
                     // For local installation, use absolute path to handle Windows properly
                     const indexPath = join(__dirname, 'dist', 'index.js');
