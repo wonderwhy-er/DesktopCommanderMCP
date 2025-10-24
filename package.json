@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.18-alpha.6",
+  "version": "0.2.18",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -39,6 +39,7 @@
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
     "test:debug": "node --inspect test/run-all-tests.js",
+    "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",
     "unlink:local": "npm unlink",
     "inspector": "npx @modelcontextprotocol/inspector dist/index.js",

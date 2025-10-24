@@ -234,13 +234,16 @@ function getPackageSpec(versionArg = null) {
   return '@wonderwhy-er/desktop-commander@latest';
 }
 
+function isNPX() {
+    return process.env.npm_lifecycle_event === 'npx' ||
+        process.env.npm_execpath?.includes('npx') ||
+        process.env._?.includes('npx') ||
+        import.meta.url.includes('node_modules');
+}
 // Function to determine execution context
 function getExecutionContext() {
   // Check if running from npx
-  const isNpx = process.env.npm_lifecycle_event === 'npx' ||
-                process.env.npm_execpath?.includes('npx') ||
-                process.env._?.includes('npx') ||
-                import.meta.url.includes('node_modules');
+  const isNpx = isNPX();
 
   // Check if installed globally
   const isGlobal = process.env.npm_config_global === 'true' ||
@@ -641,11 +644,8 @@ async function restartClaude() {
 // Main function to export for ESM compatibility
 export default async function setup() {
     // Parse command line arguments for version/tag
-    // Usage: npx @wonderwhy-er/desktop-commander setup alpha
-    //        npx @wonderwhy-er/desktop-commander setup latest
-    //        npx @wonderwhy-er/desktop-commander setup 0.2.18
-    const versionArg = process.argv[3]; // argv[0]=node, argv[1]=script, argv[2]=setup, argv[3]=version/tag
-    
+    const versionArg = process.argv[3]; // argv[0]=node, argv[1]=script, argv[2]=version/tag
+
     // Add tracking for setup function entry
     await trackEvent('npx_setup_function_started');
 
@@ -744,7 +744,7 @@ export default async function setup() {
         const configPrepStep = addSetupStep('prepare_server_config');
 
         // Determine if running through npx or locally
-        const isNpx = import.meta.url.includes('node_modules');
+        const isNpx = isNPX();
         await trackEvent('npx_setup_execution_mode', { isNpx });
 
         // Fix Windows path handling for npx execution

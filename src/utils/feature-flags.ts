@@ -13,7 +13,7 @@ class FeatureFlagManager {
   private flags: Record<string, any> = {};
   private lastFetch: number = 0;
   private cachePath: string;
-  private cacheMaxAge: number = 30 * 60 * 1000; // 5 minutes - hardcoded refresh interval
+  private cacheMaxAge: number = 30 * 60 * 1000;
   private flagUrl: string;
   private refreshInterval: NodeJS.Timeout | null = null;
 
