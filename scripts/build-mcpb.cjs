@@ -160,7 +160,9 @@ try {
         const src = path.join(ripgrepBinSrc, binary);
         const dest = path.join(ripgrepBinDest, binary);
         fs.copyFileSync(src, dest);
-        // Preserve executable permissions
+        // Set executable permissions (for development/testing)
+        // Note: Zip archives don't preserve permissions reliably, so ripgrep-wrapper.js
+        // also sets permissions at runtime to ensure compatibility after extraction
         if (!binary.endsWith('.exe')) {
             fs.chmodSync(dest, 0o755);
         }

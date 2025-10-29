@@ -34,15 +34,32 @@ const binaryName = isWindows ? `rg-${target}.exe` : `rg-${target}`;
 // __dirname is lib/, so go up one level to reach bin/
 const rgPath = path.join(__dirname, '..', 'bin', binaryName);
 
-// Verify binary exists
+// Verify binary exists and ensure executable permissions
 if (!fs.existsSync(rgPath)) {
   // Try fallback to original rg location
   const fallbackPath = path.join(__dirname, '..', 'bin', isWindows ? 'rg.exe' : 'rg');
   if (fs.existsSync(fallbackPath)) {
+    // Ensure executable permissions on Unix systems
+    if (!isWindows) {
+      try {
+        fs.chmodSync(fallbackPath, 0o755);
+      } catch (err) {
+        // Ignore permission errors - might not have write access
+      }
+    }
     module.exports.rgPath = fallbackPath;
   } else {
     throw new Error(`ripgrep binary not found for platform ${target}: ${rgPath}`);
   }
 } else {
+  // Ensure executable permissions on Unix systems
+  // This fixes issues when extracting from zip archives that don't preserve permissions
+  if (!isWindows) {
+    try {
+      fs.chmodSync(rgPath, 0o755);
+    } catch (err) {
+      // Ignore permission errors - might not have write access
+    }
+  }
   module.exports.rgPath = rgPath;
 }
