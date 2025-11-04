@@ -215,11 +215,9 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
         }).join(' ');
       }
 
-      // EXPERIMENTAL: Using custom method "log" instead of "notifications/message"
-      // to test if Cline will silently ignore it
-      const notification = {
-        jsonrpc: "2.0" as const,
-        method: "log",  // Custom method name - simple and clean
+      const notification: LogNotification = {
+        jsonrpc: "2.0",
+        method: "notifications/message",
         params: {
           level: level,
           logger: "desktop-commander",
@@ -230,9 +228,17 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
       // Send as valid JSON-RPC notification
       this.originalStdoutWrite.call(process.stdout, JSON.stringify(notification) + '\n');
     } catch (error) {
-      // Fallback to stderr if custom notification fails
-      const errorMsg = `[LOG ERROR] Failed to send log: ${args.join(' ')}`;
-      process.stderr.write(errorMsg + '\n');
+      // Fallback to a simple JSON-RPC error notification if JSON serialization fails
+      const fallbackNotification = {
+        jsonrpc: "2.0" as const,
+        method: "notifications/message",
+        params: {
+          level: "error",
+          logger: "desktop-commander",
+          data: `Log serialization failed: ${args.join(' ')}`
+        }
+      };
+      this.originalStdoutWrite.call(process.stdout, JSON.stringify(fallbackNotification) + '\n');
     }
   }
 
@@ -264,30 +270,6 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
         }
       };
       this.originalStdoutWrite.call(process.stdout, JSON.stringify(fallbackNotification) + '\n');
-    }
-  }
-
-  /**
-   * EXPERIMENTAL: Test custom notification method to see if clients ignore it
-   * Uses "log" instead of "notifications/message"
-   */
-  public sendCustomLog(level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug", message: string, data?: any) {
-    try {
-      const notification = {
-        jsonrpc: "2.0" as const,
-        method: "log",  // CUSTOM METHOD - not in MCP spec
-        params: {
-          level: level,
-          logger: "desktop-commander",
-          data: data ? { message, ...data } : message
-        }
-      };
-
-      this.originalStdoutWrite.call(process.stdout, JSON.stringify(notification) + '\n');
-    } catch (error) {
-      // Fallback to stderr if custom notification fails
-      const errorMsg = `[${level.toUpperCase()}] ${message}`;
-      process.stderr.write(errorMsg + '\n');
     }
   }
 
