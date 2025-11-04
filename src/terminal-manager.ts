@@ -66,8 +66,21 @@ export class TerminalManager {
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
 
+    // Wrap command to run in login shell if using bash/zsh to get full PATH
+    let finalCommand = enhancedCommand;
+    let finalShell: string | boolean = shellToUse;
+    
+    if (typeof shellToUse === 'string' && shellToUse !== 'powershell.exe') {
+      // For bash/zsh, wrap the command to run as login shell
+      // This ensures PATH is loaded from profile files (like .zprofile, .bash_profile)
+      if (shellToUse.includes('bash') || shellToUse.includes('zsh')) {
+        finalCommand = `${shellToUse} -l -c ${JSON.stringify(enhancedCommand)}`;
+        finalShell = true; // Use system shell to execute the wrapped command
+      }
+    }
+
     const spawnOptions: any = {
-      shell: shellToUse,
+      shell: finalShell,
       env: {
         ...process.env,
         TERM: 'xterm-256color'  // Better terminal compatibility
@@ -75,7 +88,7 @@ export class TerminalManager {
     };
 
     // Spawn the process with an empty array of arguments and our options
-    const childProcess = spawn(enhancedCommand, [], spawnOptions);
+    const childProcess = spawn(finalCommand, [], spawnOptions);
     let output = '';
 
     // Ensure childProcess.pid is defined before proceeding

@@ -30,6 +30,8 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     args: any[];
     timestamp: number;
   }> = [];
+  private clientName: string = 'unknown';
+  private disableNotifications: boolean = false;
 
   constructor() {
     super();
@@ -61,6 +63,16 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
   public enableNotifications() {
     this.isInitialized = true;
     
+    // Check if notifications should be disabled based on client
+    if (this.disableNotifications) {
+      // Clear buffer without sending - just log to stderr instead
+      if (this.messageBuffer.length > 0) {
+        process.stderr.write(`[INFO] ${this.messageBuffer.length} buffered messages suppressed for ${this.clientName}\n`);
+      }
+      this.messageBuffer = [];
+      return;
+    }
+    
     // Send the deferred initialization notification first
     this.sendLogNotification('info', ['Enhanced FilteredStdioServerTransport initialized']);
     
@@ -79,6 +91,22 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
     }
     
     this.sendLogNotification('info', ['JSON-RPC notifications enabled']);
+  }
+
+  /**
+   * Configure client-specific behavior
+   * Call this BEFORE enableNotifications()
+   */
+  public configureForClient(clientName: string) {
+    this.clientName = clientName.toLowerCase();
+    
+    // Detect Cline and disable notifications
+    if (this.clientName.includes('cline') || 
+        this.clientName.includes('vscode') ||
+        this.clientName === 'claude-dev') {
+      this.disableNotifications = true;
+      process.stderr.write(`[INFO] Desktop Commander: Notifications disabled for ${clientName}\n`);
+    }
   }
 
   /**
@@ -195,6 +223,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
   }
 
   private sendLogNotification(level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug", args: any[]) {
+    // Skip if notifications are disabled (e.g., for Cline)
+    if (this.disableNotifications) {
+      return;
+    }
+    
     try {
       // For data, we can send structured data or string according to MCP spec
       let data: any;
@@ -246,6 +279,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
    * Public method to send log notifications from anywhere in the application
    */
   public sendLog(level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug", message: string, data?: any) {
+    // Skip if notifications are disabled (e.g., for Cline)
+    if (this.disableNotifications) {
+      return;
+    }
+    
     try {
       const notification: LogNotification = {
         jsonrpc: "2.0",
