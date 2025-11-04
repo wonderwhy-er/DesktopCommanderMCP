@@ -120,6 +120,13 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
             };
+            
+            // Configure transport for client-specific behavior
+            const transport = (global as any).mcpTransport;
+            if (transport && typeof transport.configureForClient === 'function') {
+                transport.configureForClient(currentClient.name);
+            }
+            
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
         }
