@@ -215,11 +215,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
         }).join(' ');
       }
 
-      // EXPERIMENTAL: Using custom method "log/info" instead of "notifications/message"
+      // EXPERIMENTAL: Using custom method "log" instead of "notifications/message"
       // to test if Cline will silently ignore it
       const notification = {
         jsonrpc: "2.0" as const,
-        method: "log/info",  // Custom method name
+        method: "log",  // Custom method name - simple and clean
         params: {
           level: level,
           logger: "desktop-commander",
@@ -269,13 +269,13 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
 
   /**
    * EXPERIMENTAL: Test custom notification method to see if clients ignore it
-   * Uses "log/info" instead of "notifications/message"
+   * Uses "log" instead of "notifications/message"
    */
   public sendCustomLog(level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug", message: string, data?: any) {
     try {
       const notification = {
         jsonrpc: "2.0" as const,
-        method: "log/info",  // CUSTOM METHOD - not in MCP spec
+        method: "log",  // CUSTOM METHOD - not in MCP spec
         params: {
           level: level,
           logger: "desktop-commander",
