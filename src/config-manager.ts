@@ -129,7 +129,15 @@ class ConfigManager {
         "cipher",    // Encrypt/decrypt files or wipe data
         "takeown"    // Take ownership of files
       ],
-      defaultShell: os.platform() === 'win32' ? 'powershell.exe' : '/bin/sh',
+      defaultShell: (() => {
+        if (os.platform() === 'win32') {
+          return 'powershell.exe';
+        }
+        // Use user's actual shell from environment, or fall back to /bin/sh
+        const userShell = process.env.SHELL || '/bin/sh';
+        // Return just the shell path - we'll handle login shell flag elsewhere
+        return userShell;
+      })(),
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
