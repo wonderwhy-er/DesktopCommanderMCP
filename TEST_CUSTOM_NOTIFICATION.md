@@ -2,7 +2,7 @@
 
 ## What We Changed
 
-Modified `src/custom-stdio.ts` to use a **custom JSON-RPC notification method** called `log/info` instead of the standard `notifications/message`.
+Modified `src/custom-stdio.ts` to use a **custom JSON-RPC notification method** called `log` instead of the standard `notifications/message`.
 
 ### Before:
 ```json
@@ -21,7 +21,7 @@ Modified `src/custom-stdio.ts` to use a **custom JSON-RPC notification method** 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "log/info",
+  "method": "log",
   "params": {
     "level": "info",
     "logger": "desktop-commander",
@@ -29,6 +29,11 @@ Modified `src/custom-stdio.ts` to use a **custom JSON-RPC notification method** 
   }
 }
 ```
+
+**Why "log" instead of "log/info"?**
+- Simpler and cleaner
+- Follows JSON-RPC method naming conventions better
+- Still maintains all parameters including level
 
 ## Hypothesis
 
@@ -128,12 +133,13 @@ npm run build
 
 ## Alternative Custom Methods to Try
 
-If `log/info` doesn't work well, we could try:
+If `log` doesn't work well in all clients, we could try:
 
 1. `server/log` - Looks more "internal"
-2. `notifications/custom` - Closer to spec
+2. `notifications/log` - Closer to spec namespace
 3. `mcp/log` - MCP-prefixed
-4. `x-log/info` - Vendor extension style (like HTTP headers)
+4. `x-log` - Vendor extension style (like HTTP headers)
+5. `_log` - Underscore prefix for "private" methods
 
 ## Test Commands
 
@@ -160,32 +166,52 @@ After testing, document results here:
 
 ### Test Results:
 
-**Claude Desktop:**
-- [ ] Commands work normally
-- [ ] No errors
-- [ ] Notifications visible/invisible?
+**Claude Desktop (Tested ✅):**
+- ✅ Commands work normally
+- ✅ No errors
+- ✅ Notifications are invisible (not displayed in UI)
+- ✅ Server remains stable
+- **Status:** Working perfectly!
 
-**Cline:**
+**Cline (Needs Testing):**
 - [ ] Commands work normally  
 - [ ] Notifications appear in UI? (Yes/No)
 - [ ] Any errors or warnings?
 
 **Other Observations:**
-- 
+- The simpler `log` method name works just as well as `log/info`
+- Claude Desktop silently ignores the unknown notification method as expected per JSON-RPC spec
+- No performance impact observed
 
 ---
 
 ## Code Changes Made
 
 1. Added `sendCustomLog()` method to `FilteredStdioServerTransport` class
-2. Modified `sendLogNotification()` to use `"log/info"` instead of `"notifications/message"`
+2. Modified `sendLogNotification()` to use `"log"` instead of `"notifications/message"`
 3. Changed fallback from JSON-RPC notification to stderr write
 
 **Files modified:**
 - `src/custom-stdio.ts`
 
-**Commit:**
+**Commits:**
 ```bash
-git add src/custom-stdio.ts
+# First iteration with log/info
 git commit -m "EXPERIMENTAL: Test custom log/info notification method"
+
+# Simplified to just log
+git commit -m "Change custom notification method from 'log/info' to simpler 'log'"
+```
+
+**Current notification format:**
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "log",
+  "params": {
+    "level": "info",
+    "logger": "desktop-commander",
+    "data": "Message content here"
+  }
+}
 ```
