@@ -149,9 +149,6 @@
     "data-analysis"
   ],
   "license": "MIT",
-  "privacy_policies": [
-    "https://legal.desktopcommander.app/privacy_desktop_commander_mcp"
-  ],
   "compatibility": {
     "platforms": [
       "darwin",

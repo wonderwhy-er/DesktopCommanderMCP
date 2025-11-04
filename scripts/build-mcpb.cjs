@@ -180,7 +180,7 @@ try {
 // Step 7: Validate manifest
 console.log('🔍 Validating manifest...');
 try {
-    execSync(`mcpb validate "${MANIFEST_PATH}"`, { stdio: 'inherit' });
+    execSync(`npx @anthropic-ai/mcpb validate "${MANIFEST_PATH}"`, { stdio: 'inherit' });
     console.log('✅ Manifest validation passed');
 } catch (error) {
     console.error('❌ Manifest validation failed:', error.message);
@@ -191,7 +191,7 @@ console.log('📦 Creating .mcpb bundle...');
 const outputFile = path.join(PROJECT_ROOT, `${manifest.name}-${manifest.version}.mcpb`);
 
 try {
-    execSync(`mcpb pack "${BUNDLE_DIR}" "${outputFile}"`, { stdio: 'inherit' });
+    execSync(`npx @anthropic-ai/mcpb pack "${BUNDLE_DIR}" "${outputFile}"`, { stdio: 'inherit' });
     console.log('✅ MCPB bundle created successfully!');
     console.log(`📁 Bundle location: ${outputFile}`);
 } catch (error) {
