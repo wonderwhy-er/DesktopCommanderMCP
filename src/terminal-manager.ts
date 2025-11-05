@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
@@ -11,6 +12,76 @@ interface CompletedSession {
   exitCode: number | null;
   startTime: Date;
   endTime: Date;
+}
+
+/**
+ * Configuration for spawning a shell with appropriate flags
+ */
+interface ShellSpawnConfig {
+  executable: string;
+  args: string[];
+  useShellOption: string | boolean;
+}
+
+/**
+ * Get the appropriate spawn configuration for a given shell
+ * This handles login shell flags for different shell types
+ */
+function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
+  const shellName = path.basename(shellPath).toLowerCase();
+  
+  // Unix shells with login flag support
+  if (shellName.includes('bash') || shellName.includes('zsh')) {
+    return { 
+      executable: shellPath, 
+      args: ['-l', '-c', command],
+      useShellOption: false 
+    };
+  }
+  
+  // PowerShell Core (cross-platform, supports -Login)
+  if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
+    return { 
+      executable: shellPath, 
+      args: ['-Login', '-Command', command],
+      useShellOption: false 
+    };
+  }
+  
+  // Windows PowerShell 5.1 (no login flag support)
+  if (shellName === 'powershell' || shellName === 'powershell.exe') {
+    return { 
+      executable: shellPath, 
+      args: ['-Command', command],
+      useShellOption: false 
+    };
+  }
+  
+  // CMD
+  if (shellName === 'cmd' || shellName === 'cmd.exe') {
+    return { 
+      executable: shellPath, 
+      args: ['/c', command],
+      useShellOption: false 
+    };
+  }
+  
+  // Fish shell (uses -l for login, -c for command)
+  if (shellName.includes('fish')) {
+    return { 
+      executable: shellPath, 
+      args: ['-l', '-c', command],
+      useShellOption: false 
+    };
+  }
+  
+  // Unknown/other shells - use shell option for safety
+  // This provides a fallback for shells we don't explicitly handle
+  return { 
+    executable: command,
+    args: [],
+    useShellOption: shellPath 
+  };
 }
 
 export class TerminalManager {
@@ -66,29 +137,42 @@ export class TerminalManager {
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
 
-    // Wrap command to run in login shell if using bash/zsh to get full PATH
-    let finalCommand = enhancedCommand;
-    let finalShell: string | boolean = shellToUse;
+    // Get the appropriate spawn configuration for the shell
+    let spawnConfig: ShellSpawnConfig;
+    let spawnOptions: any;
     
-    if (typeof shellToUse === 'string' && shellToUse !== 'powershell.exe') {
-      // For bash/zsh, wrap the command to run as login shell
-      // This ensures PATH is loaded from profile files (like .zprofile, .bash_profile)
-      if (shellToUse.includes('bash') || shellToUse.includes('zsh')) {
-        finalCommand = `${shellToUse} -l -c ${JSON.stringify(enhancedCommand)}`;
-        finalShell = true; // Use system shell to execute the wrapped command
+    if (typeof shellToUse === 'string') {
+      // Use shell-specific configuration with login flags where appropriate
+      spawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
+      spawnOptions = {
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color'  // Better terminal compatibility
+        }
+      };
+      
+      // Add shell option if needed (for unknown shells)
+      if (spawnConfig.useShellOption) {
+        spawnOptions.shell = spawnConfig.useShellOption;
       }
+    } else {
+      // Boolean or undefined shell - use default shell option behavior
+      spawnConfig = {
+        executable: enhancedCommand,
+        args: [],
+        useShellOption: shellToUse
+      };
+      spawnOptions = {
+        shell: shellToUse,
+        env: {
+          ...process.env,
+          TERM: 'xterm-256color'
+        }
+      };
     }
 
-    const spawnOptions: any = {
-      shell: finalShell,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color'  // Better terminal compatibility
-      }
-    };
-
-    // Spawn the process with an empty array of arguments and our options
-    const childProcess = spawn(finalCommand, [], spawnOptions);
+    // Spawn the process with appropriate arguments
+    const childProcess = spawn(spawnConfig.executable, spawnConfig.args, spawnOptions);
     let output = '';
 
     // Ensure childProcess.pid is defined before proceeding
