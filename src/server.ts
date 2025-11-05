@@ -173,7 +173,7 @@ function shouldIncludeTool(toolName: string): boolean {
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
-        logToStderr('debug', 'Generating tools list...');
+        // logToStderr('debug', 'Generating tools list...');
 
         // Build complete tools array
         const allTools = [
@@ -965,7 +965,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         // Filter tools based on current client
         const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
 
-        logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
+        // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
 
         return {
             tools: filteredTools,
