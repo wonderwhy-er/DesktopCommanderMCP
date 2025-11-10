@@ -1,8 +1,8 @@
 import { spawn, ChildProcess } from 'child_process';
-import { rgPath } from '@vscode/ripgrep';
 import path from 'path';
 import { validatePath } from './tools/filesystem.js';
 import { capture } from './utils/capture.js';
+import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 
 export interface SearchResult {
   file: string;
@@ -68,6 +68,15 @@ export interface SearchSessionOptions {
 
     // Build ripgrep arguments
     const args = this.buildRipgrepArgs({ ...options, rootPath: validPath });
+    
+    // Get ripgrep path with fallback resolution
+    let rgPath: string;
+    try {
+      rgPath = await getRipgrepPath();
+      console.log(rgPath);
+    } catch (err) {
+      throw new Error(`Failed to locate ripgrep binary: ${err instanceof Error ? err.message : String(err)}`);
+    }
     
     // Start ripgrep process
     const rgProcess = spawn(rgPath, args);
