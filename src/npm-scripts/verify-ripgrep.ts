@@ -5,7 +5,7 @@
  * This runs after npm install to warn users if ripgrep is not available
  */
 
-import { getRipgrepPath, clearRipgrepCache } from '../utils/ripgrep-resolver.js';
+import { getRipgrepPath } from '../utils/ripgrep-resolver.js';
 
 async function verifyRipgrep() {
   try {
