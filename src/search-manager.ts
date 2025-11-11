@@ -73,7 +73,6 @@ export interface SearchSessionOptions {
     let rgPath: string;
     try {
       rgPath = await getRipgrepPath();
-      console.log(rgPath);
     } catch (err) {
       throw new Error(`Failed to locate ripgrep binary: ${err instanceof Error ? err.message : String(err)}`);
     }
