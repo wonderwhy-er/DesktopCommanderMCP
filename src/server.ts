@@ -929,33 +929,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_prompts",
                     description: `
-                        Browse and retrieve curated Desktop Commander prompts for various tasks and workflows.
+                        Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
                         
-                        IMPORTANT: When displaying prompt lists to users, do NOT show the internal prompt IDs (like 'onb_001'). 
-                        These IDs are for your reference only. Show users only the prompt titles and descriptions.
-                        The IDs will be provided in the response metadata for your use.
+                        SIMPLIFIED ONBOARDING: This tool now only supports direct prompt retrieval.
+                        The onboarding system presents 5 options directly to users organized by use case:
                         
-                        DESKTOP COMMANDER INTRODUCTION: If a user asks "what is Desktop Commander?" or similar questions 
-                        about what Desktop Commander can do, answer that there are example use cases and tutorials 
-                        available, then call get_prompts with action='list_prompts' and category='onboarding' to show them.
+                        FILE MANAGEMENT:
+                        1. Organize my Downloads folder (promptId: 'onb_001')
+                        2. Create organized knowledge base (promptId: 'onb_003')
                         
-                        ACTIONS:
-                        - list_categories: Show all available prompt categories
-                        - list_prompts: List prompts (optionally filtered by category)  
-                        - get_prompt: Retrieve and execute a specific prompt by ID
+                        DATA ANALYSIS:
+                        3. Analyze a data file (promptId: 'onb_007')
+                        4. Check system health and resources (promptId: 'onb_008')
                         
-                        WORKFLOW:
-                        1. Use list_categories to see available categories
-                        2. Use list_prompts to browse prompts in a category
-                        3. Use get_prompt with promptId to retrieve and start using a prompt
+                        DEVELOPMENT:
+                        5. Explain a codebase or repository (promptId: 'onb_004')
                         
-                        EXAMPLES:
-                        - get_prompts(action='list_categories') - See all categories
-                        - get_prompts(action='list_prompts', category='onboarding') - See onboarding prompts
-                        - get_prompts(action='get_prompt', promptId='onb_001') - Get a specific prompt
+                        USAGE:
+                        When user says "1", "2", "3", "4", or "5" from onboarding:
+                        - "1" → get_prompts(action='get_prompt', promptId='onb_001')
+                        - "2" → get_prompts(action='get_prompt', promptId='onb_003')
+                        - "3" → get_prompts(action='get_prompt', promptId='onb_007')
+                        - "4" → get_prompts(action='get_prompt', promptId='onb_008')
+                        - "5" → get_prompts(action='get_prompt', promptId='onb_004')
                         
-                        The get_prompt action will automatically inject the prompt content and begin execution.
-                        Perfect for discovering proven workflows and getting started with Desktop Commander.
+                        The prompt content will be injected and execution begins immediately.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
