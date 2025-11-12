@@ -959,7 +959,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                },
+                }
             ];
 
         // Filter tools based on current client
