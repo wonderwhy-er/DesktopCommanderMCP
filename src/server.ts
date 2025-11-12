@@ -120,27 +120,18 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
             };
-            
-            // Capture MCP client initialization event
-            // This event will have the actual client name and version in the analytics payload
-            capture('mcp_client_initialized', {
-                client_info_available: true
-            });
-            
+
             // Configure transport for client-specific behavior
             const transport = (global as any).mcpTransport;
             if (transport && typeof transport.configureForClient === 'function') {
                 transport.configureForClient(currentClient.name);
             }
-            
+
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
-        } else {
-            // Capture when client info is missing (edge case)
-            capture('mcp_client_initialized', {
-                client_info_available: false
-            });
         }
+
+        capture('mcp_client_initialized');
 
         // Return standard initialization response
         return {
