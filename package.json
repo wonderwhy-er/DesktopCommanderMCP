@@ -22,7 +22,7 @@
     "testemonials"
   ],
   "scripts": {
-    "postinstall": "node dist/track-installation.js",
+    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || true",
     "open-chat": "open -n /Applications/Claude.app",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
