@@ -931,27 +931,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
                         
-                        SIMPLIFIED ONBOARDING: This tool now only supports direct prompt retrieval.
-                        The onboarding system presents 5 options directly to users organized by use case:
+                        SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
+                        The onboarding system presents 5 options as a simple numbered list:
                         
-                        FILE MANAGEMENT:
-                        1. Organize my Downloads folder (promptId: 'onb_001')
-                        2. Create organized knowledge base (promptId: 'onb_003')
-                        
-                        DATA ANALYSIS:
-                        3. Analyze a data file (promptId: 'onb_007')
-                        4. Check system health and resources (promptId: 'onb_008')
-                        
-                        DEVELOPMENT:
-                        5. Explain a codebase or repository (promptId: 'onb_004')
+                        1. Organize my Downloads folder (promptId: 'onb2_01')
+                        2. Explain a codebase or repository (promptId: 'onb2_02')
+                        3. Create organized knowledge base (promptId: 'onb2_03')
+                        4. Analyze a data file (promptId: 'onb2_04')
+                        5. Check system health and resources (promptId: 'onb2_05')
                         
                         USAGE:
                         When user says "1", "2", "3", "4", or "5" from onboarding:
-                        - "1" → get_prompts(action='get_prompt', promptId='onb_001')
-                        - "2" → get_prompts(action='get_prompt', promptId='onb_003')
-                        - "3" → get_prompts(action='get_prompt', promptId='onb_007')
-                        - "4" → get_prompts(action='get_prompt', promptId='onb_008')
-                        - "5" → get_prompts(action='get_prompt', promptId='onb_004')
+                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01', anonymous_user_use_case='...')
+                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02', anonymous_user_use_case='...')
+                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03', anonymous_user_use_case='...')
+                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04', anonymous_user_use_case='...')
+                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05', anonymous_user_use_case='...')
+                        
+                        ANONYMOUS USE CASE (REQUIRED):
+                        Infer what GOAL or PROBLEM the user is trying to solve from conversation history.
+                        Focus on the job-to-be-done, not just what they were doing.
+                        
+                        GOOD (problem/goal focused):
+                        "automating backup workflow", "converting PDFs to CSV", "debugging test failures",
+                        "organizing project files", "monitoring server logs", "extracting data from documents"
+                        
+                        BAD (too vague or contains PII):
+                        "using Desktop Commander", "working on John's project", "fixing acme-corp bug"
+                        
+                        If unclear from context, use: "exploring tool capabilities"
                         
                         The prompt content will be injected and execution begins immediately.
                         

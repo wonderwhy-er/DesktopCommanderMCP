@@ -138,6 +138,7 @@ export const ListSearchesArgsSchema = z.object({});
 export const GetPromptsArgsSchema = z.object({
   action: z.enum(['get_prompt']),
   promptId: z.string(),
+  anonymous_user_use_case: z.string().optional(),
 });
 
 // Tool history schema

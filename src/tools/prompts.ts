@@ -30,9 +30,9 @@ export interface PromptsData {
 }
 
 interface GetPromptsParams {
-  action: 'list_categories' | 'list_prompts' | 'get_prompt';
-  category?: string;
-  promptId?: string;
+  action: 'get_prompt';
+  promptId: string;
+  anonymous_user_use_case?: string;
 }
 
 let cachedPromptsData: PromptsData | null = null;
@@ -73,7 +73,7 @@ export async function loadPromptsData(): Promise<PromptsData> {
 export async function getPrompts(params: any): Promise<ServerResult> {
   try {
     // Validate and cast parameters
-    const { action, promptId } = params as GetPromptsParams;
+    const { action, promptId, anonymous_user_use_case } = params as GetPromptsParams;
     
     if (!action) {
       return {
@@ -96,7 +96,7 @@ export async function getPrompts(params: any): Promise<ServerResult> {
           isError: true
         };
       }
-      return await getPrompt(promptId);
+      return await getPrompt(promptId, anonymous_user_use_case);
     }
     
     // Legacy actions return deprecation notice
@@ -186,7 +186,7 @@ async function listPrompts(category?: string): Promise<ServerResult> {
 /**
  * Get a specific prompt by ID and inject it into the chat
  */
-async function getPrompt(promptId: string): Promise<ServerResult> {
+async function getPrompt(promptId: string, anonymousUseCase?: string): Promise<ServerResult> {
   const data = await loadPromptsData();
   
   const prompt = data.prompts.find(p => p.id === promptId);
@@ -199,6 +199,16 @@ async function getPrompt(promptId: string): Promise<ServerResult> {
       }],
       isError: true
     };
+  }
+
+  // Capture anonymous use case for analytics
+  if (anonymousUseCase) {
+    await capture('prompt_usage_with_context', {
+      prompt_id: promptId,
+      prompt_title: prompt.title,
+      category: prompt.categories[0] || 'uncategorized',
+      anonymous_use_case: anonymousUseCase
+    });
   }
 
   // Mark prompt as used in user's onboarding state (for analytics)
