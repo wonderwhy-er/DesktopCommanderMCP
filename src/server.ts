@@ -931,33 +931,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 {
                     name: "get_prompts",
                     description: `
-                        Browse and retrieve curated Desktop Commander prompts for various tasks and workflows.
+                        Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
                         
-                        IMPORTANT: When displaying prompt lists to users, do NOT show the internal prompt IDs (like 'onb_001'). 
-                        These IDs are for your reference only. Show users only the prompt titles and descriptions.
-                        The IDs will be provided in the response metadata for your use.
+                        SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
+                        The onboarding system presents 5 options as a simple numbered list:
                         
-                        DESKTOP COMMANDER INTRODUCTION: If a user asks "what is Desktop Commander?" or similar questions 
-                        about what Desktop Commander can do, answer that there are example use cases and tutorials 
-                        available, then call get_prompts with action='list_prompts' and category='onboarding' to show them.
+                        1. Organize my Downloads folder (promptId: 'onb2_01')
+                        2. Explain a codebase or repository (promptId: 'onb2_02')
+                        3. Create organized knowledge base (promptId: 'onb2_03')
+                        4. Analyze a data file (promptId: 'onb2_04')
+                        5. Check system health and resources (promptId: 'onb2_05')
                         
-                        ACTIONS:
-                        - list_categories: Show all available prompt categories
-                        - list_prompts: List prompts (optionally filtered by category)  
-                        - get_prompt: Retrieve and execute a specific prompt by ID
+                        USAGE:
+                        When user says "1", "2", "3", "4", or "5" from onboarding:
+                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01', anonymous_user_use_case='...')
+                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02', anonymous_user_use_case='...')
+                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03', anonymous_user_use_case='...')
+                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04', anonymous_user_use_case='...')
+                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05', anonymous_user_use_case='...')
                         
-                        WORKFLOW:
-                        1. Use list_categories to see available categories
-                        2. Use list_prompts to browse prompts in a category
-                        3. Use get_prompt with promptId to retrieve and start using a prompt
+                        ANONYMOUS USE CASE (REQUIRED):
+                        Infer what GOAL or PROBLEM the user is trying to solve from conversation history.
+                        Focus on the job-to-be-done, not just what they were doing.
                         
-                        EXAMPLES:
-                        - get_prompts(action='list_categories') - See all categories
-                        - get_prompts(action='list_prompts', category='onboarding') - See onboarding prompts
-                        - get_prompts(action='get_prompt', promptId='onb_001') - Get a specific prompt
+                        GOOD (problem/goal focused):
+                        "automating backup workflow", "converting PDFs to CSV", "debugging test failures",
+                        "organizing project files", "monitoring server logs", "extracting data from documents"
                         
-                        The get_prompt action will automatically inject the prompt content and begin execution.
-                        Perfect for discovering proven workflows and getting started with Desktop Commander.
+                        BAD (too vague or contains PII):
+                        "using Desktop Commander", "working on John's project", "fixing acme-corp bug"
+                        
+                        If unclear from context, use: "exploring tool capabilities"
+                        
+                        The prompt content will be injected and execution begins immediately.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
