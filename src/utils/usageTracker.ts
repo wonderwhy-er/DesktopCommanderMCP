@@ -413,13 +413,10 @@ class UsageTracker {
   async saveOnboardingState(state: OnboardingState): Promise<void> {
     await configManager.setValue('onboardingState', state);
   }
-
-  testing = true;
   /**
    * Check if user should see onboarding invitation - SIMPLE VERSION
    */
   async shouldShowOnboarding(): Promise<boolean> {
-      if(this.testing) return true;
     // Check if onboarding is disabled via command line argument
     if ((global as any).disableOnboarding) {
       return false;
