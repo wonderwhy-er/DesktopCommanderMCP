@@ -30,9 +30,9 @@ export interface PromptsData {
 }
 
 interface GetPromptsParams {
-  action: 'list_categories' | 'list_prompts' | 'get_prompt';
-  category?: string;
-  promptId?: string;
+  action: 'get_prompt';
+  promptId: string;
+  anonymous_user_use_case?: string;
 }
 
 let cachedPromptsData: PromptsData | null = null;
@@ -68,55 +68,46 @@ export async function loadPromptsData(): Promise<PromptsData> {
 }
 
 /**
- * Get prompts - main entry point for the tool
+ * Get prompts - SIMPLIFIED VERSION (only get_prompt action)
  */
 export async function getPrompts(params: any): Promise<ServerResult> {
   try {
     // Validate and cast parameters
-    const { action, category, promptId } = params as GetPromptsParams;
+    const { action, promptId, anonymous_user_use_case } = params as GetPromptsParams;
     
     if (!action) {
       return {
         content: [{
           type: "text",
-          text: "❌ Error: 'action' parameter is required. Use 'list_categories', 'list_prompts', or 'get_prompt'"
+          text: "❌ Error: 'action' parameter is required. Use 'get_prompt'"
         }],
         isError: true
       };
     }
 
-    // No separate analytics here - will be captured by server tool call tracking with parameters
-
-    switch (action) {
-      case 'list_categories':
-        return await listCategories();
-        
-      case 'list_prompts':
-        return await listPrompts(category);
-        
-      case 'get_prompt':
-        if (!promptId) {
-          return {
-            content: [{
-              type: "text",
-              text: "❌ Error: promptId is required when action is 'get_prompt'"
-            }],
-            isError: true
-          };
-        }
-        return await getPrompt(promptId);
-        
-      default:
+    // Only support get_prompt action now
+    if (action === 'get_prompt') {
+      if (!promptId) {
         return {
           content: [{
             type: "text",
-            text: "❌ Error: Invalid action. Use 'list_categories', 'list_prompts', or 'get_prompt'"
+            text: "❌ Error: promptId is required when action is 'get_prompt'"
           }],
           isError: true
         };
+      }
+      return await getPrompt(promptId, anonymous_user_use_case);
     }
+    
+    // Legacy actions return deprecation notice
+    return {
+      content: [{
+        type: "text",
+        text: "❌ Error: Only 'get_prompt' action is supported. Use promptId to get a specific prompt."
+      }],
+      isError: true
+    };
   } catch (error) {
-    // Error will be captured by server tool call tracking
     return {
       content: [{
         type: "text",
@@ -195,7 +186,7 @@ async function listPrompts(category?: string): Promise<ServerResult> {
 /**
  * Get a specific prompt by ID and inject it into the chat
  */
-async function getPrompt(promptId: string): Promise<ServerResult> {
+async function getPrompt(promptId: string, anonymousUseCase?: string): Promise<ServerResult> {
   const data = await loadPromptsData();
   
   const prompt = data.prompts.find(p => p.id === promptId);
@@ -208,6 +199,16 @@ async function getPrompt(promptId: string): Promise<ServerResult> {
       }],
       isError: true
     };
+  }
+
+  // Capture anonymous use case for analytics
+  if (anonymousUseCase) {
+    await capture('prompt_usage_with_context', {
+      prompt_id: promptId,
+      prompt_title: prompt.title,
+      category: prompt.categories[0] || 'uncategorized',
+      anonymous_use_case: anonymousUseCase
+    });
   }
 
   // Mark prompt as used in user's onboarding state (for analytics)
