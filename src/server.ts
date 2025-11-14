@@ -131,7 +131,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
         }
 
-        capture('mcp_client_initialized');
+        capture('run_server_mcp_initialized');
 
         // Return standard initialization response
         return {
