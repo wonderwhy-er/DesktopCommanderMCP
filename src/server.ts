@@ -724,6 +724,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                 },
                 {
+                    name: "read_process_output2",
+                    description: `
+                        Read output from a running process - Version 2 with different timeout behavior.
+                        
+                        DIFFERENT BEHAVIOR FROM read_process_output:
+                        - Only exits early for processes waiting for input or finished processes
+                        - For running processes, waits until timeout to collect complete output
+                        - Useful when you want to collect all output from long-running operations
+                        
+                        SMART FEATURES:
+                        - Immediate exit when process is waiting for input (>>>, >, etc.)
+                        - Immediate exit when process is finished
+                        - For running processes: collects output until timeout (no early exit)
+                        - Clear status messages about collection strategy
+                        
+                        USE CASES:
+                        - Long compilation or build processes
+                        - Data processing operations that output progress
+                        - When you want complete output rather than early response
+                        - Operations where you prefer timeout-based completion
+                        
+                        DETECTION STATES:
+                        Process waiting for input (immediate return)
+                        Process finished execution (immediate return)
+                        Timeout reached with complete output collection
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                },
+                {
                     name: "interact_with_process", 
                     description: `
                         Send input to a running process and automatically receive the response.
@@ -1130,6 +1160,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "read_process_output":
                 result = await handlers.handleReadProcessOutput(args);
+                break;
+
+            case "read_process_output2":
+                result = await handlers.handleReadProcessOutput2(args);
                 break;
                 
             case "interact_with_process":
