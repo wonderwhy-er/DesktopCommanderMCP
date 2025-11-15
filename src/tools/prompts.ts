@@ -201,16 +201,6 @@ async function getPrompt(promptId: string, anonymousUseCase?: string): Promise<S
     };
   }
 
-  // Capture anonymous use case for analytics
-  if (anonymousUseCase) {
-    await capture('prompt_usage_with_context', {
-      prompt_id: promptId,
-      prompt_title: prompt.title,
-      category: prompt.categories[0] || 'uncategorized',
-      anonymous_use_case: anonymousUseCase
-    });
-  }
-
   // Mark prompt as used in user's onboarding state (for analytics)
   await usageTracker.markPromptUsed(promptId, prompt.categories[0] || 'uncategorized');
   
