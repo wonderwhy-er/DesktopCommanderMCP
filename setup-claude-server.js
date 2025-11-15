@@ -757,23 +757,34 @@ export default async function setup() {
                     // Debug with npx
                     logToFile('Setting up debug configuration with npx. The process will pause on start until a debugger connects.');
                     // Add environment variables to help with debugging
+                    // Inspector flag must be in NODE_OPTIONS, not passed as npx argument
                     const debugEnv = {
-                        "NODE_OPTIONS": "--trace-warnings --trace-exit",
+                        "NODE_OPTIONS": "--inspect-brk=9229 --trace-warnings --trace-exit",
                         "DEBUG": "*"
                     };
 
                     const packageSpec = getPackageSpec(versionArg);
-                    serverConfig = {
-                        "command": isWindows ? "node.exe" : "node",
-                        "args": [
-                            "--inspect-brk=9229",
-                            isWindows ?
-                                join(process.env.APPDATA || '', "npm", "npx.cmd").replace(/\\/g, '\\\\') :
-                                "$(which npx)",
-                            packageSpec
-                        ],
-                        "env": debugEnv
-                    };
+                    
+                    // Windows requires cmd /c wrapper for npx
+                    if (isWindows) {
+                        serverConfig = {
+                            "command": "cmd",
+                            "args": [
+                                "/c",
+                                "npx",
+                                packageSpec
+                            ],
+                            "env": debugEnv
+                        };
+                    } else {
+                        serverConfig = {
+                            "command": "npx",
+                            "args": [
+                                packageSpec
+                            ],
+                            "env": debugEnv
+                        };
+                    }
                     await trackEvent('npx_setup_config_debug_npx', { packageSpec });
                 } else {
                     // Debug with local installation path
@@ -799,12 +810,27 @@ export default async function setup() {
                 // Standard configuration without debug
                 if (isNpx) {
                     const packageSpec = getPackageSpec(versionArg);
-                    serverConfig = {
-                        "command": isWindows ? "npx.cmd" : "npx",
-                        "args": [
-                            packageSpec
-                        ]
-                    };
+                    
+                    // Windows requires cmd /c wrapper for npx
+                    if (isWindows) {
+                        serverConfig = {
+                            "command": "cmd",
+                            "args": [
+                                "/c",
+                                "npx",
+                                "-y",
+                                packageSpec
+                            ]
+                        };
+                    } else {
+                        serverConfig = {
+                            "command": "npx",
+                            "args": [
+                                "-y",
+                                packageSpec
+                            ]
+                        };
+                    }
                     await trackEvent('npx_setup_config_standard_npx', { packageSpec });
                 } else {
                     // For local installation, use absolute path to handle Windows properly
