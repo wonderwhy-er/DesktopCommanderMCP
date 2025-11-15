@@ -4,7 +4,7 @@ This document outlines the complete process for publishing new versions of Deskt
 
 ## 🚀 Automated Release (Recommended)
 
-We now have an automated release script that handles the entire process!
+We now have an automated release script that handles the entire process with **automatic state tracking and resume capability**!
 
 ```bash
 # Patch release (0.2.16 → 0.2.17) - Bug fixes, small improvements
@@ -18,9 +18,31 @@ npm run release:major
 
 # Test without publishing
 npm run release:dry
+
+# Clear saved state and start fresh
+node scripts/publish-release.cjs --clear-state
 ```
 
-**See [scripts/README-RELEASE.md](scripts/README-RELEASE.md) for full documentation of the automated release process.**
+### ✨ Smart State Tracking
+
+The script automatically tracks completed steps and **resumes from failures**:
+
+1. **Automatic Resume**: If any step fails, just run the script again - it will skip completed steps and continue from where it failed
+2. **No Manual Flags**: No need to remember which `--skip-*` flags to use
+3. **Clear State**: Use `--clear-state` to reset and start from the beginning
+4. **Transparent**: Shows which steps were already completed when resuming
+
+**Example workflow:**
+```bash
+# Start release - tests fail
+npm run release
+# ❌ Step 2/6 failed: Tests failed
+
+# Fix the tests, then just run again
+npm run release
+# ✓ Step 1/6: Version bump already completed
+# ✓ Step 2/6: Running tests...  (continues from here)
+```
 
 The script automatically handles:
 - ✅ Version bumping
@@ -30,6 +52,7 @@ The script automatically handles:
 - ✅ NPM publishing
 - ✅ MCP Registry publishing
 - ✅ Publication verification
+- ✨ **State tracking and automatic resume**
 
 ---
 
