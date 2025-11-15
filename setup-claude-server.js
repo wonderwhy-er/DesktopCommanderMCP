@@ -757,8 +757,9 @@ export default async function setup() {
                     // Debug with npx
                     logToFile('Setting up debug configuration with npx. The process will pause on start until a debugger connects.');
                     // Add environment variables to help with debugging
+                    // Inspector flag must be in NODE_OPTIONS, not passed as npx argument
                     const debugEnv = {
-                        "NODE_OPTIONS": "--trace-warnings --trace-exit",
+                        "NODE_OPTIONS": "--inspect-brk=9229 --trace-warnings --trace-exit",
                         "DEBUG": "*"
                     };
 
@@ -771,7 +772,6 @@ export default async function setup() {
                             "args": [
                                 "/c",
                                 "npx",
-                                "--inspect-brk=9229",
                                 packageSpec
                             ],
                             "env": debugEnv
@@ -780,7 +780,6 @@ export default async function setup() {
                         serverConfig = {
                             "command": "npx",
                             "args": [
-                                "--inspect-brk=9229",
                                 packageSpec
                             ],
                             "env": debugEnv
