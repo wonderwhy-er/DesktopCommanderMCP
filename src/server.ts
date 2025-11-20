@@ -10,7 +10,7 @@ import {
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import {zodToJsonSchema} from "zod-to-json-schema";
-import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
+import {getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance} from './utils/system-info.js';
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -58,7 +58,7 @@ import {toolHistory} from './utils/toolHistory.js';
 
 import {VERSION} from './version.js';
 import {capture, capture_call_tool} from "./utils/capture.js";
-import { logToStderr, logger } from './utils/logger.js';
+import {logToStderr, logger} from './utils/logger.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{level: string, message: string}> = [];
@@ -68,7 +68,7 @@ function deferLog(level: string, message: string) {
 
 // Function to flush deferred messages after initialization
 export function flushDeferredMessages() {
-    while (deferredMessages.length > 0) {
+    while(deferredMessages.length > 0) {
         const msg = deferredMessages.shift()!;
         logger.info(msg.message);
     }
@@ -108,14 +108,14 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 });
 
 // Store current client info (simple variable)
-let currentClient = { name: 'uninitialized', version: 'uninitialized' };
+let currentClient = {name: 'uninitialized', version: 'uninitialized'};
 
 // Add handler for initialization method - capture client info
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
     try {
         // Extract and store current client information
         const clientInfo = request.params?.clientInfo;
-        if (clientInfo) {
+        if(clientInfo) {
             currentClient = {
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
@@ -123,7 +123,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
             // Configure transport for client-specific behavior
             const transport = (global as any).mcpTransport;
-            if (transport && typeof transport.configureForClient === 'function') {
+            if(transport && typeof transport.configureForClient === 'function') {
                 transport.configureForClient(currentClient.name);
             }
 
@@ -147,14 +147,14 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 version: VERSION,
             },
         };
-    } catch (error) {
+    } catch(error) {
         logToStderr('error', `Error in initialization handler: ${error}`);
         throw error;
     }
 });
 
 // Export current client info for access by other modules
-export { currentClient };
+export {currentClient};
 
 deferLog('info', 'Setting up request handlers...');
 
@@ -163,7 +163,7 @@ deferLog('info', 'Setting up request handlers...');
  */
 function shouldIncludeTool(toolName: string): boolean {
     // Exclude give_feedback_to_desktop_commander for desktop-commander client
-    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
+    if(toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
         return false;
     }
 
@@ -179,10 +179,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
-                // Configuration tools
-                {
-                    name: "get_config",
-                    description: `
+            // Configuration tools
+            {
+                name: "get_config",
+                description: `
                         Get the complete server configuration as JSON. Config includes fields for:
                         - blockedCommands (array of blocked shell commands)
                         - defaultShell (shell to use for commands)
@@ -195,15 +195,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetConfigArgsSchema),
-                    annotations: {
-                        title: "Get Configuration",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(GetConfigArgsSchema),
+                annotations: {
+                    title: "Get Configuration",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "set_config_value",
-                    description: `
+            },
+            {
+                name: "set_config_value",
+                description: `
                         Set a specific configuration value by key.
                         
                         WARNING: Should be used in a separate chat from file operations and 
@@ -221,20 +221,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         to the entire file system, regardless of the operating system.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
-                    annotations: {
-                        title: "Set Configuration Value",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
+                annotations: {
+                    title: "Set Configuration Value",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
+            },
 
-                // Filesystem tools
-                {
-                    name: "read_file",
-                    description: `
-                        Read the contents of a file from the file system or a URL with optional offset and length parameters.
+            // Filesystem tools
+            {
+                name: "read_file",
+                description: `
+                        Read contents from files, URLs, or extract text from PDF files.
                         
                         Prefer this over 'execute_command' with cat/type for viewing files.
                         
@@ -264,18 +264,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Handles text files normally and image files are returned as viewable images.
                         Recognized image types: PNG, JPEG, GIF, WebP.
                         
+                        PDF Support:
+                        - Automatically extracts text content as markdown
+                        - Preserves basic document structure with paragraph breaks
+                        
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ReadFileArgsSchema),
-                    annotations: {
-                        title: "Read File or URL",
-                        readOnlyHint: true,
-                        openWorldHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                annotations: {
+                    title: "Read File or URL",
+                    readOnlyHint: true,
+                    openWorldHint: true,
                 },
-                {
-                    name: "read_multiple_files",
-                    description: `
+            },
+            {
+                name: "read_multiple_files",
+                description: `
                         Read the contents of multiple files simultaneously.
                         
                         Each file's content is returned with its path as a reference.
@@ -287,15 +291,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
-                    annotations: {
-                        title: "Read Multiple Files",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
+                annotations: {
+                    title: "Read Multiple Files",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "write_file",
-                    description: `
+            },
+            {
+                name: "write_file",
+                description: `
                         Write or append to file contents. 
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
@@ -324,17 +328,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(WriteFileArgsSchema),
-                    annotations: {
-                        title: "Write File",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(WriteFileArgsSchema),
+                annotations: {
+                    title: "Write File",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
-                {
-                    name: "create_directory",
-                    description: `
+            },
+            {
+                name: "create_directory",
+                description: `
                         Create a new directory or ensure a directory exists.
                         
                         Can create multiple nested directories in one operation.
@@ -342,11 +346,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
-                },
-                {
-                    name: "list_directory",
-                    description: `
+                inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
+            },
+            {
+                name: "list_directory",
+                description: `
                         Get a detailed listing of all files and directories in a specified path.
                         
                         Use this instead of 'execute_command' with ls/dir commands.
@@ -376,15 +380,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
-                    annotations: {
-                        title: "List Directory Contents",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
+                annotations: {
+                    title: "List Directory Contents",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "move_file",
-                    description: `
+            },
+            {
+                name: "move_file",
+                description: `
                         Move or rename files and directories.
                         
                         Can move files between directories and rename them in a single operation.
@@ -392,17 +396,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(MoveFileArgsSchema),
-                    annotations: {
-                        title: "Move/Rename File",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(MoveFileArgsSchema),
+                annotations: {
+                    title: "Move/Rename File",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
-                {
-                    name: "start_search",
-                    description: `
+            },
+            {
+                name: "start_search",
+                description: `
                         Start a streaming search that can return results progressively.
                         
                         SEARCH STRATEGY GUIDE:
@@ -481,11 +485,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(StartSearchArgsSchema),
-                },
-                {
-                    name: "get_more_search_results",
-                    description: `
+                inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+            },
+            {
+                name: "get_more_search_results",
+                description: `
                         Get more results from an active search with offset-based pagination.
                         
                         Supports partial result reading with:
@@ -507,15 +511,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         results from a search started with start_search.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
-                    annotations: {
-                        title: "Get Search Results",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                annotations: {
+                    title: "Get Search Results",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "stop_search", 
-                    description: `
+            },
+            {
+                name: "stop_search",
+                description: `
                         Stop an active search.
                         
                         Stops the background search process gracefully. Use this when you've found
@@ -526,11 +530,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         automatically cleaned up after 5 minutes.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(StopSearchArgsSchema),
-                },
-                {
-                    name: "list_searches",
-                    description: `
+                inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+            },
+            {
+                name: "list_searches",
+                description: `
                         List all active searches.
                         
                         Shows search IDs, search types, patterns, status, and runtime.
@@ -538,15 +542,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         multiple concurrent searches.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
-                    annotations: {
-                        title: "List Active Searches",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
+                annotations: {
+                    title: "List Active Searches",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "get_file_info",
-                    description: `
+            },
+            {
+                name: "get_file_info",
+                description: `
                         Retrieve detailed metadata about a file or directory including:
                         - size
                         - creation time
@@ -561,18 +565,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
-                    annotations: {
-                        title: "Get File Information",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
+                annotations: {
+                    title: "Get File Information",
+                    readOnlyHint: true,
                 },
-                // Note: list_allowed_directories removed - use get_config to check allowedDirectories
+            },
+            // Note: list_allowed_directories removed - use get_config to check allowedDirectories
 
-                // Text editing tools
-                {
-                    name: "edit_block",
-                    description: `
+            // Text editing tools
+            {
+                name: "edit_block",
+                description: `
                         Apply surgical text replacements to files.
                         
                         BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
@@ -605,19 +609,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(EditBlockArgsSchema),
-                    annotations: {
-                        title: "Edit Text Block",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(EditBlockArgsSchema),
+                annotations: {
+                    title: "Edit Text Block",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
-                
-                // Terminal tools
-                {
-                    name: "start_process",
-                    description: `
+            },
+
+            // Terminal tools
+            {
+                name: "start_process",
+                description: `
                         Start a new terminal process with intelligent state detection.
                         
                         PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
@@ -676,17 +680,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(StartProcessArgsSchema),
-                    annotations: {
-                        title: "Start Terminal Process",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: true,
-                    },
+                inputSchema: zodToJsonSchema(StartProcessArgsSchema),
+                annotations: {
+                    title: "Start Terminal Process",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
                 },
-                {
-                    name: "read_process_output",
-                    description: `
+            },
+            {
+                name: "read_process_output",
+                description: `
                         Read output from a running process with intelligent completion detection.
                         
                         Automatically detects when process is ready for more input instead of timing out.
@@ -717,15 +721,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Use this to identify when timeouts could be reduced or detection patterns improved.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
-                    annotations: {
-                        title: "Read Process Output",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                annotations: {
+                    title: "Read Process Output",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "interact_with_process", 
-                    description: `
+            },
+            {
+                name: "interact_with_process",
+                description: `
                         Send input to a running process and automatically receive the response.
                         
                         CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
@@ -782,31 +786,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
-                    annotations: {
-                        title: "Send Input to Process",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: true,
-                    },
+                inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
+                annotations: {
+                    title: "Send Input to Process",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
                 },
-                {
-                    name: "force_terminate",
-                    description: `
+            },
+            {
+                name: "force_terminate",
+                description: `
                         Force terminate a running terminal session.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
-                    annotations: {
-                        title: "Force Terminate Process",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
+                annotations: {
+                    title: "Force Terminate Process",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
-                {
-                    name: "list_sessions",
-                    description: `
+            },
+            {
+                name: "list_sessions",
+                description: `
                         List all active terminal sessions.
                         
                         Shows session status including:
@@ -820,59 +824,59 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Long runtime with blocked status may indicate stuck process
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
-                    annotations: {
-                        title: "List Terminal Sessions",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
+                annotations: {
+                    title: "List Terminal Sessions",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "list_processes",
-                    description: `
+            },
+            {
+                name: "list_processes",
+                description: `
                         List all running processes.
                         
                         Returns process information including PID, command name, CPU usage, and memory usage.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
-                    annotations: {
-                        title: "List Running Processes",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
+                annotations: {
+                    title: "List Running Processes",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "kill_process",
-                    description: `
+            },
+            {
+                name: "kill_process",
+                description: `
                         Terminate a running process by PID.
                         
                         Use with caution as this will forcefully terminate the specified process.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(KillProcessArgsSchema),
-                    annotations: {
-                        title: "Kill Process",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: false,
-                    },
+                inputSchema: zodToJsonSchema(KillProcessArgsSchema),
+                annotations: {
+                    title: "Kill Process",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
                 },
-                {
-                    name: "get_usage_stats",
-                    description: `
+            },
+            {
+                name: "get_usage_stats",
+                description: `
                         Get usage statistics for debugging and analysis.
                         
                         Returns summary of tool usage, success/failure rates, and performance metrics.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
-                    annotations: {
-                        title: "Get Usage Statistics",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
+                annotations: {
+                    title: "Get Usage Statistics",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "get_recent_tool_calls",
-                    description: `
+            },
+            {
+                name: "get_recent_tool_calls",
+                description: `
                         Get recent tool call history with their arguments and outputs.
                         Returns chronological list of tool calls made during this session.
                         
@@ -885,15 +889,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         History kept in memory (last 1000 calls, lost on restart).
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetRecentToolCallsArgsSchema),
-                    annotations: {
-                        title: "Get Recent Tool Calls",
-                        readOnlyHint: true,
-                    },
+                inputSchema: zodToJsonSchema(GetRecentToolCallsArgsSchema),
+                annotations: {
+                    title: "Get Recent Tool Calls",
+                    readOnlyHint: true,
                 },
-                {
-                    name: "give_feedback_to_desktop_commander",
-                    description: `
+            },
+            {
+                name: "give_feedback_to_desktop_commander",
+                description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
                         
                         IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
@@ -926,11 +930,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         No parameters are needed - just call the tool to open the form.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
-                },
-                {
-                    name: "get_prompts",
-                    description: `
+                inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+            },
+            {
+                name: "get_prompts",
+                description: `
                         Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
                         
                         SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
@@ -966,9 +970,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         The prompt content will be injected and execution begins immediately.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                }
-            ];
+                inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+            }
+        ];
 
         // Filter tools based on current client
         const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
@@ -978,7 +982,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         return {
             tools: filteredTools,
         };
-    } catch (error) {
+    } catch(error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
     }
@@ -993,36 +997,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
     try {
         // Prepare telemetry data - add config key for set_config_value
-        const telemetryData: any = { name };
-        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+        const telemetryData: any = {name};
+        if(name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
         }
-        if (name === 'get_prompts' && args && typeof args === 'object') {
+        if(name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
             telemetryData.action = promptArgs.action;
-            if (promptArgs.category) {
+            if(promptArgs.category) {
                 telemetryData.category = promptArgs.category;
                 telemetryData.has_category_filter = true;
             }
-            if (promptArgs.promptId) {
+            if(promptArgs.promptId) {
                 telemetryData.prompt_id = promptArgs.promptId;
             }
         }
-        
+
         capture_call_tool('server_call_tool', telemetryData);
-        
+
+        // Log every tool request name
+        // logger.info(`Tool request: ${name}`, { toolName: name, timestamp: new Date().toISOString() });
+
         // Track tool call
         trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
         let result: ServerResult;
 
-        switch (name) {
+        switch(name) {
             // Config tools
             case "get_config":
                 try {
                     result = await getConfig();
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in get_config handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to get configuration`}],
@@ -1033,7 +1040,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "set_config_value":
                 try {
                     result = await setConfigValue(args);
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to set configuration value`}],
@@ -1045,7 +1052,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_usage_stats":
                 try {
                     result = await getUsageStats();
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to get usage statistics`}],
@@ -1057,18 +1064,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_prompts":
                 try {
                     result = await getPrompts(args || {});
-                    
+
                     // Capture detailed analytics for all successful get_prompts actions
-                    if (args && typeof args === 'object' && !result.isError) {
+                    if(args && typeof args === 'object' && !result.isError) {
                         const action = (args as any).action;
-                        
+
                         try {
-                            if (action === 'get_prompt' && (args as any).promptId) {
+                            if(action === 'get_prompt' && (args as any).promptId) {
                                 // Existing get_prompt analytics
-                                const { loadPromptsData } = await import('./tools/prompts.js');
+                                const {loadPromptsData} = await import('./tools/prompts.js');
                                 const promptsData = await loadPromptsData();
                                 const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
-                                if (prompt) {
+                                if(prompt) {
                                     await capture('server_get_prompt', {
                                         prompt_id: prompt.id,
                                         prompt_title: prompt.title,
@@ -1079,18 +1086,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                                     });
                                 }
                             }
-                        } catch (error) {
+                        } catch(error) {
                             // Don't fail the request if analytics fail
                         }
                     }
-                    
+
                     // Track if user used get_prompts after seeing onboarding invitation (for state management only)
                     const onboardingState = await usageTracker.getOnboardingState();
-                    if (onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
+                    if(onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
                         // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
                         await usageTracker.markOnboardingPromptsUsed();
                     }
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to retrieve prompts`}],
@@ -1102,7 +1109,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_recent_tool_calls":
                 try {
                     result = await handlers.handleGetRecentToolCalls(args);
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in get_recent_tool_calls handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to get tool call history`}],
@@ -1114,7 +1121,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "give_feedback_to_desktop_commander":
                 try {
                     result = await giveFeedbackToDesktopCommander(args);
-                } catch (error) {
+                } catch(error) {
                     capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
                     result = {
                         content: [{type: "text", text: `Error: Failed to open feedback form`}],
@@ -1131,7 +1138,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "read_process_output":
                 result = await handlers.handleReadProcessOutput(args);
                 break;
-                
+
             case "interact_with_process":
                 result = await handlers.handleInteractWithProcess(args);
                 break;
@@ -1217,13 +1224,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         const EXCLUDED_TOOLS = [
             'get_recent_tool_calls'
         ];
-        
-        if (!EXCLUDED_TOOLS.includes(name)) {
+
+        if(!EXCLUDED_TOOLS.includes(name)) {
             toolHistory.addCall(name, args, result, duration);
         }
 
         // Track success or failure based on result
-        if (result.isError) {
+        if(result.isError) {
             await usageTracker.trackFailure(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
         } else {
@@ -1234,7 +1241,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
             console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
 
-            if (shouldShowOnboarding) {
+            if(shouldShowOnboarding) {
                 console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
                 const onboardingResult = await usageTracker.getOnboardingMessage();
                 console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
@@ -1251,7 +1258,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 });
 
                 // Inject onboarding message for the LLM
-                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                if(result.content && result.content.length > 0 && result.content[0].type === "text") {
                     const currentContent = result.content[0].text || '';
                     result.content[0].text = `${currentContent}${onboardingResult.message}`;
                 } else {
@@ -1272,7 +1279,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
             console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
 
-            if (shouldPrompt) {
+            if(shouldPrompt) {
                 console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
                 const feedbackResult = await usageTracker.getFeedbackPromptMessage();
                 console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
@@ -1290,10 +1297,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 });
 
                 // Inject feedback instruction for the LLM
-                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
+                if(result.content && result.content.length > 0 && result.content[0].type === "text") {
                     const currentContent = result.content[0].text || '';
                     result.content[0].text = `${currentContent}${feedbackResult.message}`;
-               } else {
+                } else {
                     result.content = [
                         ...(result.content || []),
                         {
@@ -1312,7 +1319,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         return result;
-    } catch (error) {
+    } catch(error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         // Track the failure
@@ -1329,4 +1336,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 });
 
 // Add no-op handlers so Visual Studio initialization succeeds
-server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({resourceTemplates: []}));

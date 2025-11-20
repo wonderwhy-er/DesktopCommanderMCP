@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Test script for PDF parsing functionality using unpdf
+ * Test script for PDF parsing functionality using @opendocsg/pdf2md (v3)
  * Verifies parsing of sample PDFs and URL
  */
 
-import { getPdfMetadata, pdfToMarkdown, getPdfContent } from '../dist/tools/pdf-v2.js';
+import { pdfToMarkdown } from '../dist/tools/pdf-v3.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,33 +28,17 @@ async function testSample(name, source) {
     console.log(`--------------------------------------------------------------------------------`);
 
     try {
-        // 1. Metadata
-        console.log('📊 METADATA:');
-        const metadata = await getPdfMetadata(source);
-        if (metadata.success) {
-            console.log(`  File Size: ${metadata.fileSize ? metadata.fileSize + ' bytes' : 'N/A'}, Pages: ${metadata.totalPages}`);
-            console.log(`  Title: ${metadata.title || 'N/A'} (Author: ${metadata.author || 'N/A'})`);
-            console.log(`  Processing Time: ${metadata.processingTime}ms`);
-        } else {
-            console.error(`  ❌ Failed to get metadata: ${metadata.error}`);
-        }
+        const startTime = Date.now();
 
-        // 2. Content (Markdown)
+        // Content (Markdown)
         console.log('\n📝 CONTENT PREVIEW (Markdown):');
         const markdown = await pdfToMarkdown(source);
+        const processingTime = Date.now() - startTime;
+
         const preview = markdown.substring(0, 500).replace(/\n/g, '\n  ');
         console.log(`  ${preview}...`);
         console.log(`\n  [Total Length: ${markdown.length} chars]`);
-
-        // 3. Content (Raw/Structured via getPdfContent)
-        console.log('\n📄 RAW CONTENT (First Page):');
-        const content = await getPdfContent(source, { max: 1 });
-        if (content.success && content.text) {
-            const pageText = content.text.substring(0, 200).replace(/\n/g, '\n  ');
-            console.log(`  ${pageText}...`);
-        } else {
-            console.log('  (No content extracted or failed)');
-        }
+        console.log(`  Processing Time: ${processingTime}ms`);
 
     } catch (error) {
         console.error(`❌ Error processing ${name}:`, error);
@@ -62,7 +46,7 @@ async function testSample(name, source) {
 }
 
 async function main() {
-    console.log('🧪 PDF v2 Sample Test Suite (unpdf)');
+    console.log('🧪 PDF v3 Sample Test Suite (@opendocsg/pdf2md)');
 
     // Test Local Samples
     for (const sample of SAMPLES) {
@@ -72,27 +56,6 @@ async function main() {
 
     // Test URL
     await testSample('URL Sample', URL_SAMPLE);
-
-    // Test Page Filter
-    console.log('\n================================================================================');
-    console.log('Testing Page Filter (using 03_sample_compex.pdf)');
-    console.log('--------------------------------------------------------------------------------');
-    const complexSample = path.join(SAMPLES_DIR, '03_sample_compex.pdf');
-
-    // Test First 2 Pages
-    console.log('\n📄 Filter: { first: 2 }');
-    const first2 = await getPdfContent(complexSample, { first: 2 });
-    console.log(`  Extracted Pages: ${first2.text.split('\n\n').length} (Expected: 2)`);
-
-    // Test Last 2 Pages
-    console.log('\n📄 Filter: { last: 2 }');
-    const last2 = await getPdfContent(complexSample, { last: 2 });
-    console.log(`  Extracted Pages: ${last2.text.split('\n\n').length} (Expected: 2)`);
-
-    // Test Partial [1, 5]
-    console.log('\n📄 Filter: { partial: [1, 5] }');
-    const partial = await getPdfContent(complexSample, { partial: [1, 5] });
-    console.log(`  Extracted Pages: ${partial.text.split('\n\n').length} (Expected: 2)`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
