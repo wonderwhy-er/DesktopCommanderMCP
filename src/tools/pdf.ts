@@ -39,21 +39,14 @@ export async function pdfToMarkdown(source: string): Promise<string> {
     }
 }
 
-
-/**
- * Create PDF from markdown content
- */
-export async function markdownToPdf(markdown: string, outputPath: string, options: any = {}): Promise<boolean> {
+export async function markdownToPdf(markdown: string, outputPath: string, options: any = {}): Promise<Buffer> {
     try {
-        const pdf = await mdToPdf({ content: markdown }, options).catch(console.error);
+        const pdf = await mdToPdf({ content: markdown }, options)
 
-        if (pdf) {
-            await fs.writeFile(outputPath, pdf.content);
-            return true;
-        }
-        return false;
+
+        return pdf.content;
     } catch (error) {
         console.error('Error creating PDF:', error);
-        return false;
+        throw error;
     }
 }

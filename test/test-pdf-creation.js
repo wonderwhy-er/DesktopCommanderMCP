@@ -5,7 +5,7 @@
  * Creates PDF from markdown string and verifies it
  */
 
-import { createPdfFromMarkdown, getPdfMetadata } from '../dist/tools/pdf-v2.js';
+import { markdownToPdf } from '../dist/tools/pdf.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -44,26 +44,34 @@ console.log('Hello World');
     `;
 
     console.log(`\nCreating PDF at: ${OUTPUT_FILE}`);
-    const success = await createPdfFromMarkdown(markdown, OUTPUT_FILE);
 
-    if (success) {
-        console.log('✅ PDF created successfully');
+    try {
+        // markdownToPdf returns a Buffer, it does not write to disk itself
+        const pdfBuffer = await markdownToPdf(markdown, OUTPUT_FILE);
 
-        // Verify the created PDF
-        console.log('\nVerifying created PDF...');
-        const metadata = await getPdfMetadata(OUTPUT_FILE);
+        if (pdfBuffer) {
+            await fs.writeFile(OUTPUT_FILE, pdfBuffer);
+            console.log('✅ PDF created successfully');
 
-        if (metadata.success) {
-            console.log('✅ PDF is valid');
-            console.log(`  File Size: ${metadata.fileSize} bytes`);
-            console.log(`  Pages: ${metadata.totalPages}`);
-            console.log(`  Title: ${metadata.title || 'N/A'}`);
+            // Verify the created PDF
+            console.log('\nVerifying created PDF...');
+            const stats = await fs.stat(OUTPUT_FILE);
+
+            if (stats.size > 0) {
+                console.log('✅ PDF is valid (non-empty)');
+                console.log(`  File Size: ${stats.size} bytes`);
+            } else {
+                console.error('❌ PDF file is empty');
+                process.exit(1);
+            }
+
         } else {
-            console.error(`❌ Failed to verify PDF: ${metadata.error}`);
+            console.error('❌ Failed to create PDF: No buffer returned');
+            process.exit(1);
         }
-
-    } else {
-        console.error('❌ Failed to create PDF');
+    } catch (error) {
+        console.error('❌ Failed to create PDF:', error);
+        process.exit(1);
     }
 }
 

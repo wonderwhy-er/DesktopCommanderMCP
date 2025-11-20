@@ -1,4 +1,4 @@
-import {Server} from "@modelcontextprotocol/sdk/server/index.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
@@ -9,8 +9,8 @@ import {
     type CallToolRequest,
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
-import {zodToJsonSchema} from "zod-to-json-schema";
-import {getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance} from './utils/system-info.js';
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -46,29 +46,30 @@ import {
     ListSearchesArgsSchema,
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
+    WritePdfArgsSchema,
 } from './tools/schemas.js';
-import {getConfig, setConfigValue} from './tools/config.js';
-import {getUsageStats} from './tools/usage.js';
-import {giveFeedbackToDesktopCommander} from './tools/feedback.js';
-import {getPrompts} from './tools/prompts.js';
-import {trackToolCall} from './utils/trackTools.js';
-import {usageTracker} from './utils/usageTracker.js';
-import {processDockerPrompt} from './utils/dockerPrompt.js';
-import {toolHistory} from './utils/toolHistory.js';
+import { getConfig, setConfigValue } from './tools/config.js';
+import { getUsageStats } from './tools/usage.js';
+import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
+import { getPrompts } from './tools/prompts.js';
+import { trackToolCall } from './utils/trackTools.js';
+import { usageTracker } from './utils/usageTracker.js';
+import { processDockerPrompt } from './utils/dockerPrompt.js';
+import { toolHistory } from './utils/toolHistory.js';
 
-import {VERSION} from './version.js';
-import {capture, capture_call_tool} from "./utils/capture.js";
-import {logToStderr, logger} from './utils/logger.js';
+import { VERSION } from './version.js';
+import { capture, capture_call_tool } from "./utils/capture.js";
+import { logToStderr, logger } from './utils/logger.js';
 
 // Store startup messages to send after initialization
-const deferredMessages: Array<{level: string, message: string}> = [];
+const deferredMessages: Array<{ level: string, message: string }> = [];
 function deferLog(level: string, message: string) {
-    deferredMessages.push({level, message});
+    deferredMessages.push({ level, message });
 }
 
 // Function to flush deferred messages after initialization
 export function flushDeferredMessages() {
-    while(deferredMessages.length > 0) {
+    while (deferredMessages.length > 0) {
         const msg = deferredMessages.shift()!;
         logger.info(msg.message);
     }
@@ -108,14 +109,14 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 });
 
 // Store current client info (simple variable)
-let currentClient = {name: 'uninitialized', version: 'uninitialized'};
+let currentClient = { name: 'uninitialized', version: 'uninitialized' };
 
 // Add handler for initialization method - capture client info
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
     try {
         // Extract and store current client information
         const clientInfo = request.params?.clientInfo;
-        if(clientInfo) {
+        if (clientInfo) {
             currentClient = {
                 name: clientInfo.name || 'unknown',
                 version: clientInfo.version || 'unknown'
@@ -123,7 +124,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
             // Configure transport for client-specific behavior
             const transport = (global as any).mcpTransport;
-            if(transport && typeof transport.configureForClient === 'function') {
+            if (transport && typeof transport.configureForClient === 'function') {
                 transport.configureForClient(currentClient.name);
             }
 
@@ -147,14 +148,14 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 version: VERSION,
             },
         };
-    } catch(error) {
+    } catch (error) {
         logToStderr('error', `Error in initialization handler: ${error}`);
         throw error;
     }
 });
 
 // Export current client info for access by other modules
-export {currentClient};
+export { currentClient };
 
 deferLog('info', 'Setting up request handlers...');
 
@@ -163,7 +164,7 @@ deferLog('info', 'Setting up request handlers...');
  */
 function shouldIncludeTool(toolName: string): boolean {
     // Exclude give_feedback_to_desktop_commander for desktop-commander client
-    if(toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
+    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
         return false;
     }
 
@@ -301,6 +302,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "write_file",
                 description: `
                         Write or append to file contents. 
+                        
+                        IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks. 
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -331,6 +334,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: zodToJsonSchema(WriteFileArgsSchema),
                 annotations: {
                     title: "Write File",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "write_pdf",
+                description: `
+                        Create a PDF file from Markdown content.
+                        
+                        THIS IS THE ONLY TOOL FOR CREATING PDF FILES.
+                        
+                        Use this tool to save content as a PDF document.
+                        Common use cases:
+                        - Saving conversation history or chat logs to PDF
+                        - Creating reports, documentation, or articles
+                        - Exporting markdown notes to a printable format
+                        
+                        The tool takes markdown text as input. If you want to save the current conversation, you should first format the conversation as markdown and then pass it to this tool.
+                        
+                        EXAMPLE INTERACTION:
+                        User: "save this conversation to a pdf"
+                        Claude: "I will save the conversation to a PDF file."
+                        [calls write_pdf(path="conversation.pdf", content="# Conversation Log\n\nUser: save this...\n...")]
+                        
+                        Supports standard markdown features including headers, lists, code blocks, tables, and basic formatting.
+                        
+                        Only works within allowed directories.
+                        
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(WritePdfArgsSchema),
+                annotations: {
+                    title: "Write PDF",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
@@ -982,33 +1019,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         return {
             tools: filteredTools,
         };
-    } catch(error) {
+    } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
     }
 });
 
 import * as handlers from './handlers/index.js';
-import {ServerResult} from './types.js';
+import { ServerResult } from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
-    const {name, arguments: args} = request.params;
+    const { name, arguments: args } = request.params;
     const startTime = Date.now();
 
     try {
         // Prepare telemetry data - add config key for set_config_value
-        const telemetryData: any = {name};
-        if(name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+        const telemetryData: any = { name };
+        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
         }
-        if(name === 'get_prompts' && args && typeof args === 'object') {
+        if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
             telemetryData.action = promptArgs.action;
-            if(promptArgs.category) {
+            if (promptArgs.category) {
                 telemetryData.category = promptArgs.category;
                 telemetryData.has_category_filter = true;
             }
-            if(promptArgs.promptId) {
+            if (promptArgs.promptId) {
                 telemetryData.prompt_id = promptArgs.promptId;
             }
         }
@@ -1024,15 +1061,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // Using a more structured approach with dedicated handlers
         let result: ServerResult;
 
-        switch(name) {
+        switch (name) {
             // Config tools
             case "get_config":
                 try {
                     result = await getConfig();
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in get_config handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_config handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to get configuration`}],
+                        content: [{ type: "text", text: `Error: Failed to get configuration` }],
                         isError: true,
                     };
                 }
@@ -1040,10 +1077,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "set_config_value":
                 try {
                     result = await setConfigValue(args);
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in set_config_value handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to set configuration value`}],
+                        content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,
                     };
                 }
@@ -1052,10 +1089,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_usage_stats":
                 try {
                     result = await getUsageStats();
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in get_usage_stats handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_usage_stats handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to get usage statistics`}],
+                        content: [{ type: "text", text: `Error: Failed to get usage statistics` }],
                         isError: true,
                     };
                 }
@@ -1066,16 +1103,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     result = await getPrompts(args || {});
 
                     // Capture detailed analytics for all successful get_prompts actions
-                    if(args && typeof args === 'object' && !result.isError) {
+                    if (args && typeof args === 'object' && !result.isError) {
                         const action = (args as any).action;
 
                         try {
-                            if(action === 'get_prompt' && (args as any).promptId) {
+                            if (action === 'get_prompt' && (args as any).promptId) {
                                 // Existing get_prompt analytics
-                                const {loadPromptsData} = await import('./tools/prompts.js');
+                                const { loadPromptsData } = await import('./tools/prompts.js');
                                 const promptsData = await loadPromptsData();
                                 const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
-                                if(prompt) {
+                                if (prompt) {
                                     await capture('server_get_prompt', {
                                         prompt_id: prompt.id,
                                         prompt_title: prompt.title,
@@ -1086,21 +1123,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                                     });
                                 }
                             }
-                        } catch(error) {
+                        } catch (error) {
                             // Don't fail the request if analytics fail
                         }
                     }
 
                     // Track if user used get_prompts after seeing onboarding invitation (for state management only)
                     const onboardingState = await usageTracker.getOnboardingState();
-                    if(onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
+                    if (onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
                         // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
                         await usageTracker.markOnboardingPromptsUsed();
                     }
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in get_prompts handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_prompts handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to retrieve prompts`}],
+                        content: [{ type: "text", text: `Error: Failed to retrieve prompts` }],
                         isError: true,
                     };
                 }
@@ -1109,10 +1146,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_recent_tool_calls":
                 try {
                     result = await handlers.handleGetRecentToolCalls(args);
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in get_recent_tool_calls handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_recent_tool_calls handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to get tool call history`}],
+                        content: [{ type: "text", text: `Error: Failed to get tool call history` }],
                         isError: true,
                     };
                 }
@@ -1121,10 +1158,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "give_feedback_to_desktop_commander":
                 try {
                     result = await giveFeedbackToDesktopCommander(args);
-                } catch(error) {
-                    capture('server_request_error', {message: `Error in give_feedback_to_desktop_commander handler: ${error}`});
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in give_feedback_to_desktop_commander handler: ${error}` });
                     result = {
-                        content: [{type: "text", text: `Error: Failed to open feedback form`}],
+                        content: [{ type: "text", text: `Error: Failed to open feedback form` }],
                         isError: true,
                     };
                 }
@@ -1175,6 +1212,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 result = await handlers.handleWriteFile(args);
                 break;
 
+            case "write_pdf":
+                result = await handlers.handleWritePdf(args);
+                break;
+
             case "create_directory":
                 result = await handlers.handleCreateDirectory(args);
                 break;
@@ -1212,9 +1253,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 break;
 
             default:
-                capture('server_unknown_tool', {name});
+                capture('server_unknown_tool', { name });
                 result = {
-                    content: [{type: "text", text: `Error: Unknown tool: ${name}`}],
+                    content: [{ type: "text", text: `Error: Unknown tool: ${name}` }],
                     isError: true,
                 };
         }
@@ -1225,12 +1266,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             'get_recent_tool_calls'
         ];
 
-        if(!EXCLUDED_TOOLS.includes(name)) {
+        if (!EXCLUDED_TOOLS.includes(name)) {
             toolHistory.addCall(name, args, result, duration);
         }
 
         // Track success or failure based on result
-        if(result.isError) {
+        if (result.isError) {
             await usageTracker.trackFailure(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);
         } else {
@@ -1241,7 +1282,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
             console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
 
-            if(shouldShowOnboarding) {
+            if (shouldShowOnboarding) {
                 console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
                 const onboardingResult = await usageTracker.getOnboardingMessage();
                 console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
@@ -1258,7 +1299,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 });
 
                 // Inject onboarding message for the LLM
-                if(result.content && result.content.length > 0 && result.content[0].type === "text") {
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
                     const currentContent = result.content[0].text || '';
                     result.content[0].text = `${currentContent}${onboardingResult.message}`;
                 } else {
@@ -1279,7 +1320,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
             console.log(`[FEEDBACK DEBUG] Should prompt for feedback: ${shouldPrompt}`);
 
-            if(shouldPrompt) {
+            if (shouldPrompt) {
                 console.log(`[FEEDBACK DEBUG] Generating feedback message...`);
                 const feedbackResult = await usageTracker.getFeedbackPromptMessage();
                 console.log(`[FEEDBACK DEBUG] Generated variant: ${feedbackResult.variant}`);
@@ -1297,7 +1338,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 });
 
                 // Inject feedback instruction for the LLM
-                if(result.content && result.content.length > 0 && result.content[0].type === "text") {
+                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
                     const currentContent = result.content[0].text || '';
                     result.content[0].text = `${currentContent}${feedbackResult.message}`;
                 } else {
@@ -1319,7 +1360,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         return result;
-    } catch(error) {
+    } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         // Track the failure
@@ -1329,11 +1370,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             error: errorMessage
         });
         return {
-            content: [{type: "text", text: `Error: ${errorMessage}`}],
+            content: [{ type: "text", text: `Error: ${errorMessage}` }],
             isError: true,
         };
     }
 });
 
 // Add no-op handlers so Visual Studio initialization succeeds
-server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({resourceTemplates: []}));
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import {z} from "zod";
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({});
@@ -57,6 +57,12 @@ export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
+});
+
+export const WritePdfArgsSchema = z.object({
+  path: z.string(),
+  content: z.string(),
+  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
 export const CreateDirectoryArgsSchema = z.object({
