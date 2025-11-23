@@ -9,9 +9,9 @@ import { capture } from '../utils/capture.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { isPdfFile } from "./mime-types.js";
-import { pdfToMarkdown } from './pdf.js';
-import { createPdfFromMarkdown } from './pdf-v3.js';
 import { PdfMetadata, PdfPageItem } from './lib/pdf2md-patched.js';
+// import { editPdf, PdfEditOperation, createPdfFromMarkdown } from './pdf-v3.js';
+import { editPdf, PdfEditOperation, pdfToMarkdown, markdownToPdf } from './pdf.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -1179,8 +1179,7 @@ export async function writePdf(filePath: string, content: string, options: any =
         contentLength: content.length
     });
 
-    // createPdfFromMarkdown returns Uint8Array directly, doesn't need path parameter
-    const pdfBuffer = await createPdfFromMarkdown(content, options);
+    const pdfBuffer = await markdownToPdf(content, options);
 
     await fs.writeFile(validPath, pdfBuffer);
 }
@@ -1235,10 +1234,6 @@ export async function modifyPdf(
     outputPdfPath: string,
     operations: PdfModifyOperation[]
 ): Promise<void> {
-    // Import the editPdf function and types
-    const { editPdf } = await import('./pdf-v3.js');
-    type PdfEditOperation = import('./pdf-v3.js').PdfEditOperation;
-
     // Validate paths
     const validSourcePath = await validatePath(sourcePdfPath);
     const validOutputPath = await validatePath(outputPdfPath);
