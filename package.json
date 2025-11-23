@@ -89,6 +89,10 @@
     "md-to-pdf": "^5.2.4",
     "pdf-lib": "^1.17.1",
     "pngjs": "^7.0.0",
+    "remark": "^15.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
     "unpdf": "^1.4.0",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
