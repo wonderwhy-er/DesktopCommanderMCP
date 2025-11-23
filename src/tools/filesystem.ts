@@ -9,9 +9,9 @@ import { capture } from '../utils/capture.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { isPdfFile } from "./mime-types.js";
-import { pdfToMarkdown, markdownToPdf } from './pdf.js';
+import { pdfToMarkdown } from './pdf.js';
 import { createPdfFromMarkdown } from './pdf-v3.js';
-import { PdfMetadata, ImageInfo } from './lib/pdf2md-patched.js';
+import { PdfMetadata, PdfPageItem } from './lib/pdf2md-patched.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -287,7 +287,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
 
 type PdfPayload = {
     metadata: PdfMetadata;
-    images: ImageInfo[]; // base64 encoded images
+    pages: PdfPageItem[];
 }
 
 type FileResultPayloads = PdfPayload;
@@ -337,13 +337,13 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
             const pdfResult = await pdfToMarkdown(url);
 
             return {
-                content: pdfResult.text,
+                content: "",
                 mimeType: 'text/plain',
                 isImage: false,
                 isPdf: true,
                 payload: {
                     metadata: pdfResult.metadata,
-                    images: pdfResult.images
+                    pages: pdfResult.pages
                 }
             };
 
@@ -715,13 +715,13 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
             const pdfResult = await pdfToMarkdown(validPath);
 
             return {
-                content: pdfResult.text,
+                content: "",
                 mimeType: 'text/plain',
                 isImage: false,
                 isPdf: true,
                 payload: {
                     metadata: pdfResult.metadata,
-                    images: pdfResult.images
+                    pages: pdfResult.pages
                 }
             };
         } else if (isImage) {

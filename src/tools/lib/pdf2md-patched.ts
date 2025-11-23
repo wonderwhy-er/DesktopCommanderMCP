@@ -26,10 +26,15 @@ export interface PdfMetadata {
     isEncrypted?: boolean;
 }
 
-export interface Pdf2MdResult {
+export interface PdfPageItem {
     text: string;
-    metadata: PdfMetadata;
     images: ImageInfo[];
+    pageNumber: number;
+}
+
+export interface Pdf2MdResult {
+    pages: PdfPageItem[];
+    metadata: PdfMetadata;
 }
 
 /** Image information extracted from PDF */
@@ -179,17 +184,33 @@ export async function pdf2md(pdfBuffer: Uint8Array): Promise<Pdf2MdResult> {
     const { fonts, pages, pdfDocument } = result;
     const transformations = makeTransformations(fonts.map);
     const parseResult = transform(pages, transformations);
-    const text = parseResult.pages
-        .map((page: any) => page.items.join('\n') + '\n')
-        .join('');
 
-
-
+    // Extract images first
     const images = await extractImages(result);
+
+    // Group images by page
+    const imagesByPage = new Map<number, ImageInfo[]>();
+    for (const img of images) {
+        if (!imagesByPage.has(img.page)) {
+            imagesByPage.set(img.page, []);
+        }
+        imagesByPage.get(img.page)!.push(img);
+    }
+
+    // Process pages
+    const processedPages: PdfPageItem[] = parseResult.pages.map((page: any, index: number) => {
+        const pageNum = index + 1;
+        return {
+            pageNumber: pageNum,
+            text: page.items.join('\n') + '\n',
+            images: imagesByPage.get(pageNum) || []
+        };
+    });
+
     const metadata = extractMetadata(result);
 
     try {
-        return { text, metadata, images };
+        return { pages: processedPages, metadata };
     } finally {
         if (pdfDocument) {
             try {

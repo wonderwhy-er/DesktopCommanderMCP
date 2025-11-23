@@ -67,18 +67,20 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
         if (fileResult.isPdf) {
+            const content = fileResult.payload?.pages?.flatMap(p => [
+                ...(p.images?.map((image, i) => ({
+                    type: "image",
+                    data: image.data,
+                    mimeType: image.mimeType
+                })) ?? []),
+                {
+                    type: "text",
+                    text: p.text,
+                },
+            ]) ?? [];
+
             return {
-                content: [
-                    {
-                        type: "text",
-                        text: fileResult.content,
-                    },
-                    ...(fileResult.payload?.images?.map((image, i) => ({
-                        type: "image",
-                        data: image.data,
-                        mimeType: image.mimeType
-                    })) ?? [])
-                ]
+                content
             };
         }
         if (fileResult.isImage) {
@@ -129,6 +131,8 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     const textSummary = fileResults.map(result => {
         if (result.error) {
             return `${result.path}: Error - ${result.error}`;
+        } else if (result.isPdf) {
+            return `${result.path}: PDF file with ${result.payload?.pages?.length} pages`;
         } else if (result.mimeType) {
             return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
         } else {
@@ -146,15 +150,17 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
             if (result.isPdf) {
-                contentItems.push({
-                    type: "text",
-                    text: result.content,
-                });
-                result.payload?.images.forEach((image, i) => {
+                result.payload?.pages.forEach((page, i) => {
+                    page.images.forEach((image, i) => {
+                        contentItems.push({
+                            type: "image",
+                            data: image.data,
+                            mimeType: image.mimeType
+                        });
+                    });
                     contentItems.push({
-                        type: "image",
-                        data: image.data,
-                        mimeType: image.mimeType
+                        type: "text",
+                        text: page.text,
                     });
                 });
             } else if (result.isImage && result.mimeType) {

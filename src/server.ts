@@ -235,7 +235,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "read_file",
                 description: `
-                        Read contents from files, URLs, or extract text from PDF files.
+                        Read contents from files and URLs.
+                        Read PDF files and extract content as markdown and images.
                         
                         Prefer this over 'execute_command' with cat/type for viewing files.
                         

@@ -15,9 +15,9 @@ const __dirname = path.dirname(__filename);
 
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const SAMPLES = [
-    // '01_sample_simple.pdf',
+    '01_sample_simple.pdf',
     // '02_sample_invoce.pdf',
-    // '03_sample_compex.pdf',
+    '03_sample_compex.pdf',
     'statement.pdf'
 ];
 
@@ -35,11 +35,21 @@ async function testSample(name, source) {
         // Content (Markdown)
         console.log('\n📝 CONTENT PREVIEW (Markdown):');
         const result = await pdfToMarkdown(source);
-        const markdown = result.text;
-        const images = result.images;
+
+        // Verify new structure
+        if (result.pages) {
+            console.log(`\n📄 Pages Found: ${result.pages.length}`);
+            result.pages.forEach((p, i) => {
+                console.log(`  Page ${p.pageNumber}: ${p.text.length} chars, ${p.images.length} images`);
+            });
+        }
+
+        const markdown = result.pages.map(p => p.text).join('');
+        const images = result.pages.flatMap(p => p.images);
 
         const processingTime = Date.now() - startTime;
-        console.log(markdown);
+        console.log('\n--- Full Text Preview ---');
+        console.log(markdown.substring(0, 200) + '...');
 
         // Save extracted images to disk
         if (images && images.length > 0) {
