@@ -66,7 +66,21 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         const length = parsed.length ?? defaultLimit;
 
         const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
-
+        if (fileResult.isPdf) {
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: fileResult.content,
+                    },
+                    ...(fileResult.payload?.images?.map((image, i) => ({
+                        type: "image",
+                        data: image.data,
+                        mimeType: image.mimeType
+                    })) ?? [])
+                ]
+            };
+        }
         if (fileResult.isImage) {
             // For image files, return as an image content type
             return {
@@ -131,7 +145,19 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     // Add each file content
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
-            if (result.isImage && result.mimeType) {
+            if (result.isPdf) {
+                contentItems.push({
+                    type: "text",
+                    text: result.content,
+                });
+                result.payload?.images.forEach((image, i) => {
+                    contentItems.push({
+                        type: "image",
+                        data: image.data,
+                        mimeType: image.mimeType
+                    });
+                });
+            } else if (result.isImage && result.mimeType) {
                 // For image files, add an image content item
                 contentItems.push({
                     type: "image",

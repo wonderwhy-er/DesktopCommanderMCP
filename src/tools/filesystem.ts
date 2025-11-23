@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { isPdfFile } from "./mime-types.js";
 import { pdfToMarkdown, markdownToPdf } from './pdf.js';
+import { PdfMetadata, ImageInfo } from './lib/pdf2md-patched.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -283,13 +284,21 @@ export async function validatePath(requestedPath: string): Promise<string> {
     return result;
 }
 
+type PdfPayload = {
+    metadata: PdfMetadata;
+    images: ImageInfo[]; // base64 encoded images
+}
+
+type FileResultPayloads = PdfPayload;
+
 // File operation tools
 export interface FileResult {
     content: string;
     mimeType: string;
     isImage: boolean;
+    isPdf?: boolean;
+    payload?: FileResultPayloads;
 }
-
 
 /**
  * Read file content from a URL
@@ -324,12 +333,17 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         // NEW: Add PDF handling before image check
         if (isPdf) {
             // Use URL directly - pdfreader handles URL downloads internally
-            const textContent = await pdfToMarkdown(url);
+            const pdfResult = await pdfToMarkdown(url);
 
             return {
-                content: textContent,
+                content: pdfResult.text,
                 mimeType: 'text/plain',
-                isImage: false
+                isImage: false,
+                isPdf: true,
+                payload: {
+                    metadata: pdfResult.metadata,
+                    images: pdfResult.images
+                }
             };
 
         } else if (isImage) {
@@ -697,12 +711,17 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
     const readOperation = async () => {
         if (isPdf) {
             // Pass file path directly to extractPdfText which handles file reading
-            const textContent = await pdfToMarkdown(validPath);
+            const pdfResult = await pdfToMarkdown(validPath);
 
             return {
-                content: textContent,
+                content: pdfResult.text,
                 mimeType: 'text/plain',
-                isImage: false
+                isImage: false,
+                isPdf: true,
+                payload: {
+                    metadata: pdfResult.metadata,
+                    images: pdfResult.images
+                }
             };
         } else if (isImage) {
             // For image files, read as Buffer and convert to base64
@@ -883,6 +902,8 @@ export interface MultiFileResult {
     mimeType?: string;
     isImage?: boolean;
     error?: string;
+    isPdf?: boolean;
+    payload?: FileResultPayloads;
 }
 
 export async function readMultipleFiles(paths: string[]): Promise<MultiFileResult[]> {
@@ -891,12 +912,14 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
             try {
                 const validPath = await validatePath(filePath);
                 const fileResult = await readFile(validPath);
-
+                const isPdf = isPdfFile(fileResult.mimeType);
                 return {
                     path: filePath,
                     content: typeof fileResult === 'string' ? fileResult : fileResult.content,
                     mimeType: typeof fileResult === 'string' ? "text/plain" : fileResult.mimeType,
-                    isImage: typeof fileResult === 'string' ? false : fileResult.isImage
+                    isImage: typeof fileResult === 'string' ? false : fileResult.isImage,
+                    isPdf: typeof fileResult === 'string' ? false : fileResult.isPdf,
+                    payload: typeof fileResult === 'string' ? undefined : fileResult.payload
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);

@@ -5,18 +5,20 @@
  * Verifies parsing of sample PDFs and URL
  */
 
-import { pdfToMarkdown } from '../dist/tools/pdf-v3.js';
+import { pdfToMarkdown } from '../dist/tools/pdf.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const SAMPLES = [
-    '01_sample_simple.pdf',
-    '02_sample_invoce.pdf',
-    '03_sample_compex.pdf'
+    // '01_sample_simple.pdf',
+    // '02_sample_invoce.pdf',
+    // '03_sample_compex.pdf',
+    'statement.pdf'
 ];
 
 const URL_SAMPLE = 'https://pdfobject.com/pdf/sample.pdf';
@@ -32,9 +34,42 @@ async function testSample(name, source) {
 
         // Content (Markdown)
         console.log('\n📝 CONTENT PREVIEW (Markdown):');
-        const markdown = await pdfToMarkdown(source);
-        const processingTime = Date.now() - startTime;
+        const result = await pdfToMarkdown(source);
+        const markdown = result.text;
+        const images = result.images;
 
+        const processingTime = Date.now() - startTime;
+        console.log(markdown);
+
+        // Save extracted images to disk
+        if (images && images.length > 0) {
+            console.log(`\n🖼️  EXTRACTED IMAGES (${images.length}):`);
+
+            // Create images directory for this PDF
+            const imagesDir = path.join(SAMPLES_DIR, `${name}_images`);
+            await fs.mkdir(imagesDir, { recursive: true });
+
+            for (let i = 0; i < images.length; i++) {
+                const img = images[i];
+
+                // Determine file extension from MIME type
+                const ext = img.mimeType.split('/')[1] || 'png';
+                const filename = `page_${img.page}_img_${i + 1}.${ext}`;
+                const filepath = path.join(imagesDir, filename);
+
+                // Decode base64 and save to file
+                const buffer = Buffer.from(img.data, 'base64');
+                await fs.writeFile(filepath, buffer);
+
+                console.log(`  - Saved: ${filename} (${img.width}x${img.height}, ${img.mimeType})`);
+            }
+
+            console.log(`\n  Images saved to: ${imagesDir}`);
+        }
+
+        // save to markdown file
+        const markdownPath = path.join(SAMPLES_DIR, `${name}.md`);
+        await fs.writeFile(markdownPath, markdown);
         const preview = markdown.substring(0, 500).replace(/\n/g, '\n  ');
         console.log(`  ${preview}...`);
         console.log(`\n  [Total Length: ${markdown.length} chars]`);
