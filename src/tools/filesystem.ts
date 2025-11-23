@@ -10,6 +10,7 @@ import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { isPdfFile } from "./mime-types.js";
 import { pdfToMarkdown, markdownToPdf } from './pdf.js';
+import { createPdfFromMarkdown } from './pdf-v3.js';
 import { PdfMetadata, ImageInfo } from './lib/pdf2md-patched.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -1178,7 +1179,116 @@ export async function writePdf(filePath: string, content: string, options: any =
         contentLength: content.length
     });
 
-    // markdownToPdf requires outputPath as 2nd arg even if unused in the current implementation
-    const pdfBuffer = await markdownToPdf(content, validPath, options);
+    // createPdfFromMarkdown returns Uint8Array directly, doesn't need path parameter
+    const pdfBuffer = await createPdfFromMarkdown(content, options);
+
     await fs.writeFile(validPath, pdfBuffer);
+}
+
+/**
+ * PDF modification operation types
+ */
+export interface PdfModifyOperation {
+    type: 'delete' | 'insert';
+    /** For delete: page index to delete (0-based). For insert: position to insert at (0-based) */
+    pageIndex: number;
+    /** For insert: markdown content to convert to PDF pages */
+    markdownContent?: string;
+    /** For insert: path to PDF file to insert pages from */
+    sourcePdf?: string;
+    /** For insert: array of page indices to copy from sourcePdf (0-based). If not specified, all pages are inserted. Only used with sourcePdf. */
+    sourcePageIndices?: number[];
+    /** Optional PDF generation options for inserted pages */
+    pdfOptions?: any;
+}
+
+/**
+ * Modify an existing PDF by deleting pages and/or inserting new pages from markdown content or other PDFs
+ * 
+ * @param sourcePdfPath - Path to the source PDF file
+ * @param outputPdfPath - Path where the modified PDF will be saved
+ * @param operations - Array of modification operations to perform
+ * @returns Promise<void>
+ * 
+ * @example
+ * // Delete pages 2 and 5, then insert new content at position 0
+ * await modifyPdf('input.pdf', 'output.pdf', [
+ *   { type: 'delete', pageIndex: 2 },
+ *   { type: 'delete', pageIndex: 5 },
+ *   { type: 'insert', pageIndex: 0, markdownContent: '# New Cover Page\n\nThis is the new cover.' }
+ * ]);
+ * 
+ * @example
+ * // Insert a new page at the end
+ * await modifyPdf('document.pdf', 'document-updated.pdf', [
+ *   { type: 'insert', pageIndex: 999, markdownContent: '# Appendix\n\nAdditional information.' }
+ * ]);
+ * 
+ * @example
+ * // Merge another PDF
+ * await modifyPdf('main.pdf', 'merged.pdf', [
+ *   { type: 'insert', pageIndex: 999, sourcePdf: 'appendix.pdf' }
+ * ]);
+ */
+export async function modifyPdf(
+    sourcePdfPath: string,
+    outputPdfPath: string,
+    operations: PdfModifyOperation[]
+): Promise<void> {
+    // Import the editPdf function and types
+    const { editPdf } = await import('./pdf-v3.js');
+    type PdfEditOperation = import('./pdf-v3.js').PdfEditOperation;
+
+    // Validate paths
+    const validSourcePath = await validatePath(sourcePdfPath);
+    const validOutputPath = await validatePath(outputPdfPath);
+
+    // Get file extension for telemetry
+    const fileExtension = getFileExtension(validSourcePath);
+
+    // Capture telemetry
+    capture('server_modify_pdf', {
+        fileExtension: fileExtension,
+        operationCount: operations.length,
+        deleteCount: operations.filter(op => op.type === 'delete').length,
+        insertCount: operations.filter(op => op.type === 'insert').length
+    });
+
+    // Process operations
+    const editOperations: PdfEditOperation[] = [];
+
+    for (const op of operations) {
+        if (op.type === 'delete') {
+            // Delete operations can be passed through directly
+            editOperations.push({
+                type: 'delete',
+                pageIndex: op.pageIndex
+            });
+        } else if (op.type === 'insert') {
+            if (!op.markdownContent && !op.sourcePdf) {
+                throw new Error('Insert operation requires either markdownContent or sourcePdf to be specified');
+            }
+
+            let validSourcePdfPath: string | undefined;
+            if (op.sourcePdf) {
+                validSourcePdfPath = await validatePath(op.sourcePdf);
+            }
+
+            // Add insert operation
+            editOperations.push({
+                type: 'insert',
+                pageIndex: op.pageIndex,
+                markdown: op.markdownContent,
+                sourcePdf: validSourcePdfPath,
+                sourcePageIndices: op.sourcePageIndices,
+                pdfOptions: op.pdfOptions
+            });
+        }
+    }
+
+    // Perform the PDF editing
+    const modifiedPdfBuffer = await editPdf(validSourcePath, editOperations);
+
+    // Write the modified PDF to the output path
+    await fs.writeFile(validOutputPath, modifiedPdfBuffer);
 }
