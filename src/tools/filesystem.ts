@@ -9,9 +9,8 @@ import { capture } from '../utils/capture.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { isPdfFile } from "./mime-types.js";
-import { PdfMetadata, PdfPageItem } from './lib/pdf2md-patched.js';
 // import { editPdf, PdfEditOperation, createPdfFromMarkdown } from './pdf-v3.js';
-import { editPdf, PdfEditOperation, pdfToMarkdown, markdownToPdf } from './pdf.js';
+import { editPdf, PdfOperations, PdfMetadata, PdfPageItem, parsePdfToMarkdown, parseMarkdownToPdf } from './pdf/index.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -334,7 +333,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         // NEW: Add PDF handling before image check
         if (isPdf) {
             // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await pdfToMarkdown(url);
+            const pdfResult = await parsePdfToMarkdown(url);
 
             return {
                 content: "",
@@ -712,7 +711,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
     const readOperation = async () => {
         if (isPdf) {
             // Pass file path directly to extractPdfText which handles file reading
-            const pdfResult = await pdfToMarkdown(validPath);
+            const pdfResult = await parsePdfToMarkdown(validPath);
 
             return {
                 content: "",
@@ -1167,123 +1166,60 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
     return info;
 }
 
-export async function writePdf(filePath: string, content: string, options: any = {}): Promise<void> {
-    const validPath = await validatePath(filePath);
 
-    // Get file extension for telemetry
+/**
+ * Write content to a PDF file.
+ * Can create a new PDF from Markdown string, or modify an existing PDF using operations.
+ * 
+ * @param filePath Path to the output PDF file
+ * @param content Markdown string (for creation) or array of operations (for modification)
+ * @param options Options for PDF generation or modification. For modification, can include `sourcePdf`.
+ */
+export async function writePdf(
+    filePath: string,
+    content: string | PdfOperations[],
+    options: any = {}
+): Promise<void> {
+    const validPath = await validatePath(filePath);
     const fileExtension = getFileExtension(validPath);
 
-    // Capture telemetry
-    capture('server_write_pdf', {
-        fileExtension: fileExtension,
-        contentLength: content.length
-    });
+    if (typeof content === 'string') {
+        // --- PDF CREATION MODE ---
+        capture('server_write_pdf', {
+            fileExtension: fileExtension,
+            contentLength: content.length,
+            mode: 'create'
+        });
 
-    const pdfBuffer = await markdownToPdf(content, options);
+        const pdfBuffer = await parseMarkdownToPdf(content, options);
+        await fs.writeFile(validPath, pdfBuffer);
+    } else if (Array.isArray(content)) {
+        const operations: PdfOperations[] = [];
 
-    await fs.writeFile(validPath, pdfBuffer);
-}
-
-/**
- * PDF modification operation types
- */
-export interface PdfModifyOperation {
-    type: 'delete' | 'insert';
-    /** For delete: page index to delete (0-based). For insert: position to insert at (0-based) */
-    pageIndex: number;
-    /** For insert: markdown content to convert to PDF pages */
-    markdownContent?: string;
-    /** For insert: path to PDF file to insert pages from */
-    sourcePdf?: string;
-    /** For insert: array of page indices to copy from sourcePdf (0-based). If not specified, all pages are inserted. Only used with sourcePdf. */
-    sourcePageIndices?: number[];
-    /** Optional PDF generation options for inserted pages */
-    pdfOptions?: any;
-}
-
-/**
- * Modify an existing PDF by deleting pages and/or inserting new pages from markdown content or other PDFs
- * 
- * @param sourcePdfPath - Path to the source PDF file
- * @param outputPdfPath - Path where the modified PDF will be saved
- * @param operations - Array of modification operations to perform
- * @returns Promise<void>
- * 
- * @example
- * // Delete pages 2 and 5, then insert new content at position 0
- * await modifyPdf('input.pdf', 'output.pdf', [
- *   { type: 'delete', pageIndex: 2 },
- *   { type: 'delete', pageIndex: 5 },
- *   { type: 'insert', pageIndex: 0, markdownContent: '# New Cover Page\n\nThis is the new cover.' }
- * ]);
- * 
- * @example
- * // Insert a new page at the end
- * await modifyPdf('document.pdf', 'document-updated.pdf', [
- *   { type: 'insert', pageIndex: 999, markdownContent: '# Appendix\n\nAdditional information.' }
- * ]);
- * 
- * @example
- * // Merge another PDF
- * await modifyPdf('main.pdf', 'merged.pdf', [
- *   { type: 'insert', pageIndex: 999, sourcePdf: 'appendix.pdf' }
- * ]);
- */
-export async function modifyPdf(
-    sourcePdfPath: string,
-    outputPdfPath: string,
-    operations: PdfModifyOperation[]
-): Promise<void> {
-    // Validate paths
-    const validSourcePath = await validatePath(sourcePdfPath);
-    const validOutputPath = await validatePath(outputPdfPath);
-
-    // Get file extension for telemetry
-    const fileExtension = getFileExtension(validSourcePath);
-
-    // Capture telemetry
-    capture('server_modify_pdf', {
-        fileExtension: fileExtension,
-        operationCount: operations.length,
-        deleteCount: operations.filter(op => op.type === 'delete').length,
-        insertCount: operations.filter(op => op.type === 'insert').length
-    });
-
-    // Process operations
-    const editOperations: PdfEditOperation[] = [];
-
-    for (const op of operations) {
-        if (op.type === 'delete') {
-            // Delete operations can be passed through directly
-            editOperations.push({
-                type: 'delete',
-                pageIndex: op.pageIndex
-            });
-        } else if (op.type === 'insert') {
-            if (!op.markdownContent && !op.sourcePdf) {
-                throw new Error('Insert operation requires either markdownContent or sourcePdf to be specified');
+        // Validate paths in operations
+        for (const o of content) {
+            if (o.type === 'insert') {
+                if (o.sourcePdfPath) {
+                    o.sourcePdfPath = await validatePath(o.sourcePdfPath);
+                }
             }
-
-            let validSourcePdfPath: string | undefined;
-            if (op.sourcePdf) {
-                validSourcePdfPath = await validatePath(op.sourcePdf);
-            }
-
-            // Add insert operation
-            editOperations.push({
-                type: 'insert',
-                pageIndex: op.pageIndex,
-                markdown: op.markdownContent,
-                sourcePdf: validSourcePdfPath,
-                sourcePageIndices: op.sourcePageIndices,
-                pdfOptions: op.pdfOptions
-            });
+            operations.push(o);
         }
+
+        capture('server_write_pdf', {
+            fileExtension: fileExtension,
+            operationCount: operations.length,
+            mode: 'modify',
+            deleteCount: operations.filter(op => op.type === 'delete').length,
+            insertCount: operations.filter(op => op.type === 'insert').length
+        });
+
+        // Perform the PDF editing
+        const modifiedPdfBuffer = await editPdf(validPath, operations);
+
+        // Write the modified PDF to the output path
+        await fs.writeFile(validPath, modifiedPdfBuffer);
+    } else {
+        throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }
-
-    // Perform the PDF editing
-    const modifiedPdfBuffer = await editPdf(validSourcePath, editOperations);
-
-    // Write the modified PDF to the output path
-    await fs.writeFile(validOutputPath, modifiedPdfBuffer);
 }

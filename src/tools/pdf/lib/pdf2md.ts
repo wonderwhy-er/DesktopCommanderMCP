@@ -32,7 +32,7 @@ export interface PdfPageItem {
     pageNumber: number;
 }
 
-export interface Pdf2MdResult {
+export interface PdfParseResult {
     pages: PdfPageItem[];
     metadata: PdfMetadata;
 }
@@ -122,90 +122,88 @@ const extractMetadata = ({ pdfDocument, metadata }: ParseResult): PdfMetadata =>
 });
 
 /**
- * Extracts images from a PDF document.
- * @param pdfDocument The PDF document to extract images from.
+ * Extracts images from a specific PDF page.
+ * @param page The PDF page object.
+ * @param pageNum The page number (1-based).
  * @returns An array of ImageInfo objects containing the extracted images.
  */
-async function extractImages({ pdfDocument }: ParseResult) {
+async function extractImages(page: any, pageNum: number): Promise<ImageInfo[]> {
     const images: ImageInfo[] = [];
-    if (pdfDocument) {
-        try {
-            const numPages = pdfDocument.numPages;
-            for (let i = 1; i <= numPages; i++) {
-                const page = await pdfDocument.getPage(i);
-                const ops = await page.getOperatorList();
-                const paintImageOp = 85; // OPS.paintImageXObject
-                for (let j = 0; j < ops.fnArray.length; j++) {
-                    if (ops.fnArray[j] === paintImageOp) {
-                        const args = ops.argsArray[j];
-                        const objId = args[0];
-                        // Retrieve image object via page.objs.get
-                        const imgObj: any = await new Promise((resolve, reject) => {
-                            if (page.objs && typeof page.objs.get === 'function') {
-                                page.objs.get(objId, (img: any) => {
-                                    if (img) resolve(img);
-                                    else reject(new Error('Image object not found'));
-                                });
-                            } else {
-                                reject(new Error('page.objs.get not available'));
-                            }
+    try {
+        const ops = await page.getOperatorList();
+        const paintImageOp = 85; // OPS.paintImageXObject
+        for (let j = 0; j < ops.fnArray.length; j++) {
+            if (ops.fnArray[j] === paintImageOp) {
+                const args = ops.argsArray[j];
+                const objId = args[0];
+                // Retrieve image object via page.objs.get
+                const imgObj: any = await new Promise((resolve, reject) => {
+                    if (page.objs && typeof page.objs.get === 'function') {
+                        page.objs.get(objId, (img: any) => {
+                            if (img) resolve(img);
+                            else reject(new Error('Image object not found'));
                         });
-                        if (imgObj && imgObj.data) {
-                            const pngBuffer = pdfImageObjToPng(imgObj);
-
-
-                            images.push({
-                                objId,
-                                width: imgObj.width,
-                                height: imgObj.height,
-                                data: pngBuffer.toString('base64'),
-                                mimeType: 'image/png',
-                                page: i
-                            });
-                        }
+                    } else {
+                        reject(new Error('page.objs.get not available'));
                     }
+                });
+                if (imgObj && imgObj.data) {
+                    images.push({
+                        objId,
+                        width: imgObj.width,
+                        height: imgObj.height,
+                        data: pdfImageObjToPng(imgObj).toString('base64'),
+                        mimeType: 'image/png',
+                        page: pageNum
+                    });
                 }
             }
-        } catch (e) {
-            console.warn('Image extraction failed:', e);
         }
-
+    } catch (e) {
+        console.warn(`Image extraction failed for page ${pageNum}:`, e);
     }
-
-    return images
-
+    return images;
 }
 
 /**
  * Reads a PDF and converts it to Markdown, returning structured data.
+ * @param pdfBuffer The PDF buffer to convert.
+ * @param pageNumbers The page numbers to extract. If empty, all pages are extracted.
+ * @returns A Promise that resolves to a PdfParseResult object containing the parsed data.
  */
-export async function pdf2md(pdfBuffer: Uint8Array): Promise<Pdf2MdResult> {
+export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] = []): Promise<PdfParseResult> {
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;
     const transformations = makeTransformations(fonts.map);
     const parseResult = transform(pages, transformations);
 
-    // Extract images first
-    const images = await extractImages(result);
+    const filteredPages = parseResult.pages.filter((page: any, index: number) => {
+        return pageNumbers.length === 0 || pageNumbers.includes(index + 1);
+    });
 
-    // Group images by page
-    const imagesByPage = new Map<number, ImageInfo[]>();
-    for (const img of images) {
-        if (!imagesByPage.has(img.page)) {
-            imagesByPage.set(img.page, []);
-        }
-        imagesByPage.get(img.page)!.push(img);
-    }
-
-    // Process pages
-    const processedPages: PdfPageItem[] = parseResult.pages.map((page: any, index: number) => {
+    // Process pages and extract images per page
+    const processedPages: PdfPageItem[] = await Promise.all(filteredPages.map(async (page: any, index: number) => {
         const pageNum = index + 1;
+
+        // Get the raw page object from pdfDocument to pass to extractImages
+        // Note: pdfDocument.getPage is 1-based
+        let rawPage = null;
+        if (pdfDocument) {
+            try {
+                rawPage = await pdfDocument.getPage(pageNum);
+            } catch (e) {
+                console.warn(`Could not get raw page ${pageNum} for image extraction`, e);
+            }
+        }
+
+        const images = rawPage ? await extractImages(rawPage, pageNum) : [];
+
         return {
             pageNumber: pageNum,
             text: page.items.join('\n') + '\n',
-            images: imagesByPage.get(pageNum) || []
+            images: images
         };
-    });
+    }));
 
     const metadata = extractMetadata(result);
 

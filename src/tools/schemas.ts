@@ -1,4 +1,4 @@
-import {z} from "zod";
+import { z } from "zod";
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({});
@@ -59,9 +59,25 @@ export const WriteFileArgsSchema = z.object({
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
 });
 
+// PDF modification schemas
+const PdfInsertOperationSchema = z.object({
+  type: z.literal('insert'),
+  pageIndex: z.number(),
+  markdown: z.string().optional(),
+  sourcePdfPath: z.string().optional(),
+  pdfOptions: z.object({}).passthrough().optional(),
+});
+
+const PdfDeleteOperationSchema = z.object({
+  type: z.literal('delete'),
+  pageIndexes: z.array(z.number()),
+});
+
+const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
+
 export const WritePdfArgsSchema = z.object({
   path: z.string(),
-  content: z.string(),
+  content: z.union([z.string(), z.array(PdfOperationSchema)]),
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 

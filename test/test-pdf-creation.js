@@ -5,8 +5,7 @@
  * Creates PDF from markdown string and verifies it
  */
 
-import { createPdfFromMarkdown } from '../dist/tools/pdf-v3.js';
-import { modifyPdf } from '../dist/tools/filesystem.js';
+import { writePdf } from '../dist/tools/filesystem.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -61,70 +60,84 @@ console.log('Line 3');
     console.log(`\n1. Creating PDF at: ${OUTPUT_FILE}`);
 
     try {
-        const pdfBuffer = await createPdfFromMarkdown(markdown);
+        // writePdf now writes directly to file
+        await writePdf(OUTPUT_FILE, markdown);
 
-        if (pdfBuffer) {
-            await fs.writeFile(OUTPUT_FILE, pdfBuffer);
-            console.log('✅ PDF created successfully');
-
+        // Verify creation
+        try {
             const stats = await fs.stat(OUTPUT_FILE);
+            console.log('✅ PDF created successfully');
             console.log(`   File Size: ${stats.size} bytes`);
 
-            // --- Modification Test ---
-            console.log('\n2. Testing PDF Modification (Insert & Delete & Merge)...');
-
-            // Create a temporary PDF to merge
-            const tempMergeFile = path.join(OUTPUT_DIR, 'temp_merge.pdf');
-            const mergeBuffer = await createPdfFromMarkdown('# Merged Page\n\nThis page was merged from another PDF file.');
-            await fs.writeFile(tempMergeFile, mergeBuffer);
-
-            // We will:
-            // 1. Delete page 0 (the first page)
-            // 2. Insert a new cover page at the beginning (from markdown)
-            // 3. Insert an appendix page at the end (from markdown)
-            // 4. Merge the temporary PDF at the very end (from file path)
-
-            await modifyPdf(OUTPUT_FILE, MODIFIED_FILE, [
-                {
-                    type: 'delete',
-                    pageIndex: 0
-                },
-                {
-                    type: 'insert',
-                    pageIndex: 0,
-                    markdownContent: '# New Cover Page\n\nThis page was inserted dynamically.\n\n## Summary\nWe deleted the original first page and added this one.'
-                },
-                {
-                    type: 'insert',
-                    pageIndex: 999, // Insert at end
-                    markdownContent: '# Appendix\n\nThis page was appended to the end.'
-                },
-                {
-                    type: 'insert',
-                    pageIndex: 999, // Append after the appendix
-                    sourcePdf: tempMergeFile
-                }
-            ]);
-
-            console.log('✅ PDF modified successfully');
-            console.log(`   Saved to: ${MODIFIED_FILE}`);
-
-            const modStats = await fs.stat(MODIFIED_FILE);
-            if (modStats.size > 0) {
-                console.log('✅ Modified PDF is valid (non-empty)');
-                console.log(`   Modified File Size: ${modStats.size} bytes`);
-            } else {
-                console.error('❌ Modified PDF file is empty');
-                process.exit(1);
+            if (stats.size === 0) {
+                throw new Error('Created PDF is empty');
             }
-
-            // Cleanup temp file
-            await fs.unlink(tempMergeFile).catch(() => { });
-
-        } else {
-            console.error('❌ Failed to create PDF: No buffer returned');
+        } catch (e) {
+            console.error('❌ Failed to verify created PDF:', e);
             process.exit(1);
         }
+
+        // --- Modification Test ---
+        console.log('\n2. Testing PDF Modification (Insert & Delete & Merge)...');
+
+        // Create a temporary PDF to merge
+        const tempMergeFile = path.join(OUTPUT_DIR, 'temp_merge.pdf');
+        await writePdf(tempMergeFile, '# Merged Page\n\nThis page was merged from another PDF file.');
+
+        // We will:
+        // 1. Delete page 0 (the first page)
+        // 2. Insert a new cover page at the beginning (from markdown)
+        // 3. Insert an appendix page at the end (from markdown)
+        // 4. Merge the temporary PDF at the very end (from file path)
+
+        await writePdf(MODIFIED_FILE, [
+            {
+                type: 'delete',
+                pageIndex: 0
+            },
+            {
+                type: 'delete',
+                pageIndex: -1 // Delete the last page.
+                // Sequential execution:
+                // 1. Original: [Page 1, Page 2]
+                // 2. Delete 0 (Page 1): [Page 2]
+                // 3. Delete -1 (Last page, i.e., Page 2): [] (Empty)
+            },
+            {
+                type: 'insert',
+                pageIndex: 0,
+                markdownContent: '# New Cover Page\n\nThis page was inserted dynamically.\n\n## Summary\nWe deleted the original pages and added this one.'
+                // 4. Insert at 0: [New Cover Page]
+            },
+            {
+                type: 'insert',
+                pageIndex: 1, // Append to end (count is 1)
+                markdownContent: '# Appendix\n\nThis page was appended to the end.'
+                // 5. Insert at 1: [New Cover Page, Appendix]
+            },
+            {
+                type: 'insert',
+                pageIndex: 2, // Append to end (count is 2)
+                sourcePdf: tempMergeFile
+                // 6. Insert at 2: [New Cover Page, Appendix, Merged Page]
+            }
+        ], { sourcePdf: OUTPUT_FILE });
+
+        console.log('✅ PDF modified successfully');
+        console.log(`   Saved to: ${MODIFIED_FILE}`);
+
+        const modStats = await fs.stat(MODIFIED_FILE);
+        if (modStats.size > 0) {
+            console.log('✅ Modified PDF is valid (non-empty)');
+            console.log(`   Modified File Size: ${modStats.size} bytes`);
+        } else {
+            console.error('❌ Modified PDF file is empty');
+            process.exit(1);
+        }
+
+        // Cleanup temp file
+        await fs.unlink(tempMergeFile).catch(() => { });
+
     } catch (error) {
         console.error('❌ Failed:', error);
         process.exit(1);

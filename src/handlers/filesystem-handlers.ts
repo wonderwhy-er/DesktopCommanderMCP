@@ -67,7 +67,15 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
         if (fileResult.isPdf) {
+            const meta = fileResult.payload?.metadata;
+            const author = `, Author: ${meta?.author || ""}`;
+            const title = `, Title: ${meta?.title || ""}`;
+
             const content = fileResult.payload?.pages?.flatMap(p => [
+                {
+                    type: "text",
+                    text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
+                },
                 ...(p.images?.map((image, i) => ({
                     type: "image",
                     data: image.data,

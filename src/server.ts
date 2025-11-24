@@ -343,32 +343,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "write_pdf",
                 description: `
-                        Create a PDF file from Markdown content.
-                        
-                        THIS IS THE ONLY TOOL FOR CREATING PDF FILES.
-                        
-                        Use this tool to save content as a PDF document.
-                        Common use cases:
-                        - Saving conversation history or chat logs to PDF
-                        - Creating reports, documentation, or articles
-                        - Exporting markdown notes to a printable format
-                        
-                        The tool takes markdown text as input. If you want to save the current conversation, you should first format the conversation as markdown and then pass it to this tool.
-                        
-                        EXAMPLE INTERACTION:
-                        User: "save this conversation to a pdf"
-                        Claude: "I will save the conversation to a PDF file."
-                        [calls write_pdf(path="conversation.pdf", content="# Conversation Log\n\nUser: save this...\n...")]
-                        
+                        Create a new PDF file or modify an existing one.
+
+                        THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING PDF FILES.
+
+                        MODES:
+                        1. CREATE NEW PDF:
+                           Pass a markdown string as 'content'.
+                           write_pdf(path="doc.pdf", content="# Title\\n\\nBody text...")
+
+                        2. MODIFY EXISTING PDF:
+                           Pass an array of operations as 'content'.
+                           write_pdf(path="doc.pdf", content=[
+                               { type: "delete", pageIndexes: [0, 2] },
+                               { type: "insert", pageIndex: 1, markdown: "# New Page" }
+                           ])
+
+                        OPERATIONS:
+                        - delete: Remove pages by 0-based index.
+                          { type: "delete", pageIndexes: [0, 1, 5] }
+
+                        - insert: Add pages at a specific 0-based index.
+                          { type: "insert", pageIndex: 0, markdown: "..." }
+                          { type: "insert", pageIndex: 5, sourcePdfPath: "/path/to/source.pdf" }
+
                         Supports standard markdown features including headers, lists, code blocks, tables, and basic formatting.
-                        
+
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(WritePdfArgsSchema),
                 annotations: {
-                    title: "Write PDF",
+                    title: "Write/Modify PDF",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
