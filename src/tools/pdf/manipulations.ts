@@ -2,35 +2,21 @@ import fs from 'fs/promises';
 import { PDFDocument } from 'pdf-lib';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
+import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
+import { z } from 'zod';
+
+// Infer TypeScript types from Zod schemas for consistency
+type PdfInsertOperation = z.infer<typeof PdfInsertOperationSchema>;
+type PdfDeleteOperation = z.infer<typeof PdfDeleteOperationSchema>;
+type PdfOperations = z.infer<typeof PdfOperationSchema>;
+
+export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
 async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocument> {
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);
 }
-
-/**
- * PDF edit operation types
- */
-export interface PdfInsertOperation {
-    type: 'insert';
-    // Page index to insert at, negative indices are from end
-    pageIndex: number;
-    // Markdown content to insert
-    markdown?: string;
-    // Source PDF to insert
-    sourcePdfPath?: string;
-    // Optional PDF generation options
-    pdfOptions?: any;
-}
-
-export interface PdfDeleteOperation {
-    type: 'delete';
-    // Page indices to delete, negative indices are from end
-    pageIndexes: number[];
-}
-
-export type PdfOperations = PdfInsertOperation | PdfDeleteOperation;
 
 /**
  * Delete pages from a PDF document
@@ -77,7 +63,6 @@ export async function editPdf(
     operations: PdfOperations[]
 ): Promise<Uint8Array> {
     const pdfDoc = await loadPdfDocumentFromBuffer(pdfPath);
-
     for (const op of operations) {
         if (op.type === 'delete') {
             deletePages(pdfDoc, op.pageIndexes);

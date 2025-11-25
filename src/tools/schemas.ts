@@ -59,8 +59,8 @@ export const WriteFileArgsSchema = z.object({
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
 });
 
-// PDF modification schemas
-const PdfInsertOperationSchema = z.object({
+// PDF modification schemas - exported for reuse
+export const PdfInsertOperationSchema = z.object({
   type: z.literal('insert'),
   pageIndex: z.number(),
   markdown: z.string().optional(),
@@ -68,16 +68,32 @@ const PdfInsertOperationSchema = z.object({
   pdfOptions: z.object({}).passthrough().optional(),
 });
 
-const PdfDeleteOperationSchema = z.object({
+export const PdfDeleteOperationSchema = z.object({
   type: z.literal('delete'),
   pageIndexes: z.array(z.number()),
 });
 
-const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
+export const PdfOperationSchema = z.union([PdfInsertOperationSchema, PdfDeleteOperationSchema]);
 
 export const WritePdfArgsSchema = z.object({
   path: z.string(),
-  content: z.union([z.string(), z.array(PdfOperationSchema)]),
+  // Preprocess content to handle JSON strings that should be parsed as arrays
+  content: z.preprocess(
+    (val) => {
+      // If it's a string that looks like JSON array, parse it
+      if (typeof val === 'string' && val.trim().startsWith('[')) {
+        try {
+          return JSON.parse(val);
+        } catch {
+          // If parsing fails, return as-is (might be markdown content)
+          return val;
+        }
+      }
+      // Otherwise return as-is
+      return val;
+    },
+    z.union([z.string(), z.array(PdfOperationSchema)])
+  ),
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
