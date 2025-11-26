@@ -71,6 +71,10 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         
         if (fileResult.metadata?.isImage) {
             // For image files, return as an image content type
+            // Content should already be base64-encoded string from handler
+            const imageData = typeof fileResult.content === 'string'
+                ? fileResult.content
+                : fileResult.content.toString('base64');
             return {
                 content: [
                     {
@@ -79,15 +83,18 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     },
                     {
                         type: "image",
-                        data: fileResult.content.toString(),
+                        data: imageData,
                         mimeType: fileResult.mimeType
                     }
                 ],
             };
         } else {
             // For all other files, return as text
+            const textContent = typeof fileResult.content === 'string'
+                ? fileResult.content
+                : fileResult.content.toString('utf8');
             return {
-                content: [{ type: "text", text: fileResult.content.toString() }],
+                content: [{ type: "text", text: textContent }],
             };
         }
     };
