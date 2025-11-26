@@ -994,13 +994,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     description: `
                         Execute Node.js code directly using the MCP server's Node runtime.
 
+                        PRIMARY TOOL FOR EXCEL FILES AND COMPLEX CALCULATIONS
+                        Use this tool for ANY Excel file (.xlsx, .xls) operations and complex data calculations.
+                        ExcelJS library is built-in and ready to use.
+
                         Code runs as ES module (.mjs) with top-level await support.
                         Uses the same Node.js environment that runs the MCP server.
 
-                        Available libraries: exceljs (for Excel file manipulation), and all Node.js built-ins.
+                        Available libraries: ExcelJS (for Excel file manipulation), and all Node.js built-ins.
 
-                        Use cases: Data transformations, bulk file operations, complex calculations,
-                        Excel manipulation, JSON processing, or any task better suited to code than tools.
+                        Use cases: Excel file reading/writing/analysis, data transformations, bulk file operations,
+                        complex calculations, JSON processing, or any task better suited to code than tools.
 
                         Output: Use console.log() to return results. Stdout is captured and returned.
 
