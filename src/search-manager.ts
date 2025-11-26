@@ -1,8 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
+import fs from 'fs/promises';
 import { validatePath } from './tools/filesystem.js';
 import { capture } from './utils/capture.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
+import { isExcelFile } from './utils/files/index.js';
 
 export interface SearchResult {
   file: string;
@@ -144,6 +146,27 @@ export interface SearchSessionOptions {
       validatedPath: validPath
     });
 
+    // For content searches, also search Excel files in parallel
+    let excelSearchPromise: Promise<void> | null = null;
+    if (options.searchType === 'content') {
+      excelSearchPromise = this.searchExcelFiles(
+        validPath,
+        options.pattern,
+        options.ignoreCase !== false,
+        options.maxResults,
+        options.filePattern  // Pass filePattern to filter Excel files too
+      ).then(excelResults => {
+        // Add Excel results to session
+        for (const result of excelResults) {
+          session.results.push(result);
+          session.totalMatches++;
+        }
+      }).catch((err) => {
+        // Log Excel search errors but don't fail the whole search
+        capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
+
     // Wait for first chunk of data or early completion instead of fixed delay
     const firstChunk = new Promise<void>(resolve => {
       const onData = () => {
@@ -153,7 +176,9 @@ export interface SearchSessionOptions {
       session.process.stdout?.once('data', onData);
       setTimeout(resolve, 40); // cap at 40ms instead of 50-100ms
     });
-    await firstChunk;
+
+    // Wait for both ripgrep first chunk and Excel search
+    await Promise.all([firstChunk, excelSearchPromise].filter(Boolean));
 
     return {
       sessionId,
@@ -273,6 +298,187 @@ export interface SearchSessionOptions {
       runtime: Date.now() - session.startTime,
       totalResults: session.totalMatches + session.totalContextLines
     }));
+  }
+
+  /**
+   * Search Excel files for content matches
+   * Called during content search to include Excel files alongside text files
+   * Searches ALL sheets in each Excel file (row-wise for cross-column matching)
+   *
+   * TODO: Refactor - Extract Excel search logic to separate module (src/utils/search/excel-search.ts)
+   * and inject into SearchManager, similar to how file handlers are structured in src/utils/files/
+   * This would allow adding other file type searches (PDF, etc.) without bloating search-manager.ts
+   */
+  private async searchExcelFiles(
+    rootPath: string,
+    pattern: string,
+    ignoreCase: boolean,
+    maxResults?: number,
+    filePattern?: string
+  ): Promise<SearchResult[]> {
+    const results: SearchResult[] = [];
+
+    // Build regex for matching content
+    const flags = ignoreCase ? 'i' : '';
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch {
+      // If pattern is not valid regex, escape it for literal matching
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      regex = new RegExp(escaped, flags);
+    }
+
+    // Find Excel files recursively
+    let excelFiles = await this.findExcelFiles(rootPath);
+
+    // Filter by filePattern if provided
+    if (filePattern) {
+      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
+      excelFiles = excelFiles.filter(filePath => {
+        const fileName = path.basename(filePath);
+        return patterns.some(pat => {
+          // Support glob-like patterns
+          if (pat.includes('*')) {
+            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
+          }
+          // Exact match (case-insensitive)
+          return fileName.toLowerCase() === pat.toLowerCase();
+        });
+      });
+    }
+
+    // Dynamically import ExcelJS to search all sheets
+    const ExcelJS = await import('exceljs');
+
+    for (const filePath of excelFiles) {
+      if (maxResults && results.length >= maxResults) break;
+
+      try {
+        const workbook = new ExcelJS.default.Workbook();
+        await workbook.xlsx.readFile(filePath);
+
+        // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
+        for (const worksheet of workbook.worksheets) {
+          if (maxResults && results.length >= maxResults) break;
+
+          const sheetName = worksheet.name;
+
+          // Iterate through rows (faster than cell-by-cell)
+          worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            if (maxResults && results.length >= maxResults) return;
+
+            // Build a concatenated string of all cell values in the row
+            const rowValues: string[] = [];
+            row.eachCell({ includeEmpty: false }, (cell) => {
+              if (cell.value === null || cell.value === undefined) return;
+
+              let cellStr: string;
+              if (typeof cell.value === 'object') {
+                if ('result' in cell.value) {
+                  cellStr = String(cell.value.result ?? '');
+                } else if ('richText' in cell.value) {
+                  cellStr = (cell.value as any).richText.map((rt: any) => rt.text).join('');
+                } else if ('text' in cell.value) {
+                  cellStr = String((cell.value as any).text);
+                } else {
+                  cellStr = String(cell.value);
+                }
+              } else {
+                cellStr = String(cell.value);
+              }
+
+              if (cellStr.trim()) {
+                rowValues.push(cellStr);
+              }
+            });
+
+            // Join all cell values with space for cross-column matching
+            const rowText = rowValues.join(' ');
+
+            if (regex.test(rowText)) {
+              // Extract the matching portion for display
+              const match = rowText.match(regex);
+              const matchContext = match
+                ? this.getMatchContext(rowText, match.index || 0, match[0].length)
+                : rowText.substring(0, 150);
+
+              results.push({
+                file: `${filePath}:${sheetName}!Row${rowNumber}`,
+                line: rowNumber,
+                match: matchContext,
+                type: 'content'
+              });
+            }
+          });
+        }
+      } catch (error) {
+        // Skip files that can't be read (permission issues, corrupted, etc.)
+        continue;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Find all Excel files in a directory recursively
+   */
+  private async findExcelFiles(rootPath: string): Promise<string[]> {
+    const excelFiles: string[] = [];
+
+    async function walk(dir: string): Promise<void> {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+
+          if (entry.isDirectory()) {
+            // Skip node_modules, .git, etc.
+            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+              await walk(fullPath);
+            }
+          } else if (entry.isFile() && isExcelFile(entry.name)) {
+            excelFiles.push(fullPath);
+          }
+        }
+      } catch {
+        // Skip directories we can't read
+      }
+    }
+
+    // Check if rootPath is a file or directory
+    try {
+      const stats = await fs.stat(rootPath);
+      if (stats.isFile() && isExcelFile(rootPath)) {
+        return [rootPath];
+      } else if (stats.isDirectory()) {
+        await walk(rootPath);
+      }
+    } catch {
+      // Path doesn't exist or can't be accessed
+    }
+
+    return excelFiles;
+  }
+
+  /**
+   * Extract context around a match for display (show surrounding text)
+   */
+  private getMatchContext(text: string, matchStart: number, matchLength: number): string {
+    const contextChars = 50; // chars before and after match
+    const start = Math.max(0, matchStart - contextChars);
+    const end = Math.min(text.length, matchStart + matchLength + contextChars);
+
+    let context = text.substring(start, end);
+
+    // Add ellipsis if truncated
+    if (start > 0) context = '...' + context;
+    if (end < text.length) context = context + '...';
+
+    return context;
   }
 
   /**

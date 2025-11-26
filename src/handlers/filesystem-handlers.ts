@@ -9,6 +9,7 @@ import {
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
+import type { ReadOptions } from '../utils/files/base.js';
 
 import {ServerResult} from '../types.js';
 import {withTimeout} from '../utils/withTimeout.js';
@@ -59,23 +60,26 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const defaultLimit = config.fileReadLineLimit ?? 1000;
 
-        // Use the provided limits or defaults
-        const offset = parsed.offset ?? 0;
-        const length = parsed.length ?? defaultLimit;
+        const options: ReadOptions = {
+            isUrl: parsed.isUrl,
+            offset: parsed.offset ?? 0,
+            length: parsed.length ?? defaultLimit,
+            sheet: parsed.sheet,
+            range: parsed.range
+        };
+        const fileResult = await readFile(parsed.path, options);
         
-        const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
-        
-        if (fileResult.isImage) {
+        if (fileResult.metadata?.isImage) {
             // For image files, return as an image content type
             return {
                 content: [
-                    { 
-                        type: "text", 
-                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
+                    {
+                        type: "text",
+                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n`
                     },
                     {
                         type: "image",
-                        data: fileResult.content,
+                        data: fileResult.content.toString(),
                         mimeType: fileResult.mimeType
                     }
                 ],
@@ -83,7 +87,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         } else {
             // For all other files, return as text
             return {
-                content: [{ type: "text", text: fileResult.content }],
+                content: [{ type: "text", text: fileResult.content.toString() }],
             };
         }
     };
@@ -242,18 +246,49 @@ export async function handleMoveFile(args: unknown): Promise<ServerResult> {
 }
 
 /**
+ * Format a value for display, handling objects and arrays
+ */
+function formatValue(value: unknown, indent: string = ''): string {
+    if (value === null || value === undefined) {
+        return String(value);
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) return '[]';
+        // For arrays of objects (like sheets), format each item
+        const items = value.map((item, i) => {
+            if (typeof item === 'object' && item !== null) {
+                const props = Object.entries(item)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ');
+                return `${indent}  [${i}] { ${props} }`;
+            }
+            return `${indent}  [${i}] ${item}`;
+        });
+        return `\n${items.join('\n')}`;
+    }
+    if (typeof value === 'object') {
+        return JSON.stringify(value);
+    }
+    return String(value);
+}
+
+/**
  * Handle get_file_info command
  */
 export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
     try {
         const parsed = GetFileInfoArgsSchema.parse(args);
         const info = await getFileInfo(parsed.path);
+
+        // Generic formatting for any file type
+        const formattedText = Object.entries(info)
+            .map(([key, value]) => `${key}: ${formatValue(value)}`)
+            .join('\n');
+
         return {
-            content: [{ 
-                type: "text", 
-                text: Object.entries(info)
-                    .map(([key, value]) => `${key}: ${value}`)
-                    .join('\n') 
+            content: [{
+                type: "text",
+                text: formattedText
             }],
         };
     } catch (error) {

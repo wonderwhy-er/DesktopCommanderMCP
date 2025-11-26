@@ -1,16 +1,16 @@
 [34mStarting Node.js REPL...[0m
 [34mWaiting for Node.js startup...[0m
-[32m[STDOUT] Welcome to Node.js v22.18.0.
+[32m[STDOUT] Welcome to Node.js v21.7.3.
 Type ".help" for more information.[0m
 [32m[STDOUT] >[0m
-[34mInitial output buffer: Welcome to Node.js v22.18.0.
+[34mInitial output buffer: Welcome to Node.js v21.7.3.
 Type ".help" for more information.
 > [0m
 [34mSending simple command...[0m
 [32m[STDOUT] Hello from Node.js![0m
-[32m[STDOUT] undefined
->[0m
-[34mOutput after first command: Welcome to Node.js v22.18.0.
+[32m[STDOUT] undefined[0m
+[32m[STDOUT] >[0m
+[34mOutput after first command: Welcome to Node.js v21.7.3.
 Type ".help" for more information.
 > Hello from Node.js!
 undefined
@@ -29,18 +29,18 @@ for (let i = 0; i < 3; i++) {
 [32m[STDOUT] >[0m
 [32m[STDOUT] ...[0m
 [32m[STDOUT] ...[0m
-[32m[STDOUT] undefined
->[0m
+[32m[STDOUT] undefined[0m
+[32m[STDOUT] >[0m
 [32m[STDOUT] >[0m
 [32m[STDOUT] ...[0m
 [32m[STDOUT] ...[0m
 [32m[STDOUT] Hello, User 0![0m
-[32m[STDOUT] Hello, User 1![0m
-[32m[STDOUT] Hello, User 2![0m
-[32m[STDOUT] undefined[0m
+[32m[STDOUT] Hello, User 1!
+Hello, User 2![0m
+[32m[STDOUT] undefined
+>[0m
 [32m[STDOUT] >[0m
-[32m[STDOUT] >[0m
-[34mFinal output buffer: Welcome to Node.js v22.18.0.
+[34mFinal output buffer: Welcome to Node.js v21.7.3.
 Type ".help" for more information.
 > Hello from Node.js!
 undefined
