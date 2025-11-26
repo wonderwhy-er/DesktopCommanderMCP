@@ -1058,9 +1058,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         The prompt content will be injected and execution begins immediately.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-            }
-        ];
+                    inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                },
+                {
+                    name: "execute_node",
+                    description: `
+                        Execute Node.js code directly using the MCP server's Node runtime.
+
+                        PRIMARY TOOL FOR EXCEL FILES AND COMPLEX CALCULATIONS
+                        Use this tool for ANY Excel file (.xlsx, .xls) operations and complex data calculations.
+                        ExcelJS library is built-in and ready to use.
+
+                        Code runs as ES module (.mjs) with top-level await support.
+                        Uses the same Node.js environment that runs the MCP server.
+
+                        Available libraries: ExcelJS (for Excel file manipulation), and all Node.js built-ins.
+
+                        Use cases: Excel file reading/writing/analysis, data transformations, bulk file operations,
+                        complex calculations, JSON processing, or any task better suited to code than tools.
+
+                        Output: Use console.log() to return results. Stdout is captured and returned.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ExecuteNodeArgsSchema),
+                    annotations: {
+                        title: "Execute Node.js Code",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: true,
+                    },
+                }
+            ];
 
         // Filter tools based on current client
         const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
