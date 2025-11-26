@@ -721,9 +721,21 @@ export async function readFileFromDisk(
             includeStatusMessage: true
         });
 
-        // Return result - handler provides correct format for each type
+        // Return with content as string
+        // For images: content is already base64-encoded string from handler
+        // For text: content may be string or Buffer, convert to UTF-8 string
+        let content: string;
+        if (typeof result.content === 'string') {
+            content = result.content;
+        } else if (result.metadata?.isImage) {
+            // Image buffer should be base64 encoded, not UTF-8 converted
+            content = result.content.toString('base64');
+        } else {
+            content = result.content.toString('utf8');
+        }
+
         return {
-            content: result.content,
+            content,
             mimeType: result.mimeType,
             metadata: result.metadata
         };
@@ -891,10 +903,19 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
             try {
                 const validPath = await validatePath(filePath);
                 const fileResult = await readFile(validPath);
-                const isPdf = isPdfFile(fileResult.mimeType);
+                // Handle content conversion properly for images vs text
+                let content: string;
+                if (typeof fileResult.content === 'string') {
+                    content = fileResult.content;
+                } else if (fileResult.metadata?.isImage) {
+                    content = fileResult.content.toString('base64');
+                } else {
+                    content = fileResult.content.toString('utf8');
+                }
+
                 return {
                     path: filePath,
-                    content: typeof fileResult.content === 'string' ? fileResult.content : fileResult.content.toString(),
+                    content,
                     mimeType: fileResult.mimeType,
                     isImage: fileResult.metadata?.isImage ?? false,
                     isPdf: fileResult.metadata?.isPdf ?? false,
@@ -1117,22 +1138,43 @@ async function searchFilesNodeJS(rootPath: string, pattern: string): Promise<str
 export async function getFileInfo(filePath: string): Promise<Record<string, any>> {
     const validPath = await validatePath(filePath);
 
+    // Get fs.stat as a fallback for any missing fields
+    const stats = await fs.stat(validPath);
+    const fallbackInfo = {
+        size: stats.size,
+        created: stats.birthtime,
+        modified: stats.mtime,
+        accessed: stats.atime,
+        isDirectory: stats.isDirectory(),
+        isFile: stats.isFile(),
+        permissions: stats.mode.toString(8).slice(-3),
+        fileType: 'text' as const,
+        metadata: undefined as Record<string, any> | undefined,
+    };
+
     // Get appropriate handler for this file type
     const handler = getFileHandler(validPath);
 
-    // Use handler to get file info
-    const fileInfo = await handler.getInfo(validPath);
+    // Use handler to get file info, with fallback
+    let fileInfo;
+    try {
+        fileInfo = await handler.getInfo(validPath);
+    } catch (error) {
+        // If handler fails, use fallback stats
+        fileInfo = fallbackInfo;
+    }
 
     // Convert to legacy format (for backward compatibility)
+    // Use handler values with fallback to fs.stat values for any missing fields
     const info: Record<string, any> = {
-        size: fileInfo.size,
-        created: fileInfo.created,
-        modified: fileInfo.modified,
-        accessed: fileInfo.accessed,
-        isDirectory: fileInfo.isDirectory,
-        isFile: fileInfo.isFile,
-        permissions: fileInfo.permissions,
-        fileType: fileInfo.fileType,
+        size: fileInfo.size ?? fallbackInfo.size,
+        created: fileInfo.created ?? fallbackInfo.created,
+        modified: fileInfo.modified ?? fallbackInfo.modified,
+        accessed: fileInfo.accessed ?? fallbackInfo.accessed,
+        isDirectory: fileInfo.isDirectory ?? fallbackInfo.isDirectory,
+        isFile: fileInfo.isFile ?? fallbackInfo.isFile,
+        permissions: fileInfo.permissions ?? fallbackInfo.permissions,
+        fileType: fileInfo.fileType ?? fallbackInfo.fileType,
     };
 
     // Add type-specific metadata from file handler

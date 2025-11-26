@@ -60,14 +60,26 @@ async function setup() {
 
 /**
  * Teardown function
+ * Always runs cleanup, restores config only if provided
  */
 async function teardown(originalConfig) {
-  if (originalConfig) {
-    await configManager.updateConfig(originalConfig);
+  // Always clean up test directories, even if setup failed
+  try {
+    await cleanupTestDirectories();
+    console.log('✓ Teardown: cleaned up test directories');
+  } catch (error) {
+    console.error('Warning: Failed to clean up test directories:', error.message);
   }
 
-  await cleanupTestDirectories();
-  console.log('✓ Teardown: cleaned up');
+  // Restore config only if we have the original
+  if (originalConfig) {
+    try {
+      await configManager.updateConfig(originalConfig);
+      console.log('✓ Teardown: restored config');
+    } catch (error) {
+      console.error('Warning: Failed to restore config:', error.message);
+    }
+  }
 }
 
 /**
@@ -295,9 +307,9 @@ export default async function runTests() {
     console.error(error.stack);
     return false;
   } finally {
-    if (originalConfig) {
-      await teardown(originalConfig);
-    }
+    // Always run teardown to clean up test directories and restore config
+    // teardown handles the case where originalConfig is undefined
+    await teardown(originalConfig);
   }
   return true;
 }

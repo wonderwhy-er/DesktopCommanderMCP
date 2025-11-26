@@ -146,17 +146,21 @@ export interface SearchSessionOptions {
       validatedPath: validPath
     });
 
-    // For content searches, also search Excel files in parallel
-    let excelSearchPromise: Promise<void> | null = null;
-    if (options.searchType === 'content') {
-      excelSearchPromise = this.searchExcelFiles(
+    // For content searches, only search Excel files when contextually relevant:
+    // - filePattern explicitly targets Excel files (*.xlsx, *.xls, etc.)
+    // - or rootPath is an Excel file itself
+    const shouldSearchExcel = options.searchType === 'content' &&
+      this.shouldIncludeExcelSearch(options.filePattern, validPath);
+
+    if (shouldSearchExcel) {
+      this.searchExcelFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
         options.maxResults,
         options.filePattern  // Pass filePattern to filter Excel files too
       ).then(excelResults => {
-        // Add Excel results to session
+        // Add Excel results to session (merged after initial response)
         for (const result of excelResults) {
           session.results.push(result);
           session.totalMatches++;
@@ -168,6 +172,7 @@ export interface SearchSessionOptions {
     }
 
     // Wait for first chunk of data or early completion instead of fixed delay
+    // Excel search runs in background and results are merged via readSearchResults
     const firstChunk = new Promise<void>(resolve => {
       const onData = () => {
         session.process.stdout?.off('data', onData);
@@ -177,8 +182,8 @@ export interface SearchSessionOptions {
       setTimeout(resolve, 40); // cap at 40ms instead of 50-100ms
     });
 
-    // Wait for both ripgrep first chunk and Excel search
-    await Promise.all([firstChunk, excelSearchPromise].filter(Boolean));
+    // Only wait for ripgrep first chunk - Excel results merge asynchronously
+    await firstChunk;
 
     return {
       sessionId,
@@ -507,7 +512,7 @@ export interface SearchSessionOptions {
    * (has file extension and no glob wildcards)
    */
   private isExactFilename(pattern: string): boolean {
-    return /\.[a-zA-Z0-9]+$/.test(pattern) && 
+    return /\.[a-zA-Z0-9]+$/.test(pattern) &&
            !this.isGlobPattern(pattern);
   }
 
@@ -515,12 +520,44 @@ export interface SearchSessionOptions {
    * Detect if pattern contains glob wildcards
    */
   private isGlobPattern(pattern: string): boolean {
-    return pattern.includes('*') || 
-           pattern.includes('?') || 
-           pattern.includes('[') || 
+    return pattern.includes('*') ||
+           pattern.includes('?') ||
+           pattern.includes('[') ||
            pattern.includes('{') ||
            pattern.includes(']') ||
            pattern.includes('}');
+  }
+
+  /**
+   * Determine if Excel search should be included based on context
+   * Only searches Excel files when:
+   * - filePattern explicitly targets Excel files (*.xlsx, *.xls, *.xlsm, *.xlsb)
+   * - or the rootPath itself is an Excel file
+   */
+  private shouldIncludeExcelSearch(filePattern?: string, rootPath?: string): boolean {
+    const excelExtensions = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
+
+    // Check if rootPath is an Excel file
+    if (rootPath) {
+      const lowerPath = rootPath.toLowerCase();
+      if (excelExtensions.some(ext => lowerPath.endsWith(ext))) {
+        return true;
+      }
+    }
+
+    // Check if filePattern targets Excel files
+    if (filePattern) {
+      const lowerPattern = filePattern.toLowerCase();
+      // Check for patterns like *.xlsx, *.xls, or explicit Excel extensions
+      if (excelExtensions.some(ext =>
+        lowerPattern.includes(`*${ext}`) ||
+        lowerPattern.endsWith(ext)
+      )) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
