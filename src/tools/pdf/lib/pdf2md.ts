@@ -1,5 +1,5 @@
 import { createRequire } from 'module';
-import { PNG } from 'pngjs';
+
 import { generatePageNumbers } from '../utils.js';
 import { extractImagesFromPdf, ImageInfo } from '../extract-images.js';
 const require = createRequire(import.meta.url);
