@@ -5,7 +5,7 @@
  * Verifies parsing of sample PDFs and URL
  */
 
-import { pdfToMarkdown } from '../dist/tools/pdf.js';
+import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
@@ -16,9 +16,9 @@ const __dirname = path.dirname(__filename);
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const SAMPLES = [
     '01_sample_simple.pdf',
-    // '02_sample_invoce.pdf',
+    '02_sample_invoice.pdf',
     '03_sample_compex.pdf',
-    'statement.pdf'
+    // 'statement.pdf'
 ];
 
 const URL_SAMPLE = 'https://pdfobject.com/pdf/sample.pdf';
@@ -34,7 +34,7 @@ async function testSample(name, source) {
 
         // Content (Markdown)
         console.log('\n📝 CONTENT PREVIEW (Markdown):');
-        const result = await pdfToMarkdown(source);
+        const result = await parsePdfToMarkdown(source);
 
         // Verify new structure
         if (result.pages) {
@@ -90,8 +90,61 @@ async function testSample(name, source) {
     }
 }
 
+async function testPageFiltering() {
+    console.log(`\n================================================================================`);
+    console.log(`🧪 Testing Page Filtering`);
+    console.log(`--------------------------------------------------------------------------------`);
+
+    const sampleName = '03_sample_compex.pdf';
+    const samplePath = path.join(SAMPLES_DIR, sampleName);
+
+    try {
+        // Case 1: Specific Pages (Array)
+        console.log('\nCase 1: Specific Pages [1]');
+        const result1 = await parsePdfToMarkdown(samplePath, [1]);
+        console.log(`Pages returned: ${result1.pages.length}`);
+        console.log(`Page numbers: ${result1.pages.map(p => p.pageNumber).join(', ')}`);
+
+        // Case 2: Page Range (Positive Offset) - First Page
+        console.log('\nCase 2: Page Range { offset: 0, length: 1 } (First Page)');
+        const result2 = await parsePdfToMarkdown(samplePath, { offset: 0, length: 1 });
+        console.log(`Pages returned: ${result2.pages.length}`);
+        console.log(`Page numbers: ${result2.pages.map(p => p.pageNumber).join(', ')}`);
+
+        // Case 3: Page Range (Negative Offset) - Last Page
+        console.log('\nCase 3: Page Range { offset: -2, length: 2 } (Last Page)');
+        const result3 = await parsePdfToMarkdown(samplePath, { offset: -2, length: 2 });
+        console.log(`Pages returned: ${result3.pages.length}`);
+        console.log(`Page numbers: ${result3.pages.map(p => p.pageNumber).join(', ')}`);
+
+        // Case 4: Page Range (Large Length) - All Pages
+        console.log('\nCase 4: Page Range { offset: 0, length: 100 } (All Pages)');
+        const result4 = await parsePdfToMarkdown(samplePath, { offset: 0, length: 100 });
+        console.log(`Pages returned: ${result4.pages.length}`);
+        console.log(`Page numbers: ${result4.pages.map(p => p.pageNumber).join(', ')}`);
+
+        // Case 4: Page Range (Large Length) - All Pages
+        console.log('\nCase 5: Page Range { offset: 0, length: 100 } (All Pages)');
+        const result5 = await parsePdfToMarkdown(samplePath, { offset: -100, length: 100 });
+        console.log(`Pages returned: ${result5.pages.length}`);
+        console.log(`Page numbers: ${result5.pages.map(p => p.pageNumber).join(', ')}`);
+
+        // Case 6: Page Range (Large Length) - All Pages
+        console.log('\nCase 6: Page Range [1,5,14] (All Pages)');
+        const result6 = await parsePdfToMarkdown(samplePath, [1, 5, 14]);
+        console.log(`Pages returned: ${result6.pages.length}`);
+        console.log(`Page numbers: ${result6.pages.map(p => p.pageNumber).join(', ')}`);
+
+    } catch (error) {
+        console.error('❌ Error in page filtering test:', error);
+    }
+}
+
 async function main() {
     console.log('🧪 PDF v3 Sample Test Suite (@opendocsg/pdf2md)');
+
+    // Test Page Filtering
+    await testPageFiltering();
 
     // Test Local Samples
     for (const sample of SAMPLES) {

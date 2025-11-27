@@ -269,6 +269,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         PDF Support:
                         - Automatically extracts text content as markdown
                         - Preserves basic document structure with paragraph breaks
+                        - Special handling for 'offset' and 'length':
+                          * 'offset': Start page number (0-based, e.g., 0 is page 1)
+                          * 'length': Number of pages to read
+                          * Negative offsets work similarly (e.g., -1 is the last page)
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -347,13 +351,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING PDF FILES.
 
+                        RULES ABOUT FILENAMES:
+                        - When creating a new PDF, 'outputPath' MUST be provided and MUST use a new unique filename (e.g., "result_01.pdf", "analysis_2025_01.pdf", etc.).
+
                         MODES:
                         1. CREATE NEW PDF:
-                           Pass a markdown string as 'content'.
+                           - Pass a markdown string as 'content'.
                            write_pdf(path="doc.pdf", content="# Title\\n\\nBody text...")
 
                         2. MODIFY EXISTING PDF:
-                           Pass an array of operations as 'content'.
+                           - Pass array of operations as 'content'.
+                           - NEVER overwrite the original file.
+                           - ALWAYS provide a new filename in 'outputPath'.
+                           - After modifying, show original file path and new file path to user.
+
                            write_pdf(path="doc.pdf", content=[
                                { type: "delete", pageIndexes: [0, 2] },
                                { type: "insert", pageIndex: 1, markdown: "# New Page" }

@@ -711,7 +711,7 @@ export async function readFileFromDisk(filePath: string, offset: number = 0, len
     const readOperation = async () => {
         if (isPdf) {
             // Pass file path directly to extractPdfText which handles file reading
-            const pdfResult = await parsePdfToMarkdown(validPath);
+            const pdfResult = await parsePdfToMarkdown(validPath, { offset, length });
 
             return {
                 content: "",
@@ -1178,6 +1178,7 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
 export async function writePdf(
     filePath: string,
     content: string | PdfOperations[],
+    outputPath?: string,
     options: any = {}
 ): Promise<void> {
     const validPath = await validatePath(filePath);
@@ -1192,8 +1193,14 @@ export async function writePdf(
         });
 
         const pdfBuffer = await parseMarkdownToPdf(content, options);
-        await fs.writeFile(validPath, pdfBuffer);
+        // Use outputPath if provided, otherwise overwrite input file
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+        await fs.writeFile(targetPath, pdfBuffer);
     } else if (Array.isArray(content)) {
+
+        // Use outputPath if provided, otherwise overwrite input file
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
         const operations: PdfOperations[] = [];
 
         // Validate paths in operations
@@ -1218,7 +1225,7 @@ export async function writePdf(
         const modifiedPdfBuffer = await editPdf(validPath, operations);
 
         // Write the modified PDF to the output path
-        await fs.writeFile(validPath, modifiedPdfBuffer);
+        await fs.writeFile(targetPath, modifiedPdfBuffer);
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }

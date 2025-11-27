@@ -1,11 +1,11 @@
 import { createRequire } from 'module';
 import { PNG } from 'pngjs';
+import { generatePageNumbers } from '../utils.js';
 
 const require = createRequire(import.meta.url);
 
 const { parse } = require('@opendocsg/pdf2md/lib/util/pdf');
 const { makeTransformations, transform } = require('@opendocsg/pdf2md/lib/util/transformations');
-
 
 type ParseResult = ReturnType<typeof parse>;
 
@@ -165,41 +165,55 @@ async function extractImages(page: any, pageNum: number): Promise<ImageInfo[]> {
     return images;
 }
 
+export type PageRange = {
+    offset: number;
+    length: number;
+};
+
 /**
  * Reads a PDF and converts it to Markdown, returning structured data.
  * @param pdfBuffer The PDF buffer to convert.
  * @param pageNumbers The page numbers to extract. If empty, all pages are extracted.
  * @returns A Promise that resolves to a PdfParseResult object containing the parsed data.
  */
-export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] = []): Promise<PdfParseResult> {
+export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;
     const transformations = makeTransformations(fonts.map);
     const parseResult = transform(pages, transformations);
 
-    const filteredPages = parseResult.pages.filter((page: any, index: number) => {
-        return pageNumbers.length === 0 || pageNumbers.includes(index + 1);
+    const filterPageNumbers = Array.isArray(pageNumbers) ?
+        pageNumbers :
+        generatePageNumbers(pageNumbers.offset, pageNumbers.length, parseResult.pages.length);
+
+    const pagesWithIndex = parseResult.pages.map((page: any, index: number) => ({
+        page,
+        pageNumber: index + 1
+    }));
+
+    const filteredPages = pagesWithIndex.filter((item: { page: any, pageNumber: number }) => {
+        return filterPageNumbers.length === 0 || filterPageNumbers.includes(item.pageNumber);
     });
 
     // Process pages and extract images per page
-    const processedPages: PdfPageItem[] = await Promise.all(filteredPages.map(async (page: any, index: number) => {
-        const pageNum = index + 1;
+    const processedPages: PdfPageItem[] = await Promise.all(filteredPages.map(async (item: { page: any, pageNumber: number }) => {
+        const { page, pageNumber } = item;
 
         // Get the raw page object from pdfDocument to pass to extractImages
         // Note: pdfDocument.getPage is 1-based
         let rawPage = null;
         if (pdfDocument) {
             try {
-                rawPage = await pdfDocument.getPage(pageNum);
+                rawPage = await pdfDocument.getPage(pageNumber);
             } catch (e) {
-                console.warn(`Could not get raw page ${pageNum} for image extraction`, e);
+                console.warn(`Could not get raw page ${pageNumber} for image extraction`, e);
             }
         }
 
-        const images = rawPage ? await extractImages(rawPage, pageNum) : [];
+        const images = rawPage ? await extractImages(rawPage, pageNumber) : [];
 
         return {
-            pageNumber: pageNum,
+            pageNumber,
             text: page.items.join('\n') + '\n',
             images: images
         };

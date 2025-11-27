@@ -2,7 +2,6 @@ import fs from 'fs/promises';
 import { mdToPdf } from 'md-to-pdf';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 
-
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
 
@@ -16,16 +15,21 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
     }
 }
 
+type PageRange = {
+    offset: number;
+    length: number;
+}
+
 /**
  * Convert PDF to Markdown using @opendocsg/pdf2md
  */
 
-export async function parsePdfToMarkdown(source: string): Promise<PdfParseResult> {
+export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
 
         // @ts-ignore: Type definition mismatch for ESM usage
-        return await pdf2md(new Uint8Array(data));
+        return await pdf2md(new Uint8Array(data), pageNumbers);
 
     } catch (error) {
         console.error("Error converting PDF to Markdown (v3):", error);

@@ -72,10 +72,6 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             const title = meta?.title ? `, Title: ${meta?.title}` : "";
 
             const content = fileResult.payload?.pages?.flatMap(p => [
-                {
-                    type: "text",
-                    text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
-                },
                 ...(p.images?.map((image, i) => ({
                     type: "image",
                     data: image.data,
@@ -83,12 +79,18 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                 })) ?? []),
                 {
                     type: "text",
-                    text: p.text,
+                    text: `<!-- Page: ${p.pageNumber} -->\n${p.text}`,
                 },
             ]) ?? [];
 
             return {
-                content
+                content: [
+                    {
+                        type: "text",
+                        text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
+                    },
+                    ...content
+                ]
             };
         }
         if (fileResult.isImage) {
@@ -312,9 +314,9 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
 export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
-        await writePdf(parsed.path, parsed.content, parsed.options);
+        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         return {
-            content: [{ type: "text", text: `Successfully wrote PDF to ${parsed.path}` }],
+            content: [{ type: "text", text: `Successfully wrote PDF to ${parsed.outputPath}.\n Original file: ${parsed.path}` }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

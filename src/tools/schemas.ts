@@ -94,6 +94,7 @@ export const WritePdfArgsSchema = z.object({
     },
     z.union([z.string(), z.array(PdfOperationSchema)])
   ),
+  outputPath: z.string().optional(),
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
