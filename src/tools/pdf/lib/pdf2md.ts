@@ -179,21 +179,33 @@ export type PageRange = {
 export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;
-    const transformations = makeTransformations(fonts.map);
-    const parseResult = transform(pages, transformations);
 
+    // Calculate which pages to process BEFORE transformation
     const filterPageNumbers = Array.isArray(pageNumbers) ?
         pageNumbers :
-        generatePageNumbers(pageNumbers.offset, pageNumbers.length, parseResult.pages.length);
+        generatePageNumbers(pageNumbers.offset, pageNumbers.length, pages.length);
 
+    // Filter raw pages BEFORE transformation to avoid wasting CPU on unwanted pages
+    const pagesToProcess = filterPageNumbers.length === 0 ?
+        pages :
+        pages.filter((_: any, index: number) => filterPageNumbers.includes(index + 1));
+
+    // Track original page numbers for filtered pages
+    const pageNumberMap = filterPageNumbers.length === 0 ?
+        pages.map((_: any, index: number) => index + 1) :
+        filterPageNumbers.filter(pageNum => pageNum >= 1 && pageNum <= pages.length);
+
+    // Only transform the pages we need
+    const transformations = makeTransformations(fonts.map);
+    const parseResult = transform(pagesToProcess, transformations);
+
+    // Map transformed pages back to their original page numbers
     const pagesWithIndex = parseResult.pages.map((page: any, index: number) => ({
         page,
-        pageNumber: index + 1
+        pageNumber: pageNumberMap[index]
     }));
 
-    const filteredPages = pagesWithIndex.filter((item: { page: any, pageNumber: number }) => {
-        return filterPageNumbers.length === 0 || filterPageNumbers.includes(item.pageNumber);
-    });
+    const filteredPages = pagesWithIndex;
 
     // Process pages and extract images per page
     const processedPages: PdfPageItem[] = await Promise.all(filteredPages.map(async (item: { page: any, pageNumber: number }) => {
