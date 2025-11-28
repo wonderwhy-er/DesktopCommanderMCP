@@ -374,7 +374,7 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     if (parsed.range && parsed.content !== undefined) {
         try {
             const { getFileHandler } = await import('../utils/files/factory.js');
-            const handler = getFileHandler(parsed.file_path);
+            const handler = await getFileHandler(parsed.file_path);
 
             // Parse content if it's a JSON string (AI often sends arrays as JSON strings)
             let content = parsed.content;

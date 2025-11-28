@@ -58,9 +58,9 @@ export interface FileHandler {
     /**
      * Check if this handler can handle the given file
      * @param path File path
-     * @returns true if this handler supports this file type
+     * @returns true if this handler supports this file type (can be async for content-based checks)
      */
-    canHandle(path: string): boolean;
+    canHandle(path: string): boolean | Promise<boolean>;
 }
 
 // ============================================================================
