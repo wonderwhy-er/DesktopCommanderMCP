@@ -1,6 +1,9 @@
 /**
  * Factory pattern for creating appropriate file handlers
  * Routes file operations to the correct handler based on file type
+ *
+ * Each handler implements canHandle() which can be sync (extension-based)
+ * or async (content-based like BinaryFileHandler using isBinaryFile)
  */
 
 import { FileHandler } from './base.js';
@@ -10,54 +13,68 @@ import { BinaryFileHandler } from './binary.js';
 import { ExcelFileHandler } from './excel.js';
 
 // Singleton instances of each handler
-let handlers: FileHandler[] | null = null;
+let excelHandler: ExcelFileHandler | null = null;
+let imageHandler: ImageFileHandler | null = null;
+let textHandler: TextFileHandler | null = null;
+let binaryHandler: BinaryFileHandler | null = null;
 
 /**
  * Initialize handlers (lazy initialization)
  */
-function initializeHandlers(): FileHandler[] {
-    if (handlers) {
-        return handlers;
-    }
+function getExcelHandler(): ExcelFileHandler {
+    if (!excelHandler) excelHandler = new ExcelFileHandler();
+    return excelHandler;
+}
 
-    handlers = [
-        // Order matters! More specific handlers first
-        new ExcelFileHandler(),    // Check Excel first (before binary)
-        new ImageFileHandler(),    // Then images
-        new TextFileHandler(),     // Then text (handles most files)
-        new BinaryFileHandler(),   // Finally binary (catch-all)
-    ];
+function getImageHandler(): ImageFileHandler {
+    if (!imageHandler) imageHandler = new ImageFileHandler();
+    return imageHandler;
+}
 
-    return handlers;
+function getTextHandler(): TextFileHandler {
+    if (!textHandler) textHandler = new TextFileHandler();
+    return textHandler;
+}
+
+function getBinaryHandler(): BinaryFileHandler {
+    if (!binaryHandler) binaryHandler = new BinaryFileHandler();
+    return binaryHandler;
 }
 
 /**
  * Get the appropriate file handler for a given file path
  *
- * This function checks each handler in priority order and returns the first
- * handler that can handle the file type.
+ * Each handler's canHandle() determines if it can process the file.
+ * Extension-based handlers (Excel, Image) return sync boolean.
+ * BinaryFileHandler uses async isBinaryFile for content-based detection.
  *
  * Priority order:
- * 1. Excel files (xlsx, xls, xlsm)
- * 2. Image files (png, jpg, gif, webp)
- * 3. Text files (most other files)
- * 4. Binary files (catch-all for unsupported formats)
+ * 1. Excel files (xlsx, xls, xlsm) - extension based
+ * 2. Image files (png, jpg, gif, webp) - extension based
+ * 3. Binary files - content-based detection via isBinaryFile
+ * 4. Text files (default)
  *
- * @param path File path (can be before or after validation)
+ * @param filePath File path to get handler for
  * @returns FileHandler instance that can handle this file
  */
-export function getFileHandler(path: string): FileHandler {
-    const allHandlers = initializeHandlers();
-
-    // Try each handler in order
-    for (const handler of allHandlers) {
-        if (handler.canHandle(path)) {
-            return handler;
-        }
+export async function getFileHandler(filePath: string): Promise<FileHandler> {
+    // Check Excel first (extension-based, sync)
+    if (getExcelHandler().canHandle(filePath)) {
+        return getExcelHandler();
     }
 
-    // Fallback to binary handler (should never reach here due to binary catch-all)
-    return allHandlers[allHandlers.length - 1];
+    // Check Image (extension-based, sync - images are binary but handled specially)
+    if (getImageHandler().canHandle(filePath)) {
+        return getImageHandler();
+    }
+
+    // Check Binary (content-based, async via isBinaryFile)
+    if (await getBinaryHandler().canHandle(filePath)) {
+        return getBinaryHandler();
+    }
+
+    // Default to text handler
+    return getTextHandler();
 }
 
 /**

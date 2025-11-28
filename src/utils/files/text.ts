@@ -2,6 +2,9 @@
  * Text file handler
  * Handles reading, writing, and editing text files
  *
+ * Binary detection is handled at the factory level (factory.ts) using isBinaryFile.
+ * This handler only receives files that have been confirmed as text.
+ *
  * TECHNICAL DEBT:
  * This handler is missing editRange() - text search/replace logic currently lives in
  * src/tools/edit.ts (performSearchReplace function) instead of here.
@@ -11,9 +14,9 @@
  */
 
 import fs from "fs/promises";
+import path from "path";
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
-import { isBinaryFile } from 'isbinaryfile';
 import {
     FileHandler,
     ReadOptions,
@@ -37,27 +40,22 @@ const READ_PERFORMANCE_THRESHOLDS = {
 
 /**
  * Text file handler implementation
+ * Binary detection is done at the factory level - this handler assumes file is text
  */
 export class TextFileHandler implements FileHandler {
-    canHandle(path: string): boolean {
-        // Text handler is the default - handles most files
-        // Only returns false for known non-text formats (checked by other handlers)
+    canHandle(_path: string): boolean {
+        // Text handler accepts all files that pass the factory's binary check
+        // The factory routes binary files to BinaryFileHandler before reaching here
         return true;
     }
 
-    async read(path: string, options?: ReadOptions): Promise<FileResult> {
+    async read(filePath: string, options?: ReadOptions): Promise<FileResult> {
         const offset = options?.offset ?? 0;
         const length = options?.length ?? 1000; // Default from config
         const includeStatusMessage = options?.includeStatusMessage ?? true;
 
-        // Check if file is binary
-        const isBinary = await isBinaryFile(path);
-        if (isBinary) {
-            throw new Error('Cannot read binary file as text. Use appropriate handler.');
-        }
-
-        // Read with smart positioning
-        return this.readFileWithSmartPositioning(path, offset, length, 'text/plain', includeStatusMessage);
+        // Binary detection is done at factory level - just read as text
+        return this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage);
     }
 
     async write(path: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
@@ -87,7 +85,7 @@ export class TextFileHandler implements FileHandler {
         if (stats.isFile() && stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
             try {
                 const content = await fs.readFile(path, 'utf8');
-                const lineCount = this.countLines(content);
+                const lineCount = TextFileHandler.countLines(content);
                 info.metadata!.lineCount = lineCount;
             } catch (error) {
                 // If reading fails, skip line count
@@ -103,8 +101,9 @@ export class TextFileHandler implements FileHandler {
 
     /**
      * Count lines in text content
+     * Made static and public for use by other modules (e.g., writeFile telemetry in filesystem.ts)
      */
-    private countLines(content: string): number {
+    static countLines(content: string): number {
         return content.split('\n').length;
     }
 
@@ -116,7 +115,7 @@ export class TextFileHandler implements FileHandler {
             const stats = await fs.stat(filePath);
             if (stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
                 const content = await fs.readFile(filePath, 'utf8');
-                return this.countLines(content);
+                return TextFileHandler.countLines(content);
             }
         } catch (error) {
             // If we can't read the file, return undefined
@@ -161,8 +160,9 @@ export class TextFileHandler implements FileHandler {
 
     /**
      * Split text into lines while preserving line endings
+     * Made static and public for use by other modules (e.g., readFileInternal in filesystem.ts)
      */
-    private splitLinesPreservingEndings(content: string): string[] {
+    static splitLinesPreservingEndings(content: string): string[] {
         if (!content) return [''];
 
         const lines: string[] = [];

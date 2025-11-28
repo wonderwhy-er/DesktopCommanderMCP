@@ -2,63 +2,24 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
-import { createReadStream } from 'fs';
-import { createInterface } from 'readline';
-import { isBinaryFile } from 'isbinaryfile';
 import {capture} from '../utils/capture.js';
 import {withTimeout} from '../utils/withTimeout.js';
 import {configManager} from '../config-manager.js';
-import { getFileHandler } from '../utils/files/factory.js';
+import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult } from '../utils/files/base.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
     PATH_VALIDATION: 10000,    // 10 seconds
-    URL_FETCH: 30000,          // 30 seconds  
+    URL_FETCH: 30000,          // 30 seconds
     FILE_READ: 30000,          // 30 seconds
 } as const;
 
 const FILE_SIZE_LIMITS = {
-    LARGE_FILE_THRESHOLD: 10 * 1024 * 1024,  // 10MB
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
 } as const;
 
-const READ_PERFORMANCE_THRESHOLDS = {
-    SMALL_READ_THRESHOLD: 100,    // For very small reads
-    DEEP_OFFSET_THRESHOLD: 1000,  // For byte estimation
-    SAMPLE_SIZE: 10000,           // Sample size for estimation
-    CHUNK_SIZE: 8192,             // 8KB chunks for reverse reading
-} as const;
-
 // UTILITY FUNCTIONS - Eliminate duplication
-
-/**
- * Count lines in text content efficiently
- * @param content Text content to count lines in
- * @returns Number of lines
- */
-function countLines(content: string): number {
-    return content.split('\n').length;
-}
-
-/**
- * Count lines in a file efficiently (for files under size limit)
- * @param filePath Path to the file
- * @returns Line count or undefined if file too large/can't read
- */
-async function getFileLineCount(filePath: string): Promise<number | undefined> {
-    try {
-        const stats = await fs.stat(filePath);
-        // Only count lines for reasonably sized files to avoid performance issues
-        if (stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
-            const content = await fs.readFile(filePath, 'utf8');
-            return countLines(content);
-        }
-    } catch (error) {
-        // If we can't read the file, just return undefined
-    }
-    return undefined;
-}
 
 /**
  * Get MIME type information for a file
@@ -88,22 +49,6 @@ function getFileExtension(filePath: string): string {
 async function getDefaultReadLength(): Promise<number> {
     const config = await configManager.getConfig();
     return config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
-}
-
-/**
- * Generate instructions for handling binary files
- * @param filePath Path to the binary file
- * @param mimeType MIME type of the file
- * @returns Instruction message for the LLM
- */
-function getBinaryFileInstructions(filePath: string, mimeType: string): string {
-    const fileName = path.basename(filePath);
-    
-    return `Cannot read binary file as text: ${fileName} (${mimeType})
-
-Use start_process + interact_with_process to analyze binary files with appropriate tools (Node.js or Python libraries, command-line utilities, etc.).
-
-The read_file tool only handles text files and images.`;
 }
 
 // Initialize allowed directories from configuration
@@ -343,296 +288,6 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
 
 /**
- * Generate enhanced status message with total and remaining line information
- * @param readLines Number of lines actually read
- * @param offset Starting offset (line number)
- * @param totalLines Total lines in the file (if available)
- * @param isNegativeOffset Whether this is a tail operation
- * @returns Enhanced status message string
- */
-function generateEnhancedStatusMessage(
-    readLines: number, 
-    offset: number, 
-    totalLines?: number,
-    isNegativeOffset: boolean = false
-): string {
-    if (isNegativeOffset) {
-        // For tail operations (negative offset)
-        if (totalLines !== undefined) {
-            return `[Reading last ${readLines} lines (total: ${totalLines} lines)]`;
-        } else {
-            return `[Reading last ${readLines} lines]`;
-        }
-    } else {
-        // For normal reads (positive offset)
-        if (totalLines !== undefined) {
-            const endLine = offset + readLines;
-            const remainingLines = Math.max(0, totalLines - endLine);
-            
-            if (offset === 0) {
-                return `[Reading ${readLines} lines from start (total: ${totalLines} lines, ${remainingLines} remaining)]`;
-            } else {
-                return `[Reading ${readLines} lines from line ${offset} (total: ${totalLines} lines, ${remainingLines} remaining)]`;
-            }
-        } else {
-            // Fallback when total lines unknown
-            if (offset === 0) {
-                return `[Reading ${readLines} lines from start]`;
-            } else {
-                return `[Reading ${readLines} lines from line ${offset}]`;
-            }
-        }
-    }
-}
-
-/**
- * Read file content using smart positioning for optimal performance
- * @param filePath Path to the file (already validated)
- * @param offset Starting line number (negative for tail behavior)
- * @param length Maximum number of lines to read
- * @param mimeType MIME type of the file
- * @param includeStatusMessage Whether to include status headers (default: true)
- * @returns File result with content
- */
-async function readFileWithSmartPositioning(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true): Promise<FileResult> {
-    const stats = await fs.stat(filePath);
-    const fileSize = stats.size;
-
-    // Check if the file is binary (but allow images to pass through)
-    const { isImage } = await getMimeTypeInfo(filePath);
-    if (!isImage) {
-        const isBinary = await isBinaryFile(filePath);
-        if (isBinary) {
-            // Return instructions instead of trying to read binary content
-            const instructions = getBinaryFileInstructions(filePath, mimeType);
-            throw new Error(instructions);
-        }
-    }
-
-    // Get total line count for enhanced status messages (only for smaller files)
-    const totalLines = await getFileLineCount(filePath);
-
-    // For negative offsets (tail behavior), use reverse reading
-    if (offset < 0) {
-        const requestedLines = Math.abs(offset);
-
-        if (fileSize > FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD && requestedLines <= READ_PERFORMANCE_THRESHOLDS.SMALL_READ_THRESHOLD) {
-            // Use efficient reverse reading for large files with small tail requests
-            return await readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
-        } else {
-            // Use readline circular buffer for other cases
-            return await readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
-        }
-    }
-
-    // For positive offsets
-    else {
-        // For small files or reading from start, use simple readline
-        if (fileSize < FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD || offset === 0) {
-            return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
-        }
-
-        // For large files with middle/end reads, try to estimate position
-        else {
-            // If seeking deep into file, try byte estimation
-            if (offset > READ_PERFORMANCE_THRESHOLDS.DEEP_OFFSET_THRESHOLD) {
-                return await readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
-            } else {
-                return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
-            }
-        }
-    }
-}
-
-/**
- * Read last N lines efficiently by reading file backwards in chunks
- */
-async function readLastNLinesReverse(filePath: string, n: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
-    const fd = await fs.open(filePath, 'r');
-    try {
-        const stats = await fd.stat();
-        const fileSize = stats.size;
-
-        let position = fileSize;
-        let lines: string[] = [];
-        let partialLine = '';
-
-        while (position > 0 && lines.length < n) {
-            const readSize = Math.min(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE, position);
-            position -= readSize;
-
-            const buffer = Buffer.alloc(readSize);
-            await fd.read(buffer, 0, readSize, position);
-
-            const chunk = buffer.toString('utf-8');
-            const text = chunk + partialLine;
-            const chunkLines = text.split('\n');
-
-            partialLine = chunkLines.shift() || '';
-            lines = chunkLines.concat(lines);
-        }
-
-        // Add the remaining partial line if we reached the beginning
-        if (position === 0 && partialLine) {
-            lines.unshift(partialLine);
-        }
-
-        const result = lines.slice(-n); // Get exactly n lines
-        const content = includeStatusMessage
-            ? `${generateEnhancedStatusMessage(result.length, -n, fileTotalLines, true)}\n\n${result.join('\n')}`
-            : result.join('\n');
-
-        return { content, mimeType, metadata: { isImage: false } };
-    } finally {
-        await fd.close();
-    }
-}
-
-/**
- * Read from end using readline with circular buffer
- */
-async function readFromEndWithReadline(filePath: string, requestedLines: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
-    const rl = createInterface({
-        input: createReadStream(filePath),
-        crlfDelay: Infinity
-    });
-
-    const buffer: string[] = new Array(requestedLines);
-    let bufferIndex = 0;
-    let totalLines = 0;
-
-    for await (const line of rl) {
-        buffer[bufferIndex] = line;
-        bufferIndex = (bufferIndex + 1) % requestedLines;
-        totalLines++;
-    }
-
-    rl.close();
-
-    // Extract lines in correct order
-    let result: string[];
-    if (totalLines >= requestedLines) {
-        result = [
-            ...buffer.slice(bufferIndex),
-            ...buffer.slice(0, bufferIndex)
-        ].filter(line => line !== undefined);
-    } else {
-        result = buffer.slice(0, totalLines);
-    }
-
-    const content = includeStatusMessage
-        ? `${generateEnhancedStatusMessage(result.length, -requestedLines, fileTotalLines, true)}\n\n${result.join('\n')}`
-        : result.join('\n');
-    return { content, mimeType, metadata: { isImage: false } };
-}
-
-/**
- * Read from start/middle using readline
- */
-async function readFromStartWithReadline(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
-    const rl = createInterface({
-        input: createReadStream(filePath),
-        crlfDelay: Infinity
-    });
-
-    const result: string[] = [];
-    let lineNumber = 0;
-
-    for await (const line of rl) {
-        if (lineNumber >= offset && result.length < length) {
-            result.push(line);
-        }
-        if (result.length >= length) break; // Early exit optimization
-        lineNumber++;
-    }
-
-    rl.close();
-
-    if (includeStatusMessage) {
-        const statusMessage = generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
-        const content = `${statusMessage}\n\n${result.join('\n')}`;
-        return { content, mimeType, metadata: { isImage: false } };
-    } else {
-        const content = result.join('\n');
-        return { content, mimeType, metadata: { isImage: false } };
-    }
-}
-
-/**
- * Read from estimated byte position for very large files
- */
-async function readFromEstimatedPosition(filePath: string, offset: number, length: number, mimeType: string, includeStatusMessage: boolean = true, fileTotalLines?: number): Promise<FileResult> {
-    // First, do a quick scan to estimate lines per byte
-    const rl = createInterface({
-        input: createReadStream(filePath),
-        crlfDelay: Infinity
-    });
-
-    let sampleLines = 0;
-    let bytesRead = 0;
-
-
-
-    for await (const line of rl) {
-        bytesRead += Buffer.byteLength(line, 'utf-8') + 1; // +1 for newline
-        sampleLines++;
-        if (bytesRead >= READ_PERFORMANCE_THRESHOLDS.SAMPLE_SIZE) break;
-    }
-
-    rl.close();
-
-    if (sampleLines === 0) {
-        // Fallback to simple read
-        return await readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines);
-    }
-
-    // Estimate average line length and seek position
-    const avgLineLength = bytesRead / sampleLines;
-    const estimatedBytePosition = Math.floor(offset * avgLineLength);
-
-    // Create a new stream starting from estimated position
-    const fd = await fs.open(filePath, 'r');
-    try {
-        const stats = await fd.stat();
-        const startPosition = Math.min(estimatedBytePosition, stats.size);
-
-        const stream = createReadStream(filePath, { start: startPosition });
-        const rl2 = createInterface({
-            input: stream,
-            crlfDelay: Infinity
-        });
-
-        const result: string[] = [];
-        let lineCount = 0;
-        let firstLineSkipped = false;
-
-        for await (const line of rl2) {
-            // Skip first potentially partial line if we didn't start at beginning
-            if (!firstLineSkipped && startPosition > 0) {
-                firstLineSkipped = true;
-                continue;
-            }
-
-            if (result.length < length) {
-                result.push(line);
-            } else {
-                break;
-            }
-            lineCount++;
-        }
-
-        rl2.close();
-
-        const content = includeStatusMessage
-            ? `${generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
-            : result.join('\n');
-        return { content, mimeType, metadata: { isImage: false } };
-    } finally {
-        await fd.close();
-    }
-}
-
-/**
  * Read file content from the local filesystem
  * @param filePath Path to the file
  * @param options Read options (offset, length, sheet, range)
@@ -680,8 +335,8 @@ export async function readFileFromDisk(
 
     // Use withTimeout to handle potential hangs
     const readOperation = async () => {
-        // Get appropriate handler for this file type
-        const handler = getFileHandler(validPath);
+        // Get appropriate handler for this file type (async - includes binary detection)
+        const handler = await getFileHandler(validPath);
 
         // Use handler to read the file
         const result = await handler.read(validPath, {
@@ -783,54 +438,13 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     }
 
     // Handle offset/length by splitting on line boundaries while preserving line endings
-    const lines = splitLinesPreservingEndings(content);
+    const lines = TextFileHandler.splitLinesPreservingEndings(content);
 
     // Apply offset and length
     const selectedLines = lines.slice(offset, offset + length);
 
     // Join back together (this preserves the original line endings)
     return selectedLines.join('');
-}
-
-/**
- * Split text into lines while preserving original line endings with each line
- * @param content The text content to split
- * @returns Array of lines, each including its original line ending
- */
-function splitLinesPreservingEndings(content: string): string[] {
-    if (!content) return [''];
-
-    const lines: string[] = [];
-    let currentLine = '';
-
-    for (let i = 0; i < content.length; i++) {
-        const char = content[i];
-        currentLine += char;
-
-        // Check for line ending patterns
-        if (char === '\n') {
-            // LF or end of CRLF
-            lines.push(currentLine);
-            currentLine = '';
-        } else if (char === '\r') {
-            // Could be CR or start of CRLF
-            if (i + 1 < content.length && content[i + 1] === '\n') {
-                // It's CRLF, include the \n as well
-                currentLine += content[i + 1];
-                i++; // Skip the \n in next iteration
-            }
-            // Either way, we have a complete line
-            lines.push(currentLine);
-            currentLine = '';
-        }
-    }
-
-    // Handle any remaining content (file not ending with line ending)
-    if (currentLine) {
-        lines.push(currentLine);
-    }
-
-    return lines;
 }
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
@@ -841,7 +455,7 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
 
     // Calculate content metrics
     const contentBytes = Buffer.from(content).length;
-    const lineCount = countLines(content);
+    const lineCount = TextFileHandler.countLines(content);
 
     // Capture file extension and operation details in telemetry without capturing the file path
     capture('server_write_file', {
@@ -851,8 +465,8 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
         lineCount: lineCount
     });
 
-    // Get appropriate handler for this file type
-    const handler = getFileHandler(validPath);
+    // Get appropriate handler for this file type (async - includes binary detection)
+    const handler = await getFileHandler(validPath);
 
     // Use handler to write the file
     await handler.write(validPath, content, mode);
@@ -1113,8 +727,8 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         metadata: undefined as Record<string, any> | undefined,
     };
 
-    // Get appropriate handler for this file type
-    const handler = getFileHandler(validPath);
+    // Get appropriate handler for this file type (async - includes binary detection)
+    const handler = await getFileHandler(validPath);
 
     // Use handler to get file info, with fallback
     let fileInfo;
