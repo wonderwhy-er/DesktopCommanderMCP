@@ -526,7 +526,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     verbose_timing = false
   } = parsed.data;
 
-  // Check if this is a virtual Node session (Python fallback)
+  // Check if this is a virtual Node session (node:local)
   if (virtualNodeSessions.has(pid)) {
     const session = virtualNodeSessions.get(pid)!;
     capture('server_interact_with_process_node_fallback', {
@@ -535,7 +535,9 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     });
 
     // Execute code via temp file approach
-    return executeNodeCode(input, session.timeout_ms);
+    // Respect per-call timeout if provided, otherwise use session default
+    const effectiveTimeout = timeout_ms ?? session.timeout_ms;
+    return executeNodeCode(input, effectiveTimeout);
   }
 
   // Timing telemetry
@@ -758,13 +760,26 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
     };
   }
 
-  const success = terminalManager.forceTerminate(parsed.data.pid);
+  const pid = parsed.data.pid;
+
+  // Handle virtual Node.js sessions (node:local)
+  if (virtualNodeSessions.has(pid)) {
+    virtualNodeSessions.delete(pid);
+    return {
+      content: [{
+        type: "text",
+        text: `Cleared virtual Node.js session ${pid}`
+      }],
+    };
+  }
+
+  const success = terminalManager.forceTerminate(pid);
   return {
     content: [{
       type: "text",
       text: success
-        ? `Successfully initiated termination of session ${parsed.data.pid}`
-        : `No active session found for PID ${parsed.data.pid}`
+        ? `Successfully initiated termination of session ${pid}`
+        : `No active session found for PID ${pid}`
     }],
   };
 }
@@ -774,14 +789,30 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
  */
 export async function listSessions(): Promise<ServerResult> {
   const sessions = terminalManager.listActiveSessions();
+
+  // Include virtual Node.js sessions
+  const virtualSessions = Array.from(virtualNodeSessions.entries()).map(([pid, session]) => ({
+    pid,
+    type: 'node:local',
+    timeout_ms: session.timeout_ms
+  }));
+
+  const realSessionsText = sessions.map(s =>
+    `PID: ${s.pid}, Blocked: ${s.isBlocked}, Runtime: ${Math.round(s.runtime / 1000)}s`
+  );
+
+  const virtualSessionsText = virtualSessions.map(s =>
+    `PID: ${s.pid} (node:local), Timeout: ${s.timeout_ms}ms`
+  );
+
+  const allSessions = [...realSessionsText, ...virtualSessionsText];
+
   return {
     content: [{
       type: "text",
-      text: sessions.length === 0
+      text: allSessions.length === 0
         ? 'No active sessions'
-        : sessions.map(s =>
-            `PID: ${s.pid}, Blocked: ${s.isBlocked}, Runtime: ${Math.round(s.runtime / 1000)}s`
-          ).join('\n')
+        : allSessions.join('\n')
     }],
   };
 }
