@@ -701,6 +701,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - All Node.js built-ins available (fs, path, http, crypto, etc.)
                         - Use console.log() for output
 
+                        ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
+                        NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(StartProcessArgsSchema),
