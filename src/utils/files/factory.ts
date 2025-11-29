@@ -79,28 +79,20 @@ export async function getFileHandler(filePath: string): Promise<FileHandler> {
 
 /**
  * Check if a file path is an Excel file
+ * Delegates to ExcelFileHandler.canHandle to avoid duplicating extension logic
  * @param path File path
  * @returns true if file is Excel format
  */
 export function isExcelFile(path: string): boolean {
-    const ext = path.toLowerCase();
-    return ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.xlsm');
+    return getExcelHandler().canHandle(path);
 }
 
 /**
  * Check if a file path is an image file
+ * Delegates to ImageFileHandler.canHandle to avoid duplicating extension logic
  * @param path File path
  * @returns true if file is an image format
  */
 export function isImageFile(path: string): boolean {
-    // This will be implemented by checking MIME type
-    // For now, use extension-based check
-    const ext = path.toLowerCase();
-    return ext.endsWith('.png') ||
-           ext.endsWith('.jpg') ||
-           ext.endsWith('.jpeg') ||
-           ext.endsWith('.gif') ||
-           ext.endsWith('.webp') ||
-           ext.endsWith('.bmp') ||
-           ext.endsWith('.svg');
+    return getImageHandler().canHandle(path);
 }

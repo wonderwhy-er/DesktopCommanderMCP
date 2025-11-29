@@ -24,8 +24,9 @@ import {
     FileInfo
 } from './base.js';
 
-// Import constants from filesystem.ts
-// These will be imported after we organize the code
+// TODO: Centralize these constants with filesystem.ts to avoid silent drift
+// These duplicate concepts from filesystem.ts and should be moved to a shared
+// constants module (e.g., src/utils/files/constants.ts) during reorganization
 const FILE_SIZE_LIMITS = {
     LARGE_FILE_THRESHOLD: 10 * 1024 * 1024,  // 10MB
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting

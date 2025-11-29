@@ -371,10 +371,13 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     const parsed = EditBlockArgsSchema.parse(args);
 
     // Structured files: Range rewrite
-    if (parsed.range && parsed.content !== undefined) {
+    if (parsed.range !== undefined && parsed.content !== undefined) {
         try {
+            // Validate path before any filesystem operations
+            const validatedPath = await validatePath(parsed.file_path);
+
             const { getFileHandler } = await import('../utils/files/factory.js');
-            const handler = await getFileHandler(parsed.file_path);
+            const handler = await getFileHandler(validatedPath);
 
             // Parse content if it's a JSON string (AI often sends arrays as JSON strings)
             let content = parsed.content;
@@ -388,7 +391,7 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
 
             // Check if handler supports range editing
             if ('editRange' in handler && typeof handler.editRange === 'function') {
-                await handler.editRange(parsed.file_path, parsed.range, content, parsed.options);
+                await handler.editRange(validatedPath, parsed.range, content, parsed.options);
                 return {
                     content: [{
                         type: "text",
@@ -417,9 +420,20 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     }
 
     // Text files: String replacement
+    // Validate required parameters for text replacement
+    if (parsed.old_string === undefined || parsed.new_string === undefined) {
+        return {
+            content: [{
+                type: "text",
+                text: `Error: Text replacement requires both old_string and new_string parameters`
+            }],
+            isError: true
+        };
+    }
+
     const searchReplace = {
-        search: parsed.old_string!,
-        replace: parsed.new_string!
+        search: parsed.old_string,
+        replace: parsed.new_string
     };
 
     return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
