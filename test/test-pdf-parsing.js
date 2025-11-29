@@ -15,11 +15,11 @@ const __dirname = path.dirname(__filename);
 
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const SAMPLES = [
-    // '01_sample_simple.pdf',
-    // '02_sample_invoice.pdf',
-    // '03_sample_compex.pdf',
-    'gpc-genai-ocsummaryv2-content.pdf',
-    '2025-Wharton-GBK-AI-Adoption-Report_Full-Report.pdf'
+    '01_sample_simple.pdf',
+    '02_sample_invoice.pdf',
+    '03_sample_compex.pdf',
+    // 'gpc-genai-ocsummaryv2-content.pdf',
+    // '2025-Wharton-GBK-AI-Adoption-Report_Full-Report.pdf'
     // 'statement.pdf'
 ];
 
@@ -146,7 +146,7 @@ async function main() {
     console.log('🧪 PDF v3 Sample Test Suite (@opendocsg/pdf2md)');
 
     // Test Page Filtering
-    // await testPageFiltering();
+    await testPageFiltering();
 
     // Test Local Samples
     for (const sample of SAMPLES) {
