@@ -203,8 +203,3 @@ export const GetRecentToolCallsArgsSchema = z.object({
   since: z.string().datetime().optional(),
 });
 
-// Execute Node.js code schema
-export const ExecuteNodeArgsSchema = z.object({
-  code: z.string(),
-  timeout_ms: z.number().optional().default(30000),
-});

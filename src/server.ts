@@ -47,7 +47,6 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
-    ExecuteNodeArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -668,7 +667,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         EXCEL FILES (.xlsx, .xls, .xlsm) - Range Update mode:
                         Takes:
                         - file_path: Path to the Excel file
-                        - range: "SheetName!A1:C10" or "SheetName" for whole sheet
+                        - range: ALWAYS use FROM:TO format - "SheetName!A1:C10" or "SheetName!C1:C1"
                         - content: 2D array, e.g., [["H1","H2"],["R1","R2"]]
 
                         TEXT FILES - Find/Replace mode:
@@ -764,8 +763,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Which detection mechanism triggered early exit
                         Use this to identify missed optimization opportunities and improve detection patterns.
 
-                        ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
-                        NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
+                        NODE.JS FALLBACK (node:local):
+                        When Python is unavailable or fails, use start_process("node:local") instead.
+                        - Runs on MCP server where Node.js is guaranteed
+                        - interact_with_process(pid, "complete self-contained script")
+                        - STATELESS: Each call is fresh - include ALL imports/setup/processing in ONE call
+                        - Use ES module imports: import ExcelJS from 'exceljs'
+                        - ExcelJS available for Excel files (NOT xlsx library)
+                        - All Node.js built-ins available (fs, path, http, crypto, etc.)
+                        - Use console.log() for output
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -937,9 +943,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "kill_process",
                 description: `
                         Terminate a running process by PID.
-                        
+
                         Use with caution as this will forcefully terminate the specified process.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(KillProcessArgsSchema),
                 annotations: {
@@ -1060,35 +1066,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                },
-                {
-                    name: "execute_node",
-                    description: `
-                        Execute Node.js code directly using the MCP server's Node runtime.
-
-                        PRIMARY TOOL FOR EXCEL FILES AND COMPLEX CALCULATIONS
-                        Use this tool for ANY Excel file (.xlsx, .xls) operations and complex data calculations.
-                        ExcelJS library is built-in and ready to use.
-
-                        Code runs as ES module (.mjs) with top-level await support.
-                        Uses the same Node.js environment that runs the MCP server.
-
-                        Available libraries: ExcelJS (for Excel file manipulation), and all Node.js built-ins.
-
-                        Use cases: Excel file reading/writing/analysis, data transformations, bulk file operations,
-                        complex calculations, JSON processing, or any task better suited to code than tools.
-
-                        Output: Use console.log() to return results. Stdout is captured and returned.
-
-                        ${PATH_GUIDANCE}
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(ExecuteNodeArgsSchema),
-                    annotations: {
-                        title: "Execute Node.js Code",
-                        readOnlyHint: false,
-                        destructiveHint: true,
-                        openWorldHint: true,
-                    },
                 }
             ];
 
@@ -1276,18 +1253,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "kill_process":
                 result = await handlers.handleKillProcess(args);
-                break;
-
-            case "execute_node":
-                try {
-                    result = await handlers.handleExecuteNode(args);
-                } catch (error) {
-                    capture('server_request_error', {message: `Error in execute_node handler: ${error}`});
-                    result = {
-                        content: [{type: "text", text: `Error executing Node.js code: ${error instanceof Error ? error.message : String(error)}`}],
-                        isError: true,
-                    };
-                }
                 break;
 
             // Note: REPL functionality removed in favor of using general terminal commands
