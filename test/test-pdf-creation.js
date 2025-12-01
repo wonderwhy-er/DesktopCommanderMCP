@@ -90,7 +90,6 @@ console.log('Line 3');
         // 3. Insert an appendix page at the end (from markdown)
         // 4. Merge the temporary PDF at the very end (from file path)
 
-        // writePdf signature: writePdf(sourcePath, operations, outputPath)
         await writePdf(OUTPUT_FILE, [
             {
                 type: 'delete',
@@ -99,28 +98,21 @@ console.log('Line 3');
             {
                 type: 'delete',
                 pageIndexes: [-1] // Delete the last page.
-                // Sequential execution:
-                // 1. Original: [Page 1, Page 2]
-                // 2. Delete 0 (Page 1): [Page 2]
-                // 3. Delete -1 (Last page, i.e., Page 2): [] (Empty)
             },
             {
                 type: 'insert',
                 pageIndex: 0,
                 markdown: '# New Cover Page\n\nThis page was inserted dynamically.\n\n## Summary\nWe deleted the original pages and added this one.'
-                // 4. Insert at 0: [New Cover Page]
             },
             {
                 type: 'insert',
-                pageIndex: 1, // Append to end (count is 1)
+                pageIndex: 1,
                 markdown: '# Appendix\n\nThis page was appended to the end.'
-                // 5. Insert at 1: [New Cover Page, Appendix]
             },
             {
                 type: 'insert',
-                pageIndex: 2, // Append to end (count is 2)
+                pageIndex: 2,
                 sourcePdfPath: tempMergeFile
-                // 6. Insert at 2: [New Cover Page, Appendix, Merged Page]
             }
         ], MODIFIED_FILE);
 
