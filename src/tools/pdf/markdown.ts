@@ -23,10 +23,8 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
 export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
-        const byteData = data instanceof Uint8Array ? data : new Uint8Array(data);
 
         // @ts-ignore: Type definition mismatch for ESM usage
-        return await pdf2md(byteData, pageNumbers);
         return await pdf2md(new Uint8Array(data), pageNumbers);
 
     } catch (error) {
