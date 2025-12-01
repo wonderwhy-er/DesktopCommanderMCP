@@ -159,8 +159,7 @@ async function convertRawImageToBase64(
 
     try {
         // Try to dynamically import sharp
-        const sharpModule = await eval('import("sharp")') as any;
-        const sharp = sharpModule.default;
+        const sharp = (await import('sharp')).default;
 
         // sharp takes Buffer, Uint8Array, etc.
         // unpdf returns Uint8ClampedArray, which works with Buffer.from()
