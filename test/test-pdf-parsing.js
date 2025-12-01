@@ -119,14 +119,14 @@ async function testPageFiltering() {
         console.log(`Pages returned: ${result3.pages.length}`);
         console.log(`Page numbers: ${result3.pages.map(p => p.pageNumber).join(', ')}`);
 
-        // Case 4: Page Range (Large Length) - All Pages
+        // Case 4: Page Range (Large Length) - All Pages from start
         console.log('\nCase 4: Page Range { offset: 0, length: 100 } (All Pages)');
         const result4 = await parsePdfToMarkdown(samplePath, { offset: 0, length: 100 });
         console.log(`Pages returned: ${result4.pages.length}`);
         console.log(`Page numbers: ${result4.pages.map(p => p.pageNumber).join(', ')}`);
 
-        // Case 4: Page Range (Large Length) - All Pages
-        console.log('\nCase 5: Page Range { offset: 0, length: 100 } (All Pages)');
+        // Case 5: Page Range (Large Negative Offset) - All Pages from end
+        console.log('\nCase 5: Page Range { offset: -100, length: 100 } (All Pages from end)');
         const result5 = await parsePdfToMarkdown(samplePath, { offset: -100, length: 100 });
         console.log(`Pages returned: ${result5.pages.length}`);
         console.log(`Page numbers: ${result5.pages.map(p => p.pageNumber).join(', ')}`);
