@@ -25,7 +25,8 @@ export function getMimeType(filePath: string): string {
 }
 
 export function isPdfFile(mimeType: string): boolean {
-  return mimeType === 'application/pdf';
+  const [baseType] = mimeType.toLowerCase().split(';');
+  return baseType.trim() === 'application/pdf';
 }
 
 export function isImageFile(mimeType: string): boolean {
