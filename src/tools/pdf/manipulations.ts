@@ -1,5 +1,5 @@
 import fs from 'fs/promises';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, PDFPage } from 'pdf-lib';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
 import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
@@ -36,6 +36,41 @@ function deletePages(pdfDoc: PDFDocument, pageIndexes: number[]): PDFDocument {
     return pdfDoc;
 }
 
+function getPageLayout(page: PDFPage) {
+    const { width, height } = page.getSize();
+
+    const mediaBox = page.getMediaBox(); // Full page area
+    const cropBox = page.getCropBox();   // Visible area (may indicate margins)
+
+    // Calculate margins (if CropBox differs from MediaBox)
+    let marginLeft = cropBox.x - mediaBox.x;
+    let marginBottom = cropBox.y - mediaBox.y;
+    let marginRight = (mediaBox.x + mediaBox.width) - (cropBox.x + cropBox.width);
+    let marginTop = (mediaBox.y + mediaBox.height) - (cropBox.y + cropBox.height);
+
+    if (marginLeft === 0 && marginRight === 0 && marginTop === 0 && marginBottom === 0) {
+        marginLeft = 72;
+        marginBottom = 72;
+        marginRight = 72;
+        marginTop = 72;
+    }
+    // Convert points to inches (1 inch = 72 points)
+    // Puppeteer requires standard units and doesn't accept decimal points
+    const pointsToInches = (pts: number) => (pts / 72).toFixed(4);
+
+    return {
+        format: undefined,  // Explicitly disable format to use custom dimensions
+        width: `${pointsToInches(width)}in`,
+        height: `${pointsToInches(height)}in`,
+        margin: {
+            top: `${pointsToInches(marginTop)}in`,
+            right: `${pointsToInches(marginRight)}in`,
+            bottom: `${pointsToInches(marginBottom)}in`,
+            left: `${pointsToInches(marginLeft)}in`
+        }
+    };
+}
+
 async function insertPages(destPdfDocument: PDFDocument, pageIndex: number, sourcePdfDocument: PDFDocument): Promise<PDFDocument> {
     let insertPosition = pageIndex < 0 ? destPdfDocument.getPageCount() + pageIndex : pageIndex;
 
@@ -63,6 +98,10 @@ export async function editPdf(
     operations: PdfOperations[]
 ): Promise<Uint8Array> {
     const pdfDoc = await loadPdfDocumentFromBuffer(pdfPath);
+
+    // Get page layout from the ORIGINAL first page
+    const pageLayout = pdfDoc.getPageCount() > 0 ? getPageLayout(pdfDoc.getPage(0)) : undefined;
+
     for (const op of operations) {
         if (op.type === 'delete') {
             deletePages(pdfDoc, op.pageIndexes);
@@ -70,7 +109,8 @@ export async function editPdf(
         else if (op.type == 'insert') {
             let sourcePdfDocument: PDFDocument;
             if (op.markdown) {
-                const pdfBuffer = await parseMarkdownToPdf(op.markdown);
+                const pdfOptions = pageLayout ? { pdf_options: pageLayout } : undefined;
+                const pdfBuffer = await parseMarkdownToPdf(op.markdown, pdfOptions);
                 sourcePdfDocument = await loadPdfDocumentFromBuffer(pdfBuffer);
             } else if (op.sourcePdfPath) {
                 sourcePdfDocument = await loadPdfDocumentFromBuffer(op.sourcePdfPath);
