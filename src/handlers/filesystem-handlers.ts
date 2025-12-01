@@ -315,8 +315,9 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
         await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const targetPath = parsed.outputPath || parsed.path;
         return {
-            content: [{ type: "text", text: `Successfully wrote PDF to ${parsed.outputPath}.\n Original file: ${parsed.path}` }],
+            content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
