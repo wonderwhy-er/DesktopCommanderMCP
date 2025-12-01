@@ -69,6 +69,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         if (fileResult.isPdf) {
             const meta = fileResult.payload?.metadata;
             const author = meta?.author ? `, Author: ${meta?.author}` : "";
+            const title = meta?.title ? `, Title: ${meta?.title}` : "";
         // Use the provided limits or defaults.
         // If the caller did not supply an explicit length, fall back to the configured default.
         const rawArgs = args as { offset?: number; length?: number } | undefined;

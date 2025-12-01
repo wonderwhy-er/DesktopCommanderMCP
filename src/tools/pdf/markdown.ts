@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import { mdToPdf } from 'md-to-pdf';
+import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 
 const isUrl = (source: string): boolean =>
@@ -13,11 +14,6 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
     } else {
         return await fs.readFile(source);
     }
-}
-
-type PageRange = {
-    offset: number;
-    length: number;
 }
 
 /**
