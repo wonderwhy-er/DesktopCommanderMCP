@@ -85,7 +85,7 @@
     "file-type": "^21.1.1",
     "glob": "^10.3.10",
     "isbinaryfile": "^5.0.4",
-    "md-to-pdf": "^5.2.4",
+    "md-to-pdf": "^5.2.5",
     "pdf-lib": "^1.17.1",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
