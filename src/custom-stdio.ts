@@ -277,10 +277,22 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
 
   /**
    * Public method to send log notifications from anywhere in the application
+   * Now properly buffers messages before MCP initialization to avoid breaking stdio protocol
    */
   public sendLog(level: "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug", message: string, data?: any) {
     // Skip if notifications are disabled (e.g., for Cline)
     if (this.disableNotifications) {
+      return;
+    }
+    
+    // Buffer messages before initialization to avoid breaking MCP protocol
+    // MCP requires client to send first message - server cannot write to stdout before that
+    if (!this.isInitialized) {
+      this.messageBuffer.push({
+        level,
+        args: [data ? { message, ...data } : message],
+        timestamp: Date.now()
+      });
       return;
     }
     
@@ -315,6 +327,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
    * Send a progress notification (useful for long-running operations)
    */
   public sendProgress(token: string, value: number, total?: number) {
+    // Don't send progress before initialization - would break MCP protocol
+    if (!this.isInitialized) {
+      return;
+    }
+    
     try {
       const notification = {
         jsonrpc: "2.0" as const,
@@ -346,6 +363,11 @@ export class FilteredStdioServerTransport extends StdioServerTransport {
    * Send a custom notification with any method name
    */
   public sendCustomNotification(method: string, params: any) {
+    // Don't send custom notifications before initialization - would break MCP protocol
+    if (!this.isInitialized) {
+      return;
+    }
+    
     try {
       const notification = {
         jsonrpc: "2.0" as const,
