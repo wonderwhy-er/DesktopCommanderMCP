@@ -46,6 +46,10 @@ class FeatureFlagManager {
         });
       }, this.cacheMaxAge);
       
+      // Allow process to exit even if interval is pending
+      // This is critical for proper cleanup when MCP client disconnects
+      this.refreshInterval.unref();
+      
       logger.info(`Feature flags initialized (refresh every ${this.cacheMaxAge / 1000}s)`);
     } catch (error) {
       logger.warning('Failed to initialize feature flags:', error);
@@ -107,7 +111,7 @@ class FeatureFlagManager {
    */
   private async fetchFlags(): Promise<void> {
     try {
-      logger.debug('Fetching feature flags from:', this.flagUrl);
+      // Don't log here - runs async and can interfere with MCP clients
       
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
@@ -132,10 +136,9 @@ class FeatureFlagManager {
         this.flags = config.flags;
         this.lastFetch = Date.now();
         
-        // Save to cache
+        // Save to cache (silently - don't log during async operations
+        // as it can interfere with MCP clients that close quickly)
         await this.saveToCache(config);
-        
-        logger.info(`Feature flags updated: ${Object.keys(this.flags).length} flags`);
       }
     } catch (error: any) {
       logger.debug('Failed to fetch feature flags:', error.message);
@@ -154,7 +157,7 @@ class FeatureFlagManager {
       }
       
       await fs.writeFile(this.cachePath, JSON.stringify(config, null, 2), 'utf8');
-      logger.debug('Saved feature flags to cache');
+      // Don't log here - this runs async and can cause issues with MCP clients
     } catch (error) {
       logger.warning('Failed to save feature flags to cache:', error);
     }

@@ -39,6 +39,13 @@ async function runServer() {
     // Set global flag for onboarding control
     (global as any).disableOnboarding = DISABLE_ONBOARDING;
 
+    // Create transport FIRST so all logging gets properly buffered
+    // This must happen before any code that might use logger.*
+    const transport = new FilteredStdioServerTransport();
+    
+    // Export transport for use throughout the application
+    global.mcpTransport = transport;
+
       try {
           deferLog('info', 'Loading configuration...');
           await configManager.loadConfig();
@@ -56,10 +63,6 @@ async function runServer() {
           // Continue anyway - we'll use an in-memory config
       }
 
-    const transport = new FilteredStdioServerTransport();
-    
-    // Export transport for use throughout the application
-    global.mcpTransport = transport;
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
