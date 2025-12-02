@@ -396,6 +396,149 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 }
 
 /**
+ * Read output from a running process - Version 2
+ * Different behavior: Only exits early for waiting input or finished processes.
+ * For running processes, waits until timeout to collect complete output.
+ */
+export async function readProcessOutput2(args: unknown): Promise<ServerResult> {
+  const parsed = ReadProcessOutputArgsSchema.safeParse(args);
+  if (!parsed.success) {
+    return {
+      content: [{ type: "text", text: `Error: Invalid arguments for read_process_output2: ${parsed.error}` }],
+      isError: true,
+    };
+  }
+
+  const { pid, timeout_ms = 5000 } = parsed.data;
+
+  const session = terminalManager.getSession(pid);
+  if (!session) {
+    // Check if this is a completed session
+    const completedOutput = terminalManager.getNewOutput(pid);
+    if (completedOutput) {
+      return {
+        content: [{
+          type: "text",
+          text: completedOutput
+        }],
+      };
+    }
+    
+    // Neither active nor completed session found
+    return {
+      content: [{ type: "text", text: `No session found for PID ${pid}` }],
+      isError: true,
+    };
+  }
+
+  let output = "";
+  let timeoutReached = false;
+  let earlyExit = false;
+  let processState: ProcessState | undefined;
+
+  try {
+    const outputPromise: Promise<string> = new Promise<string>((resolve) => {
+      const initialOutput = terminalManager.getNewOutput(pid);
+      if (initialOutput && initialOutput.length > 0) {
+        // Immediate check on existing output - only exit early for finished/waiting states
+        const state = analyzeProcessState(initialOutput, pid);
+        if (state.isWaitingForInput || state.isFinished) {
+          earlyExit = true;
+          processState = state;
+          resolve(initialOutput);
+          return;
+        }
+        // If not waiting/finished, fall through to periodic collection
+      }
+
+      let resolved = false;
+      let interval: NodeJS.Timeout | null = null;
+      let timeout: NodeJS.Timeout | null = null;
+      let collectedOutput = initialOutput || "";
+
+      const cleanup = () => {
+        if (interval) clearInterval(interval);
+        if (timeout) clearTimeout(timeout);
+      };
+
+      let resolveOnce = (value: string, isTimeout = false) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        timeoutReached = isTimeout;
+        resolve(value);
+      };
+
+      // Periodic collection without early exit for running processes
+      interval = setInterval(() => {
+        const newOutput = terminalManager.getNewOutput(pid);
+        if (newOutput && newOutput.length > 0) {
+          collectedOutput += newOutput;
+          
+          // Analyze current state
+          const state = analyzeProcessState(collectedOutput, pid);
+          
+          // Only exit early for waiting input or finished states
+          if (state.isWaitingForInput || state.isFinished) {
+            earlyExit = true;
+            processState = state;
+            resolveOnce(collectedOutput);
+            return;
+          }
+          
+          // For running processes, continue collecting until timeout
+          // Don't update output here, just continue collecting
+        }
+      }, 200); // Check every 200ms
+
+      // Timeout handler - return whatever we've collected
+      timeout = setTimeout(() => {
+        const finalOutput = terminalManager.getNewOutput(pid);
+        if (finalOutput) {
+          collectedOutput += finalOutput;
+        }
+        resolveOnce(collectedOutput, true);
+      }, timeout_ms);
+    });
+
+    const newOutput = await outputPromise;
+    output += newOutput;
+    
+    // Analyze final state if not already done
+    if (!processState) {
+      processState = analyzeProcessState(output, pid);
+    }
+
+  } catch (error) {
+    return {
+      content: [{ type: "text", text: `Error reading output: ${error}` }],
+      isError: true,
+    };
+  }
+
+  // Format response based on what we detected
+  let statusMessage = '';
+  if (earlyExit && processState?.isWaitingForInput) {
+    statusMessage = `\n🔄 ${formatProcessStateMessage(processState, pid)}`;
+  } else if (earlyExit && processState?.isFinished) {
+    statusMessage = `\n✅ ${formatProcessStateMessage(processState, pid)}`;
+  } else if (timeoutReached) {
+    statusMessage = '\n⏱️ Timeout reached - collected all available output';
+  } else {
+    statusMessage = '\n📊 Output collection completed';
+  }
+
+  const responseText = output || 'No new output available';
+  
+  return {
+    content: [{
+      type: "text",
+      text: `${responseText}${statusMessage}`
+    }],
+  };
+}
+
+/**
  * Interact with a running process (renamed from send_input)
  * Automatically detects when process is ready and returns output
  */

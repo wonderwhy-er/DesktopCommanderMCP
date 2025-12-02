@@ -1,6 +1,7 @@
 import { 
     startProcess, 
     readProcessOutput, 
+    readProcessOutput2,
     interactWithProcess,
     forceTerminate, 
     listSessions 
@@ -30,6 +31,14 @@ export async function handleStartProcess(args: unknown): Promise<ServerResult> {
 export async function handleReadProcessOutput(args: unknown): Promise<ServerResult> {
     const parsed = ReadProcessOutputArgsSchema.parse(args);
     return readProcessOutput(parsed);
+}
+
+/**
+ * Handle read_process_output2 command - alternative behavior for running processes
+ */
+export async function handleReadProcessOutput2(args: unknown): Promise<ServerResult> {
+    const parsed = ReadProcessOutputArgsSchema.parse(args);
+    return readProcessOutput2(parsed);
 }
 
 /**
