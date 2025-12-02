@@ -6,14 +6,15 @@ import {
     listDirectory,
     moveFile,
     getFileInfo,
+    writePdf,
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
 
-import {ServerResult} from '../types.js';
-import {withTimeout} from '../utils/withTimeout.js';
-import {createErrorResponse} from '../error-handlers.js';
-import {configManager} from '../config-manager.js';
+import { ServerResult } from '../types.js';
+import { withTimeout } from '../utils/withTimeout.js';
+import { createErrorResponse } from '../error-handlers.js';
+import { configManager } from '../config-manager.js';
 
 import {
     ReadFileArgsSchema,
@@ -22,7 +23,8 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
-    GetFileInfoArgsSchema
+    GetFileInfoArgsSchema,
+    WritePdfArgsSchema
 } from '../tools/schemas.js';
 
 /**
@@ -62,16 +64,47 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         // Use the provided limits or defaults
         const offset = parsed.offset ?? 0;
         const length = parsed.length ?? defaultLimit;
-        
+
         const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
-        
+        if (fileResult.isPdf) {
+            const meta = fileResult.payload?.metadata;
+            const author = meta?.author ? `, Author: ${meta?.author}` : "";
+            const title = meta?.title ? `, Title: ${meta?.title}` : "";
+        // Use the provided limits or defaults.
+        // If the caller did not supply an explicit length, fall back to the configured default.
+        const rawArgs = args as { offset?: number; length?: number } | undefined;
+        const offset = rawArgs && 'offset' in rawArgs ? parsed.offset : 0;
+        const length = rawArgs && 'length' in rawArgs ? parsed.length : defaultLimit;
+
+            const content = fileResult.payload?.pages?.flatMap(p => [
+                ...(p.images?.map((image, i) => ({
+                    type: "image",
+                    data: image.data,
+                    mimeType: image.mimeType
+                })) ?? []),
+                {
+                    type: "text",
+                    text: `<!-- Page: ${p.pageNumber} -->\n${p.text}`,
+                },
+            ]) ?? [];
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
+                    },
+                    ...content
+                ]
+            };
+        }
         if (fileResult.isImage) {
             // For image files, return as an image content type
             return {
                 content: [
-                    { 
-                        type: "text", 
-                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n` 
+                    {
+                        type: "text",
+                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n`
                     },
                     {
                         type: "image",
@@ -87,7 +120,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             };
         }
     };
-    
+
     // Execute with timeout at the handler level
     const result = await withTimeout(
         readFileOperation(),
@@ -108,28 +141,44 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 export async function handleReadMultipleFiles(args: unknown): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
     const fileResults = await readMultipleFiles(parsed.paths);
-    
+
     // Create a text summary of all files
     const textSummary = fileResults.map(result => {
         if (result.error) {
             return `${result.path}: Error - ${result.error}`;
+        } else if (result.isPdf) {
+            return `${result.path}: PDF file with ${result.payload?.pages?.length} pages`;
         } else if (result.mimeType) {
             return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
         } else {
             return `${result.path}: Unknown type`;
         }
     }).join("\n");
-    
+
     // Create content items for each file
-    const contentItems: Array<{type: string, text?: string, data?: string, mimeType?: string}> = [];
-    
+    const contentItems: Array<{ type: string, text?: string, data?: string, mimeType?: string }> = [];
+
     // Add the text summary
     contentItems.push({ type: "text", text: textSummary });
-    
+
     // Add each file content
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
-            if (result.isImage && result.mimeType) {
+            if (result.isPdf) {
+                result.payload?.pages.forEach((page, i) => {
+                    page.images.forEach((image, i) => {
+                        contentItems.push({
+                            type: "image",
+                            data: image.data,
+                            mimeType: image.mimeType
+                        });
+                    });
+                    contentItems.push({
+                        type: "text",
+                        text: page.text,
+                    });
+                });
+            } else if (result.isImage && result.mimeType) {
                 // For image files, add an image content item
                 contentItems.push({
                     type: "image",
@@ -145,7 +194,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
             }
         }
     }
-    
+
     return { content: contentItems };
 }
 
@@ -159,7 +208,7 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         // Get the line limit from configuration
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
-        
+
         // Strictly enforce line count limit
         const lines = parsed.content.split('\n');
         const lineCount = lines.length;
@@ -172,13 +221,13 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
 
         // Pass the mode parameter to writeFile
         await writeFile(parsed.path, parsed.content, parsed.mode);
-        
+
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
-        
+
         return {
-            content: [{ 
-                type: "text", 
+            content: [{
+                type: "text",
                 text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
             }],
         };
@@ -249,11 +298,11 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
         const parsed = GetFileInfoArgsSchema.parse(args);
         const info = await getFileInfo(parsed.path);
         return {
-            content: [{ 
-                type: "text", 
+            content: [{
+                type: "text",
                 text: Object.entries(info)
                     .map(([key, value]) => `${key}: ${value}`)
-                    .join('\n') 
+                    .join('\n')
             }],
         };
     } catch (error) {
@@ -262,5 +311,21 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
     }
 }
 
-// The listAllowedDirectories function has been removed
 // Use get_config to retrieve the allowedDirectories configuration
+
+/**
+ * Handle write_pdf command
+ */
+export async function handleWritePdf(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = WritePdfArgsSchema.parse(args);
+        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const targetPath = parsed.outputPath || parsed.path;
+        return {
+            content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+}
