@@ -378,6 +378,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           { type: "insert", pageIndex: 0, markdown: "..." }
                           { type: "insert", pageIndex: 5, sourcePdfPath: "/path/to/source.pdf" }
 
+                        PAGE BREAKS:
+                        To force a page break, use this HTML element:
+                        <div style="page-break-before: always;"></div>
+                        
+                        Example:
+                        "# Page 1\\n\\n<div style=\\"page-break-before: always;\\"></div>\\n\\n# Page 2"
+
+                        ADVANCED STYLING:
+                        HTML/CSS and inline SVG are supported for:
+                        - Text styling: colors, sizes, alignment, highlights
+                        - Boxes: borders, backgrounds, padding, rounded corners
+                        - SVG graphics: charts, diagrams, icons, shapes
+                        - Images: <img src="/absolute/path/image.jpg" width="300" /> or ![alt](/path/image.jpg)
+
                         Supports standard markdown features including headers, lists, code blocks, tables, and basic formatting.
 
                         Only works within allowed directories.
