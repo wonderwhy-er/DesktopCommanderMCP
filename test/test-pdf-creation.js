@@ -138,7 +138,7 @@ console.log('Line 3');
     }
 
     // --- Modification Test ---
-    console.log('\n2. Testing PDF Modification - keep layout...');
+    console.log('\n3. Testing PDF Modification - keep layout...');
 
     await writePdf(SAMPLE_FILE, [
         {
