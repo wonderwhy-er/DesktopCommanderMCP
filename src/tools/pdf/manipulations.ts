@@ -108,7 +108,7 @@ export async function editPdf(
         }
         else if (op.type == 'insert') {
             let sourcePdfDocument: PDFDocument;
-            if (op.markdown) {
+            if (op.markdown !== undefined) {
                 const pdfOptions = pageLayout ? { pdf_options: pageLayout } : undefined;
                 const pdfBuffer = await parseMarkdownToPdf(op.markdown, pdfOptions);
                 sourcePdfDocument = await loadPdfDocumentFromBuffer(pdfBuffer);
