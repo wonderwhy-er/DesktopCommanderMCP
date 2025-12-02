@@ -47,7 +47,7 @@ export const ReadFileArgsSchema = z.object({
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
   length: z.number().optional().default(1000),
-  sheet: z.union([z.string(), z.number()]).optional(),
+  sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional()
 });

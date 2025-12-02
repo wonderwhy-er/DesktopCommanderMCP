@@ -264,8 +264,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         FORMAT HANDLING (by extension):
                         - Text: Uses offset/length for line-based pagination
                         - Excel (.xlsx, .xls, .xlsm): Returns JSON 2D array
-                          * Use sheet param: name (string) or index (number, 0-based)
-                          * Use range param: ALWAYS use FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
+                          * sheet: "Sheet1" (name) or "0" (index as string, 0-based)
+                          * range: ALWAYS use FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
                           * offset/length work as row pagination (optional fallback)
                         - Images (PNG, JPEG, GIF, WebP): Base64 encoded viewable content
 
@@ -657,7 +657,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         COMMON FILE ANALYSIS PATTERNS:
                         • start_process("python3 -i") → Python REPL for data analysis (RECOMMENDED)
-                        • start_process("node -i") → Node.js for JSON processing  
+                        • start_process("node -i") → Node.js REPL for JSON processing
+                        • start_process("node:local") → Node.js on MCP server (stateless, ES imports, all code in one call)
                         • start_process("cut -d',' -f1 file.csv | sort | uniq -c") → Quick CSV analysis
                         • start_process("wc -l /path/file.csv") → Line counting
                         • start_process("head -10 /path/file.csv") → File preview
@@ -666,12 +667,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         For PDF, Excel, Word, archives, databases, and other binary formats, use process tools with appropriate libraries or command-line utilities.
                         
                         INTERACTIVE PROCESSES FOR DATA ANALYSIS:
-                        1. start_process("python3 -i") - Start Python REPL for data work
-                        2. start_process("node -i") - Start Node.js REPL for JSON/JS
-                        3. start_process("bash") - Start interactive bash shell
+                        For code/calculations, use in this priority order:
+                        1. start_process("python3 -i") - Python REPL (preferred)
+                        2. start_process("node -i") - Node.js REPL (when Python unavailable)
+                        3. start_process("node:local") - Node.js fallback (when node -i fails)
                         4. Use interact_with_process() to send commands
                         5. Use read_process_output() to get responses
-                        
+                        When Python is unavailable, prefer Node.js over shell for calculations.
+                        Node.js: Always use ES import syntax (import x from 'y'), not require().
+
                         SMART DETECTION:
                         - Detects REPL prompts (>>>, >, $, etc.)
                         - Identifies when process is waiting for input
@@ -690,16 +694,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Complete timeline of all output events with timestamps
                         - Which detection mechanism triggered early exit
                         Use this to identify missed optimization opportunities and improve detection patterns.
-
-                        NODE.JS FALLBACK (node:local):
-                        When Python is unavailable or fails, use start_process("node:local") instead.
-                        - Runs on MCP server where Node.js is guaranteed
-                        - interact_with_process(pid, "complete self-contained script")
-                        - STATELESS: Each call is fresh - include ALL imports/setup/processing in ONE call
-                        - Use ES module imports: import ExcelJS from 'exceljs'
-                        - ExcelJS available for Excel files (NOT xlsx library)
-                        - All Node.js built-ins available (fs, path, http, crypto, etc.)
-                        - Use console.log() for output
 
                         ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
                         NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
@@ -785,7 +779,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         SUPPORTED REPLs:
                         - Python: python3 -i (RECOMMENDED for data analysis)
-                        - Node.js: node -i  
+                        - Node.js: node -i
                         - R: R
                         - Julia: julia
                         - Shell: bash, zsh

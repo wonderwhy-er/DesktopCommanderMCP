@@ -60,11 +60,17 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const defaultLimit = config.fileReadLineLimit ?? 1000;
 
+        // Convert sheet parameter: numeric strings become numbers for Excel index access
+        let sheetParam: string | number | undefined = parsed.sheet;
+        if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
+            sheetParam = parseInt(parsed.sheet, 10);
+        }
+
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
             length: parsed.length ?? defaultLimit,
-            sheet: parsed.sheet,
+            sheet: sheetParam,
             range: parsed.range
         };
         const fileResult = await readFile(parsed.path, options);
