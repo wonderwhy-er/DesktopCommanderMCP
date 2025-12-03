@@ -22,7 +22,7 @@
     "testemonials"
   ],
   "scripts": {
-    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || true",
+    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
     "open-chat": "open -n /Applications/Claude.app",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
@@ -32,7 +32,7 @@
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",
-    "setup": "npm install && npm run build && node setup-claude-server.js",
+    "setup": "npm install --include=dev && npm run build && node setup-claude-server.js",
     "setup:debug": "npm install && npm run build && node setup-claude-server.js --debug",
     "remove": "npm install && npm run build && node uninstall-claude-server.js",
     "prepare": "npm run build",
