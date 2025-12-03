@@ -33,10 +33,11 @@ export async function getRipgrepPath(): Promise<string> {
     // @vscode/ripgrep import or binary resolution failed, continue to fallbacks
   }
 
-  // Strategy 2: Try system ripgrep using 'which' command
+  // Strategy 2: Try system ripgrep using 'which' (Unix) or 'where' (Windows)
   try {
     const systemRg = process.platform === 'win32' ? 'rg.exe' : 'rg';
-    const result = execSync(`which ${systemRg}`, { encoding: 'utf-8' }).trim();
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    const result = execSync(`${whichCmd} ${systemRg}`, { encoding: 'utf-8' }).trim().split(/\r?\n/)[0];
     if (result && existsSync(result)) {
       cachedRgPath = result;
       return result;
