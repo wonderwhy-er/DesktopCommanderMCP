@@ -263,17 +263,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Can fetch content from URLs when isUrl parameter is set to true
                         (URLs are always read in full regardless of offset/length).
                         
-                        Handles text files normally and image files are returned as viewable images.
-                        Recognized image types: PNG, JPEG, GIF, WebP.
-                        
-                        PDF Support:
-                        - Automatically extracts text content as markdown
-                        - Preserves basic document structure with paragraph breaks
-                        - Special handling for 'offset' and 'length':
-                          * 'offset': Start page number (0-based, e.g., 0 is page 1)
-                          * 'length': Number of pages to read
-                          * Negative offsets work similarly (e.g., -1 is the last page)
-                        
+                        FORMAT HANDLING (by extension):
+                        - Text: Uses offset/length for line-based pagination
+                        - Excel (.xlsx, .xls, .xlsm): Returns JSON 2D array
+                          * Use sheet param: name (string) or index (number, 0-based)
+                          * Use range param: ALWAYS use FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
+                          * offset/length work as row pagination (optional fallback)
+                        - Images (PNG, JPEG, GIF, WebP): Base64 encoded viewable content
+                        - PDF: Extracts text content as markdown with page structure
+                          * offset/length work as page pagination (0-based)
+                          * Includes embedded images when available
+
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
@@ -306,9 +307,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "write_file",
                 description: `
-                        Write or append to file contents. 
+                        Write or append to file contents.
                         
-                        IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks. 
+                        IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
+
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -324,16 +326,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         1. Any file expected to be longer than 25-30 lines
                         2. When writing multiple files in sequence
                         3. When creating documentation, code files, or configuration files
-                        
+
                         HANDLING CONTINUATION ("Continue" prompts):
                         If user asks to "Continue" after an incomplete operation:
                         1. Read the file to see what was successfully written
                         2. Continue writing ONLY the remaining content using {mode: 'append'}
                         3. Keep chunks to 25-30 lines each
-                        
+
+                        FORMAT HANDLING (by extension):
+                        - Text files: String content
+                        - Excel (.xlsx, .xls, .xlsm): JSON 2D array or {"SheetName": [[...]]}
+                          Example: '[["Name","Age"],["Alice",30]]'
+
                         Files over 50 lines will generate performance notes but are still written successfully.
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(WriteFileArgsSchema),
@@ -624,13 +631,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Retrieve detailed metadata about a file or directory including:
                         - size
                         - creation time
-                        - last modified time 
+                        - last modified time
                         - permissions
                         - type
                         - lineCount (for text files)
                         - lastLine (zero-indexed number of last line, for text files)
                         - appendPosition (line number for appending, for text files)
-                        
+                        - sheets (for Excel files - array of {name, rowCount, colCount})
+
                         Only works within allowed directories.
                         
                         ${PATH_GUIDANCE}
@@ -643,45 +651,55 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             // Note: list_allowed_directories removed - use get_config to check allowedDirectories
 
-            // Text editing tools
+            // Editing tools
             {
                 name: "edit_block",
                 description: `
-                        Apply surgical text replacements to files.
-                        
+                        Apply surgical edits to files.
+
+
                         BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
-                        Each edit_block call should change only what needs to be changed - include just enough 
+                        Each edit_block call should change only what needs to be changed - include just enough
                         context to uniquely identify the text being modified.
-                        
+
+                        FORMAT HANDLING (by extension):
+
+                        EXCEL FILES (.xlsx, .xls, .xlsm) - Range Update mode:
+                        Takes:
+                        - file_path: Path to the Excel file
+                        - range: "SheetName!A1:C10" or "SheetName" for whole sheet
+                        - content: 2D array, e.g., [["H1","H2"],["R1","R2"]]
+
+                        TEXT FILES - Find/Replace mode:
                         Takes:
                         - file_path: Path to the file to edit
                         - old_string: Text to replace
                         - new_string: Replacement text
-                        - expected_replacements: Optional parameter for number of replacements
-                        
+                        - expected_replacements: Optional number of replacements (default: 1)
+
                         By default, replaces only ONE occurrence of the search text.
-                        To replace multiple occurrences, provide the expected_replacements parameter with
+                        To replace multiple occurrences, provide expected_replacements with
                         the exact number of matches expected.
-                        
+
                         UNIQUENESS REQUIREMENT: When expected_replacements=1 (default), include the minimal
                         amount of context necessary (typically 1-3 lines) before and after the change point,
                         with exact whitespace and indentation.
-                        
+
                         When editing multiple sections, make separate edit_block calls for each distinct change
                         rather than one large replacement.
-                        
+
                         When a close but non-exact match is found, a character-level diff is shown in the format:
                         common_prefix{-removed-}{+added+}common_suffix to help you identify what's different.
-                        
+
                         Similar to write_file, there is a configurable line limit (fileWriteLineLimit) that warns
                         if the edited file exceeds this limit. If this happens, consider breaking your edits into
                         smaller, more focused changes.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(EditBlockArgsSchema),
                 annotations: {
-                    title: "Edit Text Block",
+                    title: "Edit Block",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
@@ -1038,7 +1056,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         If unclear from context, use: "exploring tool capabilities"
                         
                         The prompt content will be injected and execution begins immediately.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
             }
@@ -1228,6 +1246,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "kill_process":
                 result = await handlers.handleKillProcess(args);
+                break;
+
+            case "execute_node":
+                try {
+                    result = await handlers.handleExecuteNode(args);
+                } catch (error) {
+                    capture('server_request_error', {message: `Error in execute_node handler: ${error}`});
+                    result = {
+                        content: [{type: "text", text: `Error executing Node.js code: ${error instanceof Error ? error.message : String(error)}`}],
+                        isError: true,
+                    };
+                }
                 break;
 
             // Note: REPL functionality removed in favor of using general terminal commands

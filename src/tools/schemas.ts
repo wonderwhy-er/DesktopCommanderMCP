@@ -47,6 +47,9 @@ export const ReadFileArgsSchema = z.object({
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
   length: z.number().optional().default(1000),
+  sheet: z.union([z.string(), z.number()]).optional(),
+  range: z.string().optional(),
+  options: z.record(z.any()).optional()
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -116,13 +119,26 @@ export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
 
-// Edit tools schema
+// Edit tools schema - SIMPLIFIED from three modes to two
+// Previously supported: text replacement, location-based edits (edits array), and range rewrites
+// Now supports only: text replacement and range rewrites
+// Removed 'edits' array parameter - location-based surgical edits were complex and unnecessary
+// Range rewrites are more powerful and cover all structured file editing needs
 export const EditBlockArgsSchema = z.object({
   file_path: z.string(),
-  old_string: z.string(),
-  new_string: z.string(),
+  // Text file string replacement
+  old_string: z.string().optional(),
+  new_string: z.string().optional(),
   expected_replacements: z.number().optional().default(1),
-});
+  // Structured file range rewrite (Excel, etc.)
+  range: z.string().optional(),
+  content: z.any().optional(),
+  options: z.record(z.any()).optional()
+}).refine(
+  data => (data.old_string !== undefined && data.new_string !== undefined) ||
+          (data.range !== undefined && data.content !== undefined),
+  { message: "Must provide either (old_string + new_string) or (range + content)" }
+);
 
 // Send input to process schema
 export const InteractWithProcessArgsSchema = z.object({
@@ -185,4 +201,10 @@ export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
   toolName: z.string().optional(),
   since: z.string().datetime().optional(),
+});
+
+// Execute Node.js code schema
+export const ExecuteNodeArgsSchema = z.object({
+  code: z.string(),
+  timeout_ms: z.number().optional().default(30000),
 });

@@ -1,3 +1,20 @@
+/**
+ * Text file editing via search/replace with fuzzy matching support.
+ *
+ * TECHNICAL DEBT / ARCHITECTURAL NOTE:
+ * This file contains text editing logic that should ideally live in TextFileHandler.editRange()
+ * to be consistent with how Excel editing works (ExcelFileHandler.editRange()).
+ *
+ * Current inconsistency:
+ * - Excel: edit_block → ExcelFileHandler.editRange() ✓ uses file handler
+ * - Text:  edit_block → performSearchReplace() here → bypasses TextFileHandler
+ *
+ * Future refactor should:
+ * 1. Move performSearchReplace() + fuzzy logic into TextFileHandler.editRange()
+ * 2. Make this file a thin dispatch layer that routes to appropriate FileHandler
+ * 3. Unify the editRange() signature to handle both text search/replace and structured edits
+ */
+
 import { readFile, writeFile, readFileInternal, validatePath } from './filesystem.js';
 import fs from 'fs/promises';
 import { ServerResult } from '../types.js';
@@ -337,17 +354,72 @@ function highlightDifferences(expected: string, actual: string): string {
 }
 
 /**
- * Handle edit_block command with enhanced functionality
- * - Supports multiple replacements
- * - Validates expected replacements count
- * - Provides detailed error messages
+ * Handle edit_block command
+ *
+ * 1. Text files: String replacement (old_string/new_string)
+ *    - Uses fuzzy matching for resilience
+ *    - Handles expected_replacements parameter
+ *
+ * 2. Structured files (Excel): Range rewrite (range + content)
+ *    - Bulk updates to cell ranges (e.g., "Sheet1!A1:C10")
+ *    - Whole sheet replacement (e.g., "Sheet1")
+ *    - More powerful and simpler than surgical location-based edits
+ *    - Supports chunking for large datasets (e.g., 1000 rows at a time)
+
  */
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     const parsed = EditBlockArgsSchema.parse(args);
-    
+
+    // Structured files: Range rewrite
+    if (parsed.range && parsed.content !== undefined) {
+        try {
+            const { getFileHandler } = await import('../utils/files/factory.js');
+            const handler = getFileHandler(parsed.file_path);
+
+            // Parse content if it's a JSON string (AI often sends arrays as JSON strings)
+            let content = parsed.content;
+            if (typeof content === 'string') {
+                try {
+                    content = JSON.parse(content);
+                } catch {
+                    // Leave as-is if not valid JSON - let handler decide
+                }
+            }
+
+            // Check if handler supports range editing
+            if ('editRange' in handler && typeof handler.editRange === 'function') {
+                await handler.editRange(parsed.file_path, parsed.range, content, parsed.options);
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Successfully updated range ${parsed.range} in ${parsed.file_path}`
+                    }],
+                };
+            } else {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Error: Range-based editing not supported for ${parsed.file_path}`
+                    }],
+                    isError: true
+                };
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{
+                    type: "text",
+                    text: `Error: ${errorMessage}`
+                }],
+                isError: true
+            };
+        }
+    }
+
+    // Text files: String replacement
     const searchReplace = {
-        search: parsed.old_string,
-        replace: parsed.new_string
+        search: parsed.old_string!,
+        replace: parsed.new_string!
     };
 
     return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
