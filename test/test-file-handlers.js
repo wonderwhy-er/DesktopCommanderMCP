@@ -107,7 +107,7 @@ async function testHandlerFactory() {
   ];
 
   for (const { file, expected } of testCases) {
-    const handler = getFileHandler(file);
+    const handler = await getFileHandler(file);
     assert.strictEqual(handler.constructor.name, expected,
       `${file} should use ${expected} but got ${handler.constructor.name}`);
   }
@@ -168,9 +168,9 @@ async function testReadOptionsInterface() {
 async function testCanHandle() {
   console.log('\n--- Test 4: canHandle Method ---');
 
-  const excelHandler = getFileHandler('test.xlsx');
-  const textHandler = getFileHandler('test.txt');
-  const imageHandler = getFileHandler('test.png');
+  const excelHandler = await getFileHandler('test.xlsx');
+  const textHandler = await getFileHandler('test.txt');
+  const imageHandler = await getFileHandler('test.png');
 
   // Excel handler should handle xlsx
   assert.ok(excelHandler.canHandle('anything.xlsx'), 'Excel handler should handle .xlsx');

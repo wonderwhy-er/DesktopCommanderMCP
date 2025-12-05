@@ -81,12 +81,12 @@ async function teardown(originalConfig) {
 async function testFileHandlerFactory() {
   console.log('\n--- Test 1: File Handler Factory ---');
 
-  const handler = getFileHandler('test.xlsx');
+  const handler = await getFileHandler('test.xlsx');
   assert.ok(handler, 'Handler should be returned for .xlsx file');
   assert.ok(handler.constructor.name === 'ExcelFileHandler',
     `Expected ExcelFileHandler but got ${handler.constructor.name}`);
 
-  const txtHandler = getFileHandler('test.txt');
+  const txtHandler = await getFileHandler('test.txt');
   assert.ok(txtHandler.constructor.name === 'TextFileHandler',
     `Expected TextFileHandler for .txt but got ${txtHandler.constructor.name}`);
 
