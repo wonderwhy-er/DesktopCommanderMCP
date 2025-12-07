@@ -2,11 +2,14 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
-import {capture} from '../utils/capture.js';
-import {withTimeout} from '../utils/withTimeout.js';
-import {configManager} from '../config-manager.js';
+import { capture } from '../utils/capture.js';
+import { withTimeout } from '../utils/withTimeout.js';
+import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
-import type { ReadOptions, FileResult } from '../utils/files/base.js';
+import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
+import { isPdfFile } from "./mime-types.js";
+import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -26,11 +29,12 @@ const FILE_SIZE_LIMITS = {
  * @param filePath Path to the file
  * @returns Object with mimeType and isImage properties
  */
-async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; isImage: boolean }> {
-    const { getMimeType, isImageFile } = await import('./mime-types.js');
+async function getMimeTypeInfo(filePath: string): Promise<{ mimeType: string; isImage: boolean; isPdf: boolean }> {
+    const { getMimeType, isImageFile, isPdfFile } = await import('./mime-types.js');
     const mimeType = getMimeType(filePath);
     const isImage = isImageFile(mimeType);
-    return { mimeType, isImage };
+    const isPdf = isPdfFile(mimeType);
+    return { mimeType, isImage, isPdf };
 }
 
 /**
@@ -126,14 +130,14 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
     }
 
     let normalizedPathToCheck = normalizePath(pathToCheck);
-    if(normalizedPathToCheck.slice(-1) === path.sep) {
+    if (normalizedPathToCheck.slice(-1) === path.sep) {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
     // Check if the path is within any allowed directory
     const isAllowed = allowedDirectories.some(allowedDir => {
         let normalizedAllowedDir = normalizePath(allowedDir);
-        if(normalizedAllowedDir.slice(-1) === path.sep) {
+        if (normalizedAllowedDir.slice(-1) === path.sep) {
             normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
         }
 
@@ -230,6 +234,12 @@ export async function validatePath(requestedPath: string): Promise<string> {
 // Re-export FileResult from base for consumers
 export type { FileResult } from '../utils/files/base.js';
 
+type PdfPayload = {
+    metadata: PdfMetadata;
+    pages: PdfPageItem[];
+}
+
+type FileResultPayloads = PdfPayload;
 
 /**
  * Read file content from a URL
@@ -243,7 +253,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
-    
+
     try {
         const response = await fetch(url, {
             signal: controller.signal
@@ -256,11 +266,30 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
 
-        // Get MIME type from Content-Type header
+        // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
+        const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
 
-        if (isImage) {
+        // NEW: Add PDF handling before image check
+        if (isPdf) {
+            // Use URL directly - pdfreader handles URL downloads internally
+            const pdfResult = await parsePdfToMarkdown(url);
+
+            return {
+                content: "",
+                mimeType: 'text/plain',
+                metadata: {
+                    isImage: false,
+                    isPdf: true,
+                    author: pdfResult.metadata.author,
+                    title: pdfResult.metadata.title,
+                    totalPages: pdfResult.metadata.totalPages,
+                    pages: pdfResult.pages
+                }
+            };
+
+        } else if (isImage) {
             // For images, convert to base64
             const buffer = await response.arrayBuffer();
             const content = Buffer.from(buffer).toString('base64');
@@ -284,8 +313,6 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         throw new Error(errorMessage);
     }
 }
-
-
 
 /**
  * Read file content from the local filesystem
@@ -329,7 +356,7 @@ export async function readFileFromDisk(
     } catch (error) {
         console.error('error catch ' + error);
         const errorMessage = error instanceof Error ? error.message : String(error);
-        capture('server_read_file_error', {error: errorMessage, fileExtension: fileExtension});
+        capture('server_read_file_error', { error: errorMessage, fileExtension: fileExtension });
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
@@ -478,6 +505,8 @@ export interface MultiFileResult {
     mimeType?: string;
     isImage?: boolean;
     error?: string;
+    isPdf?: boolean;
+    payload?: FileResultPayloads;
 }
 
 export async function readMultipleFiles(paths: string[]): Promise<MultiFileResult[]> {
@@ -486,7 +515,6 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
             try {
                 const validPath = await validatePath(filePath);
                 const fileResult = await readFile(validPath);
-
                 // Handle content conversion properly for images vs text
                 let content: string;
                 if (typeof fileResult.content === 'string') {
@@ -501,7 +529,16 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
                     path: filePath,
                     content,
                     mimeType: fileResult.mimeType,
-                    isImage: fileResult.metadata?.isImage ?? false
+                    isImage: fileResult.metadata?.isImage ?? false,
+                    isPdf: fileResult.metadata?.isPdf ?? false,
+                    payload: fileResult.metadata?.isPdf ? {
+                        metadata: {
+                            author: fileResult.metadata.author,
+                            title: fileResult.metadata.title,
+                            totalPages: fileResult.metadata.totalPages ?? 0
+                        },
+                        pages: fileResult.metadata.pages ?? []
+                    } : undefined
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -590,7 +627,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
     // Use the new search manager for better performance
     // This provides a temporary compatibility layer until we fully migrate to search sessions
     const { searchManager } = await import('../search-manager.js');
-    
+
     try {
         const result = await searchManager.startSearch({
             rootPath,
@@ -607,27 +644,27 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
         let allResults: string[] = [];
         let isComplete = result.isComplete;
         let startTime = Date.now();
-        
+
         // Add initial results
         for (const searchResult of result.results) {
             if (searchResult.type === 'file') {
                 allResults.push(searchResult.file);
             }
         }
-        
+
         while (!isComplete) {
             await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
-            
+
             const results = searchManager.readSearchResults(sessionId);
             isComplete = results.isComplete;
-            
+
             // Add new file paths to results
             for (const searchResult of results.results) {
                 if (searchResult.file !== '__LAST_READ_MARKER__' && searchResult.type === 'file') {
                     allResults.push(searchResult.file);
                 }
             }
-            
+
             // Safety check to prevent infinite loops (30 second timeout)
             if (Date.now() - startTime > 30000) {
                 searchManager.terminateSearch(sessionId);
@@ -648,7 +685,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
         capture('server_search_files_ripgrep_fallback', {
             error: error instanceof Error ? error.message : 'Unknown error'
         });
-        
+
         return await searchFilesNodeJS(rootPath, pattern);
     }
 }
@@ -752,7 +789,7 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         fileType: fileInfo.fileType ?? fallbackInfo.fileType,
     };
 
-    // Add type-specific metadata
+    // Add type-specific metadata from file handler
     if (fileInfo.metadata) {
         // For text files
         if (fileInfo.metadata.lineCount !== undefined) {
@@ -772,6 +809,14 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
             info.isImage = true;
         }
 
+        // For PDF files
+        if (fileInfo.metadata.isPdf) {
+            info.isPdf = true;
+            info.totalPages = fileInfo.metadata.totalPages;
+            if (fileInfo.metadata.title) info.title = fileInfo.metadata.title;
+            if (fileInfo.metadata.author) info.author = fileInfo.metadata.author;
+        }
+
         // For binary files
         if (fileInfo.metadata.isBinary) {
             info.isBinary = true;
@@ -779,4 +824,69 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
     }
 
     return info;
+}
+
+
+/**
+ * Write content to a PDF file.
+ * Can create a new PDF from Markdown string, or modify an existing PDF using operations.
+ * 
+ * @param filePath Path to the output PDF file
+ * @param content Markdown string (for creation) or array of operations (for modification)
+ * @param options Options for PDF generation or modification. For modification, can include `sourcePdf`.
+ */
+export async function writePdf(
+    filePath: string,
+    content: string | PdfOperations[],
+    outputPath?: string,
+    options: any = {}
+): Promise<void> {
+    const validPath = await validatePath(filePath);
+    const fileExtension = getFileExtension(validPath);
+
+    if (typeof content === 'string') {
+        // --- PDF CREATION MODE ---
+        capture('server_write_pdf', {
+            fileExtension: fileExtension,
+            contentLength: content.length,
+            mode: 'create'
+        });
+
+        const pdfBuffer = await parseMarkdownToPdf(content, options);
+        // Use outputPath if provided, otherwise overwrite input file
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+        await fs.writeFile(targetPath, pdfBuffer);
+    } else if (Array.isArray(content)) {
+
+        // Use outputPath if provided, otherwise overwrite input file
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
+        const operations: PdfOperations[] = [];
+
+        // Validate paths in operations
+        for (const o of content) {
+            if (o.type === 'insert') {
+                if (o.sourcePdfPath) {
+                    o.sourcePdfPath = await validatePath(o.sourcePdfPath);
+                }
+            }
+            operations.push(o);
+        }
+
+        capture('server_write_pdf', {
+            fileExtension: fileExtension,
+            operationCount: operations.length,
+            mode: 'modify',
+            deleteCount: operations.filter(op => op.type === 'delete').length,
+            insertCount: operations.filter(op => op.type === 'insert').length
+        });
+
+        // Perform the PDF editing
+        const modifiedPdfBuffer = await editPdf(validPath, operations);
+
+        // Write the modified PDF to the output path
+        await fs.writeFile(targetPath, modifiedPdfBuffer);
+    } else {
+        throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
+    }
 }

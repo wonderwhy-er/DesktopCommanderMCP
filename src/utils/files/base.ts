@@ -123,9 +123,28 @@ export interface FileMetadata {
     /** For text files */
     lineCount?: number;
 
+    /** For PDF files */
+    isPdf?: boolean;
+    author?: string;
+    title?: string;
+    totalPages?: number;
+    pages?: PdfPageItem[];
+
     /** Error information if operation failed */
     error?: boolean;
     errorMessage?: string;
+}
+
+/**
+ * PDF page content item
+ */
+export interface PdfPageItem {
+    pageNumber: number;
+    text: string;
+    images: Array<{
+        data: string;
+        mimeType: string;
+    }>;
 }
 
 /**
