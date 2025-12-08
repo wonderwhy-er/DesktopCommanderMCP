@@ -709,11 +709,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Start a new terminal process with intelligent state detection.
                         
-                        PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
-                        This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
-                        The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
-                        
-                        CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
+                        WHEN TO USE THIS VS NATIVE DC TOOLS:
+                        Use native Desktop Commander tools (read_file, write_file, list_directory, etc.) for direct file operations - they're simpler and more reliable.
+                        Use start_process for:
+                        - Complex data analysis requiring Python/pandas/numpy
+                        - Operations needing external tools (git, npm, brew, etc.)
+                        - Interactive workflows requiring a REPL
+                        - Running scripts or build commands
                         
                         ${OS_GUIDANCE}
                         
@@ -764,8 +766,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Which detection mechanism triggered early exit
                         Use this to identify missed optimization opportunities and improve detection patterns.
 
-                        ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
-                        NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
+                        GOOD FOR: Data analysis, CSV processing, running scripts, git/npm commands, interactive REPLs
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -821,16 +822,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Send input to a running process and automatically receive the response.
                         
-                        CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
-                        For ANY local file analysis (CSV, JSON, data processing), ALWAYS use this instead of the analysis tool.
-                        The analysis tool CANNOT access local files and WILL FAIL - use processes for ALL file-based work.
-                        
-                        FILE ANALYSIS PRIORITY ORDER (MANDATORY):
-                        1. ALWAYS FIRST: Use this tool (start_process + interact_with_process) for local data analysis
-                        2. ALTERNATIVE: Use command-line tools (cut, awk, grep) for quick processing  
-                        3. NEVER EVER: Use analysis tool for local file access (IT WILL FAIL)
-                        
-                        REQUIRED INTERACTIVE WORKFLOW FOR FILE ANALYSIS:
+                        RECOMMENDED WORKFLOW FOR DATA ANALYSIS:
                         1. Start REPL: start_process("python3 -i")
                         2. Load libraries: interact_with_process(pid, "import pandas as pd, numpy as np")
                         3. Read file: interact_with_process(pid, "df = pd.read_csv('/absolute/path/file.csv')")
@@ -871,8 +863,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Which detection mechanism triggered early exit
                         Use this to identify slow interactions and optimize detection patterns.
 
-                        ALWAYS USE FOR: CSV analysis, JSON processing, file statistics, data visualization prep, ANY local file work
-                        NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
+                        GOOD FOR: CSV analysis, JSON processing, file statistics, data visualization, running scripts
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(InteractWithProcessArgsSchema),
