@@ -88,7 +88,7 @@
     },
     {
       "name": "edit_block",
-      "description": "Apply surgical text replacements to files. Make small, focused edits with minimal context for precision."
+      "description": "Apply surgical edits to files. Supports text replacement (old_string/new_string) with fuzzy matching for text files, and range updates (range/content) for Excel files."
     },
     {
       "name": "start_process",
@@ -133,6 +133,10 @@
     {
       "name": "get_prompts",
       "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
+    },
+    {
+      "name": "execute_node",
+      "description": "Execute Node.js code directly using the MCP server's Node runtime. Supports ES modules with top-level await."
     }
   ],
   "keywords": [

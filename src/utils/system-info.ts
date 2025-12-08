@@ -1,6 +1,7 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 
 export interface DockerMount {
     hostPath: string;
@@ -42,6 +43,11 @@ export interface SystemInfo {
         version: string;
         path: string;
         npmVersion?: string;
+    };
+    pythonInfo?: {
+        available: boolean;
+        command: string;
+        version?: string;
     };
     processInfo: {
         pid: number;
@@ -399,13 +405,13 @@ function detectNodeInfo(): SystemInfo['nodeInfo'] {
     try {
         // Get Node.js version from current process
         const version = process.version.replace('v', ''); // Remove 'v' prefix
-        
+
         // Get Node.js executable path from current process
         const path = process.execPath;
-        
+
         // Get npm version from environment if available
         const npmVersion = process.env.npm_version;
-        
+
         return {
             version,
             path,
@@ -414,6 +420,39 @@ function detectNodeInfo(): SystemInfo['nodeInfo'] {
     } catch (error) {
         return undefined;
     }
+}
+
+/**
+ * Detect Python installation and version and put on systeminfo.pythonInfo
+ */
+function detectPythonInfo(): SystemInfo['pythonInfo'] {
+    // Try python commands in order of preference
+    const pythonCommands = process.platform === 'win32'
+        ? ['python', 'python3', 'py']  // Windows: 'python' is common, 'py' launcher
+        : ['python3', 'python'];        // Unix: prefer python3
+
+    for (const cmd of pythonCommands) {
+        try {
+            const version = execSync(`${cmd} --version`, {
+                encoding: 'utf8',
+                timeout: 5000,
+                stdio: ['pipe', 'pipe', 'pipe']
+            }).trim();
+
+            // Verify it's Python 3.x
+            if (version.includes('Python 3')) {
+                return {
+                    available: true,
+                    command: cmd,
+                    version: version.replace('Python ', '')
+                };
+            }
+        } catch {
+            // Command not found or failed, try next
+        }
+    }
+
+    return { available: false, command: '' };
 }
 
 /**
@@ -509,7 +548,10 @@ export function getSystemInfo(): SystemInfo {
     
     // Detect Node.js installation from current process
     const nodeInfo = detectNodeInfo();
-    
+
+    // Detect Python installation
+    const pythonInfo = detectPythonInfo();
+
     // Get process information
     const processInfo = {
         pid: process.pid,
@@ -538,6 +580,7 @@ export function getSystemInfo(): SystemInfo {
         },
         isDXT: !!process.env.MCP_DXT,
         nodeInfo,
+        pythonInfo,
         processInfo,
         examplePaths
     };

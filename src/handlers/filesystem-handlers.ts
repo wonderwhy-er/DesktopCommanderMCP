@@ -10,6 +10,7 @@ import {
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
+import type { ReadOptions } from '../utils/files/base.js';
 
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -61,23 +62,29 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const defaultLimit = config.fileReadLineLimit ?? 1000;
 
-        // Use the provided limits or defaults
-        const offset = parsed.offset ?? 0;
-        const length = parsed.length ?? defaultLimit;
+        // Convert sheet parameter: numeric strings become numbers for Excel index access
+        let sheetParam: string | number | undefined = parsed.sheet;
+        if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
+            sheetParam = parseInt(parsed.sheet, 10);
+        }
 
-        const fileResult = await readFile(parsed.path, parsed.isUrl, offset, length);
-        if (fileResult.isPdf) {
-            const meta = fileResult.payload?.metadata;
+        const options: ReadOptions = {
+            isUrl: parsed.isUrl,
+            offset: parsed.offset ?? 0,
+            length: parsed.length ?? defaultLimit,
+            sheet: sheetParam,
+            range: parsed.range
+        };
+        const fileResult = await readFile(parsed.path, options);
+
+        // Handle PDF files
+        if (fileResult.metadata?.isPdf) {
+            const meta = fileResult.metadata;
             const author = meta?.author ? `, Author: ${meta?.author}` : "";
             const title = meta?.title ? `, Title: ${meta?.title}` : "";
-        // Use the provided limits or defaults.
-        // If the caller did not supply an explicit length, fall back to the configured default.
-        const rawArgs = args as { offset?: number; length?: number } | undefined;
-        const offset = rawArgs && 'offset' in rawArgs ? parsed.offset : 0;
-        const length = rawArgs && 'length' in rawArgs ? parsed.length : defaultLimit;
 
-            const content = fileResult.payload?.pages?.flatMap(p => [
-                ...(p.images?.map((image, i) => ({
+            const pdfContent = fileResult.metadata?.pages?.flatMap((p: any) => [
+                ...(p.images?.map((image: any) => ({
                     type: "image",
                     data: image.data,
                     mimeType: image.mimeType
@@ -94,12 +101,18 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         type: "text",
                         text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
                     },
-                    ...content
+                    ...pdfContent
                 ]
             };
         }
-        if (fileResult.isImage) {
+
+        // Handle image files
+        if (fileResult.metadata?.isImage) {
             // For image files, return as an image content type
+            // Content should already be base64-encoded string from handler
+            const imageData = typeof fileResult.content === 'string'
+                ? fileResult.content
+                : fileResult.content.toString('base64');
             return {
                 content: [
                     {
@@ -108,15 +121,18 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     },
                     {
                         type: "image",
-                        data: fileResult.content,
+                        data: imageData,
                         mimeType: fileResult.mimeType
                     }
                 ],
             };
         } else {
             // For all other files, return as text
+            const textContent = typeof fileResult.content === 'string'
+                ? fileResult.content
+                : fileResult.content.toString('utf8');
             return {
-                content: [{ type: "text", text: fileResult.content }],
+                content: [{ type: "text", text: textContent }],
             };
         }
     };
@@ -291,18 +307,49 @@ export async function handleMoveFile(args: unknown): Promise<ServerResult> {
 }
 
 /**
+ * Format a value for display, handling objects and arrays
+ */
+function formatValue(value: unknown, indent: string = ''): string {
+    if (value === null || value === undefined) {
+        return String(value);
+    }
+    if (Array.isArray(value)) {
+        if (value.length === 0) return '[]';
+        // For arrays of objects (like sheets), format each item
+        const items = value.map((item, i) => {
+            if (typeof item === 'object' && item !== null) {
+                const props = Object.entries(item)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(', ');
+                return `${indent}  [${i}] { ${props} }`;
+            }
+            return `${indent}  [${i}] ${item}`;
+        });
+        return `\n${items.join('\n')}`;
+    }
+    if (typeof value === 'object') {
+        return JSON.stringify(value);
+    }
+    return String(value);
+}
+
+/**
  * Handle get_file_info command
  */
 export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
     try {
         const parsed = GetFileInfoArgsSchema.parse(args);
         const info = await getFileInfo(parsed.path);
+
+        // Generic formatting for any file type
+        const formattedText = Object.entries(info)
+            .map(([key, value]) => `${key}: ${formatValue(value)}`)
+            .join('\n');
+
         return {
             content: [{
                 type: "text",
-                text: Object.entries(info)
-                    .map(([key, value]) => `${key}: ${value}`)
-                    .join('\n')
+                text: formattedText
             }],
         };
     } catch (error) {
