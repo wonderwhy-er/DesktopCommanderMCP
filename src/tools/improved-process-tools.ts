@@ -4,9 +4,91 @@ import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProces
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
-import { getSystemInfo } from '../utils/system-info.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
+import { spawn } from 'child_process';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Get the directory where the MCP is installed (for ES module imports)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const mcpRoot = path.resolve(__dirname, '..', '..');
+
+// Track virtual Node sessions (PIDs that are actually Node fallback sessions)
+const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
+let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
+
+/**
+ * Execute Node.js code via temp file (fallback when Python unavailable)
+ * Creates temp .mjs file in MCP directory for ES module import access
+ */
+async function executeNodeCode(code: string, timeout_ms: number = 30000): Promise<ServerResult> {
+  const tempFile = path.join(mcpRoot, `.mcp-exec-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
+
+  try {
+    await fs.writeFile(tempFile, code, 'utf8');
+
+    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+      const proc = spawn(process.execPath, [tempFile], {
+        cwd: mcpRoot,
+        timeout: timeout_ms
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (exitCode) => {
+        resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
+      });
+
+      proc.on('error', (err) => {
+        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1 });
+      });
+    });
+
+    // Clean up temp file
+    await fs.unlink(tempFile).catch(() => {});
+
+    if (result.exitCode !== 0) {
+      return {
+        content: [{
+          type: "text",
+          text: `Execution failed (exit code ${result.exitCode}):\n${result.stderr}\n${result.stdout}`
+        }],
+        isError: true
+      };
+    }
+
+    return {
+      content: [{
+        type: "text",
+        text: result.stdout || '(no output)'
+      }]
+    };
+
+  } catch (error) {
+    // Clean up temp file on error
+    await fs.unlink(tempFile).catch(() => {});
+
+    return {
+      content: [{
+        type: "text",
+        text: `Failed to execute Node.js code: ${error instanceof Error ? error.message : String(error)}`
+      }],
+      isError: true
+    };
+  }
+}
 
 /**
  * Start a new process (renamed from execute_command)
@@ -42,6 +124,31 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
+  const commandToRun = parsed.data.command;
+
+  // Handle node:local - runs Node.js code directly on MCP server
+  if (commandToRun.trim() === 'node:local') {
+    const virtualPid = virtualPidCounter--;
+    virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
+
+    return {
+      content: [{
+        type: "text",
+        text: `Node.js session started with PID ${virtualPid} (MCP server execution)
+
+   IMPORTANT: Each interact_with_process call runs as a FRESH script.
+   State is NOT preserved between calls. Include ALL code in ONE call:
+   - imports, file reading, processing, and output together.
+
+   Available libraries:
+   - ExcelJS for Excel files: import ExcelJS from 'exceljs'
+   - All Node.js built-ins: fs, path, http, crypto, etc.
+
+🔄 Ready for code - send complete self-contained script via interact_with_process.`
+      }],
+    };
+  }
+
   let shellUsed: string | undefined = parsed.data.shell;
 
   if (!shellUsed) {
@@ -61,7 +168,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   }
 
   const result = await terminalManager.executeCommand(
-    parsed.data.command,
+    commandToRun,
     parsed.data.timeout_ms,
     shellUsed,
     parsed.data.verbose_timing || false
@@ -419,6 +526,20 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     verbose_timing = false
   } = parsed.data;
 
+  // Check if this is a virtual Node session (node:local)
+  if (virtualNodeSessions.has(pid)) {
+    const session = virtualNodeSessions.get(pid)!;
+    capture('server_interact_with_process_node_fallback', {
+      pid: pid,
+      inputLength: input.length
+    });
+
+    // Execute code via temp file approach
+    // Respect per-call timeout if provided, otherwise use session default
+    const effectiveTimeout = timeout_ms ?? session.timeout_ms;
+    return executeNodeCode(input, effectiveTimeout);
+  }
+
   // Timing telemetry
   const startTime = Date.now();
   let firstOutputTime: number | undefined;
@@ -639,13 +760,26 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
     };
   }
 
-  const success = terminalManager.forceTerminate(parsed.data.pid);
+  const pid = parsed.data.pid;
+
+  // Handle virtual Node.js sessions (node:local)
+  if (virtualNodeSessions.has(pid)) {
+    virtualNodeSessions.delete(pid);
+    return {
+      content: [{
+        type: "text",
+        text: `Cleared virtual Node.js session ${pid}`
+      }],
+    };
+  }
+
+  const success = terminalManager.forceTerminate(pid);
   return {
     content: [{
       type: "text",
       text: success
-        ? `Successfully initiated termination of session ${parsed.data.pid}`
-        : `No active session found for PID ${parsed.data.pid}`
+        ? `Successfully initiated termination of session ${pid}`
+        : `No active session found for PID ${pid}`
     }],
   };
 }
@@ -655,14 +789,30 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
  */
 export async function listSessions(): Promise<ServerResult> {
   const sessions = terminalManager.listActiveSessions();
+
+  // Include virtual Node.js sessions
+  const virtualSessions = Array.from(virtualNodeSessions.entries()).map(([pid, session]) => ({
+    pid,
+    type: 'node:local',
+    timeout_ms: session.timeout_ms
+  }));
+
+  const realSessionsText = sessions.map(s =>
+    `PID: ${s.pid}, Blocked: ${s.isBlocked}, Runtime: ${Math.round(s.runtime / 1000)}s`
+  );
+
+  const virtualSessionsText = virtualSessions.map(s =>
+    `PID: ${s.pid} (node:local), Timeout: ${s.timeout_ms}ms`
+  );
+
+  const allSessions = [...realSessionsText, ...virtualSessionsText];
+
   return {
     content: [{
       type: "text",
-      text: sessions.length === 0
+      text: allSessions.length === 0
         ? 'No active sessions'
-        : sessions.map(s =>
-            `PID: ${s.pid}, Blocked: ${s.isBlocked}, Runtime: ${Math.round(s.runtime / 1000)}s`
-          ).join('\n')
+        : allSessions.join('\n')
     }],
   };
 }
