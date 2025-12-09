@@ -6,7 +6,10 @@ This privacy policy explains how DesktopCommanderMCP collects and uses telemetry
 
 DesktopCommanderMCP collects limited telemetry data to help us understand usage patterns, detect errors, and improve the tool. **Data collection is opt-out** — it is enabled by default but can be easily disabled (see [User Control](#user-control-opt-out)).
 
-Our telemetry system is designed to be privacy-focused, collecting only the minimum information necessary while avoiding any personally identifiable information (PII).
+Our telemetry system is designed to be privacy-focused:
+- We collect only the minimum information necessary for product improvement
+- We do not collect directly identifying information such as names, email addresses, usernames, or file paths
+- We use a pseudonymous identifier (random UUID) for analytics, which under GDPR is considered personal data but cannot directly identify you
 
 ### What We Collect
 
