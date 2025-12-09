@@ -134,7 +134,8 @@ For transparency, we maintain a changelog of material changes below.
 
 ## Contact
 
-If you have any questions about this privacy policy or our data practices, please open an issue on our GitHub repository.
+- **General questions:** Open an issue on our [GitHub repository](https://github.com/wonderwhy-er/DesktopCommanderMCP)
+- **Privacy concerns or legal matters:** legal@desktopcommander.app
 
 ---
 
