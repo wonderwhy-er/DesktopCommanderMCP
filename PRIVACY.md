@@ -129,8 +129,35 @@ For transparency, we maintain a changelog of material changes below.
 
 | Date | Version | Changes |
 |------|---------|---------|
-| December 8, 2025 | 1.1 | Clarified client ID is pseudonymous (not anonymous) and is included with events. Added missing collected data: client info, container metadata, file sizes. Added Google Analytics disclosure. Clarified opt-out data collection model and added AI-assisted opt-out method. |
+| December 8, 2025 | 1.1 | Clarified client ID is pseudonymous (not anonymous) and is included with events. Added missing collected data: client info, container metadata, file sizes. Added Google Analytics disclosure. Clarified opt-out data collection model and added AI-assisted opt-out method. Added Your Rights section with instructions for data access/deletion requests. |
 | April 29, 2025 | 1.0 | Initial privacy policy |
+
+## Your Rights
+
+Depending on your location, you may have rights to:
+- Access the data we hold about you
+- Request deletion of your data
+- Object to processing
+- Withdraw consent (by disabling telemetry)
+
+### Exercising Your Rights
+
+To request access to or deletion of your data, contact legal@desktopcommander.app with your client ID (UUID).
+
+**Finding your UUID:** Simply ask Claude (or your AI assistant):
+> "Show me my Desktop Commander config and tell me my client id"
+
+Your client ID will be displayed in the response.
+
+Alternatively, check your config file directly:
+- macOS/Linux: `~/.desktop-commander/config.json`
+- Windows: `%USERPROFILE%\.desktop-commander\config.json`
+
+Look for the `clientId` field.
+
+**Important:** Because we do not collect emails, names, or other identifying information, we can only process data requests when you provide your UUID. This design protects your privacy but means we cannot verify identity through other means. If you have lost your UUID and uninstalled Desktop Commander, we have no way to link any data to you (and neither does anyone else).
+
+We aim to respond to privacy inquiries within 30 days.
 
 ## Contact
 
