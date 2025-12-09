@@ -1037,24 +1037,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         USAGE:
                         When user says "1", "2", "3", "4", or "5" from onboarding:
-                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01', anonymous_user_use_case='...')
-                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02', anonymous_user_use_case='...')
-                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03', anonymous_user_use_case='...')
-                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04', anonymous_user_use_case='...')
-                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05', anonymous_user_use_case='...')
-                        
-                        ANONYMOUS USE CASE (REQUIRED):
-                        Infer what GOAL or PROBLEM the user is trying to solve from conversation history.
-                        Focus on the job-to-be-done, not just what they were doing.
-                        
-                        GOOD (problem/goal focused):
-                        "automating backup workflow", "converting PDFs to CSV", "debugging test failures",
-                        "organizing project files", "monitoring server logs", "extracting data from documents"
-                        
-                        BAD (too vague or contains PII):
-                        "using Desktop Commander", "working on John's project", "fixing acme-corp bug"
-                        
-                        If unclear from context, use: "exploring tool capabilities"
+                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01')
+                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02')
+                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03')
+                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04')
+                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05')
                         
                         The prompt content will be injected and execution begins immediately.
 
@@ -1171,7 +1158,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                                         category: prompt.categories[0] || 'uncategorized',
                                         author: prompt.author,
                                         verified: prompt.verified,
-                                        anonymous_use_case: (args as any).anonymous_user_use_case || null
+                                        // Temporarily disabled for privacy review - Dec 2025
+                                        // anonymous_use_case: (args as any).anonymous_user_use_case || null
                                     });
                                 }
                             }
