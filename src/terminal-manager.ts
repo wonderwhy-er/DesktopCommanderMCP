@@ -553,17 +553,30 @@ export class TerminalManager {
   /**
    * Get output that appeared since a snapshot was taken.
    * This handles the case where output is appended to the last line (REPL prompts).
+   * Also checks completed sessions in case process finished between snapshot and poll.
    */
   getOutputSinceSnapshot(pid: number, snapshot: { totalChars: number; lineCount: number }): string | null {
+    // Check active session first
     const session = this.sessions.get(pid);
-    if (!session) return null;
-    
-    const fullOutput = session.outputLines.join('\n');
-    if (fullOutput.length <= snapshot.totalChars) {
-      return ''; // No new output
+    if (session) {
+      const fullOutput = session.outputLines.join('\n');
+      if (fullOutput.length <= snapshot.totalChars) {
+        return ''; // No new output
+      }
+      return fullOutput.substring(snapshot.totalChars);
     }
     
-    return fullOutput.substring(snapshot.totalChars);
+    // Fallback to completed sessions - process may have finished between snapshot and poll
+    const completedSession = this.completedSessions.get(pid);
+    if (completedSession) {
+      const fullOutput = completedSession.outputLines.join('\n');
+      if (fullOutput.length <= snapshot.totalChars) {
+        return ''; // No new output
+      }
+      return fullOutput.substring(snapshot.totalChars);
+    }
+    
+    return null;
   }
 
     /**
