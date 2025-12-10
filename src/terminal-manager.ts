@@ -8,10 +8,22 @@ import { analyzeProcessState } from './utils/process-detection.js';
 
 interface CompletedSession {
   pid: number;
-  output: string;
+  outputLines: string[];       // Line-based buffer (consistent with active sessions)
   exitCode: number | null;
   startTime: Date;
   endTime: Date;
+}
+
+// Result type for paginated output reading
+export interface PaginatedOutputResult {
+  lines: string[];
+  totalLines: number;
+  readFrom: number;            // Starting line of this read
+  readCount: number;           // Number of lines returned
+  remaining: number;           // Lines remaining after this read
+  isComplete: boolean;         // Whether process has finished
+  exitCode?: number | null;    // Exit code if completed
+  runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
 }
 
 /**
@@ -188,7 +200,8 @@ export class TerminalManager {
     const session: TerminalSession = {
       pid: childProcess.pid,
       process: childProcess,
-      lastOutput: '',
+      outputLines: [],           // Line-based buffer
+      lastReadIndex: 0,          // Track where "new" output starts
       isBlocked: false,
       startTime: new Date()
     };
@@ -240,7 +253,8 @@ export class TerminalManager {
         lastOutputTime = now;
 
         output += text;
-        session.lastOutput += text;
+        // Append to line-based buffer
+        this.appendToLineBuffer(session, text);
 
         // Record output event if collecting timing
         if (collectTiming) {
@@ -278,7 +292,8 @@ export class TerminalManager {
         lastOutputTime = now;
 
         output += text;
-        session.lastOutput += text;
+        // Append to line-based buffer
+        this.appendToLineBuffer(session, text);
 
         // Record output event if collecting timing
         if (collectTiming) {
@@ -324,7 +339,7 @@ export class TerminalManager {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
             pid: childProcess.pid,
-            output: output, // Use only the main output variable
+            outputLines: [...session.outputLines], // Copy line buffer
             exitCode: code,
             startTime: session.startTime,
             endTime: new Date()
@@ -348,30 +363,206 @@ export class TerminalManager {
     });
   }
 
-  getNewOutput(pid: number): string | null {
+  /**
+   * Append text to a session's line buffer
+   * Handles partial lines and newline splitting
+   */
+  private appendToLineBuffer(session: TerminalSession, text: string): void {
+    if (!text) return;
+    
+    // Split text into lines, keeping track of whether text ends with newline
+    const lines = text.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isLastFragment = i === lines.length - 1;
+      const endsWithNewline = text.endsWith('\n');
+      
+      if (session.outputLines.length === 0) {
+        // First line ever
+        session.outputLines.push(line);
+      } else if (i === 0) {
+        // First fragment - append to last line (might be partial)
+        session.outputLines[session.outputLines.length - 1] += line;
+      } else {
+        // Subsequent lines - add as new lines
+        session.outputLines.push(line);
+      }
+    }
+  }
+
+  /**
+   * Read process output with pagination (like file reading)
+   * @param pid Process ID
+   * @param offset Line offset: 0=from lastReadIndex, positive=absolute, negative=tail
+   * @param length Max lines to return
+   * @param updateReadIndex Whether to update lastReadIndex (default: true for offset=0)
+   */
+  readOutputPaginated(pid: number, offset: number = 0, length: number = 1000): PaginatedOutputResult | null {
     // First check active sessions
     const session = this.sessions.get(pid);
     if (session) {
-      const output = session.lastOutput;
-      session.lastOutput = '';
-      return output;
+      return this.readFromLineBuffer(
+        session.outputLines,
+        offset,
+        length,
+        session.lastReadIndex,
+        (newIndex) => { session.lastReadIndex = newIndex; },
+        false,
+        undefined
+      );
     }
 
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      // Format with output first, then completion info
-      const runtime = (completedSession.endTime.getTime() - completedSession.startTime.getTime()) / 1000;
-      const output = completedSession.output.trim();
-      
-      if (output) {
-        return `${output}\n\nProcess completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s`;
-      } else {
-        return `Process completed with exit code ${completedSession.exitCode}\nRuntime: ${runtime}s\n(No output produced)`;
-      }
+      const runtimeMs = completedSession.endTime.getTime() - completedSession.startTime.getTime();
+      return this.readFromLineBuffer(
+        completedSession.outputLines,
+        offset,
+        length,
+        0,  // Completed sessions don't track read position
+        () => {},  // No-op for completed sessions
+        true,
+        completedSession.exitCode,
+        runtimeMs
+      );
     }
 
     return null;
+  }
+
+  /**
+   * Internal helper to read from a line buffer with offset/length
+   */
+  private readFromLineBuffer(
+    lines: string[],
+    offset: number,
+    length: number,
+    lastReadIndex: number,
+    updateLastRead: (index: number) => void,
+    isComplete: boolean,
+    exitCode?: number | null,
+    runtimeMs?: number
+  ): PaginatedOutputResult {
+    const totalLines = lines.length;
+    let startIndex: number;
+    let linesToRead: string[];
+
+    if (offset < 0) {
+      // Negative offset = tail behavior (read last N lines)
+      const tailCount = Math.abs(offset);
+      startIndex = Math.max(0, totalLines - tailCount);
+      linesToRead = lines.slice(startIndex);
+      // Don't update lastReadIndex for tail reads
+    } else if (offset === 0) {
+      // offset=0 means "from where I last read" (like getNewOutput)
+      startIndex = lastReadIndex;
+      linesToRead = lines.slice(startIndex, startIndex + length);
+      // Update lastReadIndex for "new output" behavior
+      updateLastRead(Math.min(startIndex + linesToRead.length, totalLines));
+    } else {
+      // Positive offset = absolute position
+      startIndex = offset;
+      linesToRead = lines.slice(startIndex, startIndex + length);
+      // Don't update lastReadIndex for absolute position reads
+    }
+
+    const readCount = linesToRead.length;
+    const endIndex = startIndex + readCount;
+    const remaining = Math.max(0, totalLines - endIndex);
+
+    return {
+      lines: linesToRead,
+      totalLines,
+      readFrom: startIndex,
+      readCount,
+      remaining,
+      isComplete,
+      exitCode,
+      runtimeMs
+    };
+  }
+
+  /**
+   * Get total line count for a process
+   */
+  getOutputLineCount(pid: number): number | null {
+    const session = this.sessions.get(pid);
+    if (session) {
+      return session.outputLines.length;
+    }
+
+    const completedSession = this.completedSessions.get(pid);
+    if (completedSession) {
+      return completedSession.outputLines.length;
+    }
+
+    return null;
+  }
+
+  /**
+   * Legacy method for backward compatibility
+   * Returns all new output since last read
+   * @param maxLines Maximum lines to return (default: 1000 for context protection)
+   * @deprecated Use readOutputPaginated instead
+   */
+  getNewOutput(pid: number, maxLines: number = 1000): string | null {
+    const result = this.readOutputPaginated(pid, 0, maxLines);
+    if (!result) return null;
+
+    const output = result.lines.join('\n').trim();
+
+    // For completed sessions, append completion info with runtime
+    if (result.isComplete) {
+      const runtimeStr = result.runtimeMs !== undefined 
+        ? `\nRuntime: ${(result.runtimeMs / 1000).toFixed(2)}s` 
+        : '';
+      if (output) {
+        return `${output}\n\nProcess completed with exit code ${result.exitCode}${runtimeStr}`;
+      } else {
+        return `Process completed with exit code ${result.exitCode}${runtimeStr}\n(No output produced)`;
+      }
+    }
+
+    // Add truncation warning if there's more output
+    if (result.remaining > 0) {
+      return `${output}\n\n[Output truncated: ${result.remaining} more lines available. Use read_process_output with offset/length for full output.]`;
+    }
+
+    return output || null;
+  }
+
+  /**
+   * Capture a snapshot of current output state for interaction tracking.
+   * Used by interactWithProcess to know what output existed before sending input.
+   */
+  captureOutputSnapshot(pid: number): { totalChars: number; lineCount: number } | null {
+    const session = this.sessions.get(pid);
+    if (session) {
+      const fullOutput = session.outputLines.join('\n');
+      return {
+        totalChars: fullOutput.length,
+        lineCount: session.outputLines.length
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Get output that appeared since a snapshot was taken.
+   * This handles the case where output is appended to the last line (REPL prompts).
+   */
+  getOutputSinceSnapshot(pid: number, snapshot: { totalChars: number; lineCount: number }): string | null {
+    const session = this.sessions.get(pid);
+    if (!session) return null;
+    
+    const fullOutput = session.outputLines.join('\n');
+    if (fullOutput.length <= snapshot.totalChars) {
+      return ''; // No new output
+    }
+    
+    return fullOutput.substring(snapshot.totalChars);
   }
 
     /**
