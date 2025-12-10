@@ -451,9 +451,11 @@ export class TerminalManager {
 
     if (offset < 0) {
       // Negative offset = tail behavior (read last N lines)
-      const tailCount = Math.abs(offset);
+      // Cap at length to prevent context overflow
+      const requestedTail = Math.abs(offset);
+      const tailCount = Math.min(requestedTail, length);
       startIndex = Math.max(0, totalLines - tailCount);
-      linesToRead = lines.slice(startIndex);
+      linesToRead = lines.slice(startIndex, startIndex + tailCount);
       // Don't update lastReadIndex for tail reads
     } else if (offset === 0) {
       // offset=0 means "from where I last read" (like getNewOutput)
