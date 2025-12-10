@@ -794,7 +794,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - offset: 0                  → All new lines (respects config limit)
                         - offset: 500, length: 50    → Lines 500-549 (absolute position)
                         - offset: -20                → Last 20 lines (tail)
-                        - offset: -100, length: 50   → Last 50 lines (length caps tail)
+                        - offset: -50, length: 10    → Start 50 from end, read 10 lines
                         
                         OUTPUT PROTECTION:
                         - Uses same fileReadLineLimit as read_file (default: 1000 lines)

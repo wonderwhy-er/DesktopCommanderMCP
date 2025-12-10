@@ -450,12 +450,11 @@ export class TerminalManager {
     let linesToRead: string[];
 
     if (offset < 0) {
-      // Negative offset = tail behavior (read last N lines)
-      // Cap at length to prevent context overflow
-      const requestedTail = Math.abs(offset);
-      const tailCount = Math.min(requestedTail, length);
-      startIndex = Math.max(0, totalLines - tailCount);
-      linesToRead = lines.slice(startIndex, startIndex + tailCount);
+      // Negative offset = start position from end, then read 'length' lines forward
+      // e.g., offset=-50, length=10 means: start 50 lines from end, read 10 lines
+      const fromEnd = Math.abs(offset);
+      startIndex = Math.max(0, totalLines - fromEnd);
+      linesToRead = lines.slice(startIndex, startIndex + length);
       // Don't update lastReadIndex for tail reads
     } else if (offset === 0) {
       // offset=0 means "from where I last read" (like getNewOutput)
