@@ -197,19 +197,58 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
             const mountsContent = fs.readFileSync('/proc/mounts', 'utf8');
             const mountLines = mountsContent.split('\n');
             
+            // System filesystem types that are never user mounts
+            const systemFsTypes = new Set([
+                'overlay', 'tmpfs', 'proc', 'sysfs', 'devpts', 'cgroup', 'cgroup2',
+                'mqueue', 'debugfs', 'securityfs', 'pstore', 'configfs', 'fusectl',
+                'hugetlbfs', 'autofs', 'devtmpfs', 'bpf', 'tracefs', 'shm'
+            ]);
+
+            // Filesystem types that indicate host mounts
+            const hostMountFsTypes = new Set(['fakeowner', '9p', 'virtiofs', 'fuse.sshfs']);
+
             for (const line of mountLines) {
                 const parts = line.split(' ');
                 if (parts.length >= 4) {
                     const device = parts[0];
                     const mountPoint = parts[1];
+                    const fsType = parts[2];
                     const options = parts[3];
 
-                    // Look for user mounts (skip system mounts)
-                    if (mountPoint.startsWith('/mnt/') || 
+                    // Skip system mount points
+                    const isSystemMountPoint = 
+                        mountPoint === '/' ||
+                        mountPoint.startsWith('/dev') ||
+                        mountPoint.startsWith('/sys') ||
+                        mountPoint.startsWith('/proc') ||
+                        mountPoint.startsWith('/run') ||
+                        mountPoint.startsWith('/sbin') ||
+                        mountPoint === '/etc/resolv.conf' ||
+                        mountPoint === '/etc/hostname' ||
+                        mountPoint === '/etc/hosts';
+
+                    if (isSystemMountPoint) {
+                        continue;
+                    }
+
+                    // Detect user mounts by:
+                    // 1. Known host-mount filesystem types (fakeowner, 9p, virtiofs)
+                    // 2. Device from /run/host_mark/ (docker-mcp-gateway pattern)
+                    // 3. Non-system filesystem type with user-like mount point
+                    const isHostMountFs = hostMountFsTypes.has(fsType);
+                    const isHostMarkDevice = device.startsWith('/run/host_mark/');
+                    const isNonSystemFs = !systemFsTypes.has(fsType);
+                    const isUserLikePath = mountPoint.startsWith('/mnt/') || 
                         mountPoint.startsWith('/workspace') ||
                         mountPoint.startsWith('/data/') ||
-                        (mountPoint.startsWith('/home/') && !mountPoint.startsWith('/home/root'))) {
-                        
+                        mountPoint.startsWith('/home/') ||
+                        mountPoint.startsWith('/Users/') ||
+                        mountPoint.startsWith('/app/') ||
+                        mountPoint.startsWith('/project/') ||
+                        mountPoint.startsWith('/src/') ||
+                        mountPoint.startsWith('/code/');
+
+                    if (isHostMountFs || isHostMarkDevice || (isNonSystemFs && isUserLikePath)) {
                         const isReadOnly = options.includes('ro');
                         
                         mounts.push({
