@@ -90,7 +90,7 @@ We take your privacy seriously:
 - The client ID is a randomly generated UUID, not derived from your machine or personal information
 - The UUID is stored locally in your configuration file (`~/.desktop-commander/config.json`)
 - All data is sent securely via HTTPS
-- We implement robust sanitization of all error data to ensure file paths, usernames, and other potential PII are removed before transmission
+- We implement sanitization of all error data to ensure file paths, usernames, and other potential PII are removed before transmission
 - All collected information is carefully filtered to remove any potentially sensitive data
 - We maintain data minimization principles - only collecting what's necessary for product improvement
 
@@ -129,6 +129,7 @@ For transparency, we maintain a changelog of material changes below.
 
 | Date | Version | Changes |
 |------|---------|---------|
+| December 11, 2025 | 1.2 | Removed UUID-based data access/deletion requests. Explained that GDPR Article 12(6) requires identity verification, which is impossible with pseudonymous UUIDs alone. Clarified that opt-out and automatic data expiration are the proper mechanisms for exercising privacy rights. |
 | December 8, 2025 | 1.1 | Clarified client ID is pseudonymous (not anonymous) and is included with events. Added missing collected data: client info, container metadata, file sizes. Added Google Analytics disclosure. Clarified opt-out data collection model and added AI-assisted opt-out method. Added Your Rights section with instructions for data access/deletion requests. |
 | April 29, 2025 | 1.0 | Initial privacy policy |
 
@@ -142,28 +143,28 @@ Depending on your location, you may have rights to:
 
 ### Exercising Your Rights
 
-To request access to or deletion of your data, contact legal@desktopcommander.app with your client ID (UUID).
+**Opt-out (recommended):** The most effective way to exercise your privacy rights is to disable telemetry as described in [User Control (Opt-Out)](#user-control-opt-out). Once disabled, no further data will be collected. Any existing data associated with your UUID will be automatically deleted after our 14-month retention period.
 
-**Finding your UUID:** Simply ask Claude (or your AI assistant):
-> "Show me my Desktop Commander config and tell me my client id"
+**Why we cannot process UUID-based data requests:** GDPR Article 12(6) requires controllers to verify the identity of data subjects before fulfilling access or deletion requests. Because we collect no identifying information (no email, name, IP address, machine ID, or account), we have no way to verify that someone requesting data for a particular UUID is actually the person that UUID belongs to.
 
-Your client ID will be displayed in the response.
+Processing unverifiable requests would create serious risks:
+- We could inadvertently provide someone else's analytics data to an unauthorized requester
+- We could delete another person's data based on a mistyped, guessed, or maliciously obtained UUID
 
-Alternatively, check your config file directly:
-- macOS/Linux: `~/.desktop-commander/config.json`
-- Windows: `%USERPROFILE%\.desktop-commander\config.json`
+**What this means for you:**
+- Your privacy is protected by design: we cannot identify you, and neither can anyone else
+- To stop future data collection: disable telemetry in your config
+- To ensure old data is removed: it will automatically purge after 14 months
+- If you uninstall Desktop Commander and delete your config file, there is no way to link any stored analytics data back to you
 
-Look for the `clientId` field.
-
-**Important:** Because we do not collect emails, names, or other identifying information, we can only process data requests when you provide your UUID. This design protects your privacy but means we cannot verify identity through other means. If you have lost your UUID and uninstalled Desktop Commander, we have no way to link any data to you (and neither does anyone else).
-
-We aim to respond to privacy inquiries within 30 days.
 
 ## Contact
 
 - **General questions:** Open an issue on our [GitHub repository](https://github.com/wonderwhy-er/DesktopCommanderMCP)
 - **Privacy concerns or legal matters:** legal@desktopcommander.app
 
+We aim to respond to privacy inquiries within 30 days.
+
 ---
 
-Last updated: December 8, 2025
+Last updated: December 11, 2025
