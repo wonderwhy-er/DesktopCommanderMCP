@@ -931,28 +931,11 @@ Please create a [GitHub Issue](https://github.com/wonderwhy-er/DesktopCommanderM
 
 ## Data Collection & Privacy
 
-Desktop Commander collects limited anonymous telemetry data to help improve the tool. No personal information, file contents, file paths, or command arguments are collected.
+Desktop Commander collects limited, pseudonymous telemetry to improve the tool. We do not collect file contents, file paths, or command arguments.
 
-### Usage Analytics (Local Only)
-- **Local usage statistics** are always collected and stored locally on your machine for functionality and the `get_usage_stats` tool
-- Use the `get_usage_stats` tool to view your personal usage patterns, success rates, and performance metrics
-- **This data is NOT sent anywhere** - it remains on your computer for your personal insights
+**Opt-out:** Ask Claude to "disable Desktop Commander telemetry" or set `"telemetryEnabled": false` in your config.
 
-### Feedback System
-- Use the `give_feedback_to_desktop_commander` tool to provide feedback about Desktop Commander
-- Opens a browser-based feedback form to send suggestions and feedback to the development team
-- Only basic usage statistics (tool call count, days using, platform) are pre-filled to provide context but you can remove them
-
-### External Telemetry Opt-Out
-External telemetry (sent to analytics services) is enabled by default but can be disabled:
-
-1. Open the chat and simply ask:
-   **"Disable telemetry"**
-2. The chatbot will update your settings automatically.
-
-**Note:** This only disables external telemetry. Local usage analytics remain active for tool functionality but is not share externally
-
-For complete details about data collection, please see our [Privacy Policy](https://legal.desktopcommander.app/privacy_desktop_commander_mcp).
+For complete details, see our [Privacy Policy](PRIVACY.md).
 
 ## Verifications
 [![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/25ff7a06-58bc-40b8-bd79-ebb715140f1a)
