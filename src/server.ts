@@ -780,34 +780,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "read_process_output",
                 description: `
-                        Read output from a running process with intelligent completion detection.
+                        Read output from a running process with file-like pagination support.
                         
-                        Automatically detects when process is ready for more input instead of timing out.
+                        Supports partial output reading with offset and length parameters (like read_file):
+                        - 'offset' (start line, default: 0)
+                          * offset=0: Read NEW output since last read (default, like old behavior)
+                          * Positive: Read from absolute line position
+                          * Negative: Read last N lines from end (tail behavior)
+                        - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting)
+                        
+                        Examples:
+                        - offset: 0, length: 100     → First 100 NEW lines since last read
+                        - offset: 0                  → All new lines (respects config limit)
+                        - offset: 500, length: 50    → Lines 500-549 (absolute position)
+                        - offset: -20                → Last 20 lines (tail)
+                        - offset: -50, length: 10    → Start 50 from end, read 10 lines
+                        
+                        OUTPUT PROTECTION:
+                        - Uses same fileReadLineLimit as read_file (default: 1000 lines)
+                        - Returns status like: [Reading 100 lines from line 0 (total: 5000 lines, 4900 remaining)]
+                        - Prevents context overflow from verbose processes
                         
                         SMART FEATURES:
-                        - Early exit when REPL shows prompt (>>>, >, etc.)
-                        - Detects process completion vs still running
-                        - Prevents hanging on interactive prompts
-                        - Clear status messages about process state
-                        
-                        REPL USAGE:
-                        - Stops immediately when REPL prompt detected
-                        - Shows clear status: waiting for input vs finished
-                        - Shorter timeouts needed due to smart detection
-                        - Works with Python, Node.js, R, Julia, etc.
+                        - For offset=0, waits up to timeout_ms for new output to arrive
+                        - Detects REPL prompts and process completion
+                        - Shows process state (waiting for input, finished, etc.)
                         
                         DETECTION STATES:
                         Process waiting for input (ready for interact_with_process)
                         Process finished execution
                         Timeout reached (may still be running)
-
-                        PERFORMANCE DEBUGGING (verbose_timing parameter):
-                        Set verbose_timing: true to get detailed timing information including:
-                        - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_finished, timeout)
-                        - Total duration and time to first output
-                        - Complete timeline of all output events with timestamps
-                        - Which detection mechanism triggered early exit
-                        Use this to identify when timeouts could be reduced or detection patterns improved.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),

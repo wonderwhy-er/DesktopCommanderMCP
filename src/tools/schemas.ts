@@ -28,6 +28,8 @@ export const StartProcessArgsSchema = z.object({
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
   timeout_ms: z.number().optional(),
+  offset: z.number().optional(),   // Line offset: 0=from last read, positive=absolute, negative=tail
+  length: z.number().optional(),   // Max lines to return (default from config.fileReadLineLimit)
   verbose_timing: z.boolean().optional(),
 });
 
