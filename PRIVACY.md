@@ -1,28 +1,34 @@
-# Privacy Policy for DesktopCommanderMCP
+# Privacy Policy for Desktop Commander
 
-This privacy policy explains how DesktopCommanderMCP collects and uses telemetry data to improve the application.
+**Last updated: December 11, 2025**
+
+## Introduction
+
+We at Desktop Commander are committed to respecting your privacy and keeping secure any information collected through our software. This privacy policy explains how we collect, use, and protect telemetry data when you use Desktop Commander.
+
+Desktop Commander is an open-source MCP (Model Context Protocol) server that runs locally on your machine. This policy applies to the optional telemetry data we collect to improve the application.
 
 ## Data Collection
 
-DesktopCommanderMCP collects limited telemetry data to help us understand usage patterns, detect errors, and improve the tool. **Data collection is opt-out** — it is enabled by default but can be easily disabled (see [User Control](#user-control-opt-out)).
+Desktop Commander collects limited telemetry data to help us understand usage patterns, detect errors, and improve the tool. **Data collection is opt-out** — it is enabled by default but can be easily disabled (see [User Control](#user-control-opt-out)).
 
 Our telemetry system is designed to be privacy-focused:
 - We collect only the minimum information necessary for product improvement
 - We do not collect directly identifying information such as names, email addresses, usernames, or file paths
-- We use a pseudonymous identifier (random UUID) for analytics, which under GDPR is considered personal data but cannot directly identify you
+- We use a pseudonymous identifier (random UUID) for analytics, which cannot directly identify you but allows us to understand usage patterns
 
 ### What We Collect
 
 #### Pseudonymous Client ID
-- **Client ID**: A randomly generated UUID that persists between sessions.
-    - **Purpose**: Used to calculate monthly active users (MAU), retention metrics, and understand usage patterns over time.
-    - **Privacy Design**: This ID is not derived from hardware or personal information. It is included with telemetry events to enable aggregate analysis. It cannot identify you personally but does allow us to understand usage patterns across sessions.
+- **Client ID**: A randomly generated UUID that persists between sessions
+- **Purpose**: Used to calculate monthly active users (MAU), retention metrics, and understand usage patterns over time
+- **Privacy Design**: This ID is not derived from hardware or personal information. It cannot identify you personally but does allow us to understand usage patterns across sessions.
 
 #### Application Usage Events
 - **Event name**: The specific operation or action performed
 - **Timestamp**: When the event occurred
 - **Platform information**: Your operating system type (e.g., Windows, macOS, Linux)
-- **App version**: The version of DesktopCommanderMCP you're using
+- **App version**: The version of Desktop Commander you're using
 - **Client information**: Name and version of the MCP client (e.g., "Claude Desktop", "VS Code")
 
 #### Installation and Setup Information
@@ -63,19 +69,19 @@ We explicitly DO NOT collect:
 - **Command arguments**: Arguments or parameters passed to terminal commands
 - **Usernames**: System or account usernames
 - **Personal information**: Any personally identifiable information
+- **Sensitive data**: We do not knowingly collect sensitive or special category personal information
 
 ### IP Addresses
 
-We do not store or have access to IP addresses. However, our analytics provider (Google Analytics) receives IP addresses as part of standard HTTPS requests. Google Analytics 4 automatically truncates/anonymizes IP addresses before storage, and we do not have access to this data in any form.
+We do not store or have access to IP addresses. Our analytics provider (Google Analytics) receives IP addresses as part of standard HTTPS requests but automatically anonymizes them before storage. We do not have access to this data in any form.
 
-## Analytics Provider
+### Children
 
-We use **Google Analytics 4** to process telemetry data. Data is sent securely via HTTPS to Google's servers. Google's privacy policy applies to their processing of this data: https://policies.google.com/privacy
+Desktop Commander is not directed at children under the age of 18. We do not knowingly collect information from children. If we learn that we have collected personal data from a child, we will take steps to delete that information.
 
-## Data Usage
+## How We Use Data
 
 The collected data is used for:
-
 - Understanding how the application is used
 - Calculating retention and engagement metrics
 - Identifying common errors or issues
@@ -83,30 +89,40 @@ The collected data is used for:
 - Guiding development priorities
 - Improving overall user experience
 
-## Privacy Protection
+We may aggregate or de-identify data so that it no longer identifies any individual, and use that information for the purposes described above.
 
-We take your privacy seriously:
 
-- The client ID is a randomly generated UUID, not derived from your machine or personal information
-- The UUID is stored locally in your configuration file (`~/.desktop-commander/config.json`)
-- All data is sent securely via HTTPS
-- We implement sanitization of all error data to ensure file paths, usernames, and other potential PII are removed before transmission
-- All collected information is carefully filtered to remove any potentially sensitive data
-- We maintain data minimization principles - only collecting what's necessary for product improvement
+## How We Share Data
+
+We may share your data in the following circumstances:
+
+**Service Providers**: We use Google Analytics 4 to process telemetry data. Data is sent securely via HTTPS to Google's servers. We have appropriate data processing agreements in place with our service providers. Google's privacy policy applies to their processing: https://policies.google.com/privacy
+
+**Legal Compliance**: We may disclose data if required to comply with applicable laws, regulations, or legal processes, or to protect the rights, safety, or property of users or others.
+
+**Business Transfers**: In the event of a merger, acquisition, or sale of assets, telemetry data may be transferred as part of that transaction. We will provide notice if your data becomes subject to a different privacy policy.
+
+**No Sale or Targeted Advertising**: We do not "sell" or "share" personal data for cross-contextual behavioral advertising, and we do not process personal data for "targeted advertising" purposes (as those terms are defined under applicable privacy laws).
+
+## Data Transfers
+
+Desktop Commander processes telemetry data on servers located in various jurisdictions, including the United States. When data is transferred internationally, we apply the protections outlined in this policy regardless of where it is processed, and we only transfer data in accordance with legally valid transfer mechanisms.
 
 ## Data Retention
 
-Telemetry data is retained for a period of 14 months, after which it is automatically deleted from Google Analytics.
+Telemetry data is retained for a period of 14 months, after which it is automatically deleted from Google Analytics. When data is no longer needed, we follow procedures to delete or anonymize it in compliance with applicable laws.
+
+## Security
+
+We implement commercially reasonable technical and organizational measures to protect data from loss, misuse, and unauthorized access. All data is transmitted securely via HTTPS. However, no method of transmission over the Internet is completely secure.
 
 ## User Control (Opt-Out)
 
-Data collection is **opt-out** — telemetry is enabled by default but you can disable it at any time using either method:
+Data collection is **opt-out** — telemetry is enabled by default but you can disable it at any time:
 
 **Option 1: Ask the AI**
 Simply ask Claude (or your AI assistant) to disable telemetry:
 > "Please disable Desktop Commander telemetryEnabled in config"
-
-The AI will update your configuration automatically.
 
 **Option 2: Manual configuration**
 1. Edit your configuration file at `~/.desktop-commander/config.json`
@@ -115,56 +131,34 @@ The AI will update your configuration automatically.
 
 When telemetry is disabled, no data will be sent. Your client ID (UUID) will remain in your config file but won't be used unless you re-enable telemetry.
 
-## Legal Basis
 
-We collect this data based on our legitimate interest (GDPR Article 6(1)(f)) to improve our software. Since we use a randomly generated pseudonymous UUID rather than any personal identifier, and implement comprehensive data sanitization, the privacy impact is minimal while allowing us to gather important usage data for product improvement.
+## Your Rights and Choices
 
-## Changes to This Policy
+Depending on where you live and the laws that apply, you may have certain rights in relation to your data. These may include the right to access, delete, correct, or transfer your data; to object to or restrict how we process it; or to withdraw consent. You may also have the right to lodge a complaint with your local data protection authority.
 
-We may update this privacy policy from time to time. Changes will be posted in this document and noted in release notes for versions that include telemetry changes.
+**Exercising Your Rights**
 
-For transparency, we maintain a changelog of material changes below.
+The most effective way to exercise your privacy rights is to disable telemetry as described above. Once disabled, no further data will be collected, and any existing data will be automatically deleted after our 14-month retention period.
 
-## Changelog
+**Why we cannot process UUID-based data requests**: Privacy laws require us to verify the identity of individuals before fulfilling access or deletion requests. Because we collect no identifying information (no email, name, IP address, machine ID, or account), we have no way to verify that someone requesting data for a particular UUID is actually the person that UUID belongs to. Processing unverifiable requests could inadvertently expose or delete another person's data.
 
-| Date | Version | Changes |
-|------|---------|---------|
-| December 11, 2025 | 1.2 | Removed UUID-based data access/deletion requests. Explained that GDPR Article 12(6) requires identity verification, which is impossible with pseudonymous UUIDs alone. Clarified that opt-out and automatic data expiration are the proper mechanisms for exercising privacy rights. |
-| December 8, 2025 | 1.1 | Clarified client ID is pseudonymous (not anonymous) and is included with events. Added missing collected data: client info, container metadata, file sizes. Added Google Analytics disclosure. Clarified opt-out data collection model and added AI-assisted opt-out method. Added Your Rights section with instructions for data access/deletion requests. |
-| April 29, 2025 | 1.0 | Initial privacy policy |
-
-## Your Rights
-
-Depending on your location, you may have rights to:
-- Access the data we hold about you
-- Request deletion of your data
-- Object to processing
-- Withdraw consent (by disabling telemetry)
-
-### Exercising Your Rights
-
-**Opt-out (recommended):** The most effective way to exercise your privacy rights is to disable telemetry as described in [User Control (Opt-Out)](#user-control-opt-out). Once disabled, no further data will be collected. Any existing data associated with your UUID will be automatically deleted after our 14-month retention period.
-
-**Why we cannot process UUID-based data requests:** GDPR Article 12(6) requires controllers to verify the identity of data subjects before fulfilling access or deletion requests. Because we collect no identifying information (no email, name, IP address, machine ID, or account), we have no way to verify that someone requesting data for a particular UUID is actually the person that UUID belongs to.
-
-Processing unverifiable requests would create serious risks:
-- We could inadvertently provide someone else's analytics data to an unauthorized requester
-- We could delete another person's data based on a mistyped, guessed, or maliciously obtained UUID
-
-**What this means for you:**
+**What this means for you**:
 - Your privacy is protected by design: we cannot identify you, and neither can anyone else
 - To stop future data collection: disable telemetry in your config
 - To ensure old data is removed: it will automatically purge after 14 months
 - If you uninstall Desktop Commander and delete your config file, there is no way to link any stored analytics data back to you
 
+## Privacy Policy Changes
+
+We may update this privacy policy from time to time. When we do, we will publish an updated version and effective date at the top of this page. Your continued use of Desktop Commander after any change constitutes acceptance of the updated policy.
 
 ## Contact
 
-- **General questions:** Open an issue on our [GitHub repository](https://github.com/wonderwhy-er/DesktopCommanderMCP)
-- **Privacy concerns or legal matters:** legal@desktopcommander.app
+- **General questions**: Open an issue on our [GitHub repository](https://github.com/wonderwhy-er/DesktopCommanderMCP)
+- **Privacy concerns**: privacy@desktopcommander.app
 
 We aim to respond to privacy inquiries within 30 days.
 
 ---
 
-Last updated: December 11, 2025
+*Desktop Commander is open-source software. This privacy policy applies only to the optional telemetry feature.*
