@@ -39,7 +39,9 @@ Execute long-running terminal commands on your computer and manage processes thr
 
 - **Enhanced terminal commands with interactive process control**
 - **Execute code in memory (Python, Node.js, R) without saving files**
-- **Instant data analysis - just ask to analyze CSV/JSON files**
+- **Instant data analysis - just ask to analyze CSV/JSON/Excel files**
+- **Native Excel file support** - Read, write, edit, and search Excel files (.xlsx, .xls, .xlsm) without external tools
+- **PDF support** - Read PDFs with text extraction, create new PDFs from markdown, modify existing PDFs
 - **Interact with running processes (SSH, databases, development servers)**
 - Execute terminal commands with output streaming
 - Command timeout and background execution support
@@ -50,10 +52,10 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Update multiple settings at once
   - Dynamic configuration changes without server restart
 - Full filesystem operations:
-  - Read/write files
+  - Read/write files (text, Excel, PDF)
   - Create/list directories
   - Move files/directories
-  - Search files
+  - Search files and content (including Excel content)
   - Get file metadata
   - **Negative offset file reading**: Read from end of files using negative offset values (like Unix tail)
 - Code editing capabilities:
@@ -420,18 +422,19 @@ The server provides a comprehensive set of tools organized into several categori
 | | `list_sessions` | List all active terminal sessions |
 | | `list_processes` | List all running processes with detailed information |
 | | `kill_process` | Terminate a running process by PID |
-| **Filesystem** | `read_file` | Read contents from local filesystem or URLs with line-based pagination (supports positive/negative offset and length parameters) |
+| **Filesystem** | `read_file` | Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), and PDFs with line/page-based pagination |
 | | `read_multiple_files` | Read multiple files simultaneously |
-| | `write_file` | Write file contents with options for rewrite or append mode (uses configurable line limits) |
+| | `write_file` | Write file contents with options for rewrite or append mode. Supports Excel files (JSON 2D array format). For PDFs, use `write_pdf` |
+| | `write_pdf` | Create new PDF files from markdown or modify existing PDFs (insert/delete pages). Supports HTML/CSS styling and SVG graphics |
 | | `create_directory` | Create a new directory or ensure it exists |
 | | `list_directory` | Get detailed recursive listing of files and directories (supports depth parameter, default depth=2) |
 | | `move_file` | Move or rename files and directories |
-| | `start_search` | Start streaming search for files by name or content patterns (unified ripgrep-based search) |
+| | `start_search` | Start streaming search for files by name or content patterns (searches text files and Excel content) |
 | | `get_more_search_results` | Get paginated results from active search with offset support |
 | | `stop_search` | Stop an active search gracefully |
 | | `list_searches` | List all active search sessions |
-| | `get_file_info` | Retrieve detailed metadata about a file or directory |
-| **Text Editing** | `edit_block` | Apply targeted text replacements with enhanced prompting for smaller edits (includes character-level diff feedback) |
+| | `get_file_info` | Retrieve detailed metadata about a file or directory (includes sheet info for Excel files) |
+| **Text Editing** | `edit_block` | Apply targeted text replacements for text files, or range-based cell updates for Excel files |
 | **Analytics** | `get_usage_stats` | Get usage statistics for your own insight |
 | | `get_recent_tool_calls` | Get recent tool call history with arguments and outputs for debugging and context recovery |
 | | `give_feedback_to_desktop_commander` | Open feedback form in browser to provide feedback to Desktop Commander Team |
@@ -759,33 +762,6 @@ This project extends the MCP Filesystem Server to enable:
 - Code editing with search/replace blocks
 
 Created as part of exploring Claude MCPs: https://youtube.com/live/TlbjFDbl5Us
-
-## DONE
-- **20-05-2025 v0.1.40 Release** - Added audit logging for all tool calls, improved line-based file operations, enhanced edit_block with better prompting for smaller edits, added explicit telemetry opt-out prompting 
-- **05-05-2025 Fuzzy Search Logging** - Added comprehensive logging system for fuzzy search operations with detailed analysis tools, character-level diffs, and performance metrics to help debug edit_block failures
-- **29-04-2025 Telemetry Opt Out through configuration** - There is now setting to disable telemetry in config, ask in chat
-- **23-04-2025 Enhanced edit functionality** - Improved format, added fuzzy search and multi-occurrence replacements, should fail less and use edit block more often
-- **16-04-2025 Better configurations** - Improved settings for allowed paths, commands and shell environments
-- **14-04-2025 Windows environment fixes** - Resolved issues specific to Windows platforms
-- **14-04-2025 Linux improvements** - Enhanced compatibility with various Linux distributions
-- **12-04-2025 Better allowed directories and blocked commands** - Improved security and path validation for file read/write and terminal command restrictions.
-Terminal still can access files ignoring allowed directories.
-- **11-04-2025 Shell configuration** - Added ability to configure preferred shell for command execution
-- **07-04-2025 Added URL support** - `read_file` command can now fetch content from URLs
-- **28-03-2025 Fixed "Watching /" JSON error** - Implemented custom stdio transport to handle non-JSON messages and prevent server crashes
-- **25-03-2025 Better code search** ([merged](https://github.com/wonderwhy-er/ClaudeServerCommander/pull/17)) - Enhanced code exploration with context-aware results
-
-## Roadmap
-
-The following features are currently being explored:
-
-- **Support for WSL** - Windows Subsystem for Linux integration
-- **Support for SSH** - Remote server command execution
-- **Better file support for formats like CSV/PDF**
-- **Terminal sandboxing for Mac/Linux/Windows for better security**
-- **File reading modes** - For example, allow reading HTML as plain text or markdown
-- **Interactive shell support** - ssh, node/python repl
-- **Improve large file reading and writing**
 
 ## Support Desktop Commander
 
