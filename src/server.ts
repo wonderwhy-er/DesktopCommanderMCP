@@ -399,6 +399,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         Supports standard markdown features including headers, lists, code blocks, tables, and basic formatting.
 
+                        STYLED PDF BEST PRACTICES:
+                        For complex styled PDFs, use get_prompts(action='get_prompt', promptId='bp_pdf_styling') 
+                        to get detailed best practices for layouts, colors, and avoiding common rendering issues.
+
                         Only works within allowed directories.
 
                         ${PATH_GUIDANCE}
