@@ -209,6 +209,212 @@ function showHelp() {
     console.log('  node scripts/publish-release.cjs --clear-state # Reset state and start over');
 }
 
+// =============================================================================
+// PRE-FLIGHT CHECKS - Run before any publishing to catch issues early
+// =============================================================================
+
+/**
+ * Check if mcp-publisher is installed and check for updates
+ */
+function checkMcpPublisher() {
+    printInfo('Checking mcp-publisher...');
+    
+    const mcpPublisherPath = execSilent('which mcp-publisher', { ignoreError: true }).trim();
+    if (!mcpPublisherPath) {
+        printError('mcp-publisher not found. Install it with: brew install mcp-publisher');
+        return false;
+    }
+    
+    // Get current version (output goes to stderr with timestamp prefix)
+    const versionOutput = execSilent('mcp-publisher --version 2>&1', { ignoreError: true });
+    const versionMatch = versionOutput.match(/mcp-publisher\s+(\d+\.\d+\.\d+)/);
+    const currentVersion = versionMatch ? versionMatch[1] : 'unknown';
+    printSuccess(`mcp-publisher found: v${currentVersion}`);
+    
+    // Check for updates via brew
+    try {
+        const brewInfo = execSilent('brew info --json=v2 mcp-publisher 2>/dev/null', { ignoreError: true });
+        if (brewInfo) {
+            const info = JSON.parse(brewInfo);
+            const latestVersion = info.formulae?.[0]?.versions?.stable;
+            if (latestVersion && latestVersion !== currentVersion && currentVersion !== 'unknown') {
+                printWarning(`mcp-publisher update available: v${currentVersion} → v${latestVersion}`);
+                printWarning('Run: brew upgrade mcp-publisher');
+            }
+        }
+    } catch (e) {
+        // Ignore errors checking for updates
+    }
+    
+    return true;
+}
+
+/**
+ * Get the latest schema version from mcp-publisher
+ */
+function getLatestSchemaVersion() {
+    // Create a temp file to get the schema version mcp-publisher uses
+    const tempDir = execSilent('mktemp -d', { ignoreError: true }).trim();
+    if (!tempDir) return null;
+    
+    try {
+        execSilent(`cd ${tempDir} && mcp-publisher init 2>/dev/null`, { ignoreError: true });
+        const tempServerJson = path.join(tempDir, 'server.json');
+        if (fs.existsSync(tempServerJson)) {
+            const content = JSON.parse(fs.readFileSync(tempServerJson, 'utf8'));
+            execSilent(`rm -rf ${tempDir}`, { ignoreError: true });
+            return content.$schema;
+        }
+    } catch (e) {
+        // Ignore errors
+    }
+    
+    execSilent(`rm -rf ${tempDir}`, { ignoreError: true });
+    return null;
+}
+
+/**
+ * Update server.json schema version if needed
+ */
+function updateServerJsonSchema() {
+    const serverJsonPath = path.join(process.cwd(), 'server.json');
+    if (!fs.existsSync(serverJsonPath)) {
+        printError('server.json not found');
+        return false;
+    }
+    
+    const serverJson = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
+    const currentSchema = serverJson.$schema;
+    
+    printInfo('Checking server.json schema version...');
+    
+    // Get latest schema from mcp-publisher
+    const latestSchema = getLatestSchemaVersion();
+    
+    if (latestSchema && currentSchema !== latestSchema) {
+        printWarning(`Updating server.json schema:`);
+        printWarning(`  Old: ${currentSchema}`);
+        printWarning(`  New: ${latestSchema}`);
+        serverJson.$schema = latestSchema;
+        fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
+        printSuccess('server.json schema updated');
+        return true; // Schema was updated
+    }
+    
+    printSuccess(`server.json schema is current`);
+    return false; // No update needed
+}
+
+/**
+ * Validate server.json using mcp-publisher
+ */
+function validateServerJson() {
+    printInfo('Validating server.json...');
+    
+    try {
+        const result = execSilent('mcp-publisher validate 2>&1', { ignoreError: true });
+        
+        // Check for errors in output
+        if (result.toLowerCase().includes('error') || 
+            result.toLowerCase().includes('failed') ||
+            result.toLowerCase().includes('invalid')) {
+            printError('server.json validation failed:');
+            console.log(result);
+            return false;
+        }
+        
+        printSuccess('server.json validation passed');
+        return true;
+    } catch (error) {
+        printError('Failed to validate server.json');
+        return false;
+    }
+}
+
+/**
+ * Check MCP Registry authentication
+ */
+function checkMcpAuth() {
+    printInfo('Checking MCP Registry authentication...');
+    
+    // Try to validate - this will fail if not authenticated
+    const validateResult = execSilent('mcp-publisher validate 2>&1', { ignoreError: true });
+    
+    // If validation mentions auth issues, warn about it
+    if (validateResult.toLowerCase().includes('unauthorized') || 
+        validateResult.toLowerCase().includes('not logged in') ||
+        validateResult.toLowerCase().includes('authentication')) {
+        printWarning('MCP Registry authentication may be required.');
+        printWarning('If publish fails, run: mcp-publisher login github');
+        return false;
+    }
+    
+    printSuccess('MCP Registry authentication OK (validation passed)');
+    return true;
+}
+
+/**
+ * Run all pre-flight checks
+ * Returns true if all critical checks pass
+ */
+function runPreFlightChecks(options) {
+    console.log('');
+    console.log('╔══════════════════════════════════════════════════════════╗');
+    console.log('║              🔍 PRE-FLIGHT CHECKS                        ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
+    console.log('');
+    
+    let allPassed = true;
+    let schemaUpdated = false;
+    
+    // Check mcp-publisher installation and version
+    if (!checkMcpPublisher()) {
+        allPassed = false;
+    }
+    
+    // Update schema if needed
+    if (allPassed) {
+        schemaUpdated = updateServerJsonSchema();
+    }
+    
+    // Validate server.json
+    if (allPassed && !validateServerJson()) {
+        allPassed = false;
+    }
+    
+    // Check MCP auth
+    if (allPassed) {
+        checkMcpAuth();
+    }
+    
+    // Check NPM auth
+    if (allPassed && !options.skipNpm) {
+        printInfo('Checking NPM authentication...');
+        const npmUser = execSilent('npm whoami 2>/dev/null', { ignoreError: true }).trim();
+        if (!npmUser) {
+            printError('Not logged into NPM. Please run: npm login');
+            allPassed = false;
+        } else {
+            printSuccess(`NPM authenticated as: ${npmUser}`);
+        }
+    }
+    
+    console.log('');
+    
+    if (allPassed) {
+        printSuccess('All pre-flight checks passed!');
+        if (schemaUpdated) {
+            printWarning('Note: server.json schema was updated - this will be included in the release commit');
+        }
+    } else {
+        printError('Pre-flight checks failed. Please fix the issues above before releasing.');
+    }
+    
+    console.log('');
+    
+    return allPassed;
+}
+
 // Main release function
 async function publishRelease() {
     const options = parseArgs();
@@ -229,6 +435,14 @@ async function publishRelease() {
     if (!fs.existsSync(packageJsonPath)) {
         printError('package.json not found. Please run this script from the project root.');
         process.exit(1);
+    }
+
+    // Run pre-flight checks before anything else (unless resuming)
+    const existingState = loadState();
+    if (!existingState) {
+        if (!runPreFlightChecks(options)) {
+            process.exit(1);
+        }
     }
 
     // Load or create state
@@ -446,36 +660,70 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
                 printWarning('Would publish to MCP Registry: mcp-publisher publish');
                 printWarning('Skipping MCP Registry publish (dry run)');
             } else {
-                try {
-                    exec('mcp-publisher publish');
-                    markStepComplete(state, 'mcp');
-                    printSuccess('Published to MCP Registry');
-                    
-                    // Verify MCP Registry publication
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                let publishSuccess = false;
+                let retryCount = 0;
+                const maxRetries = 2;
+                
+                while (!publishSuccess && retryCount < maxRetries) {
                     try {
-                        const mcpResponse = execSilent('curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander"');
-                        const mcpData = JSON.parse(mcpResponse);
-                        const mcpVersion = mcpData.servers?.[0]?.version || 'unknown';
-                        
-                        if (mcpVersion === newVersion) {
-                            printSuccess(`MCP Registry publication verified: v${mcpVersion}`);
-                        } else {
-                            printWarning(`MCP Registry version: ${mcpVersion} (expected ${newVersion}, may take a moment to propagate)`);
-                        }
+                        exec('mcp-publisher publish');
+                        publishSuccess = true;
+                        markStepComplete(state, 'mcp');
+                        printSuccess('Published to MCP Registry');
                     } catch (error) {
-                        printWarning('Could not verify MCP Registry publication');
+                        const errorMsg = error.message || error.toString();
+                        retryCount++;
+                        
+                        // Handle expired token - attempt auto-refresh
+                        if (errorMsg.includes('401') || errorMsg.includes('expired') || errorMsg.includes('Unauthorized')) {
+                            if (retryCount < maxRetries) {
+                                printWarning('Authentication token expired. Attempting to refresh...');
+                                try {
+                                    exec('mcp-publisher login github', { stdio: 'inherit' });
+                                    printSuccess('Token refreshed. Retrying publish...');
+                                    continue;
+                                } catch (loginError) {
+                                    printError('Could not refresh token automatically.');
+                                    printError('Please run manually: mcp-publisher login github');
+                                    throw error;
+                                }
+                            }
+                        }
+                        
+                        // Handle deprecated schema - attempt auto-update
+                        if (errorMsg.includes('deprecated schema')) {
+                            if (retryCount < maxRetries) {
+                                printWarning('Schema version deprecated. Attempting to update...');
+                                if (updateServerJsonSchema()) {
+                                    printSuccess('Schema updated. Retrying publish...');
+                                    continue;
+                                }
+                            }
+                        }
+                        
+                        // Other errors
+                        printError('MCP Registry publish failed!');
+                        if (errorMsg.includes('422')) {
+                            printError('Validation error in server.json. Check the error message above for details.');
+                        }
+                        throw error;
                     }
-                } catch (error) {
-                    printError('MCP Registry publish failed!');
-                    if (error.message.includes('401') || error.message.includes('expired')) {
-                        printError('Authentication token expired. Please run: mcp-publisher login github');
-                        printError('After logging in, run the script again to resume from this step.');
-                    } else if (error.message.includes('422')) {
-                        printError('Validation error in server.json. Check the error message above for details.');
-                        printError('After fixing the issue, run the script again to resume from this step.');
+                }
+                
+                // Verify MCP Registry publication
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                try {
+                    const mcpResponse = execSilent('curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander"');
+                    const mcpData = JSON.parse(mcpResponse);
+                    const mcpVersion = mcpData.servers?.[0]?.version || 'unknown';
+                    
+                    if (mcpVersion === newVersion) {
+                        printSuccess(`MCP Registry publication verified: v${mcpVersion}`);
+                    } else {
+                        printWarning(`MCP Registry version: ${mcpVersion} (expected ${newVersion}, may take a moment to propagate)`);
                     }
-                    throw error;
+                } catch (verifyError) {
+                    printWarning('Could not verify MCP Registry publication');
                 }
             }
         } else {
