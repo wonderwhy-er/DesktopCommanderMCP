@@ -399,6 +399,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         Supports standard markdown features including headers, lists, code blocks, tables, and basic formatting.
 
+                        PDF OPTIONS:
+                        Use 'options' parameter with 'pdf_options' key for page settings:
+                        - Landscape: options: {"pdf_options": {"landscape": true}}
+                        - Page size: options: {"pdf_options": {"format": "A4"}} (A4, Letter, Legal, etc.)
+                        - Margins: options: {"pdf_options": {"margin": {"top": "10mm", "left": "10mm"}}}
+
                         STYLED PDF BEST PRACTICES:
                         For complex styled PDFs, use get_prompts(action='get_prompt', promptId='bp_pdf_styling') 
                         to get detailed best practices for layouts, colors, and avoiding common rendering issues.
