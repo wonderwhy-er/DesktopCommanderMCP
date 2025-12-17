@@ -44,7 +44,7 @@
     },
     {
       "name": "read_file",
-      "description": "Read the contents of a file from the file system or URL with optional offset and length parameters. Supports partial reading and handles images."
+      "description": "Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), and PDFs with line/page-based pagination."
     },
     {
       "name": "read_multiple_files",
@@ -52,7 +52,11 @@
     },
     {
       "name": "write_file",
-      "description": "Write or append to file contents. Always write files in chunks of 25-30 lines maximum for best performance."
+      "description": "Write or append to file contents. Supports Excel files (JSON 2D array format). For PDFs, use write_pdf instead."
+    },
+    {
+      "name": "write_pdf",
+      "description": "Create new PDF files from markdown or modify existing PDFs (insert/delete pages). Supports HTML/CSS styling and SVG graphics."
     },
     {
       "name": "create_directory",
@@ -68,7 +72,7 @@
     },
     {
       "name": "start_search",
-      "description": "Start a streaming search for files by name or content within files. Returns results progressively with session ID."
+      "description": "Start streaming search for files by name or content patterns. Searches text files and Excel content."
     },
     {
       "name": "get_more_search_results",
@@ -84,11 +88,11 @@
     },
     {
       "name": "get_file_info",
-      "description": "Retrieve detailed metadata about a file or directory including size, timestamps, permissions, and line counts."
+      "description": "Retrieve detailed metadata about a file or directory including size, timestamps, permissions, line counts, and sheet info for Excel files."
     },
     {
       "name": "edit_block",
-      "description": "Apply surgical edits to files. Supports text replacement (old_string/new_string) with fuzzy matching for text files, and range updates (range/content) for Excel files."
+      "description": "Apply targeted text replacements for text files, or range-based cell updates for Excel files."
     },
     {
       "name": "start_process",
@@ -133,10 +137,6 @@
     {
       "name": "get_prompts",
       "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
-    },
-    {
-      "name": "execute_node",
-      "description": "Execute Node.js code directly using the MCP server's Node runtime. Supports ES modules with top-level await."
     }
   ],
   "keywords": [
