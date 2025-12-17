@@ -325,9 +325,8 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Generate status message similar to file reading
   let statusMessage = '';
   if (offset < 0) {
-    // Tail read - show actual line range
-    const endLine = result.readFrom + result.readCount - 1;
-    statusMessage = `[Reading lines ${result.readFrom}-${endLine} (${result.readCount} lines, starting ${Math.abs(offset)} from end, total: ${result.totalLines} lines)]`;
+    // Tail read - match file reading format for consistency
+    statusMessage = `[Reading last ${result.readCount} lines (total: ${result.totalLines} lines)]`;
   } else if (offset === 0) {
     // "New output" read
     if (result.remaining > 0) {
