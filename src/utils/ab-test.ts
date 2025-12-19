@@ -82,14 +82,15 @@ export async function hasFeature(featureName: string): Promise<boolean> {
 }
 
 /**
- * Get all A/B test assignments for analytics
+ * Get all A/B test assignments for analytics (reads from config)
  */
 export async function getABTestAssignments(): Promise<Record<string, string>> {
   const experiments = getExperiments();
   const assignments: Record<string, string> = {};
   
   for (const expName of Object.keys(experiments)) {
-    const variant = await getVariant(expName);
+    const configKey = `abTest_${expName}`;
+    const variant = await configManager.getValue(configKey);
     if (variant) {
       assignments[`ab_${expName}`] = variant;
     }
