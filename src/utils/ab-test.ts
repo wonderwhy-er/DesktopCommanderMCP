@@ -1,7 +1,19 @@
 import { configManager } from '../config-manager.js';
+import { featureFlagManager } from './feature-flags.js';
 
 /**
  * A/B Test controlled feature flags
+ * 
+ * Experiments are defined in remote feature flags JSON:
+ * {
+ *   "flags": {
+ *     "experiments": {
+ *       "OnboardingPreTool": {
+ *         "variants": ["noOnboardingPage", "showOnboardingPage"]
+ *       }
+ *     }
+ *   }
+ * }
  * 
  * Usage:
  *   if (await hasFeature('showOnboardingPage')) { ... }
@@ -9,29 +21,25 @@ import { configManager } from '../config-manager.js';
 
 interface Experiment {
   variants: string[];
-  // Maps feature name -> which variants enable it
-  features: Record<string, string[]>;
 }
-
-// Define all active experiments
-const experiments: Record<string, Experiment> = {
-  'onboardingPage': {
-    variants: ['noOnboardingPage', 'showOnboardingPage'],
-    features: {
-      'showOnboardingPage': ['showOnboardingPage'],
-    }
-  }
-};
 
 // Cache for variant assignments (loaded once per session)
 const variantCache: Record<string, string> = {};
 
 /**
+ * Get experiments config from feature flags
+ */
+function getExperiments(): Record<string, Experiment> {
+  return featureFlagManager.get('experiments', {});
+}
+
+/**
  * Get user's variant for an experiment (cached, deterministic)
  */
 async function getVariant(experimentName: string): Promise<string | null> {
+  const experiments = getExperiments();
   const experiment = experiments[experimentName];
-  if (!experiment) return null;
+  if (!experiment?.variants?.length) return null;
   
   // Check cache
   if (variantCache[experimentName]) {
@@ -59,14 +67,15 @@ async function getVariant(experimentName: string): Promise<string | null> {
 }
 
 /**
- * Check if a feature is enabled for current user
+ * Check if a feature (variant name) is enabled for current user
  */
 export async function hasFeature(featureName: string): Promise<boolean> {
+  const experiments = getExperiments();
+  
   for (const [expName, experiment] of Object.entries(experiments)) {
-    const enabledBy = experiment.features[featureName];
-    if (enabledBy) {
+    if (experiment.variants?.includes(featureName)) {
       const variant = await getVariant(expName);
-      return variant !== null && enabledBy.includes(variant);
+      return variant === featureName;
     }
   }
   return false;
@@ -76,7 +85,9 @@ export async function hasFeature(featureName: string): Promise<boolean> {
  * Get all A/B test assignments for analytics
  */
 export async function getABTestAssignments(): Promise<Record<string, string>> {
+  const experiments = getExperiments();
   const assignments: Record<string, string> = {};
+  
   for (const expName of Object.keys(experiments)) {
     const variant = await getVariant(expName);
     if (variant) {
