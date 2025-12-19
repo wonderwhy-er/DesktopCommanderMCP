@@ -3,6 +3,7 @@ import {randomUUID} from 'crypto';
 import * as https from 'https';
 import {configManager} from '../config-manager.js';
 import { currentClient } from '../server.js';
+import { getABTestAssignments } from './ab-test.js';
 
 let VERSION = 'unknown';
 try {
@@ -99,17 +100,12 @@ export const captureBase = async (captureURL: string, event: string, properties?
             };
         }
 
-        // Get A/B test assignment for welcome page experiment
-        let welcomePageContext = {};
+        // Get all A/B test assignments
+        let abTestContext = {};
         try {
-            const variant = await configManager.getValue('abTest_welcomePage');
-            if (variant !== undefined) {
-                welcomePageContext = {
-                    ab_welcome_page: variant
-                };
-            }
+            abTestContext = await getABTestAssignments();
         } catch (e) {
-            // Ignore errors getting A/B test status
+            // Ignore errors getting A/B test assignments
         }
 
         // Create a deep copy of properties to avoid modifying the original objects
@@ -220,7 +216,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const eventProperties = {
             ...baseProperties,
             ...clientContext,
-            ...welcomePageContext,
+            ...abTestContext,
             ...sanitizedProperties
         };
 

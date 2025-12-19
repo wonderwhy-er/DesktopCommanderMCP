@@ -1,59 +1,96 @@
 import { configManager } from '../config-manager.js';
 
-export interface ABTestConfig {
-  name: string;           // Test name, used as config key prefix
-  variants: string[];     // e.g., ['control', 'treatment'] or ['A', 'B', 'C']
+/**
+ * A/B Test controlled feature flags
+ * 
+ * Usage:
+ *   if (await hasFeature('showOnboardingPage')) { ... }
+ */
+
+interface Experiment {
+  variants: string[];
+  // Maps feature name -> which variants enable it
+  features: Record<string, string[]>;
 }
 
-export interface ABTestResult {
-  variant: string;
-  isNewAssignment: boolean;
-}
+// Define all active experiments
+const experiments: Record<string, Experiment> = {
+  'onboardingPage': {
+    variants: ['noOnboardingPage', 'showOnboardingPage'],
+    features: {
+      'showOnboardingPage': ['showOnboardingPage'],
+    }
+  }
+};
+
+// Cache for variant assignments (loaded once per session)
+const variantCache: Record<string, string> = {};
 
 /**
- * Get or create A/B test assignment for current user
- * Assignment is deterministic based on clientId and persisted in config
+ * Get user's variant for an experiment (cached, deterministic)
  */
-export async function getABTestVariant(test: ABTestConfig): Promise<ABTestResult> {
-  const configKey = `abTest_${test.name}`;
-  const existing = await configManager.getValue(configKey);
+async function getVariant(experimentName: string): Promise<string | null> {
+  const experiment = experiments[experimentName];
+  if (!experiment) return null;
   
-  if (existing !== undefined && test.variants.includes(existing)) {
-    return { variant: existing, isNewAssignment: false };
+  // Check cache
+  if (variantCache[experimentName]) {
+    return variantCache[experimentName];
   }
   
-  // Assign based on clientId hash
+  // Check persisted assignment
+  const configKey = `abTest_${experimentName}`;
+  const existing = await configManager.getValue(configKey);
+  
+  if (existing && experiment.variants.includes(existing)) {
+    variantCache[experimentName] = existing;
+    return existing;
+  }
+  
+  // New assignment based on clientId
   const clientId = await configManager.getValue('clientId') || '';
-  const hash = simpleHash(clientId + test.name);
-  const variantIndex = hash % test.variants.length;
-  const variant = test.variants[variantIndex];
+  const hash = hashCode(clientId + experimentName);
+  const variantIndex = hash % experiment.variants.length;
+  const variant = experiment.variants[variantIndex];
   
   await configManager.setValue(configKey, variant);
-  return { variant, isNewAssignment: true };
+  variantCache[experimentName] = variant;
+  return variant;
 }
 
 /**
- * Simple hash function for deterministic assignment
+ * Check if a feature is enabled for current user
  */
-function simpleHash(str: string): number {
+export async function hasFeature(featureName: string): Promise<boolean> {
+  for (const [expName, experiment] of Object.entries(experiments)) {
+    const enabledBy = experiment.features[featureName];
+    if (enabledBy) {
+      const variant = await getVariant(expName);
+      return variant !== null && enabledBy.includes(variant);
+    }
+  }
+  return false;
+}
+
+/**
+ * Get all A/B test assignments for analytics
+ */
+export async function getABTestAssignments(): Promise<Record<string, string>> {
+  const assignments: Record<string, string> = {};
+  for (const expName of Object.keys(experiments)) {
+    const variant = await getVariant(expName);
+    if (variant) {
+      assignments[`ab_${expName}`] = variant;
+    }
+  }
+  return assignments;
+}
+
+function hashCode(str: string): number {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     hash = ((hash << 5) - hash) + str.charCodeAt(i);
     hash |= 0;
   }
   return Math.abs(hash);
-}
-
-/**
- * Check if user is in treatment group (convenience for 2-variant tests)
- */
-export async function isInTreatment(testName: string): Promise<{ inTreatment: boolean; isNew: boolean }> {
-  const result = await getABTestVariant({
-    name: testName,
-    variants: ['noOnboardingPage', 'sawOnboardingPage']
-  });
-  return { 
-    inTreatment: result.variant === 'sawOnboardingPage', 
-    isNew: result.isNewAssignment 
-  };
 }

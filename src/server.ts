@@ -57,7 +57,8 @@ import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
 import { openWelcomePage } from './utils/open-browser.js';
-import { isInTreatment } from './utils/ab-test.js';
+import { hasFeature } from './utils/ab-test.js';
+import { configManager } from './config-manager.js';
 
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
@@ -133,20 +134,19 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
             
-            // Open welcome page for claude-ai users (A/B test: 50/50 split)
-            // TODO: Add && configManager.isFirstRun() check after testing
+            // Open welcome page for claude-ai users (A/B test controlled)
             if (currentClient.name === 'claude-ai' && !(global as any).disableOnboarding) {
-                const { inTreatment, isNew } = await isInTreatment('welcomePage');
+                const shouldShow = await hasFeature('showOnboardingPage');
+                const alreadyShown = await configManager.getValue('sawOnboardingPage');
                 
-                if (isNew && inTreatment) {
+                if (shouldShow && !alreadyShown) {
                     try {
                         await openWelcomePage();
-                        deferLog('info', 'Welcome page opened (A/B treatment)');
+                        await configManager.setValue('sawOnboardingPage', true);
+                        deferLog('info', 'Welcome page opened');
                     } catch (e) {
                         deferLog('warning', `Failed to open welcome page: ${e instanceof Error ? e.message : e}`);
                     }
-                } else if (isNew) {
-                    deferLog('info', 'Welcome page skipped (A/B control)');
                 }
             }
         }
