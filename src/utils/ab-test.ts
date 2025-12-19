@@ -50,10 +50,10 @@ function simpleHash(str: string): number {
 export async function isInTreatment(testName: string): Promise<{ inTreatment: boolean; isNew: boolean }> {
   const result = await getABTestVariant({
     name: testName,
-    variants: ['control', 'treatment']
+    variants: ['noOnboardingPage', 'sawOnboardingPage']
   });
   return { 
-    inTreatment: result.variant === 'treatment', 
+    inTreatment: result.variant === 'sawOnboardingPage', 
     isNew: result.isNewAssignment 
   };
 }
