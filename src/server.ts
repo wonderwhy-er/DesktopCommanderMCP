@@ -455,6 +455,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
+                annotations: {
+                    title: "Create Directory",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                },
             },
             {
                 name: "list_directory",
@@ -594,6 +599,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+                annotations: {
+                    title: "Start Search",
+                    readOnlyHint: true,
+                },
             },
             {
                 name: "get_more_search_results",
@@ -639,6 +648,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+                annotations: {
+                    title: "Stop Search",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                },
             },
             {
                 name: "list_searches",
@@ -1055,6 +1069,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                annotations: {
+                    title: "Give Feedback",
+                    readOnlyHint: false,
+                    openWorldHint: true,
+                },
             },
             {
                 name: "get_prompts",
@@ -1082,6 +1101,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                    annotations: {
+                        title: "Get Prompts",
+                        readOnlyHint: true,
+                    },
                 }
             ];
 
