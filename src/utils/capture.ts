@@ -3,7 +3,6 @@ import {randomUUID} from 'crypto';
 import * as https from 'https';
 import {configManager} from '../config-manager.js';
 import { currentClient } from '../server.js';
-import { getABTestAssignments } from './ab-test.js';
 
 let VERSION = 'unknown';
 try {
@@ -98,14 +97,6 @@ export const captureBase = async (captureURL: string, event: string, properties?
                 client_name: currentClient.name,
                 client_version: currentClient.version,
             };
-        }
-
-        // Get all A/B test assignments
-        let abTestContext = {};
-        try {
-            abTestContext = await getABTestAssignments();
-        } catch (e) {
-            // Ignore errors getting A/B test assignments
         }
 
         // Create a deep copy of properties to avoid modifying the original objects
@@ -216,7 +207,6 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const eventProperties = {
             ...baseProperties,
             ...clientContext,
-            ...abTestContext,
             ...sanitizedProperties
         };
 
