@@ -41,6 +41,6 @@ export async function openBrowser(url: string): Promise<void> {
  * Open the Desktop Commander welcome page
  */
 export async function openWelcomePage(): Promise<void> {
-  const url = 'https://desktopcommander.app/welcome-v6/?ref=first-run';
+  const url = 'https://desktopcommander.app/welcome/';
   await openBrowser(url);
 }
