@@ -57,7 +57,7 @@ import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
 import { openWelcomePage } from './utils/open-browser.js';
-import { configManager } from './config-manager.js';
+import { isInTreatment } from './utils/ab-test.js';
 
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
@@ -133,33 +133,20 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
             
-            // Open welcome page for claude-ai users on first run (A/B test: 50/50 split)
-            // TODO: Uncomment isFirstRun check after testing
-            // if (currentClient.name === 'claude-ai' && configManager.isFirstRun() && !(global as any).disableOnboarding) {
+            // Open welcome page for claude-ai users (A/B test: 50/50 split)
+            // TODO: Add && configManager.isFirstRun() check after testing
             if (currentClient.name === 'claude-ai' && !(global as any).disableOnboarding) {
-                // Check if we've already determined this user's A/B test assignment
-                const existingAssignment = await configManager.getValue('wasShownWelcomePage');
+                const { inTreatment, isNew } = await isInTreatment('welcomePage');
                 
-                if (existingAssignment === undefined) {
-                    // First time - determine A/B test assignment based on clientId
-                    const clientId = await configManager.getValue('clientId') || '';
-                    const lastChar = clientId.slice(-1);
-                    const num = parseInt(lastChar, 16) || 0;
-                    const shouldShow = num % 2 === 0; // Even = show (treatment), Odd = don't show (control)
-                    
-                    // Save the assignment
-                    await configManager.setValue('wasShownWelcomePage', shouldShow);
-                    
-                    if (shouldShow) {
-                        try {
-                            await openWelcomePage();
-                            deferLog('info', 'Welcome page opened for claude-ai user (A/B treatment group)');
-                        } catch (welcomeError) {
-                            deferLog('warning', `Failed to open welcome page: ${welcomeError instanceof Error ? welcomeError.message : String(welcomeError)}`);
-                        }
-                    } else {
-                        deferLog('info', 'Welcome page skipped for claude-ai user (A/B control group)');
+                if (isNew && inTreatment) {
+                    try {
+                        await openWelcomePage();
+                        deferLog('info', 'Welcome page opened (A/B treatment)');
+                    } catch (e) {
+                        deferLog('warning', `Failed to open welcome page: ${e instanceof Error ? e.message : e}`);
                     }
+                } else if (isNew) {
+                    deferLog('info', 'Welcome page skipped (A/B control)');
                 }
             }
         }

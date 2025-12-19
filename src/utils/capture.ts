@@ -102,14 +102,14 @@ export const captureBase = async (captureURL: string, event: string, properties?
         // Get A/B test assignment for welcome page experiment
         let welcomePageContext = {};
         try {
-            const wasShownWelcomePage = await configManager.getValue('wasShownWelcomePage');
-            if (wasShownWelcomePage !== undefined) {
+            const variant = await configManager.getValue('abTest_welcomePage');
+            if (variant !== undefined) {
                 welcomePageContext = {
-                    was_shown_welcome_page: wasShownWelcomePage
+                    ab_welcome_page: variant
                 };
             }
         } catch (e) {
-            // Ignore errors getting welcome page status
+            // Ignore errors getting A/B test status
         }
 
         // Create a deep copy of properties to avoid modifying the original objects

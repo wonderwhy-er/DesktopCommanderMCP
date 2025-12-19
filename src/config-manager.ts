@@ -15,8 +15,7 @@ export interface ServerConfig {
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
-  wasShownWelcomePage?: boolean; // A/B test: whether user was shown welcome page on first run
-  [key: string]: any; // Allow for arbitrary configuration keys
+  [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)
 }
 
 export interface ClientInfo {
