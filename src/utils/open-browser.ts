@@ -39,11 +39,8 @@ export async function openBrowser(url: string): Promise<void> {
  * Open the Desktop Commander welcome page
  * Uses localhost for development, production URL otherwise
  */
-export async function openWelcomePage(isDev: boolean = false): Promise<void> {
-    isDev = true;
-  const baseUrl = isDev 
-    ? 'http://localhost:4322' 
-    : 'https://desktopcommander.app';
+export async function openWelcomePage(): Promise<void> {
+  const baseUrl = 'https://desktopcommander.app';
   
   // TODO: Change back to /welcome/ after testing
   const url = `${baseUrl}/welcome-v6/?ref=first-run`;

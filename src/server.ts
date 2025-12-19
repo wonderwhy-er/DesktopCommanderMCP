@@ -152,8 +152,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                     
                     if (shouldShow) {
                         try {
-                            const isDev = process.env.DC_DEV_MODE === 'true';
-                            await openWelcomePage(isDev);
+                            await openWelcomePage();
                             deferLog('info', 'Welcome page opened for claude-ai user (A/B treatment group)');
                         } catch (welcomeError) {
                             deferLog('warning', `Failed to open welcome page: ${welcomeError instanceof Error ? welcomeError.message : String(welcomeError)}`);
