@@ -56,9 +56,7 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
-import { openWelcomePage } from './utils/open-browser.js';
-import { hasFeature } from './utils/ab-test.js';
-import { configManager } from './config-manager.js';
+import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
@@ -134,20 +132,9 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
             
-            // Open welcome page for claude-ai users (A/B test controlled)
+            // Welcome page for new claude-ai users (A/B test controlled)
             if (currentClient.name === 'claude-ai' && !(global as any).disableOnboarding) {
-                const shouldShow = await hasFeature('showOnboardingPage');
-                const alreadyShown = await configManager.getValue('sawOnboardingPage');
-                
-                if (shouldShow && !alreadyShown) {
-                    try {
-                        await openWelcomePage();
-                        await configManager.setValue('sawOnboardingPage', true);
-                        deferLog('info', 'Welcome page opened');
-                    } catch (e) {
-                        deferLog('warning', `Failed to open welcome page: ${e instanceof Error ? e.message : e}`);
-                    }
-                }
+                await handleWelcomePageOnboarding();
             }
         }
 
