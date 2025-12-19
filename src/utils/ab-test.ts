@@ -71,9 +71,10 @@ async function getVariant(experimentName: string): Promise<string | null> {
  */
 export async function hasFeature(featureName: string): Promise<boolean> {
   const experiments = getExperiments();
+  if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    if (experiment.variants?.includes(featureName)) {
+    if (experiment?.variants?.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
     }
