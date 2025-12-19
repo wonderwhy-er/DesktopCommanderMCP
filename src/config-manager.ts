@@ -15,6 +15,7 @@ export interface ServerConfig {
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
+  wasShownWelcomePage?: boolean; // A/B test: whether user was shown welcome page on first run
   [key: string]: any; // Allow for arbitrary configuration keys
 }
 
@@ -30,6 +31,7 @@ class ConfigManager {
   private configPath: string;
   private config: ServerConfig = {};
   private initialized = false;
+  private _isFirstRun = false; // Track if this is the first run (config was just created)
 
   constructor() {
     // Get user's home directory
@@ -56,9 +58,11 @@ class ConfigManager {
         // Load existing config
         const configData = await fs.readFile(this.configPath, 'utf8');
         this.config = JSON.parse(configData);
+        this._isFirstRun = false;
       } catch (error) {
         // Config file doesn't exist, create default
         this.config = this.getDefaultConfig();
+        this._isFirstRun = true; // This is a first run!
         await this.saveConfig();
       }
       this.config['version'] = VERSION;
@@ -220,6 +224,13 @@ class ConfigManager {
     this.config = this.getDefaultConfig();
     await this.saveConfig();
     return { ...this.config };
+  }
+
+  /**
+   * Check if this is the first run (config file was just created)
+   */
+  isFirstRun(): boolean {
+    return this._isFirstRun;
   }
 }
 

@@ -99,6 +99,19 @@ export const captureBase = async (captureURL: string, event: string, properties?
             };
         }
 
+        // Get A/B test assignment for welcome page experiment
+        let welcomePageContext = {};
+        try {
+            const wasShownWelcomePage = await configManager.getValue('wasShownWelcomePage');
+            if (wasShownWelcomePage !== undefined) {
+                welcomePageContext = {
+                    was_shown_welcome_page: wasShownWelcomePage
+                };
+            }
+        } catch (e) {
+            // Ignore errors getting welcome page status
+        }
+
         // Create a deep copy of properties to avoid modifying the original objects
         // This ensures we don't alter error objects that are also returned to the AI
         let sanitizedProperties;
@@ -207,6 +220,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const eventProperties = {
             ...baseProperties,
             ...clientContext,
+            ...welcomePageContext,
             ...sanitizedProperties
         };
 
