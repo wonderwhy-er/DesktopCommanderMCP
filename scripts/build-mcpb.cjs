@@ -106,7 +106,8 @@ filesToCopy.forEach(file => {
     }
 });
 
-// Step 6: Create package.json in bundle with production dependencies
+// Step 6: Create package.json in bundle with production dependencies from main package.json
+// This ensures MCPB bundle always has the same dependencies as the npm package
 const bundlePackageJson = {
     name: manifest.name,
     version: manifest.version,
@@ -115,27 +116,7 @@ const bundlePackageJson = {
     author: manifest.author,
     license: manifest.license,
     repository: manifest.repository,
-    dependencies: {
-        "@modelcontextprotocol/sdk": "^1.9.0",
-        "@opendocsg/pdf2md": "^0.2.2",
-        "@vscode/ripgrep": "^1.15.9", 
-        "cross-fetch": "^4.1.0",
-        "exceljs": "^4.4.0",
-        "fastest-levenshtein": "^1.0.16",
-        "file-type": "^21.1.1",
-        "glob": "^10.3.10",
-        "isbinaryfile": "^5.0.4",
-        "md-to-pdf": "^5.2.5",
-        "pdf-lib": "^1.17.1",
-        "remark": "^15.0.1",
-        "remark-gfm": "^4.0.1",
-        "remark-parse": "^11.0.0",
-        "sharp": "^0.34.5",
-        "unified": "^11.0.5",
-        "unpdf": "^1.4.0",
-        "zod": "^3.24.1",
-        "zod-to-json-schema": "^3.23.5"
-    }
+    dependencies: packageJson.dependencies // Use dependencies directly from package.json
 };
 
 fs.writeFileSync(

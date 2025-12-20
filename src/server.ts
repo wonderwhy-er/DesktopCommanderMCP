@@ -56,6 +56,7 @@ import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
+import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
@@ -130,6 +131,11 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
             // Defer client connection message until after initialization
             deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
+            
+            // Welcome page for new claude-ai users (A/B test controlled)
+            if (currentClient.name === 'claude-ai' && !(global as any).disableOnboarding) {
+                await handleWelcomePageOnboarding();
+            }
         }
 
         capture('run_server_mcp_initialized');
@@ -422,6 +428,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
+                annotations: {
+                    title: "Create Directory",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                },
             },
             {
                 name: "list_directory",
@@ -561,6 +572,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+                annotations: {
+                    title: "Start Search",
+                    readOnlyHint: true,
+                },
             },
             {
                 name: "get_more_search_results",
@@ -606,6 +621,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StopSearchArgsSchema),
+                annotations: {
+                    title: "Stop Search",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                },
             },
             {
                 name: "list_searches",
@@ -1022,6 +1042,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
+                annotations: {
+                    title: "Give Feedback",
+                    readOnlyHint: false,
+                    openWorldHint: true,
+                },
             },
             {
                 name: "get_prompts",
@@ -1049,6 +1074,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                     inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                    annotations: {
+                        title: "Get Prompts",
+                        readOnlyHint: true,
+                    },
                 }
             ];
 
