@@ -99,6 +99,12 @@ export const captureBase = async (captureURL: string, event: string, properties?
             };
         }
 
+        // Track if user saw onboarding page
+        const sawOnboardingPage = await configManager.getValue('sawOnboardingPage');
+        if (sawOnboardingPage !== undefined) {
+            clientContext = { ...clientContext, saw_onboarding_page: sawOnboardingPage };
+        }
+
         // Create a deep copy of properties to avoid modifying the original objects
         // This ensures we don't alter error objects that are also returned to the AI
         let sanitizedProperties;
