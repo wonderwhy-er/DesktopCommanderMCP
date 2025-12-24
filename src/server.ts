@@ -47,11 +47,16 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    ConnectRemoteMCPArgsSchema,
+    DisconnectRemoteMCPArgsSchema,
+    GetRemoteMCPStatusArgsSchema,
+    ExecuteRemoteMCPArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
+import { connectRemoteMCP, disconnectRemoteMCP, getRemoteMCPStatus, executeRemoteMCP } from './tools/remote-mcp.js';
 import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
@@ -1078,6 +1083,98 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         title: "Get Prompts",
                         readOnlyHint: true,
                     },
+                },
+
+                // Remote MCP tools
+                {
+                    name: "connect_remote_mcp",
+                    description: `
+                        Connect to a Remote MCP Server to control a remote machine.
+                        
+                        This allows you to execute MCP tools on a remote machine by connecting
+                        to a Remote MCP Server via WebSocket. You need the server URL and a 
+                        device token to establish the connection.
+                        
+                        Example usage:
+                        - serverUrl: "ws://localhost:3002/ws" or "wss://your-remote-server.com/ws"
+                        - deviceToken: Token obtained from the remote server's web dashboard
+                        
+                        After connecting, use execute_remote_mcp to run commands on the remote machine.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ConnectRemoteMCPArgsSchema),
+                    annotations: {
+                        title: "Connect to Remote MCP",
+                        readOnlyHint: false,
+                        destructiveHint: false,
+                        openWorldHint: true,
+                    },
+                },
+                {
+                    name: "disconnect_remote_mcp",
+                    description: `
+                        Disconnect from the current Remote MCP Server.
+                        
+                        Gracefully closes the WebSocket connection and cleans up resources.
+                        Use this when you're done working with the remote machine or need 
+                        to connect to a different server.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(DisconnectRemoteMCPArgsSchema),
+                    annotations: {
+                        title: "Disconnect from Remote MCP",
+                        readOnlyHint: false,
+                        destructiveHint: false,
+                    },
+                },
+                {
+                    name: "get_remote_mcp_status",
+                    description: `
+                        Check the status of the Remote MCP connection.
+                        
+                        Returns information about:
+                        - Connection status (connected/disconnected)
+                        - Authentication status 
+                        - Remote device ID
+                        - Connection details
+                        
+                        Use this to verify the connection before executing remote commands.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(GetRemoteMCPStatusArgsSchema),
+                    annotations: {
+                        title: "Get Remote MCP Status",
+                        readOnlyHint: true,
+                    },
+                },
+                {
+                    name: "execute_remote_mcp",
+                    description: `
+                        Execute an MCP tool on the remote machine.
+                        
+                        This forwards an MCP request to the connected remote machine and returns
+                        the result. The remote machine must have the corresponding MCP tool available.
+                        
+                        Common MCP methods you can execute remotely:
+                        - "read_file" - Read files on the remote machine
+                        - "list_directory" - List directories on the remote machine  
+                        - "start_process" - Execute commands on the remote machine
+                        - "get_file_info" - Get file information from the remote machine
+                        
+                        You must be connected via connect_remote_mcp before using this tool.
+                        
+                        Example:
+                        method: "read_file"
+                        params: {"path": "/etc/hostname"}
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                    inputSchema: zodToJsonSchema(ExecuteRemoteMCPArgsSchema),
+                    annotations: {
+                        title: "Execute Remote MCP Command",
+                        readOnlyHint: false,
+                        destructiveHint: true,
+                        openWorldHint: true,
+                    },
                 }
             ];
 
@@ -1321,6 +1418,105 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "edit_block":
                 result = await handlers.handleEditBlock(args);
+                break;
+
+            // Remote MCP tools
+            case "connect_remote_mcp":
+                try {
+                    const parsedArgs = args as { serverUrl: string; deviceToken: string };
+                    const connectResult = await connectRemoteMCP(parsedArgs.serverUrl, parsedArgs.deviceToken);
+                    result = {
+                        content: [{
+                            type: "text",
+                            text: connectResult.success 
+                                ? `✅ ${connectResult.message}` 
+                                : `❌ ${connectResult.message}`
+                        }],
+                        isError: !connectResult.success,
+                    };
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in connect_remote_mcp handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error connecting to Remote MCP: ${error instanceof Error ? error.message : String(error)}` }],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "disconnect_remote_mcp":
+                try {
+                    const disconnectResult = disconnectRemoteMCP();
+                    result = {
+                        content: [{
+                            type: "text",
+                            text: disconnectResult.success 
+                                ? `✅ ${disconnectResult.message}` 
+                                : `❌ ${disconnectResult.message}`
+                        }],
+                        isError: !disconnectResult.success,
+                    };
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in disconnect_remote_mcp handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error disconnecting from Remote MCP: ${error instanceof Error ? error.message : String(error)}` }],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "get_remote_mcp_status":
+                try {
+                    const status = getRemoteMCPStatus();
+                    const statusIcon = status.connected && status.authenticated ? "🟢" : "🔴";
+                    result = {
+                        content: [{
+                            type: "text",
+                            text: `${statusIcon} ${status.message}`
+                        }],
+                        isError: false,
+                    };
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in get_remote_mcp_status handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error getting Remote MCP status: ${error instanceof Error ? error.message : String(error)}` }],
+                        isError: true,
+                    };
+                }
+                break;
+
+            case "execute_remote_mcp":
+                try {
+                    const parsedArgs = args as { method: string; params?: any };
+                    const executeResult = await executeRemoteMCP(parsedArgs.method, parsedArgs.params);
+                    if (executeResult.success) {
+                        // Format the result nicely
+                        const resultText = typeof executeResult.result === 'object' 
+                            ? JSON.stringify(executeResult.result, null, 2)
+                            : String(executeResult.result);
+                        
+                        result = {
+                            content: [{
+                                type: "text",
+                                text: `✅ Remote MCP command '${parsedArgs.method}' executed successfully:\n\n${resultText}`
+                            }],
+                            isError: false,
+                        };
+                    } else {
+                        result = {
+                            content: [{
+                                type: "text",
+                                text: `❌ Remote MCP command '${parsedArgs.method}' failed: ${executeResult.error}`
+                            }],
+                            isError: true,
+                        };
+                    }
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in execute_remote_mcp handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error executing Remote MCP command: ${error instanceof Error ? error.message : String(error)}` }],
+                        isError: true,
+                    };
+                }
                 break;
 
             default:

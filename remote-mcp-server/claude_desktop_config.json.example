@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "remote-mcp": {
+      "command": "node",
+      "args": ["/Users/dasein/dev/DC/DesktopCommanderMCP/remote-mcp-server/mcp-server.js"],
+      "env": {}
+    }
+  }
+}

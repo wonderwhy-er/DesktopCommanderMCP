@@ -4,7 +4,16 @@
       "Bash(git log:*)",
       "Bash(npm run build:*)",
       "Bash(chmod:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "WebSearch",
+      "Bash(npm install)",
+      "Bash(npm install:*)",
+      "Bash(npm run migrate:*)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(./agent.js http://localhost:3002 \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkZXZpY2VJZCI6IjViMmQ5MWI3LWIyNGYtNDU4OS1hOTJlLWI4YTM3YmVkZTNjYSIsInVzZXJJZCI6IjM1NTI4NzYxLWY4MDYtNDcwYi1iNzQ4LTFmN2E2NDU0MDQzMiIsInR5cGUiOiJkZXZpY2UiLCJpYXQiOjE3NjY1NDQ2MzgsImV4cCI6MTc2OTEzNjYzOH0.7Hu1SIkvRXA9TLS0AUBVDUvicvIzaNrnRc9ngfQL9Ck\")"
     ],
     "deny": [],
     "ask": []

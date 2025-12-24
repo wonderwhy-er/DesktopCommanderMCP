@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote MCP Server - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            color: #7f8c8d;
+        }
+
+        .section {
+            background: white;
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .section h2 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .form-group {
+            margin: 15px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+
+        button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        button.secondary {
+            background: #95a5a6;
+        }
+
+        button.secondary:hover {
+            background: #7f8c8d;
+        }
+
+        button.danger {
+            background: #e74c3c;
+        }
+
+        button.danger:hover {
+            background: #c0392b;
+        }
+
+        .device-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .device-card.online {
+            border-color: #27ae60;
+            background: #f8fff9;
+        }
+
+        .device-card.offline {
+            border-color: #e74c3c;
+            background: #fdf2f2;
+        }
+
+        .device-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .device-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .device-status.online {
+            background: #27ae60;
+            color: white;
+        }
+
+        .device-status.offline {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .test-area {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+
+        .test-area h3 {
+            margin-bottom: 10px;
+            color: #495057;
+        }
+
+        .mcp-examples {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .example-btn {
+            background: #6c757d;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .example-btn:hover {
+            background: #5a6268;
+        }
+
+        pre {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .loading {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        .flex {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .flex-end {
+            justify-content: flex-end;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .mcp-examples {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Remote MCP Server</h1>
+            <p>Control your desktop remotely through Claude MCP</p>
+        </div>
+
+        <!-- Authentication Section -->
+        <div class="section" id="auth-section">
+            <h2>Authentication</h2>
+            <div id="auth-form">
+                <div class="form-group">
+                    <label for="email">Email:</label>
+                    <input type="email" id="email" placeholder="your@email.com" value="test@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="name">Name:</label>
+                    <input type="text" id="name" placeholder="Your Name" value="Test User">
+                </div>
+                <button onclick="login()">Login</button>
+                <div id="auth-status" class="status hidden"></div>
+            </div>
+
+            <div id="user-info" class="hidden">
+                <div class="status success">
+                    <strong>Logged in as:</strong> <span id="username"></span>
+                    <button onclick="logout()" style="float: right;" class="secondary">Logout</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Device Management Section -->
+        <div class="section hidden" id="device-section">
+            <h2>Device Management</h2>
+            
+            <div id="device-info"></div>
+            
+            <div id="register-form">
+                <div class="form-group">
+                    <label for="device-name">Device Name:</label>
+                    <input type="text" id="device-name" placeholder="My Desktop Computer" value="My Computer">
+                </div>
+                <button onclick="registerDevice()">Register Device</button>
+            </div>
+        </div>
+
+        <!-- MCP Testing Section -->
+        <div class="section hidden" id="test-section">
+            <h2>MCP Request Testing</h2>
+            
+            <div class="test-area">
+                <h3>Quick Examples</h3>
+                <div class="mcp-examples">
+                    <button class="example-btn" onclick="loadExample('read_file')">Read File</button>
+                    <button class="example-btn" onclick="loadExample('list_directory')">List Directory</button>
+                    <button class="example-btn" onclick="loadExample('get_file_info')">File Info</button>
+                    <button class="example-btn" onclick="loadExample('start_process')">Start Process</button>
+                    <button class="example-btn" onclick="loadExample('system_info')">System Info</button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="mcp-request">MCP Request (JSON):</label>
+                <textarea id="mcp-request" rows="8" placeholder="Enter MCP request JSON..."></textarea>
+            </div>
+
+            <div class="flex">
+                <button onclick="executeMCP()" id="execute-btn">Execute MCP Request</button>
+                <button onclick="clearResult()" class="secondary">Clear Result</button>
+            </div>
+
+            <div id="mcp-result-container" class="hidden">
+                <h3>Response:</h3>
+                <pre id="mcp-result"></pre>
+            </div>
+        </div>
+
+        <!-- Server Status Section -->
+        <div class="section">
+            <h2>Server Status</h2>
+            <div id="server-status">
+                <div class="status info">Loading server status...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let authToken = null;
+        let currentUser = null;
+
+        // MCP request examples
+        const examples = {
+            read_file: {
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'read_file',
+                params: {
+                    path: '/etc/hostname'
+                }
+            },
+            list_directory: {
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'list_directory',
+                params: {
+                    path: '/home'
+                }
+            },
+            get_file_info: {
+                jsonrpc: '2.0',
+                id: 3,
+                method: 'get_file_info',
+                params: {
+                    path: '/etc/passwd'
+                }
+            },
+            start_process: {
+                jsonrpc: '2.0',
+                id: 4,
+                method: 'start_process',
+                params: {
+                    command: 'echo "Hello from Remote MCP!"',
+                    timeout_ms: 5000
+                }
+            },
+            system_info: {
+                jsonrpc: '2.0',
+                id: 5,
+                method: 'start_process',
+                params: {
+                    command: 'uname -a',
+                    timeout_ms: 5000
+                }
+            }
+        };
+
+        // Check for existing auth token
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('authToken');
+            if (token) {
+                authToken = token;
+                validateAndLoadUser();
+            }
+            loadServerStatus();
+        });
+
+        async function login() {
+            const email = document.getElementById('email').value.trim();
+            const name = document.getElementById('name').value.trim();
+
+            if (!email || !name) {
+                showAuthStatus('Please enter both email and name', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, name })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    authToken = data.token;
+                    currentUser = data.user;
+                    localStorage.setItem('authToken', authToken);
+                    
+                    showUserInfo();
+                    loadDevice();
+                    showAuthStatus('Login successful!', 'success');
+                } else {
+                    showAuthStatus(data.error || 'Login failed', 'error');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showAuthStatus('Network error during login', 'error');
+            }
+        }
+
+        async function validateAndLoadUser() {
+            try {
+                const response = await fetch('/auth/me', {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+
+                if (response.ok) {
+                    currentUser = await response.json();
+                    showUserInfo();
+                    loadDevice();
+                } else {
+                    localStorage.removeItem('authToken');
+                    authToken = null;
+                    showAuthStatus('Session expired, please login again', 'warning');
+                }
+            } catch (error) {
+                console.error('Token validation error:', error);
+                localStorage.removeItem('authToken');
+                authToken = null;
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('authToken');
+            
+            document.getElementById('auth-form').classList.remove('hidden');
+            document.getElementById('user-info').classList.add('hidden');
+            document.getElementById('device-section').classList.add('hidden');
+            document.getElementById('test-section').classList.add('hidden');
+            
+            showAuthStatus('Logged out successfully', 'info');
+        }
+
+        function showUserInfo() {
+            document.getElementById('username').textContent = currentUser.name;
+            document.getElementById('auth-form').classList.add('hidden');
+            document.getElementById('user-info').classList.remove('hidden');
+            document.getElementById('device-section').classList.remove('hidden');
+        }
+
+        function showAuthStatus(message, type) {
+            const statusEl = document.getElementById('auth-status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+            statusEl.classList.remove('hidden');
+            
+            setTimeout(() => {
+                statusEl.classList.add('hidden');
+            }, 5000);
+        }
+
+        async function loadDevice() {
+            try {
+                const response = await fetch('/api/device', {
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+
+                if (response.ok) {
+                    const device = await response.json();
+                    showDevice(device);
+                } else {
+                    document.getElementById('device-info').innerHTML = 
+                        '<div class="status warning">No device registered</div>';
+                }
+            } catch (error) {
+                console.error('Load device error:', error);
+                document.getElementById('device-info').innerHTML = 
+                    '<div class="status error">Failed to load device status</div>';
+            }
+        }
+
+        function showDevice(device) {
+            const deviceInfo = document.getElementById('device-info');
+            const statusClass = device.status === 'online' ? 'online' : 'offline';
+            
+            deviceInfo.innerHTML = `
+                <div class="device-card ${statusClass}">
+                    <div class="device-info">
+                        <div>
+                            <strong>${device.name}</strong>
+                            <div class="device-status ${statusClass}">${device.status}</div>
+                        </div>
+                        <button onclick="unregisterDevice()" class="danger">Unregister</button>
+                    </div>
+                    <div style="font-size: 14px; color: #666;">
+                        Last seen: ${device.lastSeen ? new Date(device.lastSeen).toLocaleString() : 'Never'}
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('register-form').classList.add('hidden');
+            document.getElementById('test-section').classList.remove('hidden');
+            
+            // Load default example
+            loadExample('read_file');
+        }
+
+        async function registerDevice() {
+            const name = document.getElementById('device-name').value.trim();
+            
+            if (!name) {
+                alert('Please enter a device name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/device/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ name })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`Device registered successfully!\n\nDevice Token (save this for your agent):\n${data.deviceToken}\n\nWebSocket URL: ${data.websocketUrl}`);
+                    loadDevice();
+                } else {
+                    alert(`Registration failed: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Register device error:', error);
+                alert('Network error during device registration');
+            }
+        }
+
+        async function unregisterDevice() {
+            if (!confirm('Are you sure you want to unregister your device?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/device', {
+                    method: 'DELETE',
+                    headers: { Authorization: `Bearer ${authToken}` }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('device-info').innerHTML = 
+                        '<div class="status info">Device unregistered successfully</div>';
+                    document.getElementById('register-form').classList.remove('hidden');
+                    document.getElementById('test-section').classList.add('hidden');
+                } else {
+                    alert(`Failed to unregister: ${data.error}`);
+                }
+            } catch (error) {
+                console.error('Unregister device error:', error);
+                alert('Network error during device unregistration');
+            }
+        }
+
+        function loadExample(type) {
+            const example = examples[type];
+            if (example) {
+                document.getElementById('mcp-request').value = JSON.stringify(example, null, 2);
+            }
+        }
+
+        async function executeMCP() {
+            const requestText = document.getElementById('mcp-request').value.trim();
+            
+            if (!requestText) {
+                alert('Please enter an MCP request');
+                return;
+            }
+
+            let request;
+            try {
+                request = JSON.parse(requestText);
+            } catch (error) {
+                alert('Invalid JSON format');
+                return;
+            }
+
+            const executeBtn = document.getElementById('execute-btn');
+            const resultContainer = document.getElementById('mcp-result-container');
+            const resultEl = document.getElementById('mcp-result');
+            
+            executeBtn.disabled = true;
+            executeBtn.textContent = 'Executing...';
+            
+            try {
+                const response = await fetch('/api/mcp/execute', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify(request)
+                });
+
+                const result = await response.json();
+                resultEl.textContent = JSON.stringify(result, null, 2);
+                resultContainer.classList.remove('hidden');
+                
+                if (!response.ok) {
+                    resultEl.style.color = '#e74c3c';
+                } else {
+                    resultEl.style.color = '#2c3e50';
+                }
+
+            } catch (error) {
+                console.error('MCP execution error:', error);
+                resultEl.textContent = `Network Error: ${error.message}`;
+                resultEl.style.color = '#e74c3c';
+                resultContainer.classList.remove('hidden');
+            } finally {
+                executeBtn.disabled = false;
+                executeBtn.textContent = 'Execute MCP Request';
+            }
+        }
+
+        function clearResult() {
+            document.getElementById('mcp-result-container').classList.add('hidden');
+        }
+
+        async function loadServerStatus() {
+            try {
+                const response = await fetch('/health');
+                const status = await response.json();
+                
+                document.getElementById('server-status').innerHTML = `
+                    <div class="status success">
+                        ✅ Server Online<br>
+                        Active Connections: ${status.connections || 0}<br>
+                        Last Updated: ${new Date(status.timestamp).toLocaleString()}
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('server-status').innerHTML = `
+                    <div class="status error">
+                        ❌ Server connection failed
+                    </div>
+                `;
+            }
+        }
+
+        // Refresh server status every 30 seconds
+        setInterval(loadServerStatus, 30000);
+    </script>
+</body>
+</html>

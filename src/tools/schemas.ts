@@ -206,3 +206,18 @@ export const GetRecentToolCallsArgsSchema = z.object({
   since: z.string().datetime().optional(),
 });
 
+// Remote MCP schemas
+export const ConnectRemoteMCPArgsSchema = z.object({
+  serverUrl: z.string().url(),
+  deviceToken: z.string(),
+});
+
+export const DisconnectRemoteMCPArgsSchema = z.object({});
+
+export const GetRemoteMCPStatusArgsSchema = z.object({});
+
+export const ExecuteRemoteMCPArgsSchema = z.object({
+  method: z.string(),
+  params: z.record(z.any()).optional(),
+});
+
