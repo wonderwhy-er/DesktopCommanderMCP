@@ -55,19 +55,24 @@ export const generateDeviceToken = (deviceId: string, userId: string): string =>
 
 export const verifyDeviceToken = (token: string): { deviceId: string; userId: string } => {
   const decoded = jwt.verify(token, process.env.JWT_SECRET!) as {
-    deviceId: string;
+    deviceId?: string;
     userId: string;
-    type: string
+    type?: string;
+    iat?: number;
+    exp?: number;
   };
 
   console.log('Decoded device token:', decoded)
 
-  if (decoded.type !== 'device') {
-    throw new Error('Invalid device token type');
+  if (!decoded.userId) {
+    throw new Error('Invalid device token: missing userId');
   }
 
+  // Use the actual deviceId from the token if available, otherwise fall back to userId
+  const deviceId = decoded.deviceId || decoded.userId;
+
   return {
-    deviceId: decoded.deviceId,
+    deviceId: deviceId,
     userId: decoded.userId
   };
 };

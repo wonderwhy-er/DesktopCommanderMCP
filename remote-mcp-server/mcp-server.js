@@ -5,12 +5,12 @@
  * This server acts as a bridge between Claude Desktop and remote machines via SSE
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
+const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
+const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
+const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+} = require("@modelcontextprotocol/sdk/types.js");
 
 class RemoteMCPServer {
   constructor() {
@@ -56,22 +56,31 @@ class RemoteMCPServer {
           },
           {
             name: "remote_execute",
-            description: "Execute MCP commands on connected remote machine",
+            description: "Execute MCP tool commands on connected remote machine",
             inputSchema: {
               type: "object",
               properties: {
-                method: {
+                toolName: {
                   type: "string",
-                  description: "MCP method to execute",
-                  enum: ["read_file", "write_file", "list_directory", "start_process", "get_file_info", "create_directory", "move_file"]
+                  description: "Desktop Commander tool to execute",
+                  enum: ["read_file", "write_file", "list_directory", "start_process", "get_file_info", "create_directory", "move_file", "edit_block", "read_multiple_files", "write_pdf", "force_terminate", "list_sessions", "interact_with_process", "read_process_output", "list_processes", "kill_process", "start_search", "get_more_search_results", "stop_search", "list_searches", "get_config", "set_config_value"]
                 },
-                params: {
+                arguments: {
                   type: "object",
-                  description: "Parameters for the MCP method"
+                  description: "Arguments for the tool"
                 }
               },
-              required: ["method", "params"]
+              required: ["toolName", "arguments"]
             },
+          },
+          {
+            name: "remote_list_tools",
+            description: "List all available tools on the remote Desktop Commander",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              additionalProperties: false
+            }
           },
           {
             name: "remote_status",
@@ -94,6 +103,8 @@ class RemoteMCPServer {
         switch (name) {
           case "connect_remote":
             return await this.handleConnect(args);
+          case "remote_list_tools":
+            return await this.handleListTools(args);
           case "remote_execute":
             return await this.handleExecute(args);
           case "remote_status":
@@ -151,20 +162,77 @@ class RemoteMCPServer {
     }
   }
 
+  async handleListTools(args) {
+    if (!this.connectionConfig) {
+      throw new Error("Not connected to remote server. Use connect_remote first.");
+    }
+
+    const { serverUrl, deviceToken } = this.connectionConfig;
+
+    try {
+      // Create MCP tools/list request for agent to forward to Desktop Commander
+      const mcpRequest = {
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/list",
+        params: {}
+      };
+
+      const response = await fetch(`${serverUrl}/api/mcp/execute`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${deviceToken}`
+        },
+        body: JSON.stringify(mcpRequest)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`MCP list tools failed: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      if (result.error) {
+        throw new Error(`MCP Error: ${result.error.message}`);
+      }
+
+      // Format the tools list nicely
+      const tools = result.result?.tools || [];
+      const toolsList = tools.map(tool => `• ${tool.name}: ${tool.description}`).join('\n');
+
+      return {
+        content: [
+          {
+            type: "text", 
+            text: `✅ Remote Desktop Commander Tools (${tools.length} available):\n\n${toolsList}`
+          },
+        ],
+      };
+    } catch (error) {
+      throw new Error(`Remote list tools failed: ${error.message}`);
+    }
+  }
+
   async handleExecute(args) {
     if (!this.connectionConfig) {
       throw new Error("Not connected to remote server. Use connect_remote first.");
     }
 
-    const { method, params } = args;
+    const { toolName, arguments: toolArgs } = args;
     const { serverUrl, deviceToken } = this.connectionConfig;
 
     try {
+      // Create MCP tool call request for agent to forward to Desktop Commander
       const mcpRequest = {
         jsonrpc: "2.0",
         id: Date.now(),
-        method,
-        params
+        method: "tools/call",
+        params: {
+          name: toolName,
+          arguments: toolArgs
+        }
       };
 
       const response = await fetch(`${serverUrl}/api/mcp/execute`, {
@@ -191,7 +259,7 @@ class RemoteMCPServer {
         content: [
           {
             type: "text", 
-            text: `✅ Remote MCP command '${method}' executed successfully:\n\n` +
+            text: `✅ Remote MCP tool '${toolName}' executed successfully:\n\n` +
                   `${JSON.stringify(result.result, null, 2)}`
           },
         ],
