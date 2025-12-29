@@ -1,0 +1,86 @@
+version: v2.2.0
+
+dsn: postgresql://dasein@host.docker.internal:5432/dc_app_dev3_tmp?sslmode=disable&search_path=hydra
+
+serve:
+  public:
+    host: 0.0.0.0
+    port: 4444
+    cors:
+      enabled: true
+      allowed_origins:
+        - "http://localhost:3003"
+        - "http://localhost:4455"
+      allowed_methods:
+        - "POST"
+        - "GET" 
+        - "PUT"
+        - "PATCH"
+        - "DELETE"
+      allowed_headers:
+        - "Accept"
+        - "Authorization"
+        - "Content-Type"
+        - "X-Requested-With"
+      exposed_headers:
+        - "Content-Type"
+        - "Cache-Control"
+        - "Expires"
+        - "Last-Modified"
+        - "Pragma"
+      allow_credentials: true
+  admin:
+    host: 0.0.0.0
+    port: 4445
+    cors:
+      enabled: true
+      allowed_origins:
+        - "http://localhost:3003"
+      allowed_methods:
+        - "POST"
+        - "GET"
+        - "PUT" 
+        - "PATCH"
+        - "DELETE"
+      allowed_headers:
+        - "Accept"
+        - "Authorization"
+        - "Content-Type"
+        - "X-Requested-With"
+      exposed_headers:
+        - "Content-Type"
+      allow_credentials: true
+
+urls:
+  self:
+    issuer: http://localhost:4444
+  consent: http://localhost:3003/auth/consent
+  login: http://localhost:3003/auth/login
+  logout: http://localhost:3003/auth/logout
+  error: http://localhost:3003/auth/error
+
+oidc:
+  subject_identifiers:
+    supported_types:
+      - pairwise
+      - public
+    pairwise:
+      salt: some-random-salt-change-me
+
+ttl:
+  login_consent_request: 30m
+  access_token: 1h
+  refresh_token: 720h # 30 days
+  id_token: 1h
+  auth_code: 10m
+
+oauth2:
+  expose_internal_errors: true
+
+secrets:
+  system:
+    - this-is-the-system-secret-change-it
+
+log:
+  level: debug
+  format: json
