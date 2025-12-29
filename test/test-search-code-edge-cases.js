@@ -84,8 +84,8 @@ async function setupEdgeCases() {
   // File with only whitespace
   await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'whitespace.txt'), '   \n\t\n   \n');
   
-  // File with very long lines
-  const longLine = 'a'.repeat(10000) + 'pattern' + 'b'.repeat(10000);
+  // File with very long lines (use unique pattern to avoid conflicts with large.txt)
+  const longLine = 'a'.repeat(10000) + 'LONGLINEPATTERN' + 'b'.repeat(10000);
   await fs.writeFile(path.join(EDGE_CASE_TEST_DIR, 'long-lines.txt'), longLine);
   
   // File with special characters
@@ -177,7 +177,7 @@ async function testLongLines() {
   
   const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
-    pattern: 'pattern',
+    pattern: 'LONGLINEPATTERN',
     searchType: 'content'
   });
   

@@ -417,6 +417,13 @@ class UsageTracker {
    * Check if user should see onboarding invitation - SIMPLE VERSION
    */
   async shouldShowOnboarding(): Promise<boolean> {
+    // Check feature flag first (remote kill switch)
+    const { featureFlagManager } = await import('./feature-flags.js');
+    const onboardingEnabled = featureFlagManager.get('onboarding_injection', true);
+    if (!onboardingEnabled) {
+      return false;
+    }
+
     // Check if onboarding is disabled via command line argument
     if ((global as any).disableOnboarding) {
       return false;
