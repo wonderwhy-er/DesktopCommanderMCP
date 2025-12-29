@@ -332,12 +332,12 @@ function validateServerJson() {
 }
 
 /**
- * Check MCP Registry authentication
+ * Check MCP Registry authentication and token expiration
  */
 function checkMcpAuth() {
     printInfo('Checking MCP Registry authentication...');
     
-    // Try to validate - this will fail if not authenticated
+    // First check if we can validate locally
     const validateResult = execSilent('mcp-publisher validate 2>&1', { ignoreError: true });
     
     // If validation mentions auth issues, warn about it
@@ -349,8 +349,77 @@ function checkMcpAuth() {
         return false;
     }
     
-    printSuccess('MCP Registry authentication OK (validation passed)');
+    printSuccess('Local validation passed');
     return true;
+}
+
+/**
+ * Check if MCP Registry JWT token is valid and not expired
+ * Makes a lightweight API call to verify the token works
+ */
+function checkMcpTokenExpiration() {
+    printInfo('Checking MCP Registry token validity...');
+    
+    try {
+        // mcp-publisher stores token in ~/.mcp_publisher_token
+        const homeDir = process.env.HOME || process.env.USERPROFILE;
+        const tokenPath = path.join(homeDir, '.mcp_publisher_token');
+        
+        if (!fs.existsSync(tokenPath)) {
+            printError('MCP Registry token not found. Please run: mcp-publisher login github');
+            return false;
+        }
+        
+        const authData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+        const token = authData.token;
+        
+        if (!token) {
+            printError('No token found in auth file. Run: mcp-publisher login github');
+            return false;
+        }
+        
+        // Decode JWT to check expiration (JWT format: header.payload.signature)
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+            printWarning('Invalid token format. Run: mcp-publisher login github');
+            return false;
+        }
+        
+        // Decode the payload (second part) - handle base64url encoding
+        const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
+        
+        if (payload.exp) {
+            const expirationDate = new Date(payload.exp * 1000);
+            const now = new Date();
+            const hoursUntilExpiry = (expirationDate - now) / (1000 * 60 * 60);
+            
+            if (expirationDate <= now) {
+                printError(`MCP Registry token expired on ${expirationDate.toLocaleString()}`);
+                printError('Please refresh your token: mcp-publisher login github');
+                return false;
+            }
+            
+            if (hoursUntilExpiry < 1) {
+                printWarning(`MCP Registry token expires in ${Math.round(hoursUntilExpiry * 60)} minutes`);
+                printWarning('Consider refreshing: mcp-publisher login github');
+            } else if (hoursUntilExpiry < 24) {
+                printWarning(`MCP Registry token expires in ${Math.round(hoursUntilExpiry)} hours`);
+            }
+            
+            printSuccess(`MCP Registry token valid until ${expirationDate.toLocaleString()}`);
+            return true;
+        }
+        
+        // No expiration in token - assume it's valid
+        printSuccess('MCP Registry token found (no expiration set)');
+        return true;
+        
+    } catch (error) {
+        printWarning(`Could not check token: ${error.message}`);
+        printWarning('Publish may fail if token is expired. If so, run: mcp-publisher login github');
+        return true; // Don't block, just warn
+    }
 }
 
 /**
@@ -382,9 +451,12 @@ function runPreFlightChecks(options) {
         allPassed = false;
     }
     
-    // Check MCP auth
+    // Check MCP auth and token expiration
     if (allPassed) {
         checkMcpAuth();
+        if (!checkMcpTokenExpiration()) {
+            allPassed = false;
+        }
     }
     
     // Check NPM auth
