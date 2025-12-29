@@ -1,5 +1,6 @@
 import { configManager } from '../config-manager.js';
 import { featureFlagManager } from './feature-flags.js';
+import { randomUUID } from 'crypto';
 
 /**
  * A/B Test controlled feature flags
@@ -56,7 +57,12 @@ async function getVariant(experimentName: string): Promise<string | null> {
   }
   
   // New assignment based on clientId
-  const clientId = await configManager.getValue('clientId') || '';
+  let clientId = await configManager.getValue('clientId');
+  if (!clientId) {
+    // Generate clientId if not exists (needed for A/B test assignment)
+    clientId = randomUUID();
+    await configManager.setValue('clientId', clientId);
+  }
   const hash = hashCode(clientId + experimentName);
   const variantIndex = hash % experiment.variants.length;
   const variant = experiment.variants[variantIndex];
