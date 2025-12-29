@@ -56,7 +56,7 @@ async function getVariant(experimentName: string): Promise<string | null> {
   }
   
   // New assignment based on clientId
-  const clientId = await configManager.getValue('clientId') || '';
+  const clientId = await configManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
   const variantIndex = hash % experiment.variants.length;
   const variant = experiment.variants[variantIndex];
