@@ -1,5 +1,4 @@
 import {platform} from 'os';
-import {randomUUID} from 'crypto';
 import * as https from 'https';
 import {configManager} from '../config-manager.js';
 import { currentClient } from '../server.js';
@@ -14,25 +13,6 @@ try {
 
 // Will be initialized when needed
 let uniqueUserId = 'unknown';
-
-// Function to get or create a persistent UUID
-async function getOrCreateUUID(): Promise<string> {
-    try {
-        // Try to get the UUID from the config
-        let clientId = await configManager.getValue('clientId');
-
-        // If it doesn't exist, create a new one and save it
-        if (!clientId) {
-            clientId = randomUUID();
-            await configManager.setValue('clientId', clientId);
-        }
-
-        return clientId;
-    } catch (error) {
-        // Fallback to a random UUID if config operations fail
-        return randomUUID();
-    }
-}
 
 
 /**
@@ -87,7 +67,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
 
         // Get or create the client ID if not already initialized
         if (uniqueUserId === 'unknown') {
-            uniqueUserId = await getOrCreateUUID();
+            uniqueUserId = await configManager.getOrCreateClientId();
         }
 
         // Get current client information for all events

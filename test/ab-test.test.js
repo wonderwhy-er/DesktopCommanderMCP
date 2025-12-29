@@ -20,7 +20,13 @@ const mockFeatureFlagManager = {
 // Mock configManager
 const mockConfigManager = {
   getValue: async (key) => mockConfigValues[key],
-  setValue: async (key, value) => { mockConfigValues[key] = value; }
+  setValue: async (key, value) => { mockConfigValues[key] = value; },
+  getOrCreateClientId: async () => {
+    if (!mockConfigValues.clientId) {
+      mockConfigValues.clientId = 'auto-generated-uuid-' + Math.random().toString(36).slice(2);
+    }
+    return mockConfigValues.clientId;
+  }
 };
 
 // We need to test the logic directly since we can't easily mock ES modules
@@ -58,7 +64,7 @@ async function getVariant(experimentName) {
     return existing;
   }
   
-  const clientId = await mockConfigManager.getValue('clientId') || '';
+  const clientId = await mockConfigManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
   const variantIndex = hash % experiment.variants.length;
   const variant = experiment.variants[variantIndex];

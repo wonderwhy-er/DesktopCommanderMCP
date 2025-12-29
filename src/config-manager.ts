@@ -231,6 +231,19 @@ class ConfigManager {
   isFirstRun(): boolean {
     return this._isFirstRun;
   }
+
+  /**
+   * Get or create a persistent client ID for analytics and A/B tests
+   */
+  async getOrCreateClientId(): Promise<string> {
+    let clientId = await this.getValue('clientId');
+    if (!clientId) {
+      const { randomUUID } = await import('crypto');
+      clientId = randomUUID();
+      await this.setValue('clientId', clientId);
+    }
+    return clientId;
+  }
 }
 
 // Export singleton instance
