@@ -1,5 +1,6 @@
 import { configManager } from '../config-manager.js';
 import { hasFeature } from './ab-test.js';
+import { featureFlagManager } from './feature-flags.js';
 import { openWelcomePage } from './open-browser.js';
 import { logToStderr } from './logger.js';
 
@@ -15,6 +16,14 @@ export async function handleWelcomePageOnboarding(): Promise<void> {
   // Only for brand new users (config just created)
   if (!configManager.isFirstRun()) {
     return;
+  }
+
+  // For new users, we need to wait for feature flags to load from network
+  // since they won't have a cache file yet. Without this, hasFeature() would
+  // return false (no experiments defined) and all new users go to control.
+  if (!featureFlagManager.wasLoadedFromCache()) {
+    logToStderr('debug', 'Waiting for feature flags to load...');
+    await featureFlagManager.waitForFreshFlags();
   }
 
   // Check A/B test assignment

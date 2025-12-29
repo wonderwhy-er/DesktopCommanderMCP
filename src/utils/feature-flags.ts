@@ -16,6 +16,11 @@ class FeatureFlagManager {
   private cacheMaxAge: number = 30 * 60 * 1000;
   private flagUrl: string;
   private refreshInterval: NodeJS.Timeout | null = null;
+  
+  // Track fresh fetch status for A/B tests that need network flags
+  private freshFetchPromise: Promise<void> | null = null;
+  private resolveFreshFetch: (() => void) | null = null;
+  private loadedFromCache: boolean = false;
 
   constructor() {
     const configDir = path.dirname(CONFIG_FILE);
@@ -24,6 +29,11 @@ class FeatureFlagManager {
     // Use production flags
     this.flagUrl = process.env.DC_FLAG_URL || 
       'https://desktopcommander.app/flags/v1/production.json';
+    
+    // Set up promise for waiting on fresh fetch
+    this.freshFetchPromise = new Promise((resolve) => {
+      this.resolveFreshFetch = resolve;
+    });
   }
 
   /**
@@ -35,8 +45,17 @@ class FeatureFlagManager {
       await this.loadFromCache();
       
       // Fetch in background (don't block startup)
-      this.fetchFlags().catch(err => {
+      this.fetchFlags().then(() => {
+        // Signal that fresh flags are now available
+        if (this.resolveFreshFetch) {
+          this.resolveFreshFetch();
+        }
+      }).catch(err => {
         logger.debug('Initial flag fetch failed:', err.message);
+        // Still resolve the promise so waiters don't hang forever
+        if (this.resolveFreshFetch) {
+          this.resolveFreshFetch();
+        }
       });
       
       // Start periodic refresh every 5 minutes
@@ -84,12 +103,31 @@ class FeatureFlagManager {
   }
 
   /**
+   * Check if flags were loaded from cache (vs fresh fetch)
+   */
+  wasLoadedFromCache(): boolean {
+    return this.loadedFromCache;
+  }
+
+  /**
+   * Wait for fresh flags to be fetched from network.
+   * Use this when you need to ensure flags are loaded before making decisions
+   * (e.g., A/B test assignments for new users who don't have a cache yet)
+   */
+  async waitForFreshFlags(): Promise<void> {
+    if (this.freshFetchPromise) {
+      await this.freshFetchPromise;
+    }
+  }
+
+  /**
    * Load flags from local cache
    */
   private async loadFromCache(): Promise<void> {
     try {
       if (!existsSync(this.cachePath)) {
         logger.debug('No feature flag cache found');
+        this.loadedFromCache = false;
         return;
       }
 
@@ -99,10 +137,12 @@ class FeatureFlagManager {
       if (config.flags) {
         this.flags = config.flags;
         this.lastFetch = Date.now();
+        this.loadedFromCache = true;
         logger.debug(`Loaded ${Object.keys(this.flags).length} feature flags from cache`);
       }
     } catch (error) {
       logger.warning('Failed to load feature flags from cache:', error);
+      this.loadedFromCache = false;
     }
   }
 
