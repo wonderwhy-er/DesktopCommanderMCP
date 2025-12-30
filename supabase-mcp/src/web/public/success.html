@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authentication Successful - Supabase MCP</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container success-container">
+    <div class="success-icon">✅</div>
+    <h1>Authentication Successful!</h1>
+    <p>You're now connected to the Supabase MCP Server</p>
+
+    <!-- Token display -->
+    <div id="token-section" class="config-section">
+      <h3>🔑 Access Token</h3>
+      <p>Your access token for MCP server communication:</p>
+      <div class="token-display" id="access-token"></div>
+      <button class="copy-btn" onclick="copyToken()">📋 Copy Token</button>
+      <p style="font-size: 14px; color: #666; margin-top: 8px;">
+        <strong>Note:</strong> This token expires in 1 hour. You can refresh it using the refresh token.
+      </p>
+    </div>
+
+    <!-- Claude Desktop Configuration -->
+    <div class="config-section">
+      <h3>⚙️ Claude Desktop Configuration</h3>
+      <p>Add this configuration to your Claude Desktop settings:</p>
+      
+      <div class="config-code" id="claude-config"></div>
+      
+      <button class="copy-btn" onclick="copyConfig()">📋 Copy Configuration</button>
+      
+      <div class="connection-steps">
+        <h4>Setup Instructions:</h4>
+        <ol>
+          <li>Copy the configuration above</li>
+          <li>Open Claude Desktop settings</li>
+          <li>Navigate to MCP Servers configuration</li>
+          <li>Add or replace the "supabase-mcp" server entry</li>
+          <li>Restart Claude Desktop</li>
+          <li>Test the connection using the available tools</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- SSE Connector Information -->
+    <div class="config-section">
+      <h3>🔗 SSE Connector</h3>
+      <p>For advanced users: Use the SSE connector directly</p>
+      
+      <div class="config-code" id="sse-command"></div>
+      
+      <button class="copy-btn" onclick="copySSECommand()">📋 Copy Command</button>
+    </div>
+
+    <!-- Available Tools -->
+    <div class="config-section">
+      <h3>🛠️ Available Tools</h3>
+      <p>Once connected, you'll have access to these tools:</p>
+      
+      <div id="tools-list" style="text-align: left; margin: 16px 0;">
+        <div class="alert alert-info">Loading available tools...</div>
+      </div>
+    </div>
+
+    <!-- Connection Test -->
+    <div class="config-section">
+      <h3>🧪 Test Connection</h3>
+      <p>Test your MCP server connection:</p>
+      <button class="btn btn-secondary" onclick="testConnection()" id="test-btn">
+        Test Connection
+      </button>
+      <div id="test-results" style="margin-top: 16px;"></div>
+    </div>
+
+    <!-- Actions -->
+    <div style="margin-top: 30px;">
+      <button class="btn btn-primary" onclick="refreshPage()">
+        🔄 Refresh Token
+      </button>
+      <a href="/auth.html" class="btn btn-secondary" style="margin-left: 10px;">
+        🔐 Sign Out
+      </a>
+    </div>
+
+    <div class="footer">
+      <p>
+        🎉 <strong>Success!</strong> Your Supabase MCP server is ready to use.<br>
+        <a href="/health" style="color: #667eea;">Server Health</a> | 
+        <a href="mailto:support@example.com" style="color: #667eea;">Support</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Get URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const accessToken = urlParams.get('token');
+    const refreshToken = urlParams.get('refresh');
+
+    // MCP server info
+    let mcpInfo = null;
+
+    // Initialize the success page
+    async function initSuccessPage() {
+      if (!accessToken) {
+        alert('No access token found. Redirecting to authentication...');
+        window.location.href = '/auth.html';
+        return;
+      }
+
+      try {
+        // Get MCP server info
+        const response = await fetch('/api/mcp-info');
+        mcpInfo = await response.json();
+        
+        // Display token
+        document.getElementById('access-token').textContent = accessToken;
+        
+        // Generate Claude Desktop config
+        generateClaudeConfig();
+        
+        // Generate SSE command
+        generateSSECommand();
+        
+        // Load available tools
+        loadAvailableTools();
+        
+      } catch (error) {
+        console.error('Init error:', error);
+        showTestResult('Error initializing page: ' + error.message, false);
+      }
+    }
+
+    // Generate Claude Desktop configuration
+    function generateClaudeConfig() {
+      const config = {
+        mcpServers: {
+          "supabase-mcp": {
+            command: "node",
+            args: ["sse-connector.js"],
+            env: {
+              MCP_SERVER_URL: mcpInfo.mcpServerUrl,
+              SUPABASE_ACCESS_TOKEN: accessToken,
+              SUPABASE_REFRESH_TOKEN: refreshToken || "",
+              DEBUG_MODE: "true"
+            }
+          }
+        }
+      };
+      
+      document.getElementById('claude-config').textContent = JSON.stringify(config, null, 2);
+    }
+
+    // Generate SSE command
+    function generateSSECommand() {
+      const command = `export MCP_SERVER_URL="${mcpInfo.mcpServerUrl}"
+export SUPABASE_ACCESS_TOKEN="${accessToken}"
+export SUPABASE_REFRESH_TOKEN="${refreshToken || ""}"
+node sse-connector.js`;
+      
+      document.getElementById('sse-command').textContent = command;
+    }
+
+    // Load available tools from MCP server
+    async function loadAvailableTools() {
+      try {
+        const response = await fetch(mcpInfo.mcpServerUrl + '/tools', {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        displayTools(data.tools);
+        
+      } catch (error) {
+        document.getElementById('tools-list').innerHTML = 
+          '<div class="alert alert-error">Failed to load tools: ' + error.message + '</div>';
+      }
+    }
+
+    // Display tools list
+    function displayTools(tools) {
+      if (!tools || tools.length === 0) {
+        document.getElementById('tools-list').innerHTML = 
+          '<div class="alert alert-info">No tools available</div>';
+        return;
+      }
+      
+      const toolsHTML = tools.map(tool => `
+        <div style="margin: 12px 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
+          <h4 style="margin: 0 0 8px 0; color: #2d3748;">🔧 ${tool.name}</h4>
+          <p style="margin: 0; color: #4a5568; font-size: 14px;">${tool.description}</p>
+        </div>
+      `).join('');
+      
+      document.getElementById('tools-list').innerHTML = toolsHTML;
+    }
+
+    // Test connection to MCP server
+    async function testConnection() {
+      const testBtn = document.getElementById('test-btn');
+      testBtn.disabled = true;
+      testBtn.innerHTML = '<span class="loading"></span>Testing...';
+      
+      try {
+        // Test health endpoint
+        const healthResponse = await fetch(mcpInfo.mcpServerUrl + '/health');
+        if (!healthResponse.ok) {
+          throw new Error(`Health check failed: ${healthResponse.status}`);
+        }
+        
+        // Test authenticated endpoint
+        const statsResponse = await fetch(mcpInfo.mcpServerUrl + '/stats', {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        });
+        
+        if (!statsResponse.ok) {
+          throw new Error(`Authentication test failed: ${statsResponse.status}`);
+        }
+        
+        const stats = await statsResponse.json();
+        showTestResult(`✅ Connection successful! Server uptime: ${stats.server?.uptime || 'unknown'}`, true);
+        
+      } catch (error) {
+        showTestResult(`❌ Connection failed: ${error.message}`, false);
+      } finally {
+        testBtn.disabled = false;
+        testBtn.innerHTML = 'Test Connection';
+      }
+    }
+
+    // Show test results
+    function showTestResult(message, success) {
+      const resultsDiv = document.getElementById('test-results');
+      resultsDiv.innerHTML = `
+        <div class="alert alert-${success ? 'success' : 'error'}">
+          ${message}
+        </div>
+      `;
+    }
+
+    // Copy functions
+    function copyToken() {
+      navigator.clipboard.writeText(accessToken).then(() => {
+        showCopyFeedback('Token copied to clipboard!');
+      });
+    }
+
+    function copyConfig() {
+      const config = document.getElementById('claude-config').textContent;
+      navigator.clipboard.writeText(config).then(() => {
+        showCopyFeedback('Configuration copied to clipboard!');
+      });
+    }
+
+    function copySSECommand() {
+      const command = document.getElementById('sse-command').textContent;
+      navigator.clipboard.writeText(command).then(() => {
+        showCopyFeedback('SSE command copied to clipboard!');
+      });
+    }
+
+    // Show copy feedback
+    function showCopyFeedback(message) {
+      // Create temporary feedback element
+      const feedback = document.createElement('div');
+      feedback.className = 'alert alert-success';
+      feedback.style.position = 'fixed';
+      feedback.style.top = '20px';
+      feedback.style.right = '20px';
+      feedback.style.zIndex = '1000';
+      feedback.style.minWidth = '250px';
+      feedback.textContent = message;
+      
+      document.body.appendChild(feedback);
+      
+      // Remove after 2 seconds
+      setTimeout(() => {
+        feedback.remove();
+      }, 2000);
+    }
+
+    // Refresh page (re-authenticate)
+    function refreshPage() {
+      window.location.href = '/auth.html';
+    }
+
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', initSuccessPage);
+  </script>
+</body>
+</html>

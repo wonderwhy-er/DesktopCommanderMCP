@@ -1,0 +1,21 @@
+{
+  "client_id": "182ef562-b6f4-4cc3-a459-d298d137925d",
+  "client_secret": "849bce03f07e63cde101f72bd05032aecdfc205941d66d39e5d25fd17743521a",
+  "client_name": "MCP Web OAuth Client (Manual)",
+  "redirect_uris": [
+    "https://phrase-send-enabled-elect.trycloudflare.com/oauth/web/callback",
+    "http://localhost:3006/oauth/web/callback"
+  ],
+  "grant_types": [
+    "authorization_code",
+    "refresh_token"
+  ],
+  "response_types": [
+    "code"
+  ],
+  "scope": "mcp:tools",
+  "token_endpoint_auth_method": "client_secret_post",
+  "client_id_issued_at": 1766998542,
+  "registered_at": "2025-12-29T08:55:42.077Z",
+  "oauth_server": "http://localhost:4449"
+}

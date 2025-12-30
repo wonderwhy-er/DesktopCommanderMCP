@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supabase MCP Authentication</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">🔐</div>
+      <h1>MCP Server Authentication</h1>
+      <p>Sign in to access the Supabase MCP Server with Claude</p>
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading" class="alert alert-info">
+      <span class="loading"></span>
+      Initializing authentication...
+    </div>
+
+    <!-- Error display -->
+    <div id="error-alert" class="alert alert-error hidden"></div>
+
+    <!-- Success display -->
+    <div id="success-alert" class="alert alert-success hidden"></div>
+
+    <!-- Auth form toggle -->
+    <div id="auth-container" class="hidden">
+      <div class="form-toggle">
+        <button id="signin-tab" class="active" onclick="showSignIn()">Sign In</button>
+        <button id="signup-tab" onclick="showSignUp()">Sign Up</button>
+      </div>
+
+      <!-- Sign In Form -->
+      <div id="signin-form" class="form-section">
+        <form onsubmit="handleSignIn(event)">
+          <div class="form-group">
+            <label for="signin-email">Email</label>
+            <input 
+              type="email" 
+              id="signin-email" 
+              required 
+              placeholder="your.email@example.com"
+              autocomplete="username"
+            >
+          </div>
+          
+          <div class="form-group">
+            <label for="signin-password">Password</label>
+            <input 
+              type="password" 
+              id="signin-password" 
+              required 
+              placeholder="Your password"
+              autocomplete="current-password"
+            >
+          </div>
+          
+          <button type="submit" class="btn btn-primary" id="signin-btn">
+            Sign In
+          </button>
+        </form>
+      </div>
+
+      <!-- Sign Up Form -->
+      <div id="signup-form" class="form-section hidden">
+        <form onsubmit="handleSignUp(event)">
+          <div class="form-group">
+            <label for="signup-email">Email</label>
+            <input 
+              type="email" 
+              id="signup-email" 
+              required 
+              placeholder="your.email@example.com"
+              autocomplete="username"
+            >
+          </div>
+          
+          <div class="form-group">
+            <label for="signup-password">Password</label>
+            <input 
+              type="password" 
+              id="signup-password" 
+              required 
+              placeholder="Choose a strong password"
+              autocomplete="new-password"
+              minlength="6"
+            >
+          </div>
+          
+          <div class="form-group">
+            <label for="signup-confirm">Confirm Password</label>
+            <input 
+              type="password" 
+              id="signup-confirm" 
+              required 
+              placeholder="Confirm your password"
+              autocomplete="new-password"
+              minlength="6"
+            >
+          </div>
+          
+          <button type="submit" class="btn btn-primary" id="signup-btn">
+            Create Account
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div id="connection-status" class="hidden">
+      <div class="alert alert-info">
+        <h3>🔗 Connection Status</h3>
+        <p>
+          <span class="status-indicator status-pending" id="mcp-status"></span>
+          MCP Server: <span id="mcp-status-text">Checking...</span>
+        </p>
+        <p>
+          <span class="status-indicator status-pending" id="auth-status"></span>
+          Authentication: <span id="auth-status-text">Pending</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>
+        Powered by <strong>Supabase</strong> and <strong>MCP</strong><br>
+        <a href="/health" style="color: #667eea;">Server Health</a> | 
+        <a href="/" style="color: #667eea;">Refresh</a>
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    let supabaseClient = null;
+    let mcpInfo = null;
+    let oauthParams = null;
+
+    // Initialize authentication
+    async function initAuth() {
+      try {
+        // Parse OAuth parameters from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        oauthParams = {
+          response_type: urlParams.get('response_type'),
+          client_id: urlParams.get('client_id'), 
+          redirect_uri: urlParams.get('redirect_uri'),
+          scope: urlParams.get('scope') || 'mcp:tools',
+          state: urlParams.get('state') || '',
+          code_challenge: urlParams.get('code_challenge'),
+          code_challenge_method: urlParams.get('code_challenge_method'),
+          resource: urlParams.get('resource'),
+          auth_id: urlParams.get('auth_id') // For PKCE validation
+        };
+        
+        // Get MCP server configuration
+        const response = await fetch('/api/mcp-info');
+        mcpInfo = await response.json();
+        
+        // Initialize Supabase client
+        supabaseClient = window.supabase.createClient(
+          mcpInfo.supabaseUrl,
+          mcpInfo.supabaseAnonKey
+        );
+        
+        // Check for existing session
+        const { data: { session }, error } = await supabaseClient.auth.getSession();
+        
+        if (error) {
+          throw error;
+        }
+        
+        if (session) {
+          // User is already signed in - redirect with token
+          showSuccess('Already signed in! Redirecting...');
+          setTimeout(() => {
+            redirectWithToken(session.access_token, session.refresh_token);
+          }, 1500);
+          return;
+        }
+        
+        // Check for error in URL
+        const urlError = urlParams.get('error');
+        if (urlError) {
+          showError(decodeURIComponent(urlError));
+        }
+        
+        // Show OAuth info if we have parameters
+        if (oauthParams.client_id && oauthParams.redirect_uri) {
+          showOAuthInfo();
+        }
+        
+        // Show auth form
+        hideElement('loading');
+        showElement('auth-container');
+        
+        // Check MCP server status
+        checkMCPServerStatus();
+        
+      } catch (error) {
+        console.error('Init error:', error);
+        showError(`Initialization failed: ${error.message}`);
+        hideElement('loading');
+      }
+    }
+    
+    // Show OAuth authorization info
+    function showOAuthInfo() {
+      const oauthInfo = document.createElement('div');
+      oauthInfo.className = 'alert alert-info';
+      oauthInfo.style.marginBottom = '20px';
+      oauthInfo.innerHTML = `
+        <h3>🔐 OAuth Authorization Request</h3>
+        <p><strong>Client:</strong> ${oauthParams.client_id}</p>
+        <p><strong>Scopes:</strong> ${oauthParams.scope}</p>
+        <p><strong>Redirect:</strong> ${oauthParams.redirect_uri}</p>
+        <p>Please sign in to authorize this application.</p>
+      `;
+      
+      const container = document.querySelector('.header');
+      container.appendChild(oauthInfo);
+    }
+    
+    // Redirect with OAuth token
+    function redirectWithToken(accessToken, refreshToken) {
+      if (oauthParams && oauthParams.redirect_uri) {
+        // OAuth flow - redirect to callback with token
+        const callbackParams = {
+          access_token: accessToken,
+          refresh_token: refreshToken || '',
+          client_id: oauthParams.client_id || '',
+          redirect_uri: oauthParams.redirect_uri || '',
+          state: oauthParams.state || ''
+        };
+        
+        // Include auth_id for PKCE validation if present
+        if (oauthParams.auth_id) {
+          callbackParams.auth_id = oauthParams.auth_id;
+        }
+        
+        const callbackUrl = `${window.location.origin}/auth/callback?${new URLSearchParams(callbackParams).toString()}`;
+        
+        console.log('Redirecting to OAuth callback:', callbackUrl);
+        window.location.href = callbackUrl;
+      } else {
+        // Direct access - show success page
+        window.location.href = `/success.html?token=${encodeURIComponent(accessToken)}&refresh=${encodeURIComponent(refreshToken || '')}`;
+      }
+    }
+
+    // Check MCP server status
+    async function checkMCPServerStatus() {
+      try {
+        showElement('connection-status');
+        
+        const response = await fetch(mcpInfo.mcpServerUrl + '/health');
+        const status = await response.json();
+        
+        updateStatus('mcp-status', 'success', 'Connected');
+        document.getElementById('mcp-status-text').textContent = 'Connected';
+        
+      } catch (error) {
+        updateStatus('mcp-status', 'error', 'Disconnected');
+        document.getElementById('mcp-status-text').textContent = 'Error: ' + error.message;
+      }
+    }
+
+    // Update status indicator
+    function updateStatus(elementId, status, text) {
+      const indicator = document.getElementById(elementId);
+      indicator.className = `status-indicator status-${status}`;
+    }
+
+    // Handle sign in
+    async function handleSignIn(event) {
+      event.preventDefault();
+      
+      const email = document.getElementById('signin-email').value;
+      const password = document.getElementById('signin-password').value;
+      const submitBtn = document.getElementById('signin-btn');
+      
+      try {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="loading"></span>Signing in...';
+        hideError();
+        
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+          email,
+          password
+        });
+        
+        if (error) throw error;
+        
+        if (data.session) {
+          showSuccess('Sign in successful! Redirecting...');
+          updateStatus('auth-status', 'success', 'Authenticated');
+          document.getElementById('auth-status-text').textContent = 'Authenticated';
+          
+          setTimeout(() => {
+            redirectWithToken(data.session.access_token, data.session.refresh_token);
+          }, 1500);
+        }
+        
+      } catch (error) {
+        showError(error.message);
+        updateStatus('auth-status', 'error', 'Failed');
+        document.getElementById('auth-status-text').textContent = 'Failed: ' + error.message;
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Sign In';
+      }
+    }
+
+    // Handle sign up
+    async function handleSignUp(event) {
+      event.preventDefault();
+      
+      const email = document.getElementById('signup-email').value;
+      const password = document.getElementById('signup-password').value;
+      const confirmPassword = document.getElementById('signup-confirm').value;
+      const submitBtn = document.getElementById('signup-btn');
+      
+      // Validate passwords match
+      if (password !== confirmPassword) {
+        showError('Passwords do not match');
+        return;
+      }
+      
+      try {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="loading"></span>Creating account...';
+        hideError();
+        
+        const { data, error } = await supabaseClient.auth.signUp({
+          email,
+          password,
+          options: {
+            emailRedirectTo: mcpInfo.redirectUrl
+          }
+        });
+        
+        if (error) throw error;
+        
+        if (data.session) {
+          // User signed up and is automatically signed in
+          showSuccess('Account created successfully! Redirecting...');
+          setTimeout(() => {
+            redirectWithToken(data.session.access_token, data.session.refresh_token);
+          }, 1500);
+        } else {
+          // Email confirmation required
+          showSuccess('Account created! Please check your email to verify your account, then sign in.');
+          showSignIn();
+        }
+        
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = 'Create Account';
+      }
+    }
+
+    // UI helper functions
+    function showSignIn() {
+      document.getElementById('signin-tab').classList.add('active');
+      document.getElementById('signup-tab').classList.remove('active');
+      showElement('signin-form');
+      hideElement('signup-form');
+    }
+
+    function showSignUp() {
+      document.getElementById('signup-tab').classList.add('active');
+      document.getElementById('signin-tab').classList.remove('active');
+      showElement('signup-form');
+      hideElement('signin-form');
+    }
+
+    function showError(message) {
+      const errorAlert = document.getElementById('error-alert');
+      errorAlert.textContent = message;
+      showElement('error-alert');
+      hideElement('success-alert');
+    }
+
+    function showSuccess(message) {
+      const successAlert = document.getElementById('success-alert');
+      successAlert.textContent = message;
+      showElement('success-alert');
+      hideElement('error-alert');
+    }
+
+    function hideError() {
+      hideElement('error-alert');
+    }
+
+    function showElement(id) {
+      const element = document.getElementById(id);
+      element.classList.remove('hidden');
+      element.classList.add('fade-in');
+    }
+
+    function hideElement(id) {
+      const element = document.getElementById(id);
+      element.classList.add('hidden');
+      element.classList.remove('fade-in');
+    }
+
+    // Initialize when page loads
+    document.addEventListener('DOMContentLoaded', initAuth);
+  </script>
+</body>
+</html>

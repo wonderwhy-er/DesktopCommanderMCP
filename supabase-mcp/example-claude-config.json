@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "supabase-mcp": {
+      "command": "node",
+      "args": ["/Users/dasein/dev/DC/DesktopCommanderMCP/supabase-mcp/src/client/http-connector.js"],
+      "env": {
+        "MCP_SERVER_URL": "http://localhost:3007",
+        "DEBUG_MODE": "true"
+      }
+    }
+  }
+}

@@ -32,7 +32,16 @@
       "Bash(DEMO_MODE=true npm run mcp-oauth)",
       "Bash(DEMO_MODE=true npm start)",
       "Bash(OAUTH_BASE_URL=http://localhost:4449 npm run mcp)",
-      "Bash(OAUTH_BASE_URL=https://compound-blink-overall-adds.trycloudflare.com npm run mcp)"
+      "Bash(OAUTH_BASE_URL=https://compound-blink-overall-adds.trycloudflare.com npm run mcp)",
+      "Bash(DEMO_MODE=true MCP_PORT=3006 node server.js)",
+      "Bash(timeout:*)",
+      "Bash(/dev/null)",
+      "Bash(DEMO_MODE=true npm run web)",
+      "Bash(npm start)",
+      "Bash(MCP_SERVER_URL=http://localhost:3007 node src/client/sse-connector.js)",
+      "Bash(MCP_SERVER_URL=http://localhost:3007 SUPABASE_ACCESS_TOKEN=test-token node src/client/sse-connector.js)",
+      "Bash(gtimeout:*)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

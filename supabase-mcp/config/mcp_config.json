@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "supabase-mcp": {
+      "command": "node",
+      "args": [
+        "src/client/sse-connector.js"
+      ],
+      "env": {
+        "MCP_SERVER_URL": "http://localhost:3007",
+        "DEBUG_MODE": "true"
+      }
+    }
+  }
+}
