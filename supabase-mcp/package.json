@@ -4,6 +4,9 @@
   "description": "MCP Server with Supabase OAuth and SSE transport",
   "main": "src/server/mcp-server.js",
   "type": "module",
+  "bin": {
+    "mcp-agent": "./agent.js"
+  },
   "scripts": {
     "start": "node src/server/mcp-server.js",
     "dev": "npm start",
@@ -11,18 +14,21 @@
     "test": "node test/run-tests.js",
     "test-oauth": "node test-connector.js",
     "test-flow": "node test-complete-flow.js",
-    "setup": "node scripts/setup-database.js"
+    "agent": "node agent.js",
+    "agent:dev": "BASE_MCP_URL=http://localhost:3007 node agent.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "eventsource": "^2.0.2",
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "uuid": "^9.0.1",
+    "@supabase/supabase-js": "^2.39.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "eventsource": "^2.0.2",
+    "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "node-fetch": "^3.3.2",
-    "dotenv": "^16.3.1"
+    "open": "^10.0.3",
+    "uuid": "^9.0.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

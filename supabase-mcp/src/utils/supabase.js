@@ -4,17 +4,17 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
- * Create Supabase client for public operations (anon key)
+ * Create Supabase client for public operations (publishable key)
  */
 export function createSupabaseClient() {
   const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+  const supabasePublishableKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY;
   
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Missing Supabase configuration. Check SUPABASE_URL and SUPABASE_ANON_KEY environment variables.');
+  if (!supabaseUrl || !supabasePublishableKey) {
+    throw new Error('Missing Supabase configuration. Check SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY environment variables.');
   }
   
-  return createClient(supabaseUrl, supabaseAnonKey, {
+  return createClient(supabaseUrl, supabasePublishableKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false
@@ -23,17 +23,17 @@ export function createSupabaseClient() {
 }
 
 /**
- * Create Supabase client with service role key for admin operations
+ * Create Supabase client with secret key for admin operations
  */
 export function createSupabaseServiceClient() {
   const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   
-  if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Missing Supabase service configuration. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.');
+  if (!supabaseUrl || !supabaseSecretKey) {
+    throw new Error('Missing Supabase service configuration. Check SUPABASE_URL and SUPABASE_SECRET_KEY environment variables.');
   }
   
-  return createClient(supabaseUrl, supabaseServiceKey, {
+  return createClient(supabaseUrl, supabaseSecretKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false

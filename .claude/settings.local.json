@@ -41,7 +41,8 @@
       "Bash(MCP_SERVER_URL=http://localhost:3007 node src/client/sse-connector.js)",
       "Bash(MCP_SERVER_URL=http://localhost:3007 SUPABASE_ACCESS_TOKEN=test-token node src/client/sse-connector.js)",
       "Bash(gtimeout:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(supabase migration repair:*)"
     ],
     "deny": [],
     "ask": []

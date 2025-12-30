@@ -1,33 +1,23 @@
 /**
  * User information tool - gets current user data from Supabase
  */
+import { z } from 'zod';
+
 export class UserInfoTool {
   static getDefinition() {
     return {
       name: 'user_info',
       description: 'Get current user information and session details',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          include_metadata: {
-            type: 'boolean',
-            description: 'Include user metadata in response',
-            default: true
-          },
-          include_session: {
-            type: 'boolean',
-            description: 'Include session information',
-            default: false
-          }
-        },
-        required: []
-      }
+      inputSchema: z.object({
+        include_metadata: z.boolean().default(true).describe('Include user metadata in response'),
+        include_session: z.boolean().default(false).describe('Include session information')
+      })
     };
   }
-  
+
   static async execute(params, user, supabase) {
     const { include_metadata = true, include_session = false } = params;
-    
+
     try {
       // Get basic user info
       const userInfo = {
@@ -38,13 +28,13 @@ export class UserInfoTool {
         last_sign_in_at: user.last_sign_in_at,
         email_confirmed_at: user.email_confirmed_at
       };
-      
+
       // Include metadata if requested
       if (include_metadata) {
         userInfo.user_metadata = user.user_metadata || {};
         userInfo.app_metadata = user.app_metadata || {};
       }
-      
+
       // Include session info if requested
       if (include_session) {
         try {
@@ -55,7 +45,7 @@ export class UserInfoTool {
             .eq('is_active', true)
             .order('created_at', { ascending: false })
             .limit(5);
-          
+
           if (!sessionError) {
             userInfo.active_sessions = sessions;
           }
@@ -64,14 +54,14 @@ export class UserInfoTool {
           userInfo.session_error = 'Could not retrieve session information';
         }
       }
-      
+
       return {
         content: [{
           type: 'text',
           text: JSON.stringify(userInfo, null, 2)
         }]
       };
-      
+
     } catch (error) {
       throw new Error(`Failed to get user information: ${error.message}`);
     }

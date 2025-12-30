@@ -20,10 +20,17 @@ import { fileURLToPath } from 'url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryEventStore } from '@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js';
-import { createSupabaseClient, logToolCall } from '../utils/supabase.js';
+import { createSupabaseClient, createSupabaseServiceClient, logToolCall } from '../utils/supabase.js';
 import { serverLogger, mcpLogger } from '../utils/logger.js';
 import { authMiddleware } from './auth-middleware.js';
 import { getAllToolDefinitions, executeTool } from './tools/index.js';
+import { OAuthValidator } from './oauth/oauth-validator.js';
+import { OAuthProcessor } from './oauth/oauth-processor.js';
+import { OAuthResponder } from './oauth/oauth-responder.js';
+import { ChannelManager } from '../remote/channel-manager.js';
+import { AgentRegistry } from '../remote/agent-registry.js';
+import { ToolDispatcher } from '../remote/tool-dispatcher.js';
+import { z } from 'zod';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,23 +38,11 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 
 // Configuration constants - MCP compliant
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || (process.env.NODE_ENV === 'production' 
-  ? 'https://your-production-domain.com' 
+const MCP_SERVER_URL = process.env.MCP_SERVER_URL || (process.env.NODE_ENV === 'production'
+  ? 'https://your-production-domain.com'
   : 'http://localhost:3007');
 
-// Pre-registered Claude Desktop client (MCP compliant)
-const CLAUDE_DESKTOP_CLIENT = {
-  client_id: 'claude-desktop',
-  client_name: 'Claude Desktop',
-  redirect_uris: ['urn:ietf:wg:oauth:2.0:oob'], // Out-of-band for desktop apps
-  grant_types: ['authorization_code'],
-  response_types: ['code'],
-  token_endpoint_auth_method: 'none', // Public client
-  scope: 'mcp:tools'
-};
-
-// PKCE code storage for validation
-const pkceCodes = new Map(); // In production, use Redis or database
+// OAuth components will be initialized in constructor
 
 /**
  * Main MCP Server class
@@ -58,10 +53,23 @@ class SupabaseMCPServer {
     this.port = parseInt(process.env.MCP_SERVER_PORT) || 3007;
     this.host = process.env.MCP_SERVER_HOST || 'localhost';
     this.serverUrl = MCP_SERVER_URL;
-    
+
     // Initialize components
-    this.supabase = createSupabaseClient();
-    
+    // Use Service Client for server-side operations to bypass RLS
+    this.supabase = createSupabaseServiceClient();
+
+    // Initialize OAuth components
+    this.oauthValidator = new OAuthValidator(this.serverUrl);
+    this.oauthProcessor = new OAuthProcessor(this.serverUrl, this.supabase);
+    this.oauthResponder = new OAuthResponder(this.serverUrl);
+
+    // Initialize channel manager
+    this.channelManager = new ChannelManager(this.supabase);
+
+    // Initialize remote components
+    this.agentRegistry = new AgentRegistry(this.supabase);
+    this.toolDispatcher = new ToolDispatcher(this.channelManager, this.agentRegistry, this.supabase);
+
     // Initialize MCP SDK Server
     this.mcpServer = new McpServer(
       {
@@ -81,32 +89,50 @@ class SupabaseMCPServer {
     // Initialize MCP session management
     this.mcpEventStore = new InMemoryEventStore();
     this.mcpTransports = new Map(); // Track transports by session ID
-    
+
     // Request tracking
     this.requestCount = 0;
     this.startTime = Date.now();
-    
+
     this.setupMCPToolHandlers();
+    this.setupChannelListeners();
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
-    
+
+    mcpLogger.info('✅ Supabase MCP Server initialization complete', {
+      toolsRegistered: Object.keys(this.mcpServer._registeredTools || {}).length
+    });
+
     serverLogger.info('Supabase MCP Server initialized with SDK', {
       port: this.port,
       host: this.host,
       environment: process.env.NODE_ENV || 'development'
     });
   }
-  
+
   /**
    * Setup MCP tools using the McpServer API
    */
   setupMCPToolHandlers() {
+    mcpLogger.info('🔧 setupMCPToolHandlers() called', {});
+
     // Get all tool definitions from our existing tool registry
     const tools = getAllToolDefinitions();
-    
+
+    mcpLogger.info('📋 Loaded tool definitions', {
+      toolCount: tools.length,
+      toolNames: tools.map(t => t.name)
+    });
+
     // Register each tool with the MCP server
     tools.forEach(tool => {
+      mcpLogger.info('Registering tool with MCP SDK', {
+        toolName: tool.name,
+        hasInputSchema: !!tool.inputSchema,
+        schemaType: tool.inputSchema?.constructor?.name
+      });
+
       this.mcpServer.registerTool(
         tool.name,
         {
@@ -114,6 +140,12 @@ class SupabaseMCPServer {
           inputSchema: tool.inputSchema
         },
         async (args, extra = {}) => {
+          mcpLogger.info('🔧 Tool callback invoked', {
+            toolName: tool.name,
+            argsReceived: !!args,
+            argsKeys: args ? Object.keys(args) : [],
+            extraKeys: Object.keys(extra)
+          });
           // Get authentication context from the transport
           // The transport should have the auth context stored from the session
           const transport = extra.transport || this.mcpTransports.get(extra.sessionId);
@@ -122,67 +154,242 @@ class SupabaseMCPServer {
           const supabaseInstance = authContext?.supabase || this.supabase;
 
           if (!authenticatedUser) {
+            mcpLogger.error('❌ No authenticated user found', {
+              toolName: tool.name,
+              hasTransport: !!transport,
+              hasAuthContext: !!authContext,
+              sessionId: extra.sessionId
+            });
             throw new Error('User authentication required for tool calls');
           }
 
-          mcpLogger.info('Tool call via McpServer', { 
-            userId: authenticatedUser.id, 
-            toolName: tool.name, 
-            args 
+          mcpLogger.info('✅ User authenticated for tool call', {
+            toolName: tool.name,
+            userId: authenticatedUser.id
+          });
+
+          mcpLogger.info('tool/call request', {
+            userId: authenticatedUser.id,
+            toolName: tool.name,
+            args
           });
 
           const startTime = Date.now();
-          
+
           try {
+            mcpLogger.info('⏳ Executing tool', {
+              toolName: tool.name,
+              userId: authenticatedUser.id
+            });
+
             const result = await executeTool(tool.name, args || {}, authenticatedUser, supabaseInstance);
             const duration = Date.now() - startTime;
-            
+
+            mcpLogger.info('✅ Tool execution completed', {
+              toolName: tool.name,
+              userId: authenticatedUser.id,
+              duration: `${duration}ms`,
+              hasResult: !!result
+            });
+
             // Log successful tool call
             try {
               await logToolCall(null, authenticatedUser.id, tool.name, args, result, duration, true);
             } catch (logError) {
-              serverLogger.warn('Failed to log tool call', { 
-                userId: authenticatedUser.id, 
-                toolName: tool.name 
+              serverLogger.warn('Failed to log tool call', {
+                userId: authenticatedUser.id,
+                toolName: tool.name
               }, logError);
             }
-            
-            mcpLogger.info('Tool call completed via McpServer', { 
-              userId: authenticatedUser.id, 
-              toolName: tool.name, 
+
+            mcpLogger.info('tool/call response', {
+              userId: authenticatedUser.id,
+              toolName: tool.name,
               duration: `${duration}ms`,
-              success: true
+              success: true,
+              result
             });
-            
+
             return result;
-            
+
           } catch (error) {
             const duration = Date.now() - startTime;
-            
+
+            mcpLogger.error('❌ Tool execution threw error', {
+              toolName: tool.name,
+              userId: authenticatedUser.id,
+              errorMessage: error.message,
+              errorName: error.constructor.name,
+              duration: `${duration}ms`
+            });
+
             // Log failed tool call
             try {
               await logToolCall(null, authenticatedUser.id, tool.name, args, null, duration, false, error.message);
             } catch (logError) {
-              serverLogger.warn('Failed to log tool call error', { 
-                userId: authenticatedUser.id, 
-                toolName: tool.name 
+              serverLogger.warn('Failed to log tool call error', {
+                userId: authenticatedUser.id,
+                toolName: tool.name
               }, logError);
             }
-            
-            mcpLogger.error('Tool call failed via McpServer', { 
-              userId: authenticatedUser.id, 
-              toolName: tool.name, 
+
+            mcpLogger.info('tool/call error', {
+              userId: authenticatedUser.id,
+              toolName: tool.name,
               duration: `${duration}ms`,
-              error: error.message
+              error: error.message,
+              args: args
             });
-            
+
+            mcpLogger.error('Tool call failed via McpServer', {
+              userId: authenticatedUser.id,
+              toolName: tool.name,
+              duration: `${duration}ms`,
+              error: error.message,
+              errorStack: error.stack,
+              errorType: error.constructor.name,
+              args: args
+            });
+
+            // Also log to console for immediate debugging
+            console.error(`❌ [MCP-ERROR] Tool: ${tool.name}, User: ${authenticatedUser.id}`);
+            console.error(`❌ [MCP-ERROR] Error: ${error.message}`);
+            console.error(`❌ [MCP-ERROR] Stack:`, error.stack);
+            console.error(`❌ [MCP-ERROR] Args:`, args);
+
             throw error;
           }
         }
       );
     });
 
-    serverLogger.info(`MCP SDK registered ${tools.length} tools: ${tools.map(t => t.name).join(', ')}`);
+    // Register remote echo tool (stub for testing)
+    this.mcpServer.registerTool('remote_echo', {
+      description: 'Echo text via remote agent',
+      inputSchema: z.object({
+        text: z.string().describe('Text to echo')
+      })
+    }, async (args, extra) => {
+      console.log(`🔧 [TOOL] remote_echo called with args:`, args);
+
+      const user = this.getAuthenticatedUser(extra);
+      console.log(`👤 [TOOL] Authenticated user:`, { id: user.id, email: user.email });
+
+      // Ensure user has channel subscription
+      console.log(`🔄 [TOOL] Ensuring user channel subscription`);
+      await this.ensureUserChannel(user.id);
+
+      // Dispatch to remote agent
+      console.log(`🚀 [TOOL] Dispatching to remote agent`);
+      try {
+        const result = await this.toolDispatcher.dispatchTool(
+          user.id,
+          'echo', // Tool name on agent side
+          args
+        );
+        console.log(`✅ [TOOL] Remote tool execution successful:`, result);
+        return result;
+      } catch (error) {
+        console.error(`❌ [TOOL] Remote tool execution failed:`, error);
+        throw error;
+      }
+    });
+
+    // Register agent status tool
+    this.mcpServer.registerTool('agent_status', {
+      description: 'Get status of connected agents',
+      inputSchema: z.object({})
+    }, async (args, extra = {}) => {
+      console.log(`🔧 [TOOL] agent_status called with extra:`, extra);
+
+      // Get authentication context from the transport - same pattern as other tools
+      const transport = extra.transport || this.mcpTransports.get(extra.sessionId);
+      const authContext = transport?._authContext;
+      const user = authContext?.user;
+
+      if (!user) {
+        console.error(`❌ [TOOL] agent_status - No authenticated user found`);
+        console.error(`❌ [TOOL] extra:`, extra);
+        console.error(`❌ [TOOL] transport:`, !!transport);
+        console.error(`❌ [TOOL] authContext:`, !!authContext);
+        throw new Error('User authentication required for agent_status');
+      }
+
+      console.log(`👤 [TOOL] agent_status - Authenticated user:`, { id: user.id, email: user.email });
+
+      const agents = await this.agentRegistry.getUserAgents(user.id);
+
+      console.log(`📋 [TOOL] agent_status - Found ${agents.length} agents`);
+
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            agents: agents.map(a => ({
+              name: a.agent_name,
+              status: a.status,
+              last_seen: a.last_seen
+            }))
+          }, null, 2)
+        }]
+      };
+    });
+
+    // Register dummy tool for debugging
+    this.mcpServer.registerTool('dummy_tool', {
+      description: 'Dummy tool for debugging',
+      inputSchema: z.object({})
+    }, async (args, extra) => {
+      console.log('Dummy tool executed');
+      return {
+        content: [{ type: 'text', text: 'Dummy tool success' }]
+      };
+    });
+
+    mcpLogger.info('✅ Tool registration complete', {
+      totalTools: tools.length + 3,
+      registeredTools: [...tools.map(t => t.name), 'remote_echo', 'agent_status', 'dummy_tool']
+    });
+
+    serverLogger.info(`MCP SDK registered ${tools.length + 3} tools: ${tools.map(t => t.name).join(', ')}, remote_echo, agent_status, dummy_tool`);
+  }
+
+  /**
+   * Get authenticated user from MCP request context
+   */
+  getAuthenticatedUser(extra) {
+    const transport = extra.transport || this.mcpTransports.get(extra.sessionId);
+    const authContext = transport?._authContext;
+    const user = authContext?.user;
+
+    if (!user) {
+      throw new Error('User authentication required');
+    }
+
+    return user;
+  }
+
+  /**
+   * Setup channel event listeners
+   */
+  setupChannelListeners() {
+    // Handle tool results from agents
+    this.channelManager.on('tool_result', (userId, payload) => {
+      // Will be implemented in Task 04 (Tool Dispatcher)
+      console.log(`Tool result from user ${userId}:`, payload);
+    });
+
+    serverLogger.info('Channel manager listeners configured');
+  }
+
+  /**
+   * Subscribe user to their channel on first MCP connection
+   */
+  async ensureUserChannel(userId) {
+    if (!this.channelManager.userChannels.has(userId)) {
+      await this.channelManager.subscribeToUser(userId);
+      serverLogger.info('User channel subscription created', { userId });
+    }
   }
 
   /**
@@ -190,7 +397,7 @@ class SupabaseMCPServer {
    */
   async getOrCreateMCPTransport(sessionId, user) {
     let transport = sessionId ? this.mcpTransports.get(sessionId) : undefined;
-    
+
     if (!transport) {
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => Date.now().toString() + '-' + Math.random().toString(36).substring(2),
@@ -201,28 +408,41 @@ class SupabaseMCPServer {
           this.mcpTransports.set(id, transport);
         }
       });
-      
+
       // Store auth context for this transport
       transport._authContext = {
         user: user,
         supabase: this.supabase
       };
-      
+
       // Connect the MCP server to the transport
+      mcpLogger.info('🔗 Connecting MCP server to transport', {
+        userId: user.id,
+        sessionId
+      });
+
       await this.mcpServer.connect(transport);
-      
+
+      mcpLogger.info('✅ MCP server connected to transport', {
+        userId: user.id,
+        sessionId
+      });
+
+      // Ensure user has a channel subscription
+      await this.ensureUserChannel(user.id);
+
       serverLogger.info('Created new MCP transport', { sessionId, userId: user.id });
     }
-    
+
     // Update auth context for existing transport
     transport._authContext = {
       user: user,
       supabase: this.supabase
     };
-    
+
     return transport;
   }
-  
+
   /**
    * Setup Express middleware
    */
@@ -232,32 +452,32 @@ class SupabaseMCPServer {
       this.requestCount++;
       req.requestId = this.requestCount;
       req.startTime = Date.now();
-      
+
       serverLogger.logRequest(req);
       next();
     });
-    
+
     // CORS configuration (MCP compliant - single server URL)
-    const corsOrigins = process.env.CORS_ORIGINS 
+    const corsOrigins = process.env.CORS_ORIGINS
       ? JSON.parse(process.env.CORS_ORIGINS)
       : [this.serverUrl]; // Use single MCP server URL
-    
-    serverLogger.info('CORS configuration', { 
-      corsOrigins, 
-      serverUrl: this.serverUrl 
+
+    serverLogger.info('CORS configuration', {
+      corsOrigins,
+      serverUrl: this.serverUrl
     });
-    
+
     this.app.use(cors({
       origin: (origin, callback) => {
         // Allow requests with no origin (mobile apps, Claude Desktop, etc.)
         if (!origin) return callback(null, true);
-        
+
         if (corsOrigins.includes(origin)) {
           serverLogger.debug('✅ CORS origin allowed', { origin });
           callback(null, true);
         } else {
-          serverLogger.warn('❌ CORS origin rejected', { 
-            origin, 
+          serverLogger.warn('❌ CORS origin rejected', {
+            origin,
             allowed: corsOrigins,
             serverUrl: this.serverUrl
           });
@@ -268,17 +488,17 @@ class SupabaseMCPServer {
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
     }));
-    
+
     // Body parsing
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-    
+
     // Serve static files from web/public
     const staticPath = path.join(__dirname, '..', 'web', 'public');
     this.app.use(express.static(staticPath));
-    
+
     serverLogger.info('Static files served from', { path: staticPath });
-    
+
     // Security headers
     this.app.use((req, res, next) => {
       res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -289,11 +509,11 @@ class SupabaseMCPServer {
       res.setHeader('X-Server-Type', 'Supabase-MCP-HTTP');
       next();
     });
-    
+
     // Response logging
     this.app.use((req, res, next) => {
       const originalSend = res.json;
-      res.json = function(data) {
+      res.json = function (data) {
         const duration = Date.now() - req.startTime;
         serverLogger.logResponse(req, res, duration);
         return originalSend.call(this, data);
@@ -301,7 +521,7 @@ class SupabaseMCPServer {
       next();
     });
   }
-  
+
   /**
    * Setup API routes
    */
@@ -309,7 +529,7 @@ class SupabaseMCPServer {
     // Health check (public)
     this.app.get('/health', (req, res) => {
       const uptime = Date.now() - this.startTime;
-      
+
       res.json({
         status: 'healthy',
         service: 'supabase-mcp-server',
@@ -331,7 +551,7 @@ class SupabaseMCPServer {
         }
       });
     });
-    
+
     // Server info (public)
     this.app.get('/', (req, res) => {
       res.json({
@@ -368,35 +588,7 @@ class SupabaseMCPServer {
         timestamp: new Date().toISOString()
       });
 
-      const discovery = {
-        issuer: this.serverUrl,
-        authorization_endpoint: `${this.serverUrl}/authorize`,
-        token_endpoint: `${this.serverUrl}/token`,
-        registration_endpoint: `${this.serverUrl}/register`,
-        response_types_supported: ['code'],
-        grant_types_supported: ['authorization_code'],
-        code_challenge_methods_supported: ['S256'], // PKCE required
-        scopes_supported: ['mcp:tools'],
-        token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
-        resource_indicators_supported: true, // MCP requirement
-        require_request_uri_registration: false,
-        request_object_signing_alg_values_supported: ['none'],
-        claims_supported: ['sub', 'aud', 'exp', 'iat'],
-        subject_types_supported: ['public']
-      };
-
-      serverLogger.info('✅ OAuth Discovery Response', { 
-        endpoints: {
-          authorization: discovery.authorization_endpoint,
-          token: discovery.token_endpoint,
-          registration: discovery.registration_endpoint
-        },
-        features: {
-          pkce: discovery.code_challenge_methods_supported,
-          resource_indicators: discovery.resource_indicators_supported
-        }
-      });
-
+      const discovery = this.oauthResponder.generateDiscoveryResponse();
       res.json(discovery);
     });
 
@@ -407,357 +599,114 @@ class SupabaseMCPServer {
         serverUrl: this.serverUrl
       });
 
-      const resourceInfo = {
-        resource_server: this.serverUrl,
-        authorization_servers: [this.serverUrl],
-        scopes_supported: ['mcp:tools'],
-        bearer_methods_supported: ['header'],
-        resource_documentation: `${this.serverUrl}/docs`
-      };
-
-      serverLogger.info('✅ Protected Resource Discovery Response', { 
-        resourceServer: resourceInfo.resource_server,
-        scopes: resourceInfo.scopes_supported,
-        bearerMethods: resourceInfo.bearer_methods_supported
-      });
-
+      const resourceInfo = this.oauthResponder.generateProtectedResourceResponse();
       res.json(resourceInfo);
     });
 
     // OAuth 2.0 Authorization endpoint (MCP compliant)
     this.app.get('/authorize', (req, res) => {
-      const { 
-        response_type, 
-        client_id, 
-        redirect_uri, 
-        scope, 
-        state, 
-        code_challenge, 
-        code_challenge_method,
-        resource // MCP requirement
-      } = req.query;
-
       serverLogger.info('🔐 OAuth Authorization Request', {
-        clientId: client_id,
-        redirectUri: redirect_uri,
-        scope: scope,
-        resource: resource,
-        hasCodeChallenge: !!code_challenge,
-        codeChallengMethod: code_challenge_method,
+        clientId: req.query.client_id,
+        redirectUri: req.query.redirect_uri,
+        scope: req.query.scope,
+        resource: req.query.resource,
+        hasCodeChallenge: !!req.query.code_challenge,
+        codeChallengMethod: req.query.code_challenge_method,
         ip: req.ip,
         userAgent: req.get('User-Agent')
       });
-      
-      // Validate required OAuth parameters
-      if (!response_type || response_type !== 'code') {
-        serverLogger.warn('❌ Invalid response_type', { response_type });
-        return res.status(400).json({
-          error: 'unsupported_response_type',
-          error_description: 'Only "code" response type is supported'
-        });
+
+      // Validate request parameters
+      const validation = this.oauthValidator.validateAuthorizationRequest(req.query);
+      if (!validation.valid) {
+        return this.oauthResponder.sendErrorResponse(res, validation.error, validation.error_description);
       }
 
-      if (!client_id || !redirect_uri) {
-        serverLogger.warn('❌ Missing required parameters', { client_id: !!client_id, redirect_uri: !!redirect_uri });
-        return res.status(400).json({
-          error: 'invalid_request',
-          error_description: 'Missing required parameters: client_id or redirect_uri'
-        });
+      try {
+        // Process authorization request
+        const { authorizationId, authUrl } = this.oauthProcessor.processAuthorizationRequest(req.query);
+
+        // Redirect to authentication page
+        this.oauthResponder.sendRedirectResponse(res, authUrl);
+
+      } catch (error) {
+        serverLogger.error('Authorization request processing failed', null, error);
+        this.oauthResponder.sendErrorResponse(res, 'server_error', 'Failed to process authorization request', 500);
       }
-
-      // MCP compliance: Validate resource parameter
-      if (resource && resource !== this.serverUrl) {
-        serverLogger.warn('❌ Invalid resource parameter', { 
-          provided: resource, 
-          expected: this.serverUrl 
-        });
-        return res.status(400).json({
-          error: 'invalid_request',
-          error_description: 'Invalid resource parameter'
-        });
-      }
-
-      // PKCE validation for public clients (required for MCP)
-      if (!code_challenge || !code_challenge_method) {
-        serverLogger.warn('❌ Missing PKCE parameters', { 
-          hasCodeChallenge: !!code_challenge, 
-          method: code_challenge_method 
-        });
-        return res.status(400).json({
-          error: 'invalid_request',
-          error_description: 'PKCE is required (code_challenge and code_challenge_method)'
-        });
-      }
-
-      if (code_challenge_method !== 'S256') {
-        serverLogger.warn('❌ Invalid PKCE method', { method: code_challenge_method });
-        return res.status(400).json({
-          error: 'invalid_request',
-          error_description: 'Only S256 code_challenge_method is supported'
-        });
-      }
-
-      // Store PKCE code challenge for later validation
-      const authorizationId = Date.now().toString() + '-' + Math.random().toString(36).substring(2);
-      pkceCodes.set(authorizationId, {
-        code_challenge,
-        code_challenge_method,
-        client_id,
-        redirect_uri,
-        scope: scope || 'mcp:tools',
-        resource: resource || this.serverUrl,
-        created_at: Date.now()
-      });
-
-      // Clean up old PKCE codes (older than 10 minutes)
-      const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
-      for (const [id, data] of pkceCodes) {
-        if (data.created_at < tenMinutesAgo) {
-          pkceCodes.delete(id);
-        }
-      }
-
-      // Redirect to Supabase authentication page
-      const authUrl = `${this.serverUrl}/auth.html?${new URLSearchParams({
-        response_type,
-        client_id,
-        redirect_uri,
-        scope: scope || 'mcp:tools',
-        state: state || '',
-        code_challenge,
-        code_challenge_method,
-        resource: resource || this.serverUrl,
-        auth_id: authorizationId // Include for PKCE validation
-      }).toString()}`;
-      
-      serverLogger.info('✅ Redirecting to authentication page', { 
-        authUrl: authUrl.substring(0, 100) + '...', // Truncate for logging
-        authorizationId,
-        clientId: client_id
-      });
-      
-      res.redirect(authUrl);
     });
 
     // OAuth 2.0 Token endpoint (MCP compliant)
     this.app.post('/token', express.json(), async (req, res) => {
       try {
-        const { 
-          grant_type, 
-          code, 
-          redirect_uri, 
-          client_id, 
-          code_verifier, 
-          resource // MCP requirement
-        } = req.body;
-
         serverLogger.info('🎟️ Token Exchange Request', {
-          grantType: grant_type,
-          clientId: client_id,
-          redirectUri: redirect_uri,
-          resource: resource,
-          hasCode: !!code,
-          hasCodeVerifier: !!code_verifier,
+          grantType: req.body.grant_type,
+          clientId: req.body.client_id,
+          redirectUri: req.body.redirect_uri,
+          resource: req.body.resource,
+          hasCode: !!req.body.code,
+          hasCodeVerifier: !!req.body.code_verifier,
           ip: req.ip
         });
-        
-        if (grant_type === 'authorization_code') {
-          // Validate required parameters
-          if (!code || !redirect_uri || !client_id) {
-            serverLogger.warn('❌ Missing token request parameters', {
-              hasCode: !!code,
-              hasRedirectUri: !!redirect_uri, 
-              hasClientId: !!client_id
-            });
-            return res.status(400).json({
-              error: 'invalid_request',
-              error_description: 'Missing required parameters: code, redirect_uri, or client_id'
-            });
-          }
 
-          // PKCE validation (required for MCP)
-          if (!code_verifier) {
-            serverLogger.warn('❌ Missing PKCE code_verifier', { clientId: client_id });
-            return res.status(400).json({
-              error: 'invalid_request',
-              error_description: 'code_verifier is required for PKCE'
-            });
-          }
-
-          // Find and validate PKCE challenge
-          let pkceData = null;
-          let authorizationId = null;
-          
-          for (const [id, data] of pkceCodes) {
-            if (data.client_id === client_id && data.redirect_uri === redirect_uri) {
-              pkceData = data;
-              authorizationId = id;
-              break;
-            }
-          }
-
-          if (!pkceData) {
-            serverLogger.warn('❌ No PKCE data found', { 
-              clientId: client_id,
-              redirectUri: redirect_uri 
-            });
-            return res.status(400).json({
-              error: 'invalid_grant',
-              error_description: 'Invalid authorization code or expired PKCE challenge'
-            });
-          }
-
-          // Validate PKCE code_verifier against code_challenge
-          const crypto = await import('crypto');
-          const hash = crypto.createHash('sha256').update(code_verifier).digest();
-          const computedChallenge = hash.toString('base64url');
-          
-          if (computedChallenge !== pkceData.code_challenge) {
-            serverLogger.warn('❌ PKCE validation failed', {
-              clientId: client_id,
-              expectedChallenge: pkceData.code_challenge.substring(0, 10) + '...',
-              computedChallenge: computedChallenge.substring(0, 10) + '...'
-            });
-            pkceCodes.delete(authorizationId); // Clean up
-            return res.status(400).json({
-              error: 'invalid_grant',
-              error_description: 'PKCE validation failed'
-            });
-          }
-
-          // MCP compliance: Validate resource parameter
-          if (resource && resource !== this.serverUrl) {
-            serverLogger.warn('❌ Invalid resource in token request', {
-              provided: resource,
-              expected: this.serverUrl
-            });
-            return res.status(400).json({
-              error: 'invalid_request',
-              error_description: 'Invalid resource parameter'
-            });
-          }
-
-          // Clean up PKCE data
-          pkceCodes.delete(authorizationId);
-
-          // Use the authorization code as access token (from Supabase callback)
-          const accessToken = code;
-          
-          try {
-            const { data: { user }, error: userError } = await this.supabase.auth.getUser(accessToken);
-            
-            if (userError) {
-              serverLogger.warn('❌ Token validation failed', {
-                error: userError.message,
-                clientId: client_id
-              });
-              return res.status(400).json({
-                error: 'invalid_grant',
-                error_description: 'Invalid authorization code'
-              });
-            }
-
-            const tokenResponse = {
-              access_token: accessToken,
-              token_type: 'Bearer',
-              expires_in: 86400, // 24 hours
-              scope: pkceData.scope,
-              resource: pkceData.resource // MCP compliance
-            };
-
-            serverLogger.info('✅ Token exchange successful', {
-              userId: user.id,
-              email: user.email,
-              clientId: client_id,
-              scope: tokenResponse.scope,
-              resource: tokenResponse.resource
-            });
-
-            res.json(tokenResponse);
-            
-          } catch (error) {
-            serverLogger.error('❌ Token validation error', { clientId: client_id }, error);
-            res.status(500).json({
-              error: 'server_error',
-              error_description: 'Failed to validate token'
-            });
-          }
-        } else {
-          serverLogger.warn('❌ Unsupported grant type', { grantType: grant_type });
-          res.status(400).json({
-            error: 'unsupported_grant_type',
-            error_description: 'Only authorization_code grant type is supported'
-          });
+        // Validate request parameters
+        const validation = this.oauthValidator.validateTokenRequest(req.body);
+        if (!validation.valid) {
+          return this.oauthResponder.sendErrorResponse(res, validation.error, validation.error_description);
         }
+
+        try {
+          // Process token exchange
+          const { tokenResponse, user } = await this.oauthProcessor.processTokenExchange(req.body);
+
+          // Send successful token response
+          this.oauthResponder.sendTokenResponse(res, tokenResponse);
+
+        } catch (processingError) {
+          serverLogger.error('❌ Token exchange processing failed', { clientId: req.body.client_id }, processingError);
+
+          if (processingError.message.includes('PKCE validation failed')) {
+            return this.oauthResponder.sendErrorResponse(res, 'invalid_grant', 'PKCE validation failed');
+          }
+
+          if (processingError.message.includes('Invalid authorization code')) {
+            return this.oauthResponder.sendErrorResponse(res, 'invalid_grant', 'Invalid authorization code');
+          }
+
+          return this.oauthResponder.sendErrorResponse(res, 'server_error', 'Failed to process token exchange', 500);
+        }
+
       } catch (error) {
         serverLogger.error('❌ Token endpoint error', null, error);
-        res.status(500).json({
-          error: 'server_error',
-          error_description: 'Internal server error'
-        });
+        this.oauthResponder.sendErrorResponse(res, 'server_error', 'Internal server error', 500);
       }
     });
 
     // OAuth 2.0 Client Registration endpoint
     this.app.post('/register', express.json(), (req, res) => {
-      const { client_name, redirect_uris, scope } = req.body;
-      
       serverLogger.info('📝 Client Registration Request', {
-        clientName: client_name,
-        redirectUris: redirect_uris,
-        scope: scope,
+        clientName: req.body.client_name,
+        redirectUris: req.body.redirect_uris,
+        scope: req.body.scope,
         ip: req.ip
       });
 
-      if (!client_name || !redirect_uris) {
-        serverLogger.warn('❌ Invalid client registration request', {
-          hasClientName: !!client_name,
-          hasRedirectUris: !!redirect_uris
-        });
-        return res.status(400).json({
-          error: 'invalid_client_metadata',
-          error_description: 'Missing required parameters: client_name or redirect_uris'
-        });
+      // Validate request parameters
+      const validation = this.oauthValidator.validateRegistrationRequest(req.body);
+      if (!validation.valid) {
+        return this.oauthResponder.sendErrorResponse(res, validation.error, validation.error_description);
       }
 
-      // Check if requesting pre-registered Claude Desktop client
-      if (client_name === 'Claude Desktop' || client_name === CLAUDE_DESKTOP_CLIENT.client_name) {
-        serverLogger.info('✅ Returning pre-registered Claude Desktop client', {
-          clientId: CLAUDE_DESKTOP_CLIENT.client_id
-        });
-        
-        return res.json({
-          ...CLAUDE_DESKTOP_CLIENT,
-          redirect_uris: CLAUDE_DESKTOP_CLIENT.redirect_uris,
-          client_id_issued_at: Math.floor(Date.now() / 1000),
-          client_secret_expires_at: 0 // Never expires for public client
-        });
+      try {
+        // Process client registration
+        const clientInfo = this.oauthProcessor.processClientRegistration(req.body);
+
+        // Send registration response
+        this.oauthResponder.sendRegistrationResponse(res, clientInfo);
+
+      } catch (error) {
+        serverLogger.error('Client registration processing failed', null, error);
+        this.oauthResponder.sendErrorResponse(res, 'server_error', 'Failed to process client registration', 500);
       }
-
-      // Generate client credentials for dynamic registration
-      const clientId = 'mcp_' + Date.now() + '_' + Math.random().toString(36).substring(2);
-      const clientSecret = 'secret_' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
-
-      const clientInfo = {
-        client_id: clientId,
-        client_secret: clientSecret,
-        client_name: client_name,
-        redirect_uris: Array.isArray(redirect_uris) ? redirect_uris : [redirect_uris],
-        scope: scope || 'mcp:tools',
-        grant_types: ['authorization_code'],
-        response_types: ['code'],
-        token_endpoint_auth_method: 'client_secret_post',
-        client_id_issued_at: Math.floor(Date.now() / 1000),
-        client_secret_expires_at: 0 // Never expires
-      };
-
-      serverLogger.info('✅ Dynamic client registration successful', {
-        clientId: clientInfo.client_id,
-        clientName: clientInfo.client_name,
-        redirectUris: clientInfo.redirect_uris
-      });
-
-      res.json(clientInfo);
     });
 
     // MCP endpoint (authenticated) - using SDK (supports both GET and POST)
@@ -768,7 +717,7 @@ class SupabaseMCPServer {
     );
 
     // Direct MCP endpoint without auth (for HTTP transport)
-    this.app.all('/mcp-direct', 
+    this.app.all('/mcp-direct',
       express.json(),
       authMiddleware.rateLimit(100, 60000),
       async (req, res) => {
@@ -788,7 +737,7 @@ class SupabaseMCPServer {
         const accessToken = authHeader.split(' ')[1];
         try {
           const { data: { user }, error: userError } = await this.supabase.auth.getUser(accessToken);
-          
+
           if (userError) {
             return res.status(401).json({
               jsonrpc: '2.0',
@@ -802,7 +751,7 @@ class SupabaseMCPServer {
 
           req.user = user;
           await this.handleMCPMessageWithSDK(req, res);
-          
+
         } catch (error) {
           serverLogger.error('Direct MCP auth error', null, error);
           res.status(500).json({
@@ -816,7 +765,7 @@ class SupabaseMCPServer {
         }
       }
     );
-    
+
     // Tools discovery (authenticated) - using McpServer
     this.app.get('/tools',
       authMiddleware.validate,
@@ -824,7 +773,7 @@ class SupabaseMCPServer {
         try {
           // Use the existing tool definitions directly since they're already registered
           const tools = getAllToolDefinitions();
-          
+
           res.json({
             tools: tools,
             count: tools.length,
@@ -838,118 +787,155 @@ class SupabaseMCPServer {
         }
       }
     );
-    
+
     // OAuth callback handler
     this.app.get('/auth/callback', async (req, res) => {
-      const { 
-        access_token, 
-        refresh_token, 
-        error, 
-        error_description, 
-        client_id, 
-        redirect_uri, 
-        state,
-        auth_id // For PKCE validation
-      } = req.query;
-
       serverLogger.info('🔄 OAuth Callback Received', {
-        hasAccessToken: !!access_token,
-        hasRefreshToken: !!refresh_token,
-        error: error,
-        clientId: client_id,
-        redirectUri: redirect_uri,
-        state: state,
-        authId: auth_id,
+        hasAccessToken: !!req.query.access_token,
+        hasRefreshToken: !!req.query.refresh_token,
+        error: req.query.error,
+        clientId: req.query.client_id,
+        redirectUri: req.query.redirect_uri,
+        state: req.query.state,
+        authId: req.query.auth_id,
         ip: req.ip
       });
-      
-      if (error) {
-        serverLogger.warn('OAuth callback error', { error, error_description });
-        
-        if (redirect_uri) {
-          const errorUrl = new URL(redirect_uri);
-          errorUrl.searchParams.set('error', error);
-          if (error_description) errorUrl.searchParams.set('error_description', error_description);
-          if (state) errorUrl.searchParams.set('state', state);
-          return res.redirect(errorUrl.toString());
-        }
 
-        return res.status(400).json({ error, error_description });
-      }
-      
-      if (access_token) {
-        try {
-          // Verify the Supabase token
-          const { data: { user }, error: userError } = await this.supabase.auth.getUser(access_token);
-          
-          if (userError) {
-            throw new Error(`Token validation failed: ${userError.message}`);
-          }
-          
-          serverLogger.info('OAuth callback successful', { 
-            userId: user.id, 
-            email: user.email, 
-            client_id 
-          });
-          
-          // Store session
-          const { error: sessionError } = await this.supabase
-            .from('mcp_sessions')
-            .insert({
-              user_id: user.id,
-              session_token: access_token,
-              client_info: { client_id },
-              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-            });
-          
-          if (sessionError) {
-            serverLogger.warn('Failed to store session', { userId: user.id }, sessionError);
-          }
-          
-          // Redirect back to client with authorization code (using access_token as code)
-          if (redirect_uri) {
-            const successUrl = new URL(redirect_uri);
-            successUrl.searchParams.set('code', access_token); // Use access_token as authorization code
-            if (state) successUrl.searchParams.set('state', state);
-            return res.redirect(successUrl.toString());
-          }
+      try {
+        // Process OAuth callback
+        const result = await this.oauthProcessor.processCallback(req.query);
 
-          res.json({ access_token, token_type: 'Bearer', expires_in: 86400 });
-          
-        } catch (error) {
-          serverLogger.error('OAuth callback processing failed', null, error);
-          
-          if (redirect_uri) {
-            const errorUrl = new URL(redirect_uri);
-            errorUrl.searchParams.set('error', 'invalid_token');
-            errorUrl.searchParams.set('error_description', error.message);
-            if (state) errorUrl.searchParams.set('state', state);
-            return res.redirect(errorUrl.toString());
-          }
+        // Handle callback redirect response
+        this.oauthResponder.handleCallbackRedirect(res, {
+          ...result,
+          redirect_uri: req.query.redirect_uri,
+          state: req.query.state
+        });
 
-          res.status(400).json({
-            error: 'invalid_token',
-            error_description: error.message
-          });
-        }
-      } else {
-        const error_msg = 'No access token received';
-        
-        if (redirect_uri) {
-          const errorUrl = new URL(redirect_uri);
-          errorUrl.searchParams.set('error', 'access_denied');
-          errorUrl.searchParams.set('error_description', error_msg);
-          if (state) errorUrl.searchParams.set('state', state);
-          return res.redirect(errorUrl.toString());
-        }
+      } catch (callbackError) {
+        serverLogger.error('OAuth callback processing failed', null, callbackError);
 
-        res.status(400).json({
-          error: 'access_denied',
-          error_description: error_msg
+        // Handle callback error with redirect
+        this.oauthResponder.handleCallbackRedirect(res, {
+          error: 'invalid_token',
+          error_description: callbackError.message,
+          redirect_uri: req.query.redirect_uri,
+          state: req.query.state
         });
       }
     });
-    
+
+    // DEBUG: Test endpoint to trigger remote_echo (development only)
+    this.app.post('/debug/test-remote-echo', express.json(), async (req, res) => {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      try {
+        serverLogger.info('🧪 DEBUG: Test remote_echo endpoint triggered', {
+          body: req.body,
+          ip: req.ip
+        });
+
+        // Create a mock authenticated user for testing
+        const mockUser = {
+          id: 'a6766832-9b4e-4efd-bfec-a53734bff5a3', // Use the user ID from the agent logs
+          email: 'debug@test.com'
+        };
+
+        const text = req.body.text || 'Debug test message';
+
+        // Ensure user channel exists
+        await this.ensureUserChannel(mockUser.id);
+
+        // Directly call the tool dispatcher
+        const result = await this.toolDispatcher.dispatchTool(mockUser.id, 'remote_echo', { text });
+
+        res.json({
+          success: true,
+          result,
+          message: 'Tool dispatched successfully'
+        });
+
+      } catch (error) {
+        serverLogger.error('🧪 DEBUG: Test endpoint failed', null, error);
+        res.status(500).json({
+          success: false,
+          error: error.message,
+          message: 'Tool dispatch failed'
+        });
+      }
+    });
+
+    // DEBUG: List all connected agents (development only)
+    this.app.get('/debug/list-agents', async (req, res) => {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      try {
+        serverLogger.info('🧪 DEBUG: List agents endpoint triggered', {
+          ip: req.ip
+        });
+
+        const { data: agents, error } = await this.supabase
+          .from('mcp_agents')
+          .select('*')
+          .order('last_seen', { ascending: false });
+
+        if (error) {
+          throw error;
+        }
+
+        res.json({
+          success: true,
+          agents: agents || [],
+          count: agents?.length || 0,
+          message: 'All registered agents (online and offline)'
+        });
+
+      } catch (error) {
+        serverLogger.error('🧪 DEBUG: List agents failed', null, error);
+        res.status(500).json({
+          success: false,
+          error: error.message,
+          message: 'Failed to list agents'
+        });
+      }
+    });
+
+    // DEBUG: Plain MCP endpoint without OAuth (development only)
+    this.app.post('/mcp-test', express.json(), async (req, res) => {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      try {
+        console.log('🧪 [DEBUG] Plain MCP test endpoint triggered');
+        console.log('🧪 [DEBUG] Request body:', req.body);
+
+        // Create a mock authenticated user
+        req.user = {
+          id: 'a6766832-9b4e-4efd-bfec-a53734bff5a3',
+          email: 'test@example.com'
+        };
+
+        // Handle as normal MCP request
+        await this.handleMCPMessageWithSDK(req, res);
+
+      } catch (error) {
+        console.error('❌ [DEBUG] MCP test failed:', error);
+        res.status(500).json({
+          jsonrpc: '2.0',
+          id: req.body?.id || null,
+          error: {
+            code: -32603,
+            message: error.message
+          }
+        });
+      }
+    });
+
     // MCP info API endpoint for web interface
     this.app.get('/api/mcp-info', (req, res) => {
       serverLogger.info('ℹ️ MCP Info Request', {
@@ -957,45 +943,102 @@ class SupabaseMCPServer {
         userAgent: req.get('User-Agent')
       });
 
-      const mcpInfo = {
-        mcpServerUrl: this.serverUrl,
-        supabaseUrl: process.env.SUPABASE_URL,
-        supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
-        redirectUrl: `${this.serverUrl}/auth/callback`,
-        authorizationEndpoint: `${this.serverUrl}/authorize`,
-        tokenEndpoint: `${this.serverUrl}/token`,
-        discoveryEndpoint: `${this.serverUrl}/.well-known/oauth-authorization-server`
-      };
-
-      serverLogger.info('✅ MCP Info Response', {
-        mcpServerUrl: mcpInfo.mcpServerUrl,
-        redirectUrl: mcpInfo.redirectUrl,
-        hasSupabaseConfig: !!(mcpInfo.supabaseUrl && mcpInfo.supabaseAnonKey)
-      });
-
+      const mcpInfo = this.oauthResponder.generateMCPInfoResponse();
       res.json(mcpInfo);
     });
   }
-  
+
   /**
    * Handle MCP protocol messages using session-based transports
    */
   async handleMCPMessageWithSDK(req, res) {
     const startTime = Date.now();
     const userId = req.user.id;
-    
+
     try {
       const requestBody = req.body;
       const sessionId = req.headers['mcp-session-id'];
-      
+
       mcpLogger.logMCPMessage(userId, requestBody?.method, requestBody?.id, 'RECEIVED');
-      
+      mcpLogger.info("---- req body", requestBody);
+
+      mcpLogger.info('📨 Processing MCP request', {
+        userId,
+        sessionId,
+        method: requestBody?.method,
+        id: requestBody?.id,
+        hasParams: !!requestBody?.params
+      });
+
       // Get or create transport for this session
       const transport = await this.getOrCreateMCPTransport(sessionId, req.user);
-      
+
+      mcpLogger.info('🔌 Transport ready', {
+        userId,
+        sessionId,
+        isNewTransport: !sessionId || !this.mcpTransports.has(sessionId)
+      });
+
       // Handle the request using the session transport
+      mcpLogger.info('🚀 Delegating to transport.handleRequest', {
+        userId,
+        sessionId,
+        method: requestBody?.method
+      });
+
+      // Log registered tools when tools/list is requested
+      if (requestBody?.method === 'tools/list') {
+        const registeredTools = Object.keys(this.mcpServer._registeredTools || {});
+        mcpLogger.info('📊 McpServer internal state for tools/list', {
+          registeredToolCount: registeredTools.length,
+          registeredToolNames: registeredTools,
+          hasServer: !!this.mcpServer,
+          serverConnected: this.mcpServer.isConnected()
+        });
+      }
+
+      // Intercept response to log it
+      const originalJson = res.json;
+      const originalSend = res.send;
+      let responseLogged = false;
+
+      res.json = function (data) {
+        if (!responseLogged && requestBody?.method === 'tools/list') {
+          mcpLogger.info('📋 tools/list RESPONSE BODY', {
+            tools: data?.result?.tools,
+            toolCount: data?.result?.tools?.length || 0,
+            fullResponse: data
+          });
+          responseLogged = true;
+        }
+        return originalJson.call(this, data);
+      };
+
+      res.send = function (data) {
+        if (!responseLogged && requestBody?.method === 'tools/list') {
+          try {
+            const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+            mcpLogger.info('📋 tools/list RESPONSE BODY (send)', {
+              tools: parsed?.result?.tools,
+              toolCount: parsed?.result?.tools?.length || 0,
+              fullResponse: parsed
+            });
+          } catch (e) {
+            mcpLogger.info('📋 tools/list RESPONSE (raw)', { data });
+          }
+          responseLogged = true;
+        }
+        return originalSend.call(this, data);
+      };
+
       await transport.handleRequest(req, res, requestBody);
-      
+
+      mcpLogger.info('✅ transport.handleRequest completed', {
+        userId,
+        sessionId,
+        method: requestBody?.method
+      });
+
       const duration = Date.now() - startTime;
       mcpLogger.logMCPMessage(userId, requestBody?.method, requestBody?.id, 'RESPONDED');
       mcpLogger.info('MCP SDK request completed', {
@@ -1004,10 +1047,10 @@ class SupabaseMCPServer {
         method: requestBody?.method,
         duration: `${duration}ms`
       });
-      
+
     } catch (error) {
       const duration = Date.now() - startTime;
-      
+
       // Only send error response if headers haven't been sent yet
       if (!res.headersSent) {
         const errorResponse = {
@@ -1019,14 +1062,14 @@ class SupabaseMCPServer {
             data: process.env.DEBUG_MODE === 'true' ? error.stack : undefined
           }
         };
-        
+
         mcpLogger.error('MCP SDK request failed', {
           userId,
           method: req.body?.method,
           duration: `${duration}ms`,
           error: error.message
         });
-        
+
         res.status(400).json(errorResponse);
       } else {
         mcpLogger.error('MCP SDK request failed (headers already sent)', {
@@ -1038,7 +1081,7 @@ class SupabaseMCPServer {
       }
     }
   }
-  
+
   /**
    * Get JSON-RPC error code for different error types
    */
@@ -1049,7 +1092,7 @@ class SupabaseMCPServer {
     if (error.message.includes('Invalid params')) return -32602;
     return -32603; // Internal error
   }
-  
+
   /**
    * Format uptime in human readable format
    */
@@ -1058,25 +1101,25 @@ class SupabaseMCPServer {
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
     const days = Math.floor(hours / 24);
-    
+
     if (days > 0) return `${days}d ${hours % 24}h ${minutes % 60}m`;
     if (hours > 0) return `${hours}h ${minutes % 60}m`;
     if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
     return `${seconds}s`;
   }
-  
+
   /**
    * Setup error handling
    */
   setupErrorHandling() {
     // 404 handler
     this.app.use((req, res) => {
-      serverLogger.warn('Route not found', { 
-        method: req.method, 
-        url: req.url, 
-        ip: req.ip 
+      serverLogger.warn('Route not found', {
+        method: req.method,
+        url: req.url,
+        ip: req.ip
       });
-      
+
       res.status(404).json({
         error: 'Not Found',
         message: `Route ${req.method} ${req.url} not found`,
@@ -1090,11 +1133,11 @@ class SupabaseMCPServer {
         ]
       });
     });
-    
+
     // Error handler
     this.app.use((error, req, res, next) => {
       const duration = Date.now() - (req.startTime || Date.now());
-      
+
       serverLogger.error('Express error handler', {
         method: req.method,
         url: req.url,
@@ -1102,7 +1145,7 @@ class SupabaseMCPServer {
         duration: `${duration}ms`,
         userId: req.user?.id
       }, error);
-      
+
       // CORS errors
       if (error.message.includes('CORS')) {
         return res.status(403).json({
@@ -1110,7 +1153,7 @@ class SupabaseMCPServer {
           message: 'Origin not allowed'
         });
       }
-      
+
       // Generic error response
       res.status(error.status || 500).json({
         error: 'Internal Server Error',
@@ -1118,30 +1161,30 @@ class SupabaseMCPServer {
         request_id: req.requestId
       });
     });
-    
+
     // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
       serverLogger.error('Uncaught exception', null, error);
       this.shutdown();
     });
-    
+
     process.on('unhandledRejection', (reason, promise) => {
       serverLogger.error('Unhandled rejection', { promise }, new Error(reason));
       this.shutdown();
     });
-    
+
     // Handle shutdown signals
     process.on('SIGINT', () => {
       serverLogger.info('Received SIGINT, shutting down gracefully');
       this.shutdown();
     });
-    
+
     process.on('SIGTERM', () => {
       serverLogger.info('Received SIGTERM, shutting down gracefully');
       this.shutdown();
     });
   }
-  
+
   /**
    * Start the server
    */
@@ -1152,7 +1195,7 @@ class SupabaseMCPServer {
           serverLogger.error('Failed to start server', { port: this.port, host: this.host }, error);
           return reject(error);
         }
-        
+
         serverLogger.info('🚀 Supabase MCP Server started', {
           server: `http://${this.host}:${this.port}`,
           health: `http://${this.host}:${this.port}/health`,
@@ -1160,11 +1203,11 @@ class SupabaseMCPServer {
           mcp: `http://${this.host}:${this.port}/mcp`,
           environment: process.env.NODE_ENV || 'development'
         });
-        
+
         this.server = server;
         resolve(server);
       });
-      
+
       server.on('error', (error) => {
         if (error.code === 'EADDRINUSE') {
           serverLogger.error(`Port ${this.port} is already in use`);
@@ -1175,21 +1218,27 @@ class SupabaseMCPServer {
       });
     });
   }
-  
+
   /**
    * Graceful shutdown
    */
   async shutdown() {
     serverLogger.info('Starting graceful shutdown...');
-    
+
     try {
+      // Cleanup channel manager
+      if (this.channelManager) {
+        await this.channelManager.cleanup();
+        serverLogger.info('Channel manager cleaned up');
+      }
+
       // Close HTTP server
       if (this.server) {
         await new Promise((resolve) => {
           this.server.close(resolve);
         });
       }
-      
+
       serverLogger.info('✅ Graceful shutdown completed');
       process.exit(0);
     } catch (error) {

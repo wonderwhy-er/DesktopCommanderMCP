@@ -33,7 +33,7 @@ class CompleteMCPFlowTester {
       await this.testOAuthEndpoints();
       
       // Step 3: Demonstrate SSE connector
-      await this.testSSEConnector();
+      await this.testHTTPConnector();
       
       // Step 4: Show Claude Desktop config
       this.showClaudeDesktopConfig();
@@ -81,13 +81,20 @@ class CompleteMCPFlowTester {
     console.log('🔐 Step 2: Testing OAuth Endpoints...');
     
     try {
-      // Test authorization endpoint
+      // Generate PKCE parameters
+      const crypto = await import('crypto');
+      const codeVerifier = crypto.randomBytes(32).toString('base64url');
+      const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+      
+      // Test authorization endpoint with PKCE
       const oauthParams = new URLSearchParams({
         response_type: 'code',
         client_id: 'mcp-test-client',
         redirect_uri: 'http://localhost:8847/callback',
         scope: 'mcp:tools',
-        state: 'test-state-123'
+        state: 'test-state-123',
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256'
       });
       
       const authUrl = `${this.mcpServerUrl}/authorize?${oauthParams.toString()}`;
@@ -124,12 +131,12 @@ class CompleteMCPFlowTester {
   }
 
   /**
-   * Test SSE connector (without authentication)
+   * Test HTTP connector (without authentication)
    */
-  async testSSEConnector() {
-    console.log('🔌 Step 3: Testing SSE Connector...');
+  async testHTTPConnector() {
+    console.log('🔌 Step 3: Testing HTTP Connector...');
     
-    console.log('   📝 Starting SSE connector (will trigger OAuth)...');
+    console.log('   📝 Starting HTTP connector (will trigger OAuth)...');
     console.log('   🌐 Browser should open automatically for authentication');
     console.log('');
     console.log('   ⚠️  This test will show OAuth flow but won\'t complete');
@@ -137,8 +144,8 @@ class CompleteMCPFlowTester {
     console.log('');
     
     return new Promise((resolve) => {
-      // Start SSE connector process
-      this.connectorProcess = spawn('node', ['src/client/sse-connector.js'], {
+      // Start HTTP connector process
+      this.connectorProcess = spawn('node', ['src/client/http-connector.js'], {
         env: { 
           ...process.env, 
           MCP_SERVER_URL: this.mcpServerUrl,
@@ -155,7 +162,7 @@ class CompleteMCPFlowTester {
         
         // Look for OAuth flow initiation
         if (line.includes('🔐 Starting OAuth flow')) {
-          console.log('✅ SSE connector detected missing auth and started OAuth');
+          console.log('✅ HTTP connector detected missing auth and started OAuth');
         }
         
         if (line.includes('🌐 Opening browser')) {
@@ -186,7 +193,7 @@ class CompleteMCPFlowTester {
       });
       
       this.connectorProcess.on('error', (error) => {
-        console.log(`❌ SSE connector error: ${error.message}`);
+        console.log(`❌ HTTP connector error: ${error.message}`);
         resolve();
       });
       
