@@ -625,7 +625,7 @@ class SupabaseMCPServer {
     });
 
     // DEBUG: Test endpoint to trigger remote_echo (development only)
-    this.app.post('/debug/test-remote-echo', express.json(), async (req, res) => {
+    this.app.get('/debug/test-remote', express.json(), async (req, res) => {
       if (process.env.NODE_ENV === 'production') {
         return res.status(404).json({ error: 'Not found' });
       }
@@ -646,7 +646,7 @@ class SupabaseMCPServer {
 
 
         // Directly call the tool dispatcher
-        const result = await this.toolDispatcher.dispatchTool(mockUser.id, 'remote_echo', { text });
+        const result = await this.toolDispatcher.dispatchTool(mockUser.id, 'list_directory', { path: ".", depth: 1 });
 
         res.json({
           success: true,

@@ -462,7 +462,7 @@ Agents track their presence on channels to indicate availability.
 ```json
 {
   "agent_id": "agent_123",
-  "machine_id": "MacBook-Pro-abc123",
+  "device_id": "MacBook-Pro-abc123",
   "status": "online",
   "hostname": "MacBook-Pro.local"
 }

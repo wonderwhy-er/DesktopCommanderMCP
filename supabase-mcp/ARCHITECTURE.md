@@ -224,7 +224,7 @@ Agent Registry ──Insert──► Database (mcp_agents)
 │ id (PK)         │     │ id (PK)         │     │ id (PK)         │
 │ authorization_id│     │ user_id (FK)    │     │ user_id (FK)    │
 │ code_challenge  │     │ agent_name      │     │ agent_id (FK)   │
-│ redirect_uri    │     │ machine_id      │     │ tool_name       │
+│ redirect_uri    │     │ device_id       │     │ tool_name       │
 │ expires_at      │     │ capabilities    │     │ tool_args       │
 │ created_at      │     │ status          │     │ status          │
 └─────────────────┘     │ last_seen       │     │ result          │

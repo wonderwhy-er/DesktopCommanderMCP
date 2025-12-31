@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS mcp_agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   agent_name TEXT NOT NULL,
-  machine_id TEXT NOT NULL,
+  device_id TEXT NOT NULL,
   capabilities JSONB DEFAULT '{}',
   status TEXT DEFAULT 'offline' CHECK (status IN ('online', 'offline', 'connecting')),
   last_seen TIMESTAMPTZ DEFAULT NOW(),
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS mcp_agents (
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_agents_user_id ON mcp_agents(user_id);
 CREATE INDEX IF NOT EXISTS idx_agents_status ON mcp_agents(status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_user_machine ON mcp_agents(user_id, machine_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_user_device ON mcp_agents(user_id, device_id);
 
 -- 3. Remote Tool Calls Table
 CREATE TABLE IF NOT EXISTS mcp_remote_calls (
