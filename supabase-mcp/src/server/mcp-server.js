@@ -20,17 +20,16 @@ import { fileURLToPath } from 'url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryEventStore } from '@modelcontextprotocol/sdk/examples/shared/inMemoryEventStore.js';
-import { createSupabaseClient, createSupabaseServiceClient, logToolCall } from '../utils/supabase.js';
+import { createSupabaseServiceClient } from '../utils/supabase.js';
 import { serverLogger, mcpLogger } from '../utils/logger.js';
 import { authMiddleware } from './auth-middleware.js';
-import { getAllToolDefinitions, executeTool } from './tools/index.js';
+// import { getAllToolDefinitions, executeTool } from './tools/index.js';
 import { OAuthValidator } from './oauth/oauth-validator.js';
 import { OAuthProcessor } from './oauth/oauth-processor.js';
 import { OAuthResponder } from './oauth/oauth-responder.js';
-import { ChannelManager } from '../remote/channel-manager.js';
-import { AgentRegistry } from '../remote/agent-registry.js';
 import { ToolDispatcher } from '../remote/tool-dispatcher.js';
 import { z } from 'zod';
+import { allTools } from './tools/remote-tools-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,12 +62,8 @@ class SupabaseMCPServer {
     this.oauthProcessor = new OAuthProcessor(this.serverUrl, this.supabase);
     this.oauthResponder = new OAuthResponder(this.serverUrl);
 
-    // Initialize channel manager
-    this.channelManager = new ChannelManager(this.supabase);
-
     // Initialize remote components
-    this.agentRegistry = new AgentRegistry(this.supabase);
-    this.toolDispatcher = new ToolDispatcher(this.channelManager, this.agentRegistry, this.supabase);
+    this.toolDispatcher = new ToolDispatcher(this.supabase);
 
     // Initialize MCP SDK Server
     this.mcpServer = new McpServer(
@@ -117,20 +112,34 @@ class SupabaseMCPServer {
   setupMCPToolHandlers() {
     mcpLogger.info('🔧 setupMCPToolHandlers() called', {});
 
-    // Get all tool definitions from our existing tool registry
-    const tools = getAllToolDefinitions();
+    // Register only the list_agents tool
+    this.mcpServer.registerTool('list_agents', {
+      description: 'List connected agents for the current user',
+      inputSchema: z.object({})
+    }, async (args, extra = {}) => {
+      mcpLogger.info('📋 [TOOL] list_agents called');
+      const user = this.getAuthenticatedUser(extra);
 
-    mcpLogger.info('📋 Loaded tool definitions', {
-      toolCount: tools.length,
-      toolNames: tools.map(t => t.name)
+      try {
+        const agents = await this.toolDispatcher.getUserAgents(user.id);
+        mcpLogger.info('✅ [TOOL] list_agents successful', { count: agents.length });
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify(agents, null, 2)
+          }]
+        };
+      } catch (error) {
+        mcpLogger.error('❌ [TOOL] list_agents failed', { error: error.message });
+        throw error;
+      }
     });
 
-    // Register each tool with the MCP server
-    tools.forEach(tool => {
-      mcpLogger.info('Registering tool with MCP SDK', {
-        toolName: tool.name,
-        hasInputSchema: !!tool.inputSchema,
-        schemaType: tool.inputSchema?.constructor?.name
+    // Register remote tools from allTools configuration
+    allTools.forEach(tool => {
+      mcpLogger.info('Registering remote tool with MCP SDK', {
+        toolName: tool.name
       });
 
       this.mcpServer.registerTool(
@@ -140,218 +149,44 @@ class SupabaseMCPServer {
           inputSchema: tool.inputSchema
         },
         async (args, extra = {}) => {
-          mcpLogger.info('🔧 Tool callback invoked', {
+          mcpLogger.info('🔧 Remote Tool called', {
             toolName: tool.name,
-            argsReceived: !!args,
-            argsKeys: args ? Object.keys(args) : [],
-            extraKeys: Object.keys(extra)
-          });
-          // Get authentication context from the transport
-          // The transport should have the auth context stored from the session
-          const transport = extra.transport || this.mcpTransports.get(extra.sessionId);
-          const authContext = transport?._authContext;
-          const authenticatedUser = authContext?.user || null;
-          const supabaseInstance = authContext?.supabase || this.supabase;
-
-          if (!authenticatedUser) {
-            mcpLogger.error('❌ No authenticated user found', {
-              toolName: tool.name,
-              hasTransport: !!transport,
-              hasAuthContext: !!authContext,
-              sessionId: extra.sessionId
-            });
-            throw new Error('User authentication required for tool calls');
-          }
-
-          mcpLogger.info('✅ User authenticated for tool call', {
-            toolName: tool.name,
-            userId: authenticatedUser.id
+            argsReceived: !!args
           });
 
-          mcpLogger.info('tool/call request', {
-            userId: authenticatedUser.id,
-            toolName: tool.name,
-            args
-          });
+          const user = this.getAuthenticatedUser(extra);
+          mcpLogger.info('👤 [TOOL] Authenticated user:', { id: user.id });
 
-          const startTime = Date.now();
-
+          // Dispatch to remote agent
           try {
-            mcpLogger.info('⏳ Executing tool', {
+            mcpLogger.info('🚀 Dispatching to remote agent', {
               toolName: tool.name,
-              userId: authenticatedUser.id
+              userId: user.id
             });
 
-            const result = await executeTool(tool.name, args || {}, authenticatedUser, supabaseInstance);
-            const duration = Date.now() - startTime;
+            const result = await this.toolDispatcher.dispatchTool(
+              user.id,
+              tool.name, // Tool name on agent side matches server side
+              args
+            );
 
-            mcpLogger.info('✅ Tool execution completed', {
-              toolName: tool.name,
-              userId: authenticatedUser.id,
-              duration: `${duration}ms`,
-              hasResult: !!result
+            mcpLogger.info('✅ Remote tool execution successful', {
+              toolName: tool.name
             });
-
-            // Log successful tool call
-            try {
-              await logToolCall(null, authenticatedUser.id, tool.name, args, result, duration, true);
-            } catch (logError) {
-              serverLogger.warn('Failed to log tool call', {
-                userId: authenticatedUser.id,
-                toolName: tool.name
-              }, logError);
-            }
-
-            mcpLogger.info('tool/call response', {
-              userId: authenticatedUser.id,
-              toolName: tool.name,
-              duration: `${duration}ms`,
-              success: true,
-              result
-            });
-
             return result;
-
           } catch (error) {
-            const duration = Date.now() - startTime;
-
-            mcpLogger.error('❌ Tool execution threw error', {
+            mcpLogger.error('❌ Remote tool execution failed', {
               toolName: tool.name,
-              userId: authenticatedUser.id,
-              errorMessage: error.message,
-              errorName: error.constructor.name,
-              duration: `${duration}ms`
+              error: error.message
             });
-
-            // Log failed tool call
-            try {
-              await logToolCall(null, authenticatedUser.id, tool.name, args, null, duration, false, error.message);
-            } catch (logError) {
-              serverLogger.warn('Failed to log tool call error', {
-                userId: authenticatedUser.id,
-                toolName: tool.name
-              }, logError);
-            }
-
-            mcpLogger.info('tool/call error', {
-              userId: authenticatedUser.id,
-              toolName: tool.name,
-              duration: `${duration}ms`,
-              error: error.message,
-              args: args
-            });
-
-            mcpLogger.error('Tool call failed via McpServer', {
-              userId: authenticatedUser.id,
-              toolName: tool.name,
-              duration: `${duration}ms`,
-              error: error.message,
-              errorStack: error.stack,
-              errorType: error.constructor.name,
-              args: args
-            });
-
-            // Also log to console for immediate debugging
-            console.error(`❌ [MCP-ERROR] Tool: ${tool.name}, User: ${authenticatedUser.id}`);
-            console.error(`❌ [MCP-ERROR] Error: ${error.message}`);
-            console.error(`❌ [MCP-ERROR] Stack:`, error.stack);
-            console.error(`❌ [MCP-ERROR] Args:`, args);
-
             throw error;
           }
         }
       );
     });
 
-    // Register remote echo tool (stub for testing)
-    this.mcpServer.registerTool('remote_echo', {
-      description: 'Echo text via remote agent',
-      inputSchema: z.object({
-        text: z.string().describe('Text to echo')
-      })
-    }, async (args, extra) => {
-      console.log(`🔧 [TOOL] remote_echo called with args:`, args);
-
-      const user = this.getAuthenticatedUser(extra);
-      console.log(`👤 [TOOL] Authenticated user:`, { id: user.id, email: user.email });
-
-      // Ensure user has channel subscription
-      console.log(`🔄 [TOOL] Ensuring user channel subscription`);
-      await this.ensureUserChannel(user.id);
-
-      // Dispatch to remote agent
-      console.log(`🚀 [TOOL] Dispatching to remote agent`);
-      try {
-        const result = await this.toolDispatcher.dispatchTool(
-          user.id,
-          'echo', // Tool name on agent side
-          args
-        );
-        console.log(`✅ [TOOL] Remote tool execution successful:`, result);
-        return result;
-      } catch (error) {
-        console.error(`❌ [TOOL] Remote tool execution failed:`, error);
-        throw error;
-      }
-    });
-
-    // Register agent status tool
-    this.mcpServer.registerTool('agent_status', {
-      description: 'Get status of connected agents',
-      inputSchema: z.object({})
-    }, async (args, extra = {}) => {
-      console.log(`🔧 [TOOL] agent_status called with extra:`, extra);
-
-      // Get authentication context from the transport - same pattern as other tools
-      const transport = extra.transport || this.mcpTransports.get(extra.sessionId);
-      const authContext = transport?._authContext;
-      const user = authContext?.user;
-
-      if (!user) {
-        console.error(`❌ [TOOL] agent_status - No authenticated user found`);
-        console.error(`❌ [TOOL] extra:`, extra);
-        console.error(`❌ [TOOL] transport:`, !!transport);
-        console.error(`❌ [TOOL] authContext:`, !!authContext);
-        throw new Error('User authentication required for agent_status');
-      }
-
-      console.log(`👤 [TOOL] agent_status - Authenticated user:`, { id: user.id, email: user.email });
-
-      const agents = await this.agentRegistry.getUserAgents(user.id);
-
-      console.log(`📋 [TOOL] agent_status - Found ${agents.length} agents`);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            agents: agents.map(a => ({
-              name: a.agent_name,
-              status: a.status,
-              last_seen: a.last_seen
-            }))
-          }, null, 2)
-        }]
-      };
-    });
-
-    // Register dummy tool for debugging
-    this.mcpServer.registerTool('dummy_tool', {
-      description: 'Dummy tool for debugging',
-      inputSchema: z.object({})
-    }, async (args, extra) => {
-      console.log('Dummy tool executed');
-      return {
-        content: [{ type: 'text', text: 'Dummy tool success' }]
-      };
-    });
-
-    mcpLogger.info('✅ Tool registration complete', {
-      totalTools: tools.length + 3,
-      registeredTools: [...tools.map(t => t.name), 'remote_echo', 'agent_status', 'dummy_tool']
-    });
-
-    serverLogger.info(`MCP SDK registered ${tools.length + 3} tools: ${tools.map(t => t.name).join(', ')}, remote_echo, agent_status, dummy_tool`);
+    mcpLogger.info('✅ Tool registration complete (list_agents + remote tools)');
+    serverLogger.info(`MCP SDK registered ${allTools.length + 1} tools`);
   }
 
   /**
@@ -372,25 +207,14 @@ class SupabaseMCPServer {
   /**
    * Setup channel event listeners
    */
-  setupChannelListeners() {
-    // Handle tool results from agents
-    this.channelManager.on('tool_result', (userId, payload) => {
-      // Will be implemented in Task 04 (Tool Dispatcher)
-      console.log(`Tool result from user ${userId}:`, payload);
-    });
-
-    serverLogger.info('Channel manager listeners configured');
-  }
-
   /**
-   * Subscribe user to their channel on first MCP connection
+   * Setup channel event listeners
    */
-  async ensureUserChannel(userId) {
-    if (!this.channelManager.userChannels.has(userId)) {
-      await this.channelManager.subscribeToUser(userId);
-      serverLogger.info('User channel subscription created', { userId });
-    }
+  setupChannelListeners() {
+    // Channel listeners are now handled internally by ToolDispatcher
+    serverLogger.info('Channel listeners configured via ToolDispatcher');
   }
+
 
   /**
    * Get or create MCP transport for a session
@@ -427,9 +251,6 @@ class SupabaseMCPServer {
         userId: user.id,
         sessionId
       });
-
-      // Ensure user has a channel subscription
-      await this.ensureUserChannel(user.id);
 
       serverLogger.info('Created new MCP transport', { sessionId, userId: user.id });
     }
@@ -766,28 +587,6 @@ class SupabaseMCPServer {
       }
     );
 
-    // Tools discovery (authenticated) - using McpServer
-    this.app.get('/tools',
-      authMiddleware.validate,
-      async (req, res) => {
-        try {
-          // Use the existing tool definitions directly since they're already registered
-          const tools = getAllToolDefinitions();
-
-          res.json({
-            tools: tools,
-            count: tools.length,
-            user_id: req.user.id
-          });
-        } catch (error) {
-          res.status(500).json({
-            error: 'Failed to retrieve tools',
-            message: error.message
-          });
-        }
-      }
-    );
-
     // OAuth callback handler
     this.app.get('/auth/callback', async (req, res) => {
       serverLogger.info('🔄 OAuth Callback Received', {
@@ -845,8 +644,6 @@ class SupabaseMCPServer {
 
         const text = req.body.text || 'Debug test message';
 
-        // Ensure user channel exists
-        await this.ensureUserChannel(mockUser.id);
 
         // Directly call the tool dispatcher
         const result = await this.toolDispatcher.dispatchTool(mockUser.id, 'remote_echo', { text });
@@ -960,7 +757,6 @@ class SupabaseMCPServer {
       const sessionId = req.headers['mcp-session-id'];
 
       mcpLogger.logMCPMessage(userId, requestBody?.method, requestBody?.id, 'RECEIVED');
-      mcpLogger.info("---- req body", requestBody);
 
       mcpLogger.info('📨 Processing MCP request', {
         userId,

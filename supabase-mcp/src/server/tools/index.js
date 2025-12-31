@@ -1,6 +1,5 @@
 import { EchoTool } from './echo.js';
 import { UserInfoTool } from './user-info.js';
-import { SupabaseQueryTool } from './supabase-query.js';
 
 /**
  * Registry of all available MCP tools
@@ -8,7 +7,6 @@ import { SupabaseQueryTool } from './supabase-query.js';
 export const TOOLS = {
   echo: EchoTool,
   user_info: UserInfoTool,
-  supabase_query: SupabaseQueryTool
 };
 
 /**

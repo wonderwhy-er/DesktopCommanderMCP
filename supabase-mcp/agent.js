@@ -75,9 +75,9 @@ class MCPAgent {
       await this.desktop.initialize();
 
       // Load persisted configuration (machineId, session)
-      const session = await this.loadPersistedConfig();
+      let session = await this.loadPersistedConfig();
 
-      console.log('🔧 Configuring Supabase client...');
+      console.log('🔧 Setting up Supabase client...');
       const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
 
       // Initialize Supabase Client
@@ -145,8 +145,8 @@ class MCPAgent {
       await this.registerAgent();
 
       // Subscribe to tool calls
-      console.log('🔄 Subscribing to tool call channel...');
-      await this.subscribeToToolCalls();
+      console.log('🔄 Subscribing to job queue...');
+      await this.subscribeToToolCallQueue();
 
       console.log('✅ Agent ready and listening for tool calls');
       console.log(`Agent ID: ${this.agentId}`);
@@ -228,47 +228,88 @@ class MCPAgent {
   async registerAgent() {
     const capabilities = await this.desktop.getCapabilities();
 
-    const { data: agent, error } = await this.supabase
+    console.log(`🔍 Checking for existing agent (User: ${this.user.id}, Machine: ${this.machineId})...`);
+
+    // 1. Try to find existing agent
+    const { data: existingAgent, error: findError } = await this.supabase
       .from('mcp_agents')
-      .upsert({
-        user_id: this.user.id,
-        agent_name: `Agent-${os.hostname()}`,
-        machine_id: this.machineId,
-        capabilities: capabilities,
-        status: 'online',
-        last_seen: new Date().toISOString()
-      }, {
-        onConflict: 'machine_id'
-      })
-      .select()
-      .single();
+      .select('id, agent_name')
+      .eq('user_id', this.user.id)
+      .eq('machine_id', this.machineId)
+      .maybeSingle();
 
-    if (error) throw error;
+    if (findError) throw findError;
 
-    this.agentId = agent.id;
-    console.log(`✓ Agent registered: ${agent.agent_name}`);
+    if (existingAgent) {
+      console.log(`✅ Found existing agent: ${existingAgent.agent_name} (${existingAgent.id})`);
+
+      this.agentId = existingAgent.id;
+
+      // 2. Update status and capabilities
+      await this.supabase
+        .from('mcp_agents')
+        .update({
+          status: 'online',
+          last_seen: new Date().toISOString(),
+          capabilities: capabilities,
+          agent_name: `Agent-${os.hostname()}` // Update name in case hostname changed
+        })
+        .eq('id', this.agentId);
+
+    } else {
+      console.log('📝 No existing agent found, creating new registration...');
+
+      // 3. Create new agent
+      const { data: newAgent, error: createError } = await this.supabase
+        .from('mcp_agents')
+        .insert({
+          user_id: this.user.id,
+          agent_name: `Agent-${os.hostname()}`,
+          machine_id: this.machineId,
+          capabilities: capabilities,
+          status: 'online',
+          last_seen: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+
+      this.agentId = newAgent.id;
+      console.log(`✓ Agent registered: ${newAgent.agent_name}`);
+    }
   }
 
-  async subscribeToToolCalls() {
-    const channelName = `mcp_user_${this.user.id}`;
+  async subscribeToToolCallQueue() {
+    console.log(` Subscribing to job queue for user: ${this.user.id}`);
 
-    this.channel = this.supabase.channel(channelName)
-      .on('broadcast', { event: 'tool_call' }, this.handleToolCall.bind(this))
-      .subscribe();
-
-    // Track presence
-    await this.channel.track({
-      agent_id: this.agentId,
-      machine_id: this.machineId,
-      status: 'online',
-      hostname: os.hostname()
-    });
-
-    console.log(`✓ Subscribed to channel: ${channelName}`);
+    this.channel = this.supabase.channel('agent_tool_call_queue')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'mcp_remote_calls',
+          filter: `user_id=eq.${this.user.id}`
+        },
+        (payload) => this.handleNewToolCall(payload)
+      )
+      .subscribe((status) => {
+        console.log(`Subscription status: ${status}`);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Connected to tool call queue');
+        }
+      });
   }
 
-  async handleToolCall(payload) {
-    const { call_id, tool_name, args } = payload.payload;
+  async handleNewToolCall(payload) {
+    const toolCall = payload.new;
+    const { id: call_id, tool_name, tool_args, agent_id } = toolCall;
+
+    // Only process jobs for this agent
+    if (agent_id && agent_id !== this.agentId) {
+      return;
+    }
 
     console.log(`🔧 Received tool call: ${tool_name} (${call_id})`);
 
@@ -279,54 +320,45 @@ class MCPAgent {
         .update({ status: 'executing' })
         .eq('id', call_id);
 
-      // Execute tool using desktop integration
-      const result = await this.desktop.executeTool(tool_name, args);
+      let result;
 
-      console.log(`✅ Tool ${tool_name} completed`);
+      // Handle 'ping' tool specially
+      if (tool_name === 'ping') {
+        result = {
+          content: [{
+            type: 'text',
+            text: `pong ${new Date().toISOString()}`
+          }]
+        };
+      } else {
+        // Execute other tools using desktop integration
+        result = await this.desktop.executeTool(tool_name, tool_args);
+      }
+
+      console.log(`✅ Tool call ${tool_name} completed`);
 
       // Update database with result
-      await this.supabase
-        .from('mcp_remote_calls')
-        .update({
-          status: 'completed',
-          result: result,
-          completed_at: new Date().toISOString()
-        })
-        .eq('id', call_id);
-
-      // Broadcast result back to base server
-      await this.channel.send({
-        type: 'broadcast',
-        event: 'tool_result',
-        payload: {
-          call_id: call_id,
-          result: result
-        }
-      });
+      await this.updateToolCallResult(call_id, 'completed', result);
 
     } catch (error) {
-      console.error(`❌ Tool ${tool_name} failed:`, error.message);
-
-      // Update database with error
-      await this.supabase
-        .from('mcp_remote_calls')
-        .update({
-          status: 'failed',
-          error_message: error.message,
-          completed_at: new Date().toISOString()
-        })
-        .eq('id', call_id);
-
-      // Broadcast error back
-      await this.channel.send({
-        type: 'broadcast',
-        event: 'tool_result',
-        payload: {
-          call_id: call_id,
-          error: error.message
-        }
-      });
+      console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+      await this.updateToolCallResult(call_id, 'failed', null, error.message);
     }
+  }
+
+  async updateToolCallResult(callId, status, result = null, errorMessage = null) {
+    const updateData = {
+      status: status,
+      completed_at: new Date().toISOString()
+    };
+
+    if (result !== null) updateData.result = result;
+    if (errorMessage !== null) updateData.error_message = errorMessage;
+
+    await this.supabase
+      .from('mcp_remote_calls')
+      .update(updateData)
+      .eq('id', callId);
   }
 
   startHeartbeat() {

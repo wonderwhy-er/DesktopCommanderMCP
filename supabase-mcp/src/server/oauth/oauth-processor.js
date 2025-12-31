@@ -255,22 +255,8 @@ export class OAuthProcessor {
     });
 
     // Store session
-    try {
-      const { error: sessionError } = await this.supabase
-        .from('mcp_sessions')
-        .insert({
-          user_id: user.id,
-          session_token: access_token,
-          client_info: { client_id },
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        });
-
-      if (sessionError) {
-        serverLogger.warn('Failed to store session', { userId: user.id }, sessionError);
-      }
-    } catch (sessionError) {
-      serverLogger.warn('Session storage error', { userId: user.id }, sessionError);
-    }
+    // Session storage removed as requested
+    // const { error: sessionError } = await this.supabase.from('mcp_sessions')...
 
     return {
       user,

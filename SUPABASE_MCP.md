@@ -54,22 +54,15 @@ DEMO_MODE=true
 -- Enable RLS
 ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
 
--- MCP Sessions table
-CREATE TABLE public.mcp_sessions (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  session_token TEXT UNIQUE NOT NULL,
-  client_info JSONB,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  last_activity TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '24 hours'),
-  is_active BOOLEAN DEFAULT true
-);
+
 
 -- MCP Tools Usage Log
 CREATE TABLE public.mcp_tool_calls (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  session_id UUID REFERENCES public.mcp_sessions(id) ON DELETE CASCADE,
+CREATE TABLE public.mcp_tool_calls (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  -- session_id reference removed
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   tool_name TEXT NOT NULL,
   parameters JSONB,
@@ -81,14 +74,7 @@ CREATE TABLE public.mcp_tool_calls (
 );
 
 -- RLS Policies
-CREATE POLICY "Users can view their own sessions" ON public.mcp_sessions
-  FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert their own sessions" ON public.mcp_sessions
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users can update their own sessions" ON public.mcp_sessions
-  FOR UPDATE USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can view their own tool calls" ON public.mcp_tool_calls
   FOR SELECT USING (auth.uid() = user_id);

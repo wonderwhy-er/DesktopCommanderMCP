@@ -38,11 +38,7 @@ When you add the MCP server to Claude Desktop:
 3. **Token Generation** → Supabase generates access/refresh tokens
 4. **Callback** → Redirects to `/auth/callback` with tokens
 
-### 4. Session Storage
 
-1. **Token Validation** → Server verifies token with Supabase
-2. **Session Creation** → Stores session in `mcp_sessions` table
-3. **Return to Client** → Redirects back to original application
 
 ### 5. MCP Connection
 
@@ -57,7 +53,7 @@ When you add the MCP server to Claude Desktop:
 - **MCP Server** with integrated OAuth endpoints (`/authorize`, `/auth/callback`)
 - **Web Authentication** interface with Supabase integration
 - **SSE Connector** with OAuth flow detection and browser opening
-- **Database Schema** with sessions and tool call tracking
+- **Database Schema** with tool call tracking
 
 ### 🚧 **Current Limitation:**
 

@@ -1,17 +1,60 @@
 const TOOL_CALL_TIMEOUT = 60000 * 5; // 5 minutes
 
 export class ToolDispatcher {
-  constructor(channelManager, agentRegistry, supabase) {
-    this.channelManager = channelManager;
-    this.agentRegistry = agentRegistry;
+  constructor(supabase) {
     this.supabase = supabase;
     this.pendingCalls = new Map(); // callId -> Promise resolver
+    this.globalChannel = null;
 
-    // Setup result handler
-    this.channelManager.on('tool_result', this.handleToolResult.bind(this));
+    // Setup global result listener
+    this.initializeGlobalListener();
 
     // Setup periodic cleanup
     this.startCleanupTimer();
+  }
+
+  // Initialize global listener for tool execution results
+  async initializeGlobalListener() {
+    console.log('🌍 [DISPATCH] Initializing global listener for tool results...');
+
+    this.globalChannel = this.supabase.channel('mcp_global_results')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'mcp_remote_calls',
+          filter: 'status=in.(completed,failed)'
+        },
+        (payload) => {
+          this.handleGlobalUpdate(payload.new);
+        }
+      )
+      .subscribe((status) => {
+        console.log(`Global subscription status: ${status}`);
+        if (status === 'SUBSCRIBED') {
+          console.log('✅ Listening for global tool completions');
+        }
+      });
+  }
+
+  // Handle global update from Realtime
+  async handleGlobalUpdate(record) {
+    const { id: call_id, result, error_message, status } = record;
+
+    const pending = this.pendingCalls.get(call_id);
+    if (!pending) {
+      // This is normal for restored sessions or duplicates, just ignore
+      return;
+    }
+
+    this.pendingCalls.delete(call_id);
+
+    if (status === 'failed' || error_message) {
+      pending.reject(new Error(error_message || 'Unknown error'));
+    } else {
+      pending.resolve(result);
+    }
   }
 
   // Dispatch tool call to remote agent
@@ -19,7 +62,7 @@ export class ToolDispatcher {
     console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId}`, { args });
 
     // Find available agent for user
-    const agent = await this.agentRegistry.findAvailableAgent(userId);
+    const agent = await this.findAvailableAgent(userId);
     console.log(`🔍 [DISPATCH] Agent lookup result:`, {
       userId,
       foundAgent: !!agent,
@@ -53,29 +96,7 @@ export class ToolDispatcher {
     }
 
     console.log(`✅ [DISPATCH] Remote call record created: ${remoteCall.id}`);
-
-    // Broadcast tool call to agent
-    console.log(`📡 [DISPATCH] Broadcasting tool call to user channel: mcp_user_${userId}`);
-    try {
-      await this.channelManager.broadcastToolCall(userId, {
-        call_id: remoteCall.id,
-        tool_name: toolName,
-        args: args
-      });
-      console.log(`✅ [DISPATCH] Broadcast successful`);
-    } catch (broadcastError) {
-      console.error(`❌ [DISPATCH] Broadcast failed:`, broadcastError);
-      throw broadcastError;
-    }
-
-    // Update status to executing
-    console.log(`🔄 [DISPATCH] Updating call status to executing`);
-    await this.supabase
-      .from('mcp_remote_calls')
-      .update({ status: 'executing' })
-      .eq('id', remoteCall.id);
-
-    console.log(`⏳ [DISPATCH] Waiting for agent response (30s timeout)`);
+    console.log(`⏳ [DISPATCH] Waiting for agent execution (30s timeout)`);
 
     // Return promise that resolves when result received
     return new Promise((resolve, reject) => {
@@ -98,38 +119,41 @@ export class ToolDispatcher {
     });
   }
 
-  // Handle tool result from agent
-  async handleToolResult(userId, payload) {
-    const { call_id, result, error } = payload;
+  // --- Agent Registry Logic ---
 
-    const pending = this.pendingCalls.get(call_id);
-    if (!pending) {
-      console.warn(`Received result for unknown call: ${call_id}`);
-      return;
-    }
-
-    this.pendingCalls.delete(call_id);
+  // Find available agent for user (currently single agent per user)
+  async findAvailableAgent(userId) {
+    // Search for this specific user's online agent
+    const { data: agent, error } = await this.supabase
+      .from('mcp_agents')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'online')
+      .order('last_seen', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
-      await this.markCallFailed(call_id, error);
-      pending.reject(new Error(error));
-    } else {
-      await this.markCallCompleted(call_id, result);
-      pending.resolve(result);
+      console.error(`❌ [DISPATCH] Error finding agent:`, error);
+      throw error;
     }
+
+    return agent;
   }
 
-  // Mark call as completed in database
-  async markCallCompleted(callId, result) {
-    await this.supabase
-      .from('mcp_remote_calls')
-      .update({
-        status: 'completed',
-        result: result,
-        completed_at: new Date().toISOString()
-      })
-      .eq('id', callId);
+  // Get all agents for user
+  async getUserAgents(userId) {
+    const { data: agents, error } = await this.supabase
+      .from('mcp_agents')
+      .select('*')
+      .eq('user_id', userId)
+      .order('last_seen', { ascending: false });
+
+    if (error) throw error;
+    return agents || [];
   }
+
+  // --- Helper Methods ---
 
   // Mark call as failed in database
   async markCallFailed(callId, errorMessage) {
@@ -141,40 +165,6 @@ export class ToolDispatcher {
         completed_at: new Date().toISOString()
       })
       .eq('id', callId);
-  }
-
-  // Check if user has any connected agents
-  async hasConnectedAgents(userId) {
-    const agents = await this.agentRegistry.getUserAgents(userId);
-    return agents.some(agent => agent.status === 'online');
-  }
-
-  // Get available tools from connected agents
-  async getAvailableTools(userId) {
-    const agents = await this.agentRegistry.getUserAgents(userId);
-    const onlineAgents = agents.filter(agent => agent.status === 'online');
-
-    if (onlineAgents.length === 0) {
-      return [];
-    }
-
-    // For now, return stub echo tool - will be expanded when agents report capabilities
-    return [
-      {
-        name: 'remote_echo',
-        description: 'Echo text via remote agent (stub implementation)',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            text: {
-              type: 'string',
-              description: 'Text to echo back'
-            }
-          },
-          required: ['text']
-        }
-      }
-    ];
   }
 
   // Periodic cleanup of timed out calls
@@ -196,5 +186,12 @@ export class ToolDispatcher {
         console.error('Cleanup timer error:', error);
       }
     }, TOOL_CALL_TIMEOUT); // Run every 30 seconds
+  }
+
+  // Cleanup resources
+  async cleanup() {
+    if (this.globalChannel) {
+      await this.globalChannel.unsubscribe();
+    }
   }
 }

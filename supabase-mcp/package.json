@@ -28,7 +28,8 @@
     "node-fetch": "^3.3.2",
     "open": "^10.0.3",
     "uuid": "^9.0.1",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zod-to-json-schema": "^3.25.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
