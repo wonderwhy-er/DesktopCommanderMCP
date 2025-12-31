@@ -12,11 +12,12 @@ import path from 'path';
 // Load environment variables from .env file
 dotenv.config();
 
+const HEARTBEAT_INTERVAL = 30000;
+
 class MCPAgent {
   constructor() {
     this.baseServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:3007';
     this.supabase = null;
-    this.accessToken = null;
     this.agentId = null;
     this.machineId = null; // Will be loaded or generated
     this.channel = null;
@@ -67,68 +68,72 @@ class MCPAgent {
 
       if (process.env.DEBUG_MODE === 'true') {
         console.log('🔍 Environment variables loaded:');
-        console.log(`  - MCP_SERVER_URL: ${process.env.MCP_SERVER_URL || 'not set'}`);
         console.log(`  - DEBUG_MODE: ${process.env.DEBUG_MODE || 'not set'}`);
       }
 
       // Initialize desktop integration
       await this.desktop.initialize();
 
-      // Load persisted configuration (machineId, accessToken)
-      await this.loadPersistedConfig();
+      // Load persisted configuration (machineId, session)
+      const session = await this.loadPersistedConfig();
 
-      // Ensure machineId exists
-      if (!this.machineId) {
-        this.machineId = `${os.hostname()}-${randomUUID()}`;
-        await this.savePersistedConfig();
-      }
+      console.log('🔧 Configuring Supabase client...');
+      const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
 
-      let isAuthenticated = false;
+      // Initialize Supabase Client
+      this.supabase = createClient(supabaseUrl, anonKey);
 
-      // Try to use persisted token
-      if (this.accessToken) {
-        console.log('💾 Found persisted access token, verifying...');
-        try {
-          // Verify token by fetching config
-          const config = await this.fetchSupabaseConfig(true); // silent mode
-          // If successful, we are authenticated
-          console.log('✅ Persisted token is valid');
+      // 2. Set Session or Authenticate
+      if (session) {
+        console.log('💾 Found persisted session, restoring...');
+        const { data, error } = await this.supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token
+        });
 
-          this.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-            global: {
-              headers: {
-                Authorization: `Bearer ${this.accessToken}`
-              }
-            }
-          });
-
-          isAuthenticated = true;
-        } catch (error) {
-          console.log('⚠️ Persisted token invalid or expired:', error.message);
-          this.accessToken = null;
+        if (error) {
+          console.log('⚠️ Persisted session invalid:', error.message);
+          session = null;
+        } else {
+          console.log('✅ Session restored');
         }
       }
 
-      // Authenticate if needed
-      if (!isAuthenticated) {
+      if (!session) {
         console.log('\n🔐 Authenticating with base MCP server...');
         const authenticator = new AgentAuthenticator(this.baseServerUrl);
-        this.accessToken = await authenticator.authenticate();
+        // Authenticator now returns { access_token, refresh_token }
+        session = await authenticator.authenticate();
 
-        // Save new token
-        await this.savePersistedConfig();
+        console.log('✅ Authentication successful');
 
-        // Get Supabase config
-        console.log('🔧 Configuring Supabase client...');
-        const config = await this.fetchSupabaseConfig();
-        this.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-          global: {
-            headers: {
-              Authorization: `Bearer ${this.accessToken}`
-            }
-          }
+        // Set session in Supabase
+        const { data, error } = await this.supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token
         });
+
+        if (error) throw error;
       }
+
+      // 3. Setup Token Refresh Listener
+      this.supabase.auth.onAuthStateChange(async (event, newSession) => {
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          if (newSession) {
+            console.log(`🔄 Auth state change: ${event}`);
+            await this.savePersistedConfig(newSession);
+          }
+        } else if (event === 'SIGNED_OUT') {
+          console.log('⚠️ User signed out');
+          // Handle sign out?
+        }
+      });
+
+      // Force save the current session immediately to ensure it's persisted
+      // (in case onAuthStateChange doesn't fire immediately for setSession)
+      await this.savePersistedConfig(
+        (await this.supabase.auth.getSession()).data.session
+      );
 
       // Get user info
       const { data: { user }, error: userError } = await this.supabase.auth.getUser();
@@ -160,44 +165,54 @@ class MCPAgent {
     }
   }
 
+  async ensureMachineId() {
+    if (!this.machineId) {
+      this.machineId = `${os.hostname()}-${randomUUID()}`;
+      await this.savePersistedConfig(null); // Save just machineId
+    }
+  }
+
   async loadPersistedConfig() {
     try {
       const data = await fs.readFile(this.configPath, 'utf8');
       const config = JSON.parse(data);
 
-      if (config.machineId) this.machineId = config.machineId;
-      if (config.accessToken) this.accessToken = config.accessToken;
+      if (config.session) {
+        return config.session;
+      }
 
-      console.log('📂 Loaded persisted configuration');
+      return null;
     } catch (error) {
-      // Ignore missing file
+
       if (error.code !== 'ENOENT') {
         console.warn('⚠️ Failed to load config:', error.message);
       }
+      return null;
+    } finally {
+      await this.ensureMachineId();
     }
   }
 
-  async savePersistedConfig() {
+  async savePersistedConfig(session) {
     try {
       const config = {
         machineId: this.machineId,
-        accessToken: this.accessToken
+        session: session ? {
+          access_token: session.access_token,
+          refresh_token: session.refresh_token
+        } : null
       };
 
-      // Save with secure permissions (600 - read/write only by owner)
       await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-      console.log('💾 Configuration saved to agent.json');
+      if (session) console.log('💾 Session saved to agent.json');
     } catch (error) {
       console.error('❌ Failed to save config:', error.message);
     }
   }
 
   async fetchSupabaseConfig() {
-    const response = await fetch(`${this.baseServerUrl}/api/mcp-info`, {
-      headers: {
-        'Authorization': `Bearer ${this.accessToken}`
-      }
-    });
+    // No auth header needed for this public endpoint
+    const response = await fetch(`${this.baseServerUrl}/api/mcp-info`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch Supabase config: ${response.statusText}`);
@@ -325,7 +340,7 @@ class MCPAgent {
       } catch (error) {
         console.error('Heartbeat failed:', error.message);
       }
-    }, 30000);
+    }, HEARTBEAT_INTERVAL);
   }
 
   async shutdown() {

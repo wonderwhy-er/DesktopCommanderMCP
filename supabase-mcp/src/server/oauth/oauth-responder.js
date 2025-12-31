@@ -36,7 +36,7 @@ export class OAuthResponder {
       subject_types_supported: ['public']
     };
 
-    serverLogger.info('✅ OAuth discovery response generated', { 
+    serverLogger.info('✅ OAuth discovery response generated', {
       endpoints: {
         authorization: discovery.authorization_endpoint,
         token: discovery.token_endpoint,
@@ -67,7 +67,7 @@ export class OAuthResponder {
       resource_documentation: `${this.serverUrl}/docs`
     };
 
-    serverLogger.info('✅ Protected resource discovery response generated', { 
+    serverLogger.info('✅ Protected resource discovery response generated', {
       resourceServer: resourceInfo.resource_server,
       scopes: resourceInfo.scopes_supported,
       bearerMethods: resourceInfo.bearer_methods_supported
@@ -80,12 +80,12 @@ export class OAuthResponder {
    * Send error response with proper OAuth error format
    */
   sendErrorResponse(res, error, errorDescription, statusCode = 400) {
-    serverLogger.warn(`❌ OAuth error: ${error}`, { 
-      error, 
-      errorDescription, 
-      statusCode 
+    serverLogger.warn(`❌ OAuth error: ${error}`, {
+      error,
+      errorDescription,
+      statusCode
     });
-    
+
     return res.status(statusCode).json({
       error,
       error_description: errorDescription
@@ -96,10 +96,10 @@ export class OAuthResponder {
    * Send redirect response for authorization flow
    */
   sendRedirectResponse(res, redirectUrl) {
-    serverLogger.info('🔄 Sending OAuth redirect', { 
+    serverLogger.info('🔄 Sending OAuth redirect', {
       redirectUrl: redirectUrl.substring(0, 100) + '...' // Truncate for logging
     });
-    
+
     return res.redirect(redirectUrl);
   }
 
@@ -113,7 +113,7 @@ export class OAuthResponder {
       scope: tokenData.scope,
       hasResource: !!tokenData.resource
     });
-    
+
     return res.json(tokenData);
   }
 
@@ -127,7 +127,7 @@ export class OAuthResponder {
       redirectUris: clientInfo.redirect_uris,
       hasClientSecret: !!clientInfo.client_secret
     });
-    
+
     return res.json(clientInfo);
   }
 
@@ -135,25 +135,26 @@ export class OAuthResponder {
    * Handle callback redirect with success/error
    */
   handleCallbackRedirect(res, result) {
-    const { redirect_uri, state, error, error_description, access_token } = result;
+    const { redirect_uri, state, error, error_description, access_token, refresh_token } = result;
 
     if (!redirect_uri) {
       // No redirect URI, send JSON response
       if (error) {
         return this.sendErrorResponse(res, error, error_description);
       }
-      
-      return res.json({ 
-        access_token, 
-        token_type: 'Bearer', 
-        expires_in: 86400 
+
+      return res.json({
+        access_token,
+        refresh_token,
+        token_type: 'Bearer',
+        expires_in: 86400
       });
     }
 
     // Handle redirect URI
     try {
       const redirectUrl = new URL(redirect_uri);
-      
+
       if (error) {
         redirectUrl.searchParams.set('error', error);
         if (error_description) {
@@ -165,14 +166,17 @@ export class OAuthResponder {
       } else {
         // For agent authentication, send as access_token for better compatibility
         redirectUrl.searchParams.set('access_token', access_token);
+        if (refresh_token) {
+          redirectUrl.searchParams.set('refresh_token', refresh_token);
+        }
         redirectUrl.searchParams.set('code', access_token); // Backward compatibility
         if (state) {
           redirectUrl.searchParams.set('state', state);
         }
       }
-      
+
       return this.sendRedirectResponse(res, redirectUrl.toString());
-      
+
     } catch (urlError) {
       serverLogger.error('Invalid redirect URI', { redirect_uri }, urlError);
       return this.sendErrorResponse(res, 'invalid_request', 'Invalid redirect_uri format');

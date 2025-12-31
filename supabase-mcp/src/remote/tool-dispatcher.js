@@ -1,13 +1,15 @@
+const TOOL_CALL_TIMEOUT = 60000 * 5; // 5 minutes
+
 export class ToolDispatcher {
   constructor(channelManager, agentRegistry, supabase) {
     this.channelManager = channelManager;
     this.agentRegistry = agentRegistry;
     this.supabase = supabase;
     this.pendingCalls = new Map(); // callId -> Promise resolver
-    
+
     // Setup result handler
     this.channelManager.on('tool_result', this.handleToolResult.bind(this));
-    
+
     // Setup periodic cleanup
     this.startCleanupTimer();
   }
@@ -15,23 +17,23 @@ export class ToolDispatcher {
   // Dispatch tool call to remote agent
   async dispatchTool(userId, toolName, args) {
     console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId}`, { args });
-    
+
     // Find available agent for user
     const agent = await this.agentRegistry.findAvailableAgent(userId);
-    console.log(`🔍 [DISPATCH] Agent lookup result:`, { 
-      userId, 
-      foundAgent: !!agent, 
+    console.log(`🔍 [DISPATCH] Agent lookup result:`, {
+      userId,
+      foundAgent: !!agent,
       agentId: agent?.id,
-      agentStatus: agent?.status 
+      agentStatus: agent?.status
     });
-    
+
     if (!agent) {
       console.log(`❌ [DISPATCH] No agents available for user ${userId}`);
       throw new Error('No agents available - please connect an agent to use remote tools');
     }
 
     console.log(`📝 [DISPATCH] Creating remote call record for agent ${agent.id}`);
-    
+
     // Create remote call record
     const { data: remoteCall, error } = await this.supabase
       .from('mcp_remote_calls')
@@ -74,16 +76,16 @@ export class ToolDispatcher {
       .eq('id', remoteCall.id);
 
     console.log(`⏳ [DISPATCH] Waiting for agent response (30s timeout)`);
-    
+
     // Return promise that resolves when result received
     return new Promise((resolve, reject) => {
-      this.pendingCalls.set(remoteCall.id, { 
-        resolve, 
-        reject, 
+      this.pendingCalls.set(remoteCall.id, {
+        resolve,
+        reject,
         userId,
         created: Date.now()
       });
-      
+
       // Timeout after 30 seconds
       setTimeout(() => {
         if (this.pendingCalls.has(remoteCall.id)) {
@@ -92,14 +94,14 @@ export class ToolDispatcher {
           this.markCallFailed(remoteCall.id, 'Tool call timeout - agent did not respond');
           reject(new Error('Tool call timeout - agent did not respond'));
         }
-      }, 30000);
+      }, TOOL_CALL_TIMEOUT);
     });
   }
 
   // Handle tool result from agent
   async handleToolResult(userId, payload) {
     const { call_id, result, error } = payload;
-    
+
     const pending = this.pendingCalls.get(call_id);
     if (!pending) {
       console.warn(`Received result for unknown call: ${call_id}`);
@@ -151,7 +153,7 @@ export class ToolDispatcher {
   async getAvailableTools(userId) {
     const agents = await this.agentRegistry.getUserAgents(userId);
     const onlineAgents = agents.filter(agent => agent.status === 'online');
-    
+
     if (onlineAgents.length === 0) {
       return [];
     }
@@ -181,11 +183,11 @@ export class ToolDispatcher {
       try {
         // Cleanup database
         await this.supabase.rpc('cleanup_timed_out_calls');
-        
+
         // Cleanup pending promises
         const now = Date.now();
         for (const [callId, pending] of this.pendingCalls) {
-          if (now - pending.created > 30000) { // 30 second timeout
+          if (now - pending.created > TOOL_CALL_TIMEOUT) { // 30 second timeout
             this.pendingCalls.delete(callId);
             pending.reject(new Error('Tool call timeout'));
           }
@@ -193,6 +195,6 @@ export class ToolDispatcher {
       } catch (error) {
         console.error('Cleanup timer error:', error);
       }
-    }, 30000); // Run every 30 seconds
+    }, TOOL_CALL_TIMEOUT); // Run every 30 seconds
   }
 }

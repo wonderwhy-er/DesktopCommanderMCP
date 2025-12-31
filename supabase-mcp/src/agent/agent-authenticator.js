@@ -11,9 +11,9 @@ export class AgentAuthenticator {
   async authenticate() {
     // Detect environment
     const isDesktop = this.isDesktopEnvironment();
-    
+
     console.log(`🔐 Starting authentication (${isDesktop ? 'desktop' : 'headless'} mode)...`);
-    
+
     if (isDesktop) {
       return this.authenticateDesktop();
     } else {
@@ -23,33 +23,34 @@ export class AgentAuthenticator {
 
   isDesktopEnvironment() {
     // Check if we're in a desktop environment
-    return process.platform === 'darwin' || 
-           process.platform === 'win32' || 
-           (process.platform === 'linux' && process.env.DISPLAY);
+    return process.platform === 'darwin' ||
+      process.platform === 'win32' ||
+      (process.platform === 'linux' && process.env.DISPLAY);
   }
 
   async authenticateDesktop() {
     const app = express();
     const callbackPort = 8080;
     const callbackUrl = `http://localhost:${callbackPort}/callback`;
-    
+
     return new Promise((resolve, reject) => {
       let server;
-      
+
       // Setup callback handler
       app.get('/callback', (req, res) => {
-        const { access_token, code, error, error_description } = req.query;
-        
+        const { access_token, refresh_token, code, error, error_description } = req.query;
+
         // Extract the actual token (could be in access_token or code parameter)
         const token = access_token || code;
-        
+
         console.log('🔍 Callback received:', {
           hasAccessToken: !!access_token,
+          hasRefreshToken: !!refresh_token,
           hasCode: !!code,
           hasError: !!error,
           queryParams: Object.keys(req.query)
         });
-        
+
         if (error) {
           res.send(`
             <h2>Authentication Failed</h2>
@@ -67,7 +68,10 @@ export class AgentAuthenticator {
           `);
           server.close();
           console.log('✅ Authentication successful, token received');
-          resolve(token);
+          resolve({
+            access_token: token,
+            refresh_token: refresh_token || null
+          });
         } else {
           console.log('❌ No token found in callback:', req.query);
           res.send(`
@@ -91,10 +95,10 @@ export class AgentAuthenticator {
 
         // Generate OAuth URL with callback
         const authUrl = `${this.baseServerUrl}/auth.html?redirect_uri=${encodeURIComponent(callbackUrl)}&agent=true`;
-        
+
         console.log('🌐 Opening browser for authentication...');
         console.log(`If browser doesn't open, visit: ${authUrl}`);
-        
+
         // Open browser
         open(authUrl).catch(() => {
           console.log('Could not open browser automatically.');
@@ -117,8 +121,10 @@ export class AgentAuthenticator {
     console.log('─'.repeat(50));
     console.log(`1. Open this URL in a browser: ${this.baseServerUrl}/auth.html`);
     console.log('2. Complete the authentication process');
-    console.log('3. Copy the access_token from the result');
-    console.log('4. Paste it below');
+    console.log('3. You will be redirected to a URL with parameters.');
+    console.log('   If using agent mode, look for access_token and refresh_token.');
+    console.log('4. Copy the access_token (and refresh_token if available) and paste here.');
+    console.log('   Format: access_token OR {"access_token":"...", "refresh_token":"..."}');
     console.log('─'.repeat(50));
 
     const rl = readline.createInterface({
@@ -127,16 +133,36 @@ export class AgentAuthenticator {
     });
 
     return new Promise((resolve, reject) => {
-      rl.question('\n🔑 Enter Access Token: ', (token) => {
+      rl.question('\n🔑 Enter Access Token or JSON: ', (input) => {
         rl.close();
-        
-        const trimmedToken = token.trim();
-        if (!trimmedToken) {
-          reject(new Error('Empty token provided'));
-        } else if (trimmedToken.length < 10) {
+
+        const trimmedInput = input.trim();
+        if (!trimmedInput) {
+          reject(new Error('Empty input provided'));
+          return;
+        }
+
+        try {
+          // Try parsing as JSON first
+          const json = JSON.parse(trimmedInput);
+          if (json.access_token) {
+            resolve({
+              access_token: json.access_token,
+              refresh_token: json.refresh_token || null
+            });
+            return;
+          }
+        } catch (e) {
+          // Not JSON, treat as raw token
+        }
+
+        if (trimmedInput.length < 10) {
           reject(new Error('Invalid token format (too short)'));
         } else {
-          resolve(trimmedToken);
+          resolve({
+            access_token: trimmedInput,
+            refresh_token: null
+          });
         }
       });
     });

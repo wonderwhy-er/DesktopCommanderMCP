@@ -29,12 +29,12 @@ export class OAuthProcessor {
    * Process OAuth authorization request
    */
   processAuthorizationRequest(params) {
-    const { 
-      response_type, 
-      client_id, 
-      redirect_uri, 
-      scope, 
-      code_challenge, 
+    const {
+      response_type,
+      client_id,
+      redirect_uri,
+      scope,
+      code_challenge,
       code_challenge_method,
       resource
     } = params;
@@ -66,13 +66,13 @@ export class OAuthProcessor {
       resource: resource || this.serverUrl,
       auth_id: authorizationId // Include for PKCE validation
     }).toString()}`;
-    
-    serverLogger.info('✅ Processing authorization request', { 
+
+    serverLogger.info('✅ Processing authorization request', {
       authUrl: authUrl.substring(0, 100) + '...', // Truncate for logging
       authorizationId,
       clientId: client_id
     });
-    
+
     return { authorizationId, authUrl };
   }
 
@@ -80,17 +80,17 @@ export class OAuthProcessor {
    * Process OAuth token exchange
    */
   async processTokenExchange(params) {
-    const { 
-      code, 
-      redirect_uri, 
-      client_id, 
+    const {
+      code,
+      redirect_uri,
+      client_id,
       code_verifier
     } = params;
 
     // Find and validate PKCE challenge
     let pkceData = null;
     let authorizationId = null;
-    
+
     for (const [id, data] of pkceCodes) {
       if (data.client_id === client_id && data.redirect_uri === redirect_uri) {
         pkceData = data;
@@ -100,9 +100,9 @@ export class OAuthProcessor {
     }
 
     if (!pkceData) {
-      serverLogger.warn('❌ No PKCE data found', { 
+      serverLogger.warn('❌ No PKCE data found', {
         clientId: client_id,
-        redirectUri: redirect_uri 
+        redirectUri: redirect_uri
       });
       throw new Error('Invalid authorization code or expired PKCE challenge');
     }
@@ -111,7 +111,7 @@ export class OAuthProcessor {
     const crypto = await import('crypto');
     const hash = crypto.createHash('sha256').update(code_verifier).digest();
     const computedChallenge = hash.toString('base64url');
-    
+
     if (computedChallenge !== pkceData.code_challenge) {
       serverLogger.warn('❌ PKCE validation failed', {
         clientId: client_id,
@@ -127,10 +127,10 @@ export class OAuthProcessor {
 
     // Use the authorization code as access token (from Supabase callback)
     const accessToken = code;
-    
+
     // Validate token with Supabase
     const { data: { user }, error: userError } = await this.supabase.auth.getUser(accessToken);
-    
+
     if (userError) {
       serverLogger.warn('❌ Token validation failed', {
         error: userError.message,
@@ -163,7 +163,7 @@ export class OAuthProcessor {
    */
   processClientRegistration(params) {
     const { client_name, redirect_uris, scope } = params;
-    
+
     serverLogger.info('📝 Processing client registration', {
       clientName: client_name,
       redirectUris: redirect_uris,
@@ -175,7 +175,7 @@ export class OAuthProcessor {
       serverLogger.info('✅ Returning pre-registered Claude Desktop client', {
         clientId: CLAUDE_DESKTOP_CLIENT.client_id
       });
-      
+
       return {
         ...CLAUDE_DESKTOP_CLIENT,
         redirect_uris: CLAUDE_DESKTOP_CLIENT.redirect_uris,
@@ -214,13 +214,13 @@ export class OAuthProcessor {
    * Process OAuth callback
    */
   async processCallback(params) {
-    const { 
-      access_token, 
-      refresh_token, 
-      error, 
-      error_description, 
-      client_id, 
-      redirect_uri, 
+    const {
+      access_token,
+      refresh_token,
+      error,
+      error_description,
+      client_id,
+      redirect_uri,
       state
     } = params;
 
@@ -232,28 +232,28 @@ export class OAuthProcessor {
       redirectUri: redirect_uri,
       state: state
     });
-    
+
     if (error) {
       throw new Error(`OAuth callback error: ${error} - ${error_description || 'Unknown error'}`);
     }
-    
+
     if (!access_token) {
       throw new Error('No access token received from OAuth callback');
     }
 
     // Verify the Supabase token
     const { data: { user }, error: userError } = await this.supabase.auth.getUser(access_token);
-    
+
     if (userError) {
       throw new Error(`Token validation failed: ${userError.message}`);
     }
-    
-    serverLogger.info('✅ OAuth callback processed successfully', { 
-      userId: user.id, 
-      email: user.email, 
-      clientId: client_id 
+
+    serverLogger.info('✅ OAuth callback processed successfully', {
+      userId: user.id,
+      email: user.email,
+      clientId: client_id
     });
-    
+
     // Store session
     try {
       const { error: sessionError } = await this.supabase
@@ -264,7 +264,7 @@ export class OAuthProcessor {
           client_info: { client_id },
           expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
         });
-      
+
       if (sessionError) {
         serverLogger.warn('Failed to store session', { userId: user.id }, sessionError);
       }
@@ -272,15 +272,17 @@ export class OAuthProcessor {
       serverLogger.warn('Session storage error', { userId: user.id }, sessionError);
     }
 
-    return { 
-      user, 
-      access_token, 
-      redirect_uri, 
+    return {
+      user,
+      access_token,
+      refresh_token,
+      redirect_uri,
       state,
-      token_response: { 
-        access_token, 
-        token_type: 'Bearer', 
-        expires_in: 86400 
+      token_response: {
+        access_token,
+        refresh_token,
+        token_type: 'Bearer',
+        expires_in: 86400
       }
     };
   }
