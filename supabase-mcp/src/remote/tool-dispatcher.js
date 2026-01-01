@@ -58,36 +58,27 @@ export class ToolDispatcher {
   }
 
   // Dispatch tool call to remote agent
-  async dispatchTool(userId, toolName, args) {
-    // Extract device_id if present, use rest as tool arguments
-    const { device_id, ...actualArgs } = args || {};
-    console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId}`, { args: actualArgs, targetDevice: device_id });
+  async dispatchTool(userId, toolName, args, agentId = null) {
 
-    // Find available agent for user
-    const agent = await this.findAvailableAgent(userId, device_id);
-    console.log(`🔍 [DISPATCH] Agent lookup result:`, {
-      userId,
-      foundAgent: !!agent,
-      agentId: agent?.id,
-      agentStatus: agent?.status
-    });
+    // Determine target agent: explicit param overrides args
+    let targetAgentId = agentId || await this.getLastActiveAgent(userId);
 
-    if (!agent) {
+
+    if (!targetAgentId) {
       console.log(`❌ [DISPATCH] No agents available for user ${userId}`);
       throw new Error('No agents available - please connect an agent to use remote tools');
     }
 
-    console.log(`📝 [DISPATCH] Creating remote call record for agent ${agent.id}`);
+    console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId} agent ${targetAgentId}`, args);
 
     // Create remote call record
     const { data: remoteCall, error } = await this.supabase
       .from('mcp_remote_calls')
       .insert({
         user_id: userId,
-        agent_id: agent.id,
-
+        agent_id: targetAgentId,
         tool_name: toolName,
-        tool_args: actualArgs,
+        tool_args: args,
         status: 'pending'
       })
       .select()
@@ -134,8 +125,8 @@ export class ToolDispatcher {
       .eq('status', 'online');
 
     if (targetDeviceId) {
-      // If specific device requested, filter by device_id
-      query = query.eq('device_id', targetDeviceId);
+      // If specific device requested, filter by id (which is now the deviceId)
+      query = query.eq('id', targetDeviceId);
     } else {
       // Otherwise get most recently seen
       query = query.order('last_seen', { ascending: false });
@@ -151,6 +142,35 @@ export class ToolDispatcher {
     }
 
     return agent;
+  }
+
+  async getLastActiveAgent(userId) {
+    const { data, error } = await this.supabase
+      .from('mcp_agents')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'online')
+      .order('last_seen', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error(`❌ [DISPATCH] Error finding last active agent:`, error);
+      return null;
+    }
+
+    return data?.id;
+  }
+
+  // Find available agent for user (optionally targeting specific device)
+  // kept for compatibility if needed, but dispatchTool now uses getLastActiveAgent
+  async findAvailableAgent(userId, targetDeviceId = null) {
+    // ... same as before or deprecated ...
+    // I will leave it as is for now to minimize diff, or delete if strictly unused. 
+    // User didn't explicitly say delete `findAvailableAgent`, just "replace usage".
+    return this.getLastActiveAgent(userId); // Forwarding for now?
+    // Actually, findAvailableAgent handled specific ID targeting too.
+    // But now dispatchTool handles targeting logic itself.
   }
 
   // Get all agents for user

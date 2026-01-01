@@ -19,7 +19,6 @@ class MCPAgent {
     this.baseServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:3007';
     this.supabase = null;
     this.agentId = null;
-    this.deviceId = null; // Will be loaded or generated
     this.channel = null;
     this.user = null;
     this.isShuttingDown = false;
@@ -74,7 +73,7 @@ class MCPAgent {
       // Initialize desktop integration
       await this.desktop.initialize();
 
-      // Load persisted configuration (deviceId, session)
+      // Load persisted configuration (agentId, session)
       let session = await this.loadPersistedConfig();
 
       console.log('🔧 Setting up Supabase client...');
@@ -150,7 +149,6 @@ class MCPAgent {
 
       console.log('✅ Agent ready and listening for tool calls');
       console.log(`Agent ID: ${this.agentId}`);
-      console.log(`Device ID: ${this.deviceId}`);
 
       // Keep process alive
       this.startHeartbeat();
@@ -165,19 +163,13 @@ class MCPAgent {
     }
   }
 
-  async ensureDeviceId() {
-    if (!this.deviceId) {
-      this.deviceId = `${os.hostname()}-${randomUUID()}`;
-      await this.savePersistedConfig(null); // Save just deviceId
-    }
-  }
 
   async loadPersistedConfig() {
     try {
       const data = await fs.readFile(this.configPath, 'utf8');
       const config = JSON.parse(data);
 
-      this.deviceId = config?.deviceId;
+      this.agentId = config?.agentId;
 
 
       if (config.session) {
@@ -192,14 +184,14 @@ class MCPAgent {
       }
       return null;
     } finally {
-      await this.ensureDeviceId();
+      // No need to ensure device ID here
     }
   }
 
   async savePersistedConfig(session) {
     try {
       const config = {
-        deviceId: this.deviceId,
+        agentId: this.agentId,
         session: session ? {
           access_token: session.access_token,
           refresh_token: session.refresh_token
@@ -231,17 +223,21 @@ class MCPAgent {
   async registerAgent() {
     const capabilities = await this.desktop.getCapabilities();
 
-    console.log(`🔍 Checking for existing agent (User: ${this.user.id}, Device: ${this.deviceId})...`);
+    console.log(`🔍 Checking for existing agent (User: ${this.user.id}, Agent ID: ${this.agentId || 'New'})...`);
 
-    // 1. Try to find existing agent
-    const { data: existingAgent, error: findError } = await this.supabase
-      .from('mcp_agents')
-      .select('id, agent_name')
-      .eq('user_id', this.user.id)
-      .eq('device_id', this.deviceId)
-      .maybeSingle();
+    let existingAgent = null;
 
-    if (findError) throw findError;
+    // 1. If we have a stored ID, try to find that specific agent
+    if (this.agentId) {
+      const { data, error } = await this.supabase
+        .from('mcp_agents')
+        .select('id, agent_name')
+        .eq('id', this.agentId)
+        .eq('user_id', this.user.id)
+        .maybeSingle();
+
+      if (!error) existingAgent = data;
+    }
 
     if (existingAgent) {
       console.log(`✅ Found existing agent: ${existingAgent.agent_name} (${existingAgent.id})`);
@@ -268,7 +264,6 @@ class MCPAgent {
         .insert({
           user_id: this.user.id,
           agent_name: `Agent-${os.hostname()}`,
-          device_id: this.deviceId,
           capabilities: capabilities,
           status: 'online',
           last_seen: new Date().toISOString()
@@ -279,7 +274,10 @@ class MCPAgent {
       if (createError) throw createError;
 
       this.agentId = newAgent.id;
+      await this.savePersistedConfig(this.user.session);
+
       console.log(`✓ Agent registered: ${newAgent.agent_name}`);
+      console.log(`✓ Assigned new Agent ID: ${this.agentId}`);
     }
   }
 
