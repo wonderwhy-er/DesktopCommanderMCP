@@ -800,11 +800,11 @@ class SupabaseMCPServer {
 
       res.json = function (data) {
         if (!responseLogged && requestBody?.method === 'tools/list') {
-          mcpLogger.info('📋 tools/list RESPONSE BODY', {
-            tools: data?.result?.tools,
-            toolCount: data?.result?.tools?.length || 0,
-            fullResponse: data
-          });
+          // mcpLogger.info('📋 tools/list RESPONSE BODY', {
+          //   tools: data?.result?.tools,
+          //   toolCount: data?.result?.tools?.length || 0,
+          //   fullResponse: data
+          // });
           responseLogged = true;
         }
         return originalJson.call(this, data);
@@ -814,11 +814,11 @@ class SupabaseMCPServer {
         if (!responseLogged && requestBody?.method === 'tools/list') {
           try {
             const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-            mcpLogger.info('📋 tools/list RESPONSE BODY (send)', {
-              tools: parsed?.result?.tools,
-              toolCount: parsed?.result?.tools?.length || 0,
-              fullResponse: parsed
-            });
+            // mcpLogger.info('📋 tools/list RESPONSE BODY (send)', {
+            //   tools: parsed?.result?.tools,
+            //   toolCount: parsed?.result?.tools?.length || 0,
+            //   fullResponse: parsed
+            // });
           } catch (e) {
             mcpLogger.info('📋 tools/list RESPONSE (raw)', { data });
           }
@@ -829,20 +829,20 @@ class SupabaseMCPServer {
 
       await transport.handleRequest(req, res, requestBody);
 
-      mcpLogger.info('✅ transport.handleRequest completed', {
-        userId,
-        sessionId,
-        method: requestBody?.method
-      });
+      // mcpLogger.info('✅ transport.handleRequest completed', {
+      //   userId,
+      //   sessionId,
+      //   method: requestBody?.method
+      // });
 
       const duration = Date.now() - startTime;
       mcpLogger.logMCPMessage(userId, requestBody?.method, requestBody?.id, 'RESPONDED');
-      mcpLogger.info('MCP SDK request completed', {
-        userId,
-        sessionId,
-        method: requestBody?.method,
-        duration: `${duration}ms`
-      });
+      // mcpLogger.info('MCP SDK request completed', {
+      //   userId,
+      //   sessionId,
+      //   method: requestBody?.method,
+      //   duration: `${duration}ms`
+      // });
 
     } catch (error) {
       const duration = Date.now() - startTime;

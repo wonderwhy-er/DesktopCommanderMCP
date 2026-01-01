@@ -1,4 +1,6 @@
 
+import { z } from 'zod'; // Added for schema extension
+
 import {
     StartProcessArgsSchema,
     ReadProcessOutputArgsSchema,
@@ -38,6 +40,25 @@ const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
+/**
+ * Wraps a Zod schema to add an optional device_id parameter.
+ * This allows targeting a specific remote device.
+ * @param {z.ZodObject} schema - The original input schema
+ * @returns {z.ZodObject} - The extended schema with device_id
+ */
+const withDeviceSelection = (schema) => {
+    const deviceParam = {
+        device_id: z.string().optional().describe("Optional: The ID of the specific device to execute this tool on. If not provided, the first available online device will be used.")
+    };
+
+    if (typeof schema.extend === 'function') {
+        return schema.extend(deviceParam);
+    }
+
+    // Fallback for ZodEffects (refine) or other types that don't support extend
+    return schema.and(z.object(deviceParam));
+};
+
 
 export const allTools = [
     // Configuration tools
@@ -56,7 +77,7 @@ export const allTools = [
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetConfigArgsSchema,
+        inputSchema: withDeviceSelection(GetConfigArgsSchema),
         annotations: {
             title: "Get Configuration",
             readOnlyHint: true,
@@ -82,7 +103,7 @@ export const allTools = [
                         to the entire file system, regardless of the operating system.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: SetConfigValueArgsSchema,
+        inputSchema: withDeviceSelection(SetConfigValueArgsSchema),
         annotations: {
             title: "Set Configuration Value",
             readOnlyHint: false,
@@ -136,7 +157,7 @@ export const allTools = [
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ReadFileArgsSchema,
+        inputSchema: withDeviceSelection(ReadFileArgsSchema),
         annotations: {
             title: "Read File or URL",
             readOnlyHint: true,
@@ -157,7 +178,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ReadMultipleFilesArgsSchema,
+        inputSchema: withDeviceSelection(ReadMultipleFilesArgsSchema),
         annotations: {
             title: "Read Multiple Files",
             readOnlyHint: true,
@@ -201,7 +222,7 @@ export const allTools = [
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: WriteFileArgsSchema,
+        inputSchema: withDeviceSelection(WriteFileArgsSchema),
         annotations: {
             title: "Write File",
             readOnlyHint: false,
@@ -263,7 +284,7 @@ export const allTools = [
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: WritePdfArgsSchema,
+        inputSchema: withDeviceSelection(WritePdfArgsSchema),
         annotations: {
             title: "Write/Modify PDF",
             readOnlyHint: false,
@@ -282,7 +303,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: CreateDirectoryArgsSchema,
+        inputSchema: withDeviceSelection(CreateDirectoryArgsSchema),
         annotations: {
             title: "Create Directory",
             readOnlyHint: false,
@@ -321,7 +342,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ListDirectoryArgsSchema,
+        inputSchema: withDeviceSelection(ListDirectoryArgsSchema),
         annotations: {
             title: "List Directory Contents",
             readOnlyHint: true,
@@ -337,7 +358,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: MoveFileArgsSchema,
+        inputSchema: withDeviceSelection(MoveFileArgsSchema),
         annotations: {
             title: "Move/Rename File",
             readOnlyHint: false,
@@ -426,7 +447,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: StartSearchArgsSchema,
+        inputSchema: withDeviceSelection(StartSearchArgsSchema),
         annotations: {
             title: "Start Search",
             readOnlyHint: true,
@@ -456,7 +477,7 @@ export const allTools = [
                         results from a search started with start_search.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetMoreSearchResultsArgsSchema,
+        inputSchema: withDeviceSelection(GetMoreSearchResultsArgsSchema),
         annotations: {
             title: "Get Search Results",
             readOnlyHint: true,
@@ -475,7 +496,7 @@ export const allTools = [
                         automatically cleaned up after 5 minutes.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: StopSearchArgsSchema,
+        inputSchema: withDeviceSelection(StopSearchArgsSchema),
         annotations: {
             title: "Stop Search",
             readOnlyHint: false,
@@ -492,7 +513,7 @@ export const allTools = [
                         multiple concurrent searches.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ListSearchesArgsSchema,
+        inputSchema: withDeviceSelection(ListSearchesArgsSchema),
         annotations: {
             title: "List Active Searches",
             readOnlyHint: true,
@@ -516,7 +537,7 @@ export const allTools = [
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetFileInfoArgsSchema,
+        inputSchema: withDeviceSelection(GetFileInfoArgsSchema),
         annotations: {
             title: "Get File Information",
             readOnlyHint: true,
@@ -569,7 +590,7 @@ export const allTools = [
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: EditBlockArgsSchema,
+        inputSchema: withDeviceSelection(EditBlockArgsSchema),
         annotations: {
             title: "Edit Block",
             readOnlyHint: false,
@@ -644,7 +665,7 @@ export const allTools = [
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: StartProcessArgsSchema,
+        inputSchema: withDeviceSelection(StartProcessArgsSchema),
         annotations: {
             title: "Start Terminal Process",
             readOnlyHint: false,
@@ -688,7 +709,7 @@ export const allTools = [
                         Timeout reached (may still be running)
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ReadProcessOutputArgsSchema,
+        inputSchema: withDeviceSelection(ReadProcessOutputArgsSchema),
         annotations: {
             title: "Read Process Output",
             readOnlyHint: true,
@@ -753,7 +774,7 @@ export const allTools = [
                         NEVER USE ANALYSIS TOOL FOR: Local file access (it cannot read files from disk and WILL FAIL)
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: InteractWithProcessArgsSchema,
+        inputSchema: withDeviceSelection(InteractWithProcessArgsSchema),
         annotations: {
             title: "Send Input to Process",
             readOnlyHint: false,
@@ -767,7 +788,7 @@ export const allTools = [
                         Force terminate a running terminal session.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ForceTerminateArgsSchema,
+        inputSchema: withDeviceSelection(ForceTerminateArgsSchema),
         annotations: {
             title: "Force Terminate Process",
             readOnlyHint: false,
@@ -791,7 +812,7 @@ export const allTools = [
                         - Long runtime with blocked status may indicate stuck process
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ListSessionsArgsSchema,
+        inputSchema: withDeviceSelection(ListSessionsArgsSchema),
         annotations: {
             title: "List Terminal Sessions",
             readOnlyHint: true,
@@ -805,7 +826,7 @@ export const allTools = [
                         Returns process information including PID, command name, CPU usage, and memory usage.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: ListProcessesArgsSchema,
+        inputSchema: withDeviceSelection(ListProcessesArgsSchema),
         annotations: {
             title: "List Running Processes",
             readOnlyHint: true,
@@ -819,7 +840,7 @@ export const allTools = [
                         Use with caution as this will forcefully terminate the specified process.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: KillProcessArgsSchema,
+        inputSchema: withDeviceSelection(KillProcessArgsSchema),
         annotations: {
             title: "Kill Process",
             readOnlyHint: false,
@@ -835,7 +856,7 @@ export const allTools = [
                         Returns summary of tool usage, success/failure rates, and performance metrics.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetUsageStatsArgsSchema,
+        inputSchema: withDeviceSelection(GetUsageStatsArgsSchema),
         annotations: {
             title: "Get Usage Statistics",
             readOnlyHint: true,
@@ -856,7 +877,7 @@ export const allTools = [
                         History kept in memory (last 1000 calls, lost on restart).
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetRecentToolCallsArgsSchema,
+        inputSchema: withDeviceSelection(GetRecentToolCallsArgsSchema),
         annotations: {
             title: "Get Recent Tool Calls",
             readOnlyHint: true,
@@ -897,7 +918,7 @@ export const allTools = [
                         No parameters are needed - just call the tool to open the form.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GiveFeedbackArgsSchema,
+        inputSchema: withDeviceSelection(GiveFeedbackArgsSchema),
         annotations: {
             title: "Give Feedback",
             readOnlyHint: false,
@@ -930,7 +951,7 @@ export const allTools = [
                         The prompt content will be injected and execution begins immediately.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-        inputSchema: GetPromptsArgsSchema,
+        inputSchema: withDeviceSelection(GetPromptsArgsSchema),
         annotations: {
             title: "Get Prompts",
             readOnlyHint: true,

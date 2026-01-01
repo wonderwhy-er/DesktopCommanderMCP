@@ -59,10 +59,12 @@ export class ToolDispatcher {
 
   // Dispatch tool call to remote agent
   async dispatchTool(userId, toolName, args) {
-    console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId}`, { args });
+    // Extract device_id if present, use rest as tool arguments
+    const { device_id, ...actualArgs } = args || {};
+    console.log(`🚀 [DISPATCH] Starting tool dispatch: ${toolName} for user ${userId}`, { args: actualArgs, targetDevice: device_id });
 
     // Find available agent for user
-    const agent = await this.findAvailableAgent(userId);
+    const agent = await this.findAvailableAgent(userId, device_id);
     console.log(`🔍 [DISPATCH] Agent lookup result:`, {
       userId,
       foundAgent: !!agent,
@@ -83,8 +85,9 @@ export class ToolDispatcher {
       .insert({
         user_id: userId,
         agent_id: agent.id,
+
         tool_name: toolName,
-        tool_args: args,
+        tool_args: actualArgs,
         status: 'pending'
       })
       .select()
@@ -121,15 +124,24 @@ export class ToolDispatcher {
 
   // --- Agent Registry Logic ---
 
-  // Find available agent for user (currently single agent per user)
-  async findAvailableAgent(userId) {
+  // Find available agent for user (optionally targeting specific device)
+  async findAvailableAgent(userId, targetDeviceId = null) {
     // Search for this specific user's online agent
-    const { data: agent, error } = await this.supabase
+    let query = this.supabase
       .from('mcp_agents')
       .select('*')
       .eq('user_id', userId)
-      .eq('status', 'online')
-      .order('last_seen', { ascending: false })
+      .eq('status', 'online');
+
+    if (targetDeviceId) {
+      // If specific device requested, filter by device_id
+      query = query.eq('device_id', targetDeviceId);
+    } else {
+      // Otherwise get most recently seen
+      query = query.order('last_seen', { ascending: false });
+    }
+
+    const { data: agent, error } = await query
       .limit(1)
       .maybeSingle();
 
