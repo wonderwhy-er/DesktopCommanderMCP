@@ -1,6 +1,6 @@
 # Installation Guide
 
-This comprehensive guide will walk you through setting up the Supabase MCP Server with remote agent capabilities from scratch.
+This comprehensive guide will walk you through setting up the Desktop Commander Remote Server with remote agent capabilities from scratch.
 
 ## Prerequisites
 
@@ -38,9 +38,10 @@ nano .env  # or use your preferred editor
 
 ### 3. Database Setup
 
+The database schema is located in `migrations/`. You need to apply this to your Supabase project.
+
 ```bash
-# Run the database migration
-npm run setup
+# Recommendation: Use Supabase CLI or Dashboard to apply migrations/001_remote_mcp_schema.sql
 ```
 
 ### 4. Start the System
@@ -150,14 +151,14 @@ npm list --depth=0
 
 #### 4.1 Apply Database Schema
 
-Run the setup script to create required tables:
+Locate the migration file at `migrations/001_remote_mcp_schema.sql`.
 
-```bash
-npm run setup
-```
+You can apply this using the Supabase SQL Editor:
+1. Copy the content of the SQL file.
+2. Go to the Supabase **SQL Editor**.
+3. Paste the content and click **Run**.
 
 This creates the following tables:
-- `mcp_pkce_codes` - OAuth PKCE codes storage
 - `mcp_agents` - Agent registry and status
 - `mcp_remote_calls` - Tool call tracking
 
@@ -166,7 +167,7 @@ This creates the following tables:
 Check that tables were created successfully:
 
 1. Go to Supabase Dashboard → **Table Editor**
-2. Verify the three tables exist
+2. Verify the tables exist
 3. Check that Row Level Security (RLS) is enabled
 
 ### Step 5: Start the Server
@@ -181,9 +182,8 @@ npm run dev
 
 You should see:
 ```
-🚀 Supabase MCP Server started
+🚀 Desktop Commander Remote Server started
 Server: http://localhost:3007
-Health: http://localhost:3007/health
 MCP: http://localhost:3007/mcp
 Environment: development
 ```
@@ -196,23 +196,11 @@ For production deployment:
 NODE_ENV=production npm start
 ```
 
-#### 5.3 Verify Server Health
-
+#### 5.3 Verify Server
 Test the server is running correctly:
 
 ```bash
-curl http://localhost:3007/health
-```
-
-Expected response:
-```json
-{
-  "status": "healthy",
-  "service": "supabase-mcp-server",
-  "version": "1.0.0",
-  "uptime": { ... },
-  "environment": { ... }
-}
+curl http://localhost:3007/
 ```
 
 ### Step 6: Agent Setup (Optional)
@@ -225,8 +213,8 @@ In a separate terminal or on another machine:
 # Local agent
 npm run agent
 
-# Remote agent (specify server URL)
-BASE_MCP_URL=https://your-server.com npm run agent
+# Remote agent (specify server URL via env var if needed, default is localhost:3007)
+# BASE_MCP_URL=https://your-server.com npm run agent
 ```
 
 #### 6.2 Agent Authentication
@@ -263,13 +251,15 @@ Add the MCP server to your Claude Desktop configuration file:
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
+> **Note**: Since the HTTP connector script is currently pending update, you may need to use an SSE transport or a custom connector script.
+
 ```json
 {
   "mcpServers": {
     "supabase-mcp": {
       "command": "node",
       "args": [
-        "/path/to/supabase-mcp/src/client/http-connector.js"
+        "path/to/your-connector-script.js"
       ],
       "env": {
         "MCP_SERVER_URL": "http://localhost:3007"
@@ -311,24 +301,6 @@ To run on a different port:
 MCP_SERVER_PORT=8080 npm start
 ```
 
-#### HTTPS Configuration
-
-For production with HTTPS:
-
-```bash
-# Enable HTTPS (requires certificates)
-ENABLE_HTTPS=true npm start
-```
-
-#### CORS Configuration
-
-For cross-origin requests:
-
-```bash
-# Allow specific origins
-CORS_ORIGINS='["https://myapp.com", "https://localhost:3000"]' npm start
-```
-
 ### Agent Configuration
 
 #### Remote Agent Setup
@@ -340,15 +312,9 @@ To connect an agent from a different machine:
 BASE_MCP_URL=https://your-server.com npm run agent
 ```
 
-#### Agent Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BASE_MCP_URL` | `http://localhost:3007` | MCP server URL |
-
 ## 🧪 Testing Your Installation
 
-### 1. Health Check Test
+### 1. Health Check Test (Uses Info Endpoint)
 
 ```bash
 npm run test-health
@@ -369,7 +335,7 @@ npm run test
 ### 4. Agent Integration Test
 
 ```bash
-node test-agent.js
+node test/test-agent.js
 ```
 
 ## 🚨 Troubleshooting
@@ -407,7 +373,7 @@ MCP_SERVER_PORT=8080 npm start
 #### Claude Desktop Integration
 
 **Error:** `MCP server not found`
-- Verify the path to `http-connector.js` is correct
+- Verify the path to your connector script is correct or use a direct command if applicable.
 - Check that the server is running on the specified URL
 - Restart Claude Desktop after configuration changes
 
@@ -440,7 +406,7 @@ After successful installation:
 1. **Explore Tools**: Try the available MCP tools in Claude Desktop
 2. **Add Custom Tools**: Extend the agent with your own tools
 3. **Scale Agents**: Deploy agents on multiple machines
-4. **Monitor Usage**: Check the health and stats endpoints
+4. **Monitor Usage**: Check the stats endpoints
 5. **Production Deploy**: See [DEPLOYMENT.md](./DEPLOYMENT.md) for production setup
 
 ## 📚 Additional Resources

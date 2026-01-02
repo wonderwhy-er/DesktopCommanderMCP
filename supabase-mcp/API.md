@@ -1,6 +1,6 @@
 # API Reference
 
-This document provides comprehensive API documentation for the Supabase MCP Server, including REST endpoints, MCP tools, and WebSocket communication.
+This document provides comprehensive API documentation for the Desktop Commander Remote Server, including REST endpoints, MCP tools, and WebSocket communication.
 
 ## 📡 Server Endpoints
 
@@ -16,14 +16,13 @@ Server information and capabilities.
 **Response:**
 ```json
 {
-  "service": "Supabase MCP Server",
+  "service": "Desktop Commander Remote Server",
   "version": "1.0.0",
   "protocol_version": "2024-11-05",
   "transport": "http",
   "authentication": "oauth2",
   "endpoints": {
     "mcp": "/mcp",
-    "health": "/health",
     "authorize": "/authorize",
     "token": "/token",
     "register": "/register"
@@ -40,32 +39,7 @@ Server information and capabilities.
 }
 ```
 
-#### `GET /health`
-Server health and performance metrics.
 
-**Response:**
-```json
-{
-  "status": "healthy",
-  "service": "supabase-mcp-server",
-  "version": "1.0.0",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "uptime": {
-    "milliseconds": 3600000,
-    "seconds": 3600,
-    "human": "1h"
-  },
-  "requests": {
-    "total": 1250,
-    "rate": 0.35
-  },
-  "environment": {
-    "node_version": "v18.19.0",
-    "platform": "darwin",
-    "arch": "arm64"
-  }
-}
-```
 
 ### OAuth 2.0 Endpoints
 
@@ -359,7 +333,7 @@ Execute read-only database queries on user-scoped tables.
 **Example Usage:**
 ```json
 {
-  "name": "supabase_query",
+  "service": "desktop-commander-remote-server",
   "arguments": {
     "table": "mcp_remote_calls",
     "columns": "tool_name, status, created_at",
@@ -584,14 +558,12 @@ Following JSON-RPC 2.0 error codes:
 
 ## 📈 Monitoring & Analytics
 
-### Health Metrics
+### Server Metrics
 
-Available via the `/health` endpoint:
+Available via the `/` endpoint (server info) or `/stats` (authenticated):
 
-- Server uptime and version
-- Request count and rate
-- Memory usage and performance
-- Database connection status
+- Server version and capabilities
+- Platform information
 
 ### Tool Usage Analytics
 
@@ -620,7 +592,7 @@ Monitor database performance:
   "mcpServers": {
     "supabase-mcp": {
       "command": "node",
-      "args": ["/path/to/supabase-mcp/src/client/http-connector.js"],
+      "args": ["/path/to/your/connector-script.js"],
       "env": {
         "MCP_SERVER_URL": "http://localhost:3007"
       }
@@ -676,4 +648,4 @@ const channel = supabase.channel(`mcp_user_${userId}`)
 
 ---
 
-This API reference provides complete documentation for integrating with and extending the Supabase MCP Server.
+This API reference provides complete documentation for integrating with and extending the Desktop Commander Remote Server.

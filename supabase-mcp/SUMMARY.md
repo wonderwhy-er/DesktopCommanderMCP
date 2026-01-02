@@ -1,8 +1,8 @@
-# Supabase MCP Remote Connector - Complete Implementation
+# Desktop Commander Remote Server - Complete Implementation
 
 ## 🎉 **SUCCESS: Remote MCP Connector with SSE is Working!**
 
-The Supabase MCP Server has been successfully implemented as a remote connector with SSE (Server-Sent Events) transport, following the same OAuth approach as the passport-oauth implementation.
+The Desktop Commander Remote Server has been successfully implemented as a remote connector with SSE (Server-Sent Events) transport, following the same OAuth approach as the passport-oauth implementation.
 
 ## ✅ **What We Accomplished**
 
@@ -22,7 +22,7 @@ The Supabase MCP Server has been successfully implemented as a remote connector 
 - ✅ **Single Server** - No separate web server needed
 - ✅ **OAuth Endpoints** - `/authorize` and `/auth/callback` integrated
 - ✅ **Static Files** - Web interface served from main server
-- ✅ **Health Monitoring** - Comprehensive health checks and stats
+- ✅ **Health Monitoring** - Comprehensive stats
 
 ### **4. Production Features**
 - ✅ **Database Schema** - Complete tables with RLS policies
@@ -147,7 +147,7 @@ npm run test-oauth
 # Test SSE connector directly
 npm run connector
 
-# Run server health tests
+# Run server metric tests
 npm test
 ```
 
@@ -166,18 +166,17 @@ Auth: Requiring valid Supabase tokens
 - ✅ Supabase production database
 - ✅ Environment variables secured
 - ✅ Rate limiting enabled
-- ✅ Health monitoring setup
+- ✅ Metrics monitoring setup
 
 ## 📈 **Performance & Monitoring**
 
 ```javascript
-// Server health endpoint
-GET /health
+// Server info endpoint
+GET /
 {
-  "status": "healthy",
-  "uptime": "2h 15m",
-  "sse_connections": 5,
-  "requests_per_minute": 42
+  "service": "Desktop Commander Remote Server",
+  "version": "1.0.0",
+  ...
 }
 
 // User statistics  
@@ -208,7 +207,7 @@ GET /stats (authenticated)
 
 ## ✨ **Summary**
 
-The Supabase MCP Server successfully implements:
+The Desktop Commander Remote Server successfully implements:
 
 🔥 **Remote MCP Connector** with SSE transport  
 🔥 **OAuth Authentication** with browser-based flow  

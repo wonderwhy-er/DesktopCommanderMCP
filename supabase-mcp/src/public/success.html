@@ -1,16 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Authentication Successful - Supabase MCP</title>
+  <title>Authentication Successful - Desktop Commander</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
   <div class="container success-container">
     <div class="success-icon">✅</div>
     <h1>Authentication Successful!</h1>
-    <p>You're now connected to the Supabase MCP Server</p>
+    <p>You're now connected to the Desktop Commander Remote Server</p>
 
     <!-- Token display -->
     <div id="token-section" class="config-section">
@@ -27,11 +29,11 @@
     <div class="config-section">
       <h3>⚙️ Claude Desktop Configuration</h3>
       <p>Add this configuration to your Claude Desktop settings:</p>
-      
+
       <div class="config-code" id="claude-config"></div>
-      
+
       <button class="copy-btn" onclick="copyConfig()">📋 Copy Configuration</button>
-      
+
       <div class="connection-steps">
         <h4>Setup Instructions:</h4>
         <ol>
@@ -49,9 +51,9 @@
     <div class="config-section">
       <h3>🔗 SSE Connector</h3>
       <p>For advanced users: Use the SSE connector directly</p>
-      
+
       <div class="config-code" id="sse-command"></div>
-      
+
       <button class="copy-btn" onclick="copySSECommand()">📋 Copy Command</button>
     </div>
 
@@ -59,7 +61,7 @@
     <div class="config-section">
       <h3>🛠️ Available Tools</h3>
       <p>Once connected, you'll have access to these tools:</p>
-      
+
       <div id="tools-list" style="text-align: left; margin: 16px 0;">
         <div class="alert alert-info">Loading available tools...</div>
       </div>
@@ -87,8 +89,7 @@
 
     <div class="footer">
       <p>
-        🎉 <strong>Success!</strong> Your Supabase MCP server is ready to use.<br>
-        <a href="/health" style="color: #667eea;">Server Health</a> | 
+        🎉 <strong>Success!</strong> Your Desktop Commander server is ready to use.<br>
         <a href="mailto:support@example.com" style="color: #667eea;">Support</a>
       </p>
     </div>
@@ -115,19 +116,19 @@
         // Get MCP server info
         const response = await fetch('/api/mcp-info');
         mcpInfo = await response.json();
-        
+
         // Display token
         document.getElementById('access-token').textContent = accessToken;
-        
+
         // Generate Claude Desktop config
         generateClaudeConfig();
-        
+
         // Generate SSE command
         generateSSECommand();
-        
+
         // Load available tools
         loadAvailableTools();
-        
+
       } catch (error) {
         console.error('Init error:', error);
         showTestResult('Error initializing page: ' + error.message, false);
@@ -150,7 +151,7 @@
           }
         }
       };
-      
+
       document.getElementById('claude-config').textContent = JSON.stringify(config, null, 2);
     }
 
@@ -160,7 +161,7 @@
 export SUPABASE_ACCESS_TOKEN="${accessToken}"
 export SUPABASE_REFRESH_TOKEN="${refreshToken || ""}"
 node sse-connector.js`;
-      
+
       document.getElementById('sse-command').textContent = command;
     }
 
@@ -172,16 +173,16 @@ node sse-connector.js`;
             'Authorization': `Bearer ${accessToken}`
           }
         });
-        
+
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
         displayTools(data.tools);
-        
+
       } catch (error) {
-        document.getElementById('tools-list').innerHTML = 
+        document.getElementById('tools-list').innerHTML =
           '<div class="alert alert-error">Failed to load tools: ' + error.message + '</div>';
       }
     }
@@ -189,18 +190,18 @@ node sse-connector.js`;
     // Display tools list
     function displayTools(tools) {
       if (!tools || tools.length === 0) {
-        document.getElementById('tools-list').innerHTML = 
+        document.getElementById('tools-list').innerHTML =
           '<div class="alert alert-info">No tools available</div>';
         return;
       }
-      
+
       const toolsHTML = tools.map(tool => `
         <div style="margin: 12px 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px;">
           <h4 style="margin: 0 0 8px 0; color: #2d3748;">🔧 ${tool.name}</h4>
           <p style="margin: 0; color: #4a5568; font-size: 14px;">${tool.description}</p>
         </div>
       `).join('');
-      
+
       document.getElementById('tools-list').innerHTML = toolsHTML;
     }
 
@@ -209,28 +210,22 @@ node sse-connector.js`;
       const testBtn = document.getElementById('test-btn');
       testBtn.disabled = true;
       testBtn.innerHTML = '<span class="loading"></span>Testing...';
-      
+
       try {
-        // Test health endpoint
-        const healthResponse = await fetch(mcpInfo.mcpServerUrl + '/health');
-        if (!healthResponse.ok) {
-          throw new Error(`Health check failed: ${healthResponse.status}`);
-        }
-        
         // Test authenticated endpoint
         const statsResponse = await fetch(mcpInfo.mcpServerUrl + '/stats', {
           headers: {
             'Authorization': `Bearer ${accessToken}`
           }
         });
-        
+
         if (!statsResponse.ok) {
           throw new Error(`Authentication test failed: ${statsResponse.status}`);
         }
-        
+
         const stats = await statsResponse.json();
         showTestResult(`✅ Connection successful! Server uptime: ${stats.server?.uptime || 'unknown'}`, true);
-        
+
       } catch (error) {
         showTestResult(`❌ Connection failed: ${error.message}`, false);
       } finally {
@@ -281,9 +276,9 @@ node sse-connector.js`;
       feedback.style.zIndex = '1000';
       feedback.style.minWidth = '250px';
       feedback.textContent = message;
-      
+
       document.body.appendChild(feedback);
-      
+
       // Remove after 2 seconds
       setTimeout(() => {
         feedback.remove();
@@ -299,4 +294,5 @@ node sse-connector.js`;
     document.addEventListener('DOMContentLoaded', initSuccessPage);
   </script>
 </body>
+
 </html>

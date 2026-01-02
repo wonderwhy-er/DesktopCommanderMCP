@@ -30,13 +30,6 @@ import {
     WritePdfArgsSchema,
 } from './schemas.js';
 
-import { getSystemInfo, getOSSpecificGuidance, getDevelopmentToolGuidance, getPathGuidance } from '../../utils/system-info.js';
-
-// Get system information once at startup
-const SYSTEM_INFO = getSystemInfo();
-const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
-const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
-const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
@@ -155,7 +148,6 @@ export const allTools = [
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
 
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(ReadFileArgsSchema),
         annotations: {
@@ -176,7 +168,6 @@ export const allTools = [
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(ReadMultipleFilesArgsSchema),
         annotations: {
@@ -220,7 +211,6 @@ export const allTools = [
                         Files over 50 lines will generate performance notes but are still written successfully.
                         Only works within allowed directories.
 
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(WriteFileArgsSchema),
         annotations: {
@@ -282,7 +272,6 @@ export const allTools = [
 
                         Only works within allowed directories.
 
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(WritePdfArgsSchema),
         annotations: {
@@ -301,7 +290,6 @@ export const allTools = [
                         Can create multiple nested directories in one operation.
                         Only works within allowed directories.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(CreateDirectoryArgsSchema),
         annotations: {
@@ -340,7 +328,6 @@ export const allTools = [
                         If a directory cannot be accessed, it will show [DENIED] instead.
                         Only works within allowed directories.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(ListDirectoryArgsSchema),
         annotations: {
@@ -356,7 +343,6 @@ export const allTools = [
                         Can move files between directories and rename them in a single operation.
                         Both source and destination must be within allowed directories.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(MoveFileArgsSchema),
         annotations: {
@@ -445,7 +431,6 @@ export const allTools = [
                         Perfect for large directories where you want to see results immediately and
                         have the option to cancel if the search takes too long or you find what you need.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(StartSearchArgsSchema),
         annotations: {
@@ -535,7 +520,6 @@ export const allTools = [
 
                         Only works within allowed directories.
                         
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(GetFileInfoArgsSchema),
         annotations: {
@@ -588,7 +572,6 @@ export const allTools = [
                         if the edited file exceeds this limit. If this happens, consider breaking your edits into
                         smaller, more focused changes.
 
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(EditBlockArgsSchema),
         annotations: {
@@ -610,8 +593,6 @@ export const allTools = [
                         The analysis tool CANNOT access local files and WILL FAIL - always use processes for file-based work.
                         
                         CRITICAL RULE: For ANY local file work, ALWAYS use this tool + interact_with_process, NEVER use analysis/REPL tool.
-                        
-                        ${OS_GUIDANCE}
                         
                         REQUIRED WORKFLOW FOR LOCAL FILES:
                         1. start_process("python3 -i") - Start Python REPL for data analysis
@@ -663,7 +644,6 @@ export const allTools = [
                         ALWAYS USE FOR: Local file analysis, CSV processing, data exploration, system commands
                         NEVER USE ANALYSIS TOOL FOR: Local file access (analysis tool is browser-only and WILL FAIL)
 
-                        ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
         inputSchema: withDeviceSelection(StartProcessArgsSchema),
         annotations: {

@@ -1,10 +1,10 @@
 # Supabase MCP OAuth Flow
 
-This document explains how the OAuth authentication works with the Supabase MCP Server.
+This document explains how the OAuth authentication works with the Desktop Commander Remote Server.
 
 ## How OAuth Works
 
-The Supabase MCP Server uses OAuth for authentication, similar to the passport-oauth approach. When Claude Desktop connects, the following flow occurs:
+The Desktop Commander Remote Server uses OAuth for authentication, similar to the passport-oauth approach. When Claude Desktop connects, the following flow occurs:
 
 ### 1. Initial Connection Attempt
 

@@ -1,92 +1,77 @@
 # Architecture Guide
 
-This document provides a comprehensive overview of the Supabase MCP Server architecture, including system design, data flows, and implementation details.
+This document provides a comprehensive overview of the Desktop Commander Remote Server architecture, including system design, data flows, and implementation details.
 
 ## 🏗️ System Overview
 
-The Supabase MCP Server is a distributed system that enables remote tool execution through real-time communication channels. It bridges Claude Desktop with remote agents, providing a secure and scalable platform for distributed AI workflows.
+The Desktop Commander Remote Server is a distributed system that enables remote tool execution through real-time communication channels. It bridges Claude Desktop with remote agents, providing a secure and scalable platform for distributed AI workflows.
 
 ### High-Level Architecture
 
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │                 │     │                 │     │                 │
-│  Claude Desktop │────►│ Supabase MCP    │────►│  Remote Agent   │
-│                 │     │ Server          │     │  (Machine A)    │
+│  Claude Desktop │────►│ Desktop Commander │────►│  Remote Agent   │
+│                 │     │ Remote Server   │     │  (Machine A)    │
 │  - MCP Client   │◄────│                 │◄────│                 │
 │  - Tool Calls   │     │ ┌─────────────┐ │     │ - Tool Executor │
-│  - UI           │     │ │ Channel     │ │     │ - Desktop Int.  │
-└─────────────────┘     │ │ Manager     │ │     │ - OAuth Client  │
-                        │ └─────────────┘ │     └─────────────────┘
-┌─────────────────┐     │ ┌─────────────┐ │     ┌─────────────────┐
-│                 │     │ │ Tool        │ │     │                 │
-│  Web Browser    │────►│ │ Dispatcher  │ │────►│  Remote Agent   │
-│                 │     │ └─────────────┘ │     │  (Machine B)    │
+│  - UI           │     │ │ Remote MCP  │ │     │ - Desktop Int.  │
+│                 │     │ │ Manager     │ │     │ - OAuth Client  │
+│                 │     │ └─────────────┘ │     └─────────────────┘
+└─────────────────┘     │ ┌─────────────┐ │
+┌─────────────────┐     │ │ Tool Call   │ │     ┌─────────────────┐
+│                 │     │ │ Processor   │ │     │                 │
+│  Web Browser    │────►│ └─────────────┘ │────►│  Remote Agent   │
+│                 │     │                 │     │  (Machine B)    │
 │ - OAuth Flow    │◄────│ ┌─────────────┐ │◄────│                 │
-│ - Auth UI       │     │ │ Agent       │ │     │ - Headless Mode │
-└─────────────────┘     │ │ Registry    │ │     │ - Tool Executor │
-                        │ └─────────────┘ │     │ - SSH/Docker    │
-        ┌───────────────┤ ┌─────────────┐ │     └─────────────────┘
-        │               │ │ OAuth       │ │
-        │               │ │ Provider    │ │
-        ▼               │ └─────────────┘ │
-┌─────────────────┐     └─────────────────┘
-│                 │              │
-│   Supabase      │◄─────────────┘
-│                 │
-│ - PostgreSQL    │
-│ - Real-time     │
-│ - Auth          │
-│ - Row Security  │
-└─────────────────┘
+│ - Auth UI       │     │ │ OAuth       │ │     │ - Headless Mode │
+│                 │     │ │ Provider    │ │     │ - Tool Executor │
+└─────────────────┘     │ └─────────────┘ │     │ - SSH/Docker    │
+                        └─────────────────┘     └─────────────────┘
+                                 │
+        ┌───────────────┐        │
+        │               │◄───────┘
+        │   Supabase    │
+        │               │
+        │ - PostgreSQL  │
+        │ - Real-time   │
+        │ - Auth        │
+        │ - Row Security│
+        └───────────────┘
 ```
 
 ## 🔧 Core Components
 
-### 1. Base MCP Server (`src/server/mcp-server.js`)
+### 1. Desktop Commander Remote Server (`src/server/server.js`)
 
-The central server that handles MCP protocol communication with Claude Desktop.
+The central server that handles MCP protocol communication with Claude Desktop and orchestrates the remote tool execution.
 
 **Responsibilities:**
-- MCP protocol compliance and message routing
+- MCP protocol compliance via `@modelcontextprotocol/sdk`
 - HTTP/HTTPS server with Express.js
-- Session management and transport creation
-- Authentication middleware integration
-- Tool registration and execution coordination
+- Authentication and session management
+- Routing to sub-modules (OAuth, MCP, General)
 
-**Key Features:**
-- SDK-based MCP implementation using `@modelcontextprotocol/sdk`
-- Session-based transport management
-- Automatic user channel subscription
-- Graceful shutdown handling
+### 2. Remote MCP Manager (`src/server/remote-mcp/remote-mcp.js`)
 
-### 2. Channel Manager (`src/remote/channel-manager.js`)
-
-Manages Supabase real-time channels for communication between server and agents.
+Handles the integration of the MCP SDK and manages tool registration and transport layers.
 
 **Responsibilities:**
-- User-specific channel subscriptions (`mcp_user_{userId}`)
-- Tool call broadcasting to agents
-- Tool result collection from agents
-- Presence tracking for connected agents
-- Channel lifecycle management
+- Initializes `McpServer` and manages transports
+- Registers static tools (e.g., `list_agents`) and dynamic remote tools
+- Manages user-specific `ToolCallProcessor` instances
+- Coordinates between incoming MCP requests and the tool execution logic
 
-**Communication Flow:**
-```
-Server → Channel Manager → Supabase Channel → Remote Agent
-       ←                ←                  ←
-```
+### 3. Tool Call Processor (`src/server/remote-mcp/tool-call-processor.js`)
 
-### 3. Tool Dispatcher (`src/remote/tool-dispatcher.js`)
-
-Orchestrates tool calls between the server and remote agents.
+Orchestrates the dispatching and tracking of tool execution calls to remote agents.
 
 **Responsibilities:**
-- Tool call queue management with timeout handling
-- Agent availability checking
-- Database persistence of call status
-- Promise-based result handling
-- Periodic cleanup of stale calls
+- Dispatches tool calls to specific agents via Supabase Realtime
+- Manages the lifecycle of a tool call (pending -> executing -> completed/failed)
+- Subscribes to global result channels to receive feedback from agents
+- Handles timeouts and error states
+- Queries `mcp_agents` to find available execution targets
 
 **State Machine:**
 ```
@@ -96,40 +81,21 @@ database  database   database
  insert   update     update
 ```
 
-### 4. Agent Registry (`src/remote/agent-registry.js`)
+### 4. Remote Agent (`agent.js` & `src/agent/`)
 
-Tracks and manages connected remote agents.
-
-**Responsibilities:**
-- Agent registration with capability reporting
-- Status tracking and last-seen updates
-- Available agent discovery
-- Cleanup of offline agents
-
-**Agent Lifecycle:**
-```
-Registration → Online → Heartbeat → Offline → Cleanup
-     ↓           ↓         ↓          ↓         ↓
-   Database   Database  Database  Database  Database
-   INSERT     UPDATE    UPDATE    UPDATE    DELETE
-```
-
-### 5. Remote Agent (`agent.js`)
-
-Standalone agent that connects to the server and executes tools.
+Standalone agent that runs on the target machine, connects to the server, and executes requested tools.
 
 **Responsibilities:**
 - OAuth authentication (desktop/headless modes)
 - Supabase client configuration
-- Real-time channel subscription
-- Tool execution via Desktop Integration
+- Real-time channel subscription to receive job tokens
+- Tool execution via `DesktopIntegration`
 - Presence tracking and heartbeat
 
 **Agent States:**
 - **Initializing**: Starting up and configuring
 - **Authenticating**: Completing OAuth flow
-- **Registering**: Adding to server registry
-- **Online**: Ready to receive tool calls
+- **Online**: Ready to receive tool calls (Heartbeat active)
 - **Executing**: Processing a tool call
 - **Shutting Down**: Graceful disconnection
 
@@ -139,78 +105,78 @@ Standalone agent that connects to the server and executes tools.
 
 ```
 1. Tool Request
-Claude Desktop ──MCP Request──► Base MCP Server
+Claude Desktop ──MCP Request──► Remote Server (server.js)
                                       │
-2. Dispatch                          │
-                                     ▼
-                            Tool Dispatcher
-                                     │
-3. Find Agent                        │
-                                     ▼
-                            Agent Registry ──Query──► Database
-                                     │                    │
-4. Queue Call                        │                    ▼
-                                     ▼              mcp_remote_calls
-                              Channel Manager           (INSERT)
-                                     │
-5. Broadcast                         │
-                                     ▼
-                            Supabase Channel
-                                     │
-6. Receive                           │
-                                     ▼
-                              Remote Agent
-                                     │
-7. Execute                           │
-                                     ▼
-                           Desktop Integration
-                                     │
-8. Result                            │
-                                     ▼
-                            Supabase Channel
-                                     │
-9. Handle Result                     │
-                                     ▼
-                           Tool Dispatcher ──Update──► Database
-                                     │                     │
-10. Response                         │                     ▼
-                                     ▼               mcp_remote_calls
-                            Base MCP Server           (UPDATE)
-                                     │
-11. MCP Response                     │
-                                     ▼
-Claude Desktop ◄──MCP Response───── Base MCP Server
+2. Route Request                      │
+                                      ▼
+                             Remote MCP Manager
+                                      │
+3. Dispatch                           │
+                                      ▼
+                            Tool Call Processor ──Query──► Database
+                                      │                    │
+4. Create Call Record                 │                    ▼
+                                      ▼              mcp_remote_calls
+                              Supabase Client            (INSERT)
+                                      │
+5. Broadcast                          │
+                                      ▼
+                             Supabase Channel
+                                      │
+6. Receive                            │
+                                      ▼
+                               Remote Agent
+                                      │
+7. Execute                            │
+                                      ▼
+                            Desktop Integration
+                                      │
+8. Result                             │
+                                      ▼
+                             Supabase Channel
+                                      │
+9. Handle Result                      │
+                                      ▼
+                            Tool Call Processor ──Update──► Database
+                                      │                     │
+10. Return Result                     │                     ▼
+                                      ▼              mcp_remote_calls
+                             Remote MCP Manager          (UPDATE)
+                                      │
+11. MCP Response                      │
+                                      ▼
+Claude Desktop ◄──MCP Response───── Remote Server
 ```
 
 ### Authentication Flow
 
 ```
 1. Agent Start
-Remote Agent ──HTTP Request──► Base MCP Server
+Remote Agent ──HTTP Request──► Remote Server
                                       │
 2. OAuth URL                          │
                                       ▼
-Remote Agent ◄──OAuth URL──── OAuth Provider
+Remote Agent ◄──OAuth URL──── OAuth Handler
       │                              │
-3. Browser/Manual                     │
+3. Browser/Manual                    │
       ▼                              │
 Web Browser ──Login/Signup──► Supabase Auth
                                       │
 4. Callback                           │
                                       ▼
-Base MCP Server ◄──Access Token───── OAuth Provider
+Remote Server ◄──Access Token───── OAuth Provider
                                       │
 5. Token Response                     │
                                       ▼
-Remote Agent ◄──Access Token──── Base MCP Server
+Remote Agent ◄──Access Token──── Remote Server
       │
 6. Client Config
       ▼
 Supabase Client ──Get User──► Supabase Auth
       │                           │
-7. Agent Registration              │
+7. Agent Registration             │
       ▼                           ▼
-Agent Registry ──Insert──► Database (mcp_agents)
+Agent Wrapper ──Insert──► Database (mcp_agents)
 ```
 
 ## 💾 Database Schema
@@ -218,30 +184,27 @@ Agent Registry ──Insert──► Database (mcp_agents)
 ### Entity Relationship Diagram
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  mcp_pkce_codes │     │   mcp_agents    │     │mcp_remote_calls │
-├─────────────────┤     ├─────────────────┤     ├─────────────────┤
-│ id (PK)         │     │ id (PK)         │     │ id (PK)         │
-│ authorization_id│     │ user_id (FK)    │     │ user_id (FK)    │
-│ code_challenge  │     │ agent_name      │     │ agent_id (FK)   │
-│ redirect_uri    │     │ device_id       │     │ tool_name       │
-│ expires_at      │     │ capabilities    │     │ tool_args       │
-│ created_at      │     │ status          │     │ status          │
-└─────────────────┘     │ last_seen       │     │ result          │
-                        │ auth_token      │     │ error_message   │
-                        │ created_at      │     │ created_at      │
-                        │ updated_at      │     │ completed_at    │
-                        └─────────────────┘     │ timeout_at      │
-                                 │              └─────────────────┘
-                                 │                       │
-                                 └───────────────────────┘
+┌─────────────────┐     ┌─────────────────┐
+│   mcp_agents    │     │mcp_remote_calls │
+├─────────────────┤     ├─────────────────┤
+│ id (PK, uuid)   │     │ id (PK)         │
+│ user_id (FK)    │     │ user_id (FK)    │
+│ agent_name      │     │ agent_id (FK)   │
+│ capabilities    │     │ tool_name       │
+│ status          │     │ tool_args       │
+│ last_seen       │     │ status          │
+│ auth_token      │     │ result          │
+│ created_at      │     │ error_message   │
+│ updated_at      │     │ created_at      │
+│                 │     │ completed_at    │
+└─────────────────┘     │ timeout_at      │
+                        └─────────────────┘
 ```
 
 ### Table Purposes
 
-1. **mcp_pkce_codes**: OAuth PKCE code storage for secure authentication
-2. **mcp_agents**: Registry of connected agents with capabilities and status
-3. **mcp_remote_calls**: Tool call queue and execution tracking
+1. **mcp_agents**: Registry of connected agents with capabilities and status. Unique constraint on `(user_id, agent_name)`.
+2. **mcp_remote_calls**: Tool call queue and execution tracking.
 
 ### Row Level Security (RLS)
 
@@ -249,12 +212,8 @@ All tables implement user-scoped access:
 
 ```sql
 -- Users can only access their own data
-CREATE POLICY "User isolation" ON table_name 
+CREATE POLICY "User execution isolation" ON mcp_remote_calls 
 FOR ALL USING (auth.uid() = user_id);
-
--- Exception: PKCE codes are temporarily public for auth flow
-CREATE POLICY "PKCE public access" ON mcp_pkce_codes 
-FOR ALL USING (true);
 ```
 
 ## 🔐 Security Architecture
@@ -293,9 +252,8 @@ FOR ALL USING (true);
 │  │ │Agents   │ │    │ │Agents   │ │    │ │Agents   │ │  │
 │  │ │Channels │ │    │ │Channels │ │    │ │Channels │ │  │
 │  │ │Data     │ │    │ │Data     │ │    │ │Data     │ │  │
-│  │ └─────────┘ │    │ └─────────┘ │    │ └─────────┘ │  │
-│  └─────────────┘    └─────────────┘    └─────────────┘  │
-└─────────────────────────────────────────────────────────┘
+│  │ └─────────┘ │    └─────────────┘    └─────────────┘  │
+└─────────────────┘                                         │
 ```
 
 ## 📊 Performance Considerations
@@ -318,31 +276,29 @@ FOR ALL USING (true);
 
 ```
 Memory Usage:
-├── Channel Manager: O(users) active channels
-├── Tool Dispatcher: O(pending_calls) promise handlers
-├── Agent Registry: O(agents) cached entries
-└── MCP Server: O(sessions) transport objects
+├── Tool Call Processor: O(pending_calls) promise handlers
+├── Remote MCP Manager: O(sessions) transport objects
+└── MCP Server: Single instance with registered tools
 
 Database Load:
 ├── Agent Heartbeats: 1 UPDATE per agent per 30 seconds
 ├── Tool Calls: 1 INSERT + 1-2 UPDATEs per call
 ├── Channel Events: Real-time subscription overhead
-└── Cleanup: Periodic DELETE operations
+└── Cleanup: Periodic DELETE operations (via RPC)
 ```
 
 ## 🚀 Extension Points
 
 ### Adding New Tools
 
-1. **Server Tools**: Add to `src/server/tools/`
-2. **Agent Tools**: Extend `DesktopIntegration` class
-3. **Capability Reporting**: Update agent capabilities
+1. **Server-Side Definition**: Add tool definition to `src/server/remote-mcp/clientTools/client-tools.js`.
+2. **Agent Capabilities**: Ensure the agent's `DesktopIntegration` supports the new tool.
+3. **Registration**: The `RemoteMcp` class automatically registers tools defined in `clientTools`.
 
 ### Custom Agent Types
 
-1. **Specialized Agents**: Inherit from base `MCPAgent` class
-2. **Tool Integrations**: Custom `DesktopIntegration` implementations
-3. **Environment Adaptations**: Platform-specific optimizations
+1. **Specialized Agents**: Inherit from base `MCPAgent` class (if creating new agent implementation).
+2. **Tool Integrations**: Custom `DesktopIntegration` implementations in `src/agent/desktop-integration.js`.
 
 ### Monitoring Integration
 
@@ -355,21 +311,21 @@ Database Load:
 
 ### Debug Interfaces
 
-1. **Health Endpoint**: Real-time server status
-2. **Agent Status Tool**: Connected agents overview
-3. **Database Introspection**: Tool call history
-4. **Log Aggregation**: Centralized logging
+1. **Server Logs**: Structured logging via `serverLogger` and `mcpLogger`.
+2. **Agent Status Tool**: `agent_status` tool to view connected agents.
+3. **Database Introspection**: Direct query of `mcp_remote_calls` table.
 
 ### Tracing Tool Calls
 
 ```
-Request ID: req_123456
-├── MCP Request Received (timestamp)
-├── Agent Lookup (duration: 5ms)
-├── Channel Broadcast (duration: 10ms)
-├── Agent Processing (duration: 150ms)
-├── Result Received (duration: 5ms)
-└── MCP Response Sent (total: 170ms)
+Request ID: req_xxx
+├── MCP Request Received
+├── Route to Remote MCP
+├── Tool Call Processor Dispatch
+├── Remote Call Record Created
+├── Agent Execution
+├── Result Received via Realtime
+└── MCP Response Sent
 ```
 
 ### Common Debug Scenarios

@@ -1,6 +1,6 @@
 const TOOL_CALL_TIMEOUT = 60000 * 5; // 5 minutes
 
-export class ToolDispatcher {
+export class ToolCallProcessor {
   constructor(supabase) {
     this.supabase = supabase;
     this.pendingCalls = new Map(); // callId -> Promise resolver
@@ -27,7 +27,7 @@ export class ToolDispatcher {
           filter: 'status=in.(completed,failed)'
         },
         (payload) => {
-          this.handleGlobalUpdate(payload.new);
+          this.handleToolCallUpdate(payload.new);
         }
       )
       .subscribe((status) => {
@@ -39,7 +39,7 @@ export class ToolDispatcher {
   }
 
   // Handle global update from Realtime
-  async handleGlobalUpdate(record) {
+  async handleToolCallUpdate(record) {
     const { id: call_id, result, error_message, status } = record;
 
     const pending = this.pendingCalls.get(call_id);

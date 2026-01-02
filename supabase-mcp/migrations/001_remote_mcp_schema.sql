@@ -1,22 +1,7 @@
 -- Remote MCP Infrastructure Schema
 -- This migration adds tables for remote agent management and PKCE storage
 
--- 1. PKCE Codes Table (replaces in-memory storage)
-CREATE TABLE IF NOT EXISTS mcp_pkce_codes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  authorization_id TEXT UNIQUE NOT NULL,
-  code_challenge TEXT NOT NULL,
-  code_challenge_method TEXT NOT NULL,
-  client_id TEXT NOT NULL,
-  redirect_uri TEXT NOT NULL,
-  scope TEXT DEFAULT 'mcp:tools',
-  resource TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '10 minutes')
-);
 
--- Index for cleanup operations
-CREATE INDEX IF NOT EXISTS idx_pkce_codes_expires_at ON mcp_pkce_codes(expires_at);
 
 -- 2. Agent Registration Table
 CREATE TABLE IF NOT EXISTS mcp_agents (
@@ -59,13 +44,11 @@ CREATE INDEX IF NOT EXISTS idx_remote_calls_timeout ON mcp_remote_calls(timeout_
 
 -- 4. Row Level Security Policies
 -- Enable RLS on new tables
-ALTER TABLE mcp_pkce_codes ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE mcp_agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE mcp_remote_calls ENABLE ROW LEVEL SECURITY;
 
--- PKCE codes - publicly accessible (temporary auth data, no user context)
-DROP POLICY IF EXISTS "PKCE codes are publicly accessible" ON mcp_pkce_codes;
-CREATE POLICY "PKCE codes are publicly accessible" ON mcp_pkce_codes FOR ALL USING (true);
+
 
 -- Agents - users can only see their own agents
 DROP POLICY IF EXISTS "Users see own agents" ON mcp_agents;
@@ -76,13 +59,7 @@ DROP POLICY IF EXISTS "Users see own remote calls" ON mcp_remote_calls;
 CREATE POLICY "Users see own remote calls" ON mcp_remote_calls FOR ALL USING (auth.uid() = user_id);
 
 -- 5. Cleanup Functions
--- Function to cleanup expired PKCE codes
-CREATE OR REPLACE FUNCTION cleanup_expired_pkce_codes()
-RETURNS void AS $$
-BEGIN
-  DELETE FROM mcp_pkce_codes WHERE expires_at < NOW();
-END;
-$$ LANGUAGE plpgsql;
+
 
 -- Function to cleanup timed out remote calls
 CREATE OR REPLACE FUNCTION cleanup_timed_out_calls()
@@ -119,6 +96,6 @@ $$ LANGUAGE plpgsql;
 ALTER publication supabase_realtime ADD TABLE mcp_agents;
 ALTER publication supabase_realtime ADD TABLE mcp_remote_calls;
 
-COMMENT ON TABLE mcp_pkce_codes IS 'OAuth PKCE codes storage for secure authorization flow';
+
 COMMENT ON TABLE mcp_agents IS 'Registry of remote MCP agents connected to the system';
 COMMENT ON TABLE mcp_remote_calls IS 'Queue and tracking for remote tool call execution';

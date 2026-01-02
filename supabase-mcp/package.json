@@ -2,13 +2,13 @@
   "name": "supabase-mcp-server",
   "version": "1.0.0",
   "description": "MCP Server with Supabase OAuth and SSE transport",
-  "main": "src/server/mcp-server.js",
+  "main": "src/server/server.js",
   "type": "module",
   "bin": {
     "mcp-agent": "./agent.js"
   },
   "scripts": {
-    "start": "node src/server/mcp-server.js",
+    "start": "node src/server/server.js",
     "dev": "npm start",
     "connector": "node src/client/http-connector.js",
     "test": "node test/run-tests.js",
