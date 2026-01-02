@@ -24,7 +24,6 @@ import { serverLogger } from '../utils/logger.js';
 
 import { createOAuthRouter } from './routes/oauth.js';
 import { createMCPRouter } from './routes/mcp.js';
-import { createGeneralRouter } from './routes/general.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,19 +91,15 @@ class DesktopCommanderRemoteServer {
     this.app.use(cors({
       origin: (origin, callback) => {
         // Allow requests with no origin (mobile apps, Claude Desktop, etc.)
-        if (!origin) return callback(null, true);
-
-        if (corsOrigins.includes(origin)) {
-          serverLogger.debug('✅ CORS origin allowed', { origin });
-          callback(null, true);
-        } else {
-          serverLogger.warn('❌ CORS origin rejected', {
-            origin,
-            allowed: corsOrigins,
-            serverUrl: this.serverUrl
-          });
-          callback(new Error('Not allowed by CORS'));
+        if (!origin || corsOrigins.includes(origin)) {
+          return callback(null, true);
         }
+
+        serverLogger.warn('❌ CORS origin rejected', {
+          origin,
+          allowed: corsOrigins
+        });
+        callback(new Error('Not allowed by CORS'));
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -134,12 +129,10 @@ class DesktopCommanderRemoteServer {
 
     // Response logging
     this.app.use((req, res, next) => {
-      const originalSend = res.json;
-      res.json = function (data) {
+      res.on('finish', () => {
         const duration = Date.now() - req.startTime;
         serverLogger.logResponse(req, res, duration);
-        return originalSend.call(this, data);
-      };
+      });
       next();
     });
   }
@@ -148,8 +141,40 @@ class DesktopCommanderRemoteServer {
    * Setup API routes
    */
   setupRoutes() {
-    // Mount routers
-    this.app.use('/', createGeneralRouter(this.serverUrl));
+    // Server info endpoint (public)
+    this.app.get('/', (req, res) => {
+      res.json({
+        service: 'Desktop Commander Remote Server',
+        version: '1.0.0',
+        protocol_version: '2024-11-05',
+        transport: 'http',
+        authentication: 'oauth2',
+        endpoints: {
+          mcp: '/mcp',
+          authorize: '/authorize',
+          token: '/token',
+          register: '/register'
+        },
+        timestamp: new Date().toISOString()
+      });
+    });
+
+    // MCP info API endpoint for web interface
+    this.app.get('/api/mcp-info', (req, res) => {
+      const mcpInfo = {
+        mcpServerUrl: this.serverUrl,
+        supabaseUrl: process.env.SUPABASE_URL,
+        supabaseAnonKey: process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY,
+        redirectUrl: `${this.serverUrl}/auth/callback`,
+        authorizationEndpoint: `${this.serverUrl}/authorize`,
+        tokenEndpoint: `${this.serverUrl}/token`,
+        discoveryEndpoint: `${this.serverUrl}/.well-known/oauth-authorization-server`
+      };
+
+      res.json(mcpInfo);
+    });
+
+    // Mount OAuth and MCP routers
     this.app.use('/', createOAuthRouter(this.serverUrl, this.supabase));
     this.app.use('/', createMCPRouter(this.supabase));
   }
@@ -266,12 +291,6 @@ class DesktopCommanderRemoteServer {
     serverLogger.info('Starting graceful shutdown...');
 
     try {
-      // Cleanup channel manager
-      if (this.channelManager) {
-        await this.channelManager.cleanup();
-        serverLogger.info('Channel manager cleaned up');
-      }
-
       // Close HTTP server
       if (this.server) {
         await new Promise((resolve) => {

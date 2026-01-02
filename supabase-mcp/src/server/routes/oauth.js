@@ -105,7 +105,7 @@ export function createOAuthRouter(serverUrl, supabase) {
     };
 
     const handleCallbackRedirect = (res, result) => {
-        const { redirect_uri, state, error, error_description, access_token, refresh_token } = result;
+        const { redirect_uri, state, error, error_description, access_token, refresh_token, client_id, client_name } = result;
 
         if (!redirect_uri) {
             if (error) return sendErrorResponse(res, error, error_description);
@@ -122,6 +122,10 @@ export function createOAuthRouter(serverUrl, supabase) {
                 url.searchParams.set('access_token', access_token);
                 if (refresh_token) url.searchParams.set('refresh_token', refresh_token);
                 url.searchParams.set('code', access_token); // Legacy support
+
+                // Add client information for client-agnostic UI
+                if (client_id) url.searchParams.set('client_id', client_id);
+                if (client_name) url.searchParams.set('client_name', client_name);
             }
 
             if (state) url.searchParams.set('state', state);
@@ -276,7 +280,9 @@ export function createOAuthRouter(serverUrl, supabase) {
             handleCallbackRedirect(res, {
                 ...result,
                 redirect_uri: req.query.redirect_uri,
-                state: req.query.state
+                state: req.query.state,
+                client_id: req.query.client_id,
+                client_name: req.query.client_name
             });
         } catch (callbackError) {
             serverLogger.error('OAuth callback processing failed', null, callbackError);

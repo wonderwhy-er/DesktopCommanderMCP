@@ -219,8 +219,18 @@
         console.log('Redirecting to OAuth callback:', callbackUrl);
         window.location.href = callbackUrl;
       } else {
-        // Direct access - show success page
-        window.location.href = `/success.html?token=${encodeURIComponent(accessToken)}&refresh=${encodeURIComponent(refreshToken || '')}`;
+        // Direct access - show success page with client info
+        const successParams = new URLSearchParams({
+          token: accessToken,
+          refresh: refreshToken || ''
+        });
+
+        // Add client info if available from OAuth params
+        if (oauthParams && oauthParams.client_id) {
+          successParams.set('client_id', oauthParams.client_id);
+        }
+
+        window.location.href = `/success.html?${successParams.toString()}`;
       }
     }
 

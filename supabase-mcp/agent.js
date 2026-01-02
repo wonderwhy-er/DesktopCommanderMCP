@@ -171,7 +171,7 @@ class MCPAgent {
 
       this.agentId = config?.agentId;
 
-
+      console.log('💾 Found persisted session for agent ' + this.agentId);
       if (config.session) {
         return config.session;
       }

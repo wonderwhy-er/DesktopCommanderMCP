@@ -25,12 +25,16 @@
       </p>
     </div>
 
-    <!-- Claude Desktop Configuration -->
+    <!-- MCP Client Configuration -->
     <div class="config-section">
-      <h3>⚙️ Claude Desktop Configuration</h3>
-      <p>Add this configuration to your Claude Desktop settings:</p>
+      <h3>⚙️ MCP Client Configuration</h3>
+      <div id="client-info" class="alert alert-info" style="margin-bottom: 16px; display: none;">
+        <strong>Client:</strong> <span id="client-name"></span><br>
+        <strong>Client ID:</strong> <code id="client-id" style="font-size: 12px;"></code>
+      </div>
+      <p>Add this configuration to your MCP client settings:</p>
 
-      <div class="config-code" id="claude-config"></div>
+      <div class="config-code" id="mcp-config"></div>
 
       <button class="copy-btn" onclick="copyConfig()">📋 Copy Configuration</button>
 
@@ -38,10 +42,10 @@
         <h4>Setup Instructions:</h4>
         <ol>
           <li>Copy the configuration above</li>
-          <li>Open Claude Desktop settings</li>
+          <li>Open your MCP client settings</li>
           <li>Navigate to MCP Servers configuration</li>
-          <li>Add or replace the "supabase-mcp" server entry</li>
-          <li>Restart Claude Desktop</li>
+          <li>Add or replace the server entry with the key shown above</li>
+          <li>Restart your MCP client</li>
           <li>Test the connection using the available tools</li>
         </ol>
       </div>
@@ -100,6 +104,8 @@
     const urlParams = new URLSearchParams(window.location.search);
     const accessToken = urlParams.get('token');
     const refreshToken = urlParams.get('refresh');
+    const clientName = urlParams.get('client_name') || 'MCP Client';
+    const clientId = urlParams.get('client_id') || '';
 
     // MCP server info
     let mcpInfo = null;
@@ -120,8 +126,15 @@
         // Display token
         document.getElementById('access-token').textContent = accessToken;
 
-        // Generate Claude Desktop config
-        generateClaudeConfig();
+        // Display client info if available
+        if (clientName || clientId) {
+          document.getElementById('client-name').textContent = clientName;
+          document.getElementById('client-id').textContent = clientId || 'Dynamic';
+          document.getElementById('client-info').style.display = 'block';
+        }
+
+        // Generate MCP config
+        generateMCPConfig();
 
         // Generate SSE command
         generateSSECommand();
@@ -135,11 +148,14 @@
       }
     }
 
-    // Generate Claude Desktop configuration
-    function generateClaudeConfig() {
+    // Generate MCP client configuration
+    function generateMCPConfig() {
+      // Create server key from client name (lowercase, hyphenated)
+      const serverKey = clientName.toLowerCase().replace(/\s+/g, '-') + '-remote';
+
       const config = {
         mcpServers: {
-          "supabase-mcp": {
+          [serverKey]: {
             command: "node",
             args: ["sse-connector.js"],
             env: {
@@ -152,7 +168,7 @@
         }
       };
 
-      document.getElementById('claude-config').textContent = JSON.stringify(config, null, 2);
+      document.getElementById('mcp-config').textContent = JSON.stringify(config, null, 2);
     }
 
     // Generate SSE command
@@ -252,7 +268,7 @@ node sse-connector.js`;
     }
 
     function copyConfig() {
-      const config = document.getElementById('claude-config').textContent;
+      const config = document.getElementById('mcp-config').textContent;
       navigator.clipboard.writeText(config).then(() => {
         showCopyFeedback('Configuration copied to clipboard!');
       });

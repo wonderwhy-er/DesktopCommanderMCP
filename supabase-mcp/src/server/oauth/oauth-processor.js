@@ -8,17 +8,6 @@ import { serverLogger } from '../../utils/logger.js';
 // PKCE code storage for validation (in production, use Redis or database)
 const pkceCodes = new Map();
 
-// Pre-registered Claude Desktop client (MCP compliant)
-const CLAUDE_DESKTOP_CLIENT = {
-  client_id: 'claude-desktop',
-  client_name: 'Claude Desktop',
-  redirect_uris: ['urn:ietf:wg:oauth:2.0:oob'], // Out-of-band for desktop apps
-  grant_types: ['authorization_code'],
-  response_types: ['code'],
-  token_endpoint_auth_method: 'none', // Public client
-  scope: 'mcp:tools'
-};
-
 export class OAuthProcessor {
   constructor(serverUrl, supabase) {
     this.serverUrl = serverUrl;
@@ -159,7 +148,7 @@ export class OAuthProcessor {
   }
 
   /**
-   * Process client registration
+   * Process client registration (universal for any MCP client)
    */
   processClientRegistration(params) {
     const { client_name, redirect_uris, scope } = params;
@@ -170,44 +159,57 @@ export class OAuthProcessor {
       scope: scope
     });
 
-    // Check if requesting pre-registered Claude Desktop client
-    if (client_name === 'Claude Desktop' || client_name === CLAUDE_DESKTOP_CLIENT.client_name) {
-      serverLogger.info('✅ Returning pre-registered Claude Desktop client', {
-        clientId: CLAUDE_DESKTOP_CLIENT.client_id
-      });
+    // Normalize redirect URIs to array
+    const normalizedRedirectUris = Array.isArray(redirect_uris) ? redirect_uris : [redirect_uris];
 
-      return {
-        ...CLAUDE_DESKTOP_CLIENT,
-        redirect_uris: CLAUDE_DESKTOP_CLIENT.redirect_uris,
-        client_id_issued_at: Math.floor(Date.now() / 1000),
-        client_secret_expires_at: 0 // Never expires for public client
-      };
-    }
+    // Detect client type based on redirect URIs
+    const clientType = this.determineClientType(normalizedRedirectUris);
 
     // Generate client credentials for dynamic registration
-    const clientId = 'mcp_' + Date.now() + '_' + Math.random().toString(36).substring(2);
-    const clientSecret = 'secret_' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+    const clientId = 'mcp_client_' + Date.now() + '_' + Math.random().toString(36).substring(2);
 
     const clientInfo = {
       client_id: clientId,
-      client_secret: clientSecret,
       client_name: client_name,
-      redirect_uris: Array.isArray(redirect_uris) ? redirect_uris : [redirect_uris],
+      redirect_uris: normalizedRedirectUris,
       scope: scope || 'mcp:tools',
       grant_types: ['authorization_code'],
       response_types: ['code'],
-      token_endpoint_auth_method: 'client_secret_post',
+      token_endpoint_auth_method: clientType.authMethod,
       client_id_issued_at: Math.floor(Date.now() / 1000),
-      client_secret_expires_at: 0 // Never expires
+      client_secret_expires_at: 0
     };
+
+    // Only generate client_secret for confidential clients
+    if (!clientType.isPublic) {
+      clientInfo.client_secret = 'secret_' + Math.random().toString(36).substring(2) + Math.random().toString(36).substring(2);
+    }
 
     serverLogger.info('✅ Dynamic client registration successful', {
       clientId: clientInfo.client_id,
       clientName: clientInfo.client_name,
+      clientType: clientType.isPublic ? 'public' : 'confidential',
       redirectUris: clientInfo.redirect_uris
     });
 
     return clientInfo;
+  }
+
+  /**
+   * Determine client type from redirect URIs
+   * Public clients use out-of-band (OOB) redirect for desktop/mobile apps
+   * Confidential clients use HTTP(S) redirects
+   */
+  determineClientType(redirectUris) {
+    // Check if any redirect URI is out-of-band (OOB)
+    const hasOOB = redirectUris.some(uri =>
+      uri === 'urn:ietf:wg:oauth:2.0:oob' || uri.startsWith('urn:ietf:wg:oauth:2.0:oob')
+    );
+
+    return {
+      isPublic: hasOOB,
+      authMethod: hasOOB ? 'none' : 'client_secret_post'
+    };
   }
 
   /**
