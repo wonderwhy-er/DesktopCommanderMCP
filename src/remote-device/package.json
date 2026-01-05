@@ -1,0 +1,18 @@
+{
+  "name": "supabase-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server with Supabase OAuth and SSE transport",
+  "type": "module",
+  "bin": {
+    "mcp-device": "./device.js"
+  },
+  "scripts": {
+    "device": "node device.js",
+    "device:dev": "MCP_SERVER_URL=http://localhost:3007 node device.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "open": "^10.0.3",
+    "uuid": "^9.0.1"
+  }
+}

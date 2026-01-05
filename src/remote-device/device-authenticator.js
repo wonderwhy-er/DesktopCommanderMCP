@@ -1,0 +1,173 @@
+import express from 'express';
+import { createServer } from 'http';
+import open from 'open';
+import readline from 'readline';
+
+export class DeviceAuthenticator {
+    constructor(baseServerUrl) {
+        this.baseServerUrl = baseServerUrl;
+    }
+
+    async authenticate() {
+        // Detect environment
+        const isDesktop = this.isDesktopEnvironment();
+
+        console.log(`🔐 Starting authentication (${isDesktop ? 'desktop' : 'headless'} mode)...`);
+
+        if (isDesktop) {
+            return this.authenticateDesktop();
+        } else {
+            return this.authenticateHeadless();
+        }
+    }
+
+    isDesktopEnvironment() {
+        // Check if we're in a desktop environment
+        return process.platform === 'darwin' ||
+            process.platform === 'win32' ||
+            (process.platform === 'linux' && process.env.DISPLAY);
+    }
+
+    async authenticateDesktop() {
+        const app = express();
+        const callbackPort = 8080;
+        const callbackUrl = `http://localhost:${callbackPort}/callback`;
+
+        return new Promise((resolve, reject) => {
+            let server;
+
+            // Setup callback handler
+            app.get('/callback', (req, res) => {
+                const { access_token, refresh_token, code, error, error_description } = req.query;
+
+                // Extract the actual token (could be in access_token or code parameter)
+                const token = access_token || code;
+
+                console.log('🔍 Callback received:', {
+                    hasAccessToken: !!access_token,
+                    hasRefreshToken: !!refresh_token,
+                    hasCode: !!code,
+                    hasError: !!error,
+                    queryParams: Object.keys(req.query)
+                });
+
+                if (error) {
+                    res.send(`
+            <h2>Authentication Failed</h2>
+            <p>Error: ${error}</p>
+            <p>Description: ${error_description || 'Unknown error'}</p>
+            <p>You can close this window.</p>
+          `);
+                    server.close();
+                    reject(new Error(`${error}: ${error_description}`));
+                } else if (token) {
+                    res.send(`
+            <h2>Authentication Successful!</h2>
+            <p>Your device is now connected.</p>
+            <p>You can close this window.</p>
+          `);
+                    server.close();
+                    console.log('✅ Authentication successful, token received');
+                    resolve({
+                        access_token: token,
+                        refresh_token: refresh_token || null
+                    });
+                } else {
+                    console.log('❌ No token found in callback:', req.query);
+                    res.send(`
+            <h2>Authentication Failed</h2>
+            <p>No access token received</p>
+            <p>Received parameters: ${Object.keys(req.query).join(', ')}</p>
+            <p>You can close this window.</p>
+          `);
+                    server.close();
+                    reject(new Error('No access token received'));
+                }
+            });
+
+            // Start callback server
+            server = createServer(app);
+            server.listen(callbackPort, (err) => {
+                if (err) {
+                    reject(new Error(`Failed to start callback server: ${err.message}`));
+                    return;
+                }
+
+                // Generate OAuth URL with callback (using Hash Fragment)
+                // Generate OAuth URL with callback (using Query Params)
+                // Updated to use root path '/'
+                // Changed agent=true to device=true
+                const authUrl = `${this.baseServerUrl}/?redirect_uri=${encodeURIComponent(callbackUrl)}&device=true`;
+
+                console.log('🌐 Opening browser for authentication...');
+                console.log(`If browser doesn't open, visit: ${authUrl}`);
+
+                // Open browser
+                open(authUrl).catch(() => {
+                    console.log('Could not open browser automatically.');
+                    console.log(`Please visit: ${authUrl}`);
+                });
+            });
+
+            // Timeout after 5 minutes
+            setTimeout(() => {
+                if (server.listening) {
+                    server.close();
+                    reject(new Error('Authentication timeout - no response received'));
+                }
+            }, 5 * 60 * 1000);
+        });
+    }
+
+    async authenticateHeadless() {
+        console.log('\n🔗 Manual Authentication Required:');
+        console.log('─'.repeat(50));
+        console.log(`1. Open this URL in a browser: ${this.baseServerUrl}/`);
+        console.log('2. Complete the authentication process');
+        console.log('3. You will be redirected to a URL with parameters.');
+        console.log('   If using device mode, look for access_token and refresh_token.');
+        console.log('4. Copy the access_token (and refresh_token if available) and paste here.');
+        console.log('   Format: access_token OR {"access_token":"...", "refresh_token":"..."}');
+        console.log('─'.repeat(50));
+
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+
+        return new Promise((resolve, reject) => {
+            rl.question('\n🔑 Enter Access Token or JSON: ', (input) => {
+                rl.close();
+
+                const trimmedInput = input.trim();
+                if (!trimmedInput) {
+                    reject(new Error('Empty input provided'));
+                    return;
+                }
+
+                try {
+                    // Try parsing as JSON first
+                    const json = JSON.parse(trimmedInput);
+                    if (json.access_token) {
+                        resolve({
+                            access_token: json.access_token,
+                            refresh_token: json.refresh_token || null
+                        });
+                        return;
+                    }
+                } catch (e) {
+                    // Not JSON, treat as raw token
+                }
+
+                if (trimmedInput.length < 10) {
+                    reject(new Error('Invalid token format (too short)'));
+                } else {
+                    resolve({
+                        access_token: trimmedInput,
+                        refresh_token: null
+                    });
+                }
+            });
+        });
+    }
+}

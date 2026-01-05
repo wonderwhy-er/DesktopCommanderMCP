@@ -24,6 +24,9 @@
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
     "open-chat": "open -n /Applications/Claude.app",
+    "device:install": "cd src/remote-device && npm install",
+    "device:start": "cd src/remote-device && npm run device",
+    "device:dev": "cd src/remote-device && npm run device:dev",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
