@@ -85,9 +85,9 @@ export class RemoteChannel {
 
         } else {
             if (currentDeviceId) {
-                console.warn(`⚠️ persisted deviceId ${currentDeviceId} not found for user ${userId}. Creating new device...`);
+                console.log(`   - ⚠️ persisted deviceId ${currentDeviceId} not found for user ${userId}. Creating new device...`);
             } else {
-                console.log('📝 No existing device found, creating new registration...');
+                console.log('   - 📝 No existing device found, creating new registration...');
             }
 
             const { data: newDevice, error } = await this.createDevice({
@@ -100,8 +100,8 @@ export class RemoteChannel {
 
             if (error) throw error;
 
-            console.log(`✓ Device registered: ${newDevice.device_name}`);
-            console.log(`✓ Assigned new Device ID: ${newDevice.id}`);
+            console.log(`   - ✅ Device registered: ${newDevice.device_name}`);
+            console.log(`   - ✅ Assigned new Device ID: ${newDevice.id}`);
             return newDevice.id;
         }
     }

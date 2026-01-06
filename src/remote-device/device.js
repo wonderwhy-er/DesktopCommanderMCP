@@ -64,8 +64,9 @@ class MCPDevice {
             // Initialize desktop integration
             await this.desktop.initialize();
 
-            console.log(`🔧 Connecting to Remote MCP ${this.baseServerUrl}`);
+            console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
+            console.log(`   - 🔌 Connected to Remote MCP`);
 
             // Initialize Remote Channel
             this.remoteChannel.initialize(supabaseUrl, anonKey);
