@@ -72,7 +72,7 @@ export class RemoteChannel {
         }
 
         if (existingDevice) {
-            console.log(`✅ Found existing device: ${existingDevice.device_name} (${existingDevice.id})`);
+            console.log(`🔍 Found existing device: ${existingDevice.device_name} (${existingDevice.id})`);
 
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
@@ -107,7 +107,7 @@ export class RemoteChannel {
     }
 
     async subscribe(userId, onToolCall) {
-        console.debug(`- Subscribing to call queue for user: ${userId}`);
+        console.debug(` - ⏳ Subscribing to call queue...`);
 
         return new Promise((resolve, reject) => {
             this.channel = this.client.channel('device_tool_call_queue')
@@ -124,13 +124,13 @@ export class RemoteChannel {
                 .subscribe((status, err) => {
                     // console.log(`Subscription status: ${status}`);
                     if (status === 'SUBSCRIBED') {
-                        console.debug('✅ Connected to call queue');
+                        console.debug(' - 🔌 Connected to call queue');
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ Failed to connect to call queue:', err);
+                        console.error(' - ❌ Failed to connect to call queue:', err);
                         reject(err || new Error('Failed to initialize call queue subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error('❌ Connection to call queue timed out');
+                        console.error(' - ❌ Connection to call queue timed out');
                         reject(new Error('Call queue subscription timed out'));
                     }
                 });

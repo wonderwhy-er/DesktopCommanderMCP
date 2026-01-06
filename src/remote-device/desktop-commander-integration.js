@@ -23,7 +23,7 @@ export class DesktopCommanderIntegration {
       throw new Error('Desktop Commander MCP not found. Please install it globally via `npm install -g @wonderwhy-er/desktop-commander` or build the local project.');
     }
 
-    console.log(`🔌 Connecting to Local Desktop Commander MCP using: ${config.command} ${config.args.join(' ')}`);
+    console.log(` - ⏳ Connecting to Local Desktop Commander MCP using: ${config.command} ${config.args.join(' ')}`);
 
     try {
       this.mcpTransport = new StdioClientTransport(config);
@@ -43,10 +43,10 @@ export class DesktopCommanderIntegration {
       await this.mcpClient.connect(this.mcpTransport);
       this.isReady = true;
 
-      console.log('✅ Connected to Desktop Commander MCP');
+      console.log(' - 🔌 Connected to Desktop Commander MCP');
 
     } catch (error) {
-      console.error('❌ Failed to connect to Desktop Commander MCP:', error);
+      console.error(' - ❌ Failed to connect to Desktop Commander MCP:', error);
       throw error;
     }
   }
@@ -56,7 +56,7 @@ export class DesktopCommanderIntegration {
     const devPath = path.resolve(__dirname, '../../dist/index.js');
     try {
       await fs.access(devPath);
-      console.debug(' - Found local MCP server at:', devPath);
+      console.debug(' - 🔍 Found local MCP server at:', devPath);
       return {
         command: process.execPath, // Use the current node executable
         args: [devPath],

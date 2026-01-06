@@ -64,18 +64,17 @@ class MCPDevice {
             // Initialize desktop integration
             await this.desktop.initialize();
 
-            // Load persisted configuration (deviceId, session)
-            let session = await this.loadPersistedConfig();
-
             console.log(`🔧 Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
 
             // Initialize Remote Channel
             this.remoteChannel.initialize(supabaseUrl, anonKey);
 
+            // Load persisted configuration (deviceId, session)
+            let session = await this.loadPersistedConfig();
+
             // 2. Set Session or Authenticate
             if (session) {
-                console.log('💾 Found persisted session, restoring...');
                 const { error } = await this.remoteChannel.setSession(session);
 
                 if (error) {
@@ -136,14 +135,14 @@ class MCPDevice {
             await this.remoteChannel.subscribe(this.user.id, (payload) => this.handleNewToolCall(payload));
 
             console.log('✅ Device ready:');
-            console.log(`   - Device ID: ${this.deviceId}`);
-            console.log(`   - Device Name: ${deviceName}`);
+            console.log(`   - Device ID:    ${this.deviceId}`);
+            console.log(`   - Device Name:  ${deviceName}`);
 
             // Keep process alive
             this.remoteChannel.startHeartbeat(this.deviceId);
 
         } catch (error) {
-            console.error('❌ Device startup failed:', error.message);
+            console.error(' - ❌ Device startup failed:', error.message);
             if (error.stack && process.env.DEBUG_MODE === 'true') {
                 console.error('Stack trace:', error.stack);
             }
@@ -188,9 +187,9 @@ class MCPDevice {
             };
 
             await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            if (session) console.log('💾 Session saved to device.json');
+            // if (session) console.debug('💾 Session saved to device.json');
         } catch (error) {
-            console.error('❌ Failed to save config:', error.message);
+            console.error(' - ❌ Failed to save config:', error.message);
         }
     }
 

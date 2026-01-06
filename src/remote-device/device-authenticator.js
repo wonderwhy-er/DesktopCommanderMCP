@@ -71,7 +71,7 @@ export class DeviceAuthenticator {
             <p>You can close this window.</p>
           `);
                     server.close();
-                    console.log('✅ Authentication successful, token received');
+                    console.log('   - ✅ Authentication successful, token received');
                     resolve({
                         access_token: token,
                         refresh_token: refresh_token || null
@@ -100,13 +100,13 @@ export class DeviceAuthenticator {
 
                 const authUrl = `${this.baseServerUrl}/?redirect_uri=${encodeURIComponent(callbackUrl)}&device=true`;
 
-                console.log('🌐 Opening browser for authentication...');
-                console.log(`If browser doesn't open, visit: ${authUrl}`);
+                console.log('   - 🌐 Opening browser for authentication...');
+                console.log(`   - If browser doesn't open, visit: ${authUrl}`);
 
                 // Open browser
                 open(authUrl).catch(() => {
-                    console.log('Could not open browser automatically.');
-                    console.log(`Please visit: ${authUrl}`);
+                    console.log('   - Could not open browser automatically.');
+                    console.log(`   - Please visit: ${authUrl}`);
                 });
             });
 
@@ -114,7 +114,7 @@ export class DeviceAuthenticator {
             setTimeout(() => {
                 if (server.listening) {
                     server.close();
-                    reject(new Error('Authentication timeout - no response received'));
+                    reject(new Error('   - Authentication timeout - no response received'));
                 }
             }, 5 * 60 * 1000);
         });

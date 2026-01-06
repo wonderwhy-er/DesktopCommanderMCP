@@ -8,12 +8,11 @@
   },
   "scripts": {
     "device": "node device.js",
-    "device:dev": "MCP_SERVER_URL=http://localhost:3007 node device.js"
+    "device:dev": "MCP_SERVER_URL=http://localhost:8080 node device.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "express": "^4.18.2",
-    "open": "^10.0.3",
-    "uuid": "^9.0.1"
+    "open": "^10.0.3"
   }
 }
