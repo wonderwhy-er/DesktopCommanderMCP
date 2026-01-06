@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
@@ -16,29 +17,21 @@ export class DesktopCommanderIntegration {
   }
 
   async initialize() {
-    // Find DesktopCommanderMCP installation
-    this.mcpServerPath = await this.findDesktopCommanderMCP();
-    if (!this.mcpServerPath) {
-      throw new Error('DesktopCommanderMCP not found. Please install it first.');
+    const config = await this.resolveMcpConfig();
+
+    if (!config) {
+      throw new Error('Desktop Commander MCP not found. Please install it globally via `npm install -g @wonderwhy-er/desktop-commander` or build the local project.');
     }
 
-    console.log(`Found DesktopCommanderMCP at: ${this.mcpServerPath}`);
+    console.log(`🔌 Connecting to Local Desktop Commander MCP using: ${config.command} ${config.args.join(' ')}`);
 
     try {
-      console.log('🔌 Connecting to Desktop Commander MCP...');
-
-      // Create stdio transport that will spawn Desktop Commander MCP
-      this.mcpTransport = new StdioClientTransport({
-        command: 'node',
-        args: [this.mcpServerPath],
-        // Use the directory of the MCP server as cwd
-        cwd: path.dirname(this.mcpServerPath)
-      });
+      this.mcpTransport = new StdioClientTransport(config);
 
       // Create MCP client
       this.mcpClient = new Client(
         {
-          name: "desktop-integration-client",
+          name: "desktop-commander-client",
           version: "1.0.0"
         },
         {
@@ -58,37 +51,38 @@ export class DesktopCommanderIntegration {
     }
   }
 
-  async findDesktopCommanderMCP() {
-    // Common installation paths for DesktopCommanderMCP
-    const mcpPath = path.resolve(__dirname, '../../dist/index.js');
-    const possiblePaths = [
-      // If installed globally
-      'desktop-commander-mcp',
-      mcpPath // For development
-      // Add more paths as needed
-    ];
+  async resolveMcpConfig() {
+    // Option 1: Development/Local Build
+    const devPath = path.resolve(__dirname, '../../dist/index.js');
+    try {
+      await fs.access(devPath);
+      console.debug(' - Found local MCP server at:', devPath);
+      return {
+        command: process.execPath, // Use the current node executable
+        args: [devPath],
+        cwd: path.dirname(devPath)
+      };
+    } catch {
+      // Local file not found, continue...
+    }
 
-    for (const mcpPath of possiblePaths) {
-      try {
-        // Test if the MCP server exists and is executable
-        // We use 'node' to execute it
-        const testProcess = spawn('node', [mcpPath, '--version'], {
-          stdio: 'pipe',
-          timeout: 5000
-        });
-
-        await new Promise((resolve, reject) => {
-          testProcess.on('close', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`Exit code: ${code}`));
-          });
-          testProcess.on('error', reject);
-        });
-
-        return mcpPath;
-      } catch (error) {
-        // Continue to next path
-      }
+    // Option 2: Global Installation
+    const commandName = 'desktop-commander';
+    try {
+      await new Promise((resolve, reject) => {
+        // Use 'which' to check if the command exists in PATH
+        // We can't run it directly as it's an stdio MCP server that waits for input
+        const check = spawn('which', [commandName]);
+        check.on('error', reject);
+        check.on('close', (code) => code === 0 ? resolve() : reject());
+      });
+      console.debug(' - Found global desktop-commander CLI');
+      return {
+        command: commandName,
+        args: []
+      };
+    } catch {
+      // Global command not found
     }
 
     return null;
@@ -121,10 +115,7 @@ export class DesktopCommanderIntegration {
 
       // Merge tools
       return {
-        tools: [
-          ...localTools,
-          ...(mcpTools.tools || [])
-        ]
+        tools: mcpTools.tools || []
       };
     } catch (error) {
       console.error('Error fetching capabilities:', error);

@@ -9,7 +9,7 @@ import path from 'path';
 
 class MCPDevice {
     constructor() {
-        this.baseServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:3007';
+        this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
         this.remoteChannel = new RemoteChannel();
         this.deviceId = null;
         this.user = null;
@@ -32,23 +32,24 @@ class MCPDevice {
 
             console.log(`\n${signal} received, initiating graceful shutdown...`);
             await this.shutdown();
-            process.exit(0);
         };
 
-        process.on('SIGINT', () => handleShutdown('SIGINT'));
-        process.on('SIGTERM', () => handleShutdown('SIGTERM'));
-
-        // Handle uncaught exceptions
-        process.on('uncaughtException', async (error) => {
-            console.error('Uncaught exception:', error);
-            await this.shutdown();
-            process.exit(1);
+        process.on('SIGINT', () => {
+            handleShutdown('SIGINT').finally(() => process.exit(0));
+        });
+        process.on('SIGTERM', () => {
+            handleShutdown('SIGTERM').finally(() => process.exit(0));
         });
 
-        process.on('unhandledRejection', async (reason, promise) => {
+        // Handle uncaught exceptions
+        process.on('uncaughtException', (error) => {
+            console.error('Uncaught exception:', error);
+            handleShutdown('uncaughtException').finally(() => process.exit(1));
+        });
+
+        process.on('unhandledRejection', (reason, promise) => {
             console.error('Unhandled rejection at:', promise, 'reason:', reason);
-            await this.shutdown();
-            process.exit(1);
+            handleShutdown('unhandledRejection').finally(() => process.exit(1));
         });
     }
 
@@ -58,7 +59,6 @@ class MCPDevice {
             if (process.env.DEBUG_MODE === 'true') {
                 console.log(`  - 🐞 DEBUG_MODE`);
             }
-            console.log(`Coordinator URL: ${this.baseServerUrl}`);
 
 
             // Initialize desktop integration
@@ -67,7 +67,7 @@ class MCPDevice {
             // Load persisted configuration (deviceId, session)
             let session = await this.loadPersistedConfig();
 
-            console.log('🔧 Setting up Supabase client...');
+            console.log(`🔧 Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
 
             // Initialize Remote Channel
@@ -79,15 +79,15 @@ class MCPDevice {
                 const { error } = await this.remoteChannel.setSession(session);
 
                 if (error) {
-                    console.log('⚠️ Persisted session invalid:', error.message);
+                    console.log('   - ⚠️ Persisted session invalid:', error.message);
                     session = null;
                 } else {
-                    console.log('✅ Session restored');
+                    console.log('   - ✅ Session restored');
                 }
             }
 
             if (!session) {
-                console.log('\n🔐 Authenticating with base MCP server...');
+                console.log('\n🔐 Authenticating with Remote MCP server...');
                 const authenticator = new DeviceAuthenticator(this.baseServerUrl);
                 session = await authenticator.authenticate();
 
@@ -119,13 +119,13 @@ class MCPDevice {
             if (userError) throw userError;
             this.user = user;
 
+            const deviceName = os.hostname();
             // Register as device
-            console.log('📝 Registering device...');
             this.deviceId = await this.remoteChannel.registerDevice(
                 this.user.id,
                 await this.desktop.getCapabilities(),
                 this.deviceId,
-                `Device-${os.hostname()}`
+                deviceName
             );
 
             // Also save session again just in case (optional, but harmless)
@@ -135,8 +135,9 @@ class MCPDevice {
             // Subscribe to tool calls
             await this.remoteChannel.subscribe(this.user.id, (payload) => this.handleNewToolCall(payload));
 
-            console.log('✅ Device ready and listening for tool calls');
-            console.log(`Device ID: ${this.deviceId}`);
+            console.log('✅ Device ready:');
+            console.log(`   - Device ID: ${this.deviceId}`);
+            console.log(`   - Device Name: ${deviceName}`);
 
             // Keep process alive
             this.remoteChannel.startHeartbeat(this.deviceId);

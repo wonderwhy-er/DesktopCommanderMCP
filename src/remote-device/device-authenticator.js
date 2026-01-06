@@ -3,6 +3,17 @@ import { createServer } from 'http';
 import open from 'open';
 import readline from 'readline';
 
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+const CALLBACK_PORT = 8121;
 export class DeviceAuthenticator {
     constructor(baseServerUrl) {
         this.baseServerUrl = baseServerUrl;
@@ -30,8 +41,7 @@ export class DeviceAuthenticator {
 
     async authenticateDesktop() {
         const app = express();
-        const callbackPort = 8080;
-        const callbackUrl = `http://localhost:${callbackPort}/callback`;
+        const callbackUrl = `http://localhost:${CALLBACK_PORT}/callback`;
 
         return new Promise((resolve, reject) => {
             let server;
@@ -43,19 +53,13 @@ export class DeviceAuthenticator {
                 // Extract the actual token (could be in access_token or code parameter)
                 const token = access_token || code;
 
-                console.log('🔍 Callback received:', {
-                    hasAccessToken: !!access_token,
-                    hasRefreshToken: !!refresh_token,
-                    hasCode: !!code,
-                    hasError: !!error,
-                    queryParams: Object.keys(req.query)
-                });
-
                 if (error) {
+                    const safeError = escapeHtml(error);
+                    const safeErrorDesc = escapeHtml(error_description || 'Unknown error');
                     res.send(`
             <h2>Authentication Failed</h2>
-            <p>Error: ${error}</p>
-            <p>Description: ${error_description || 'Unknown error'}</p>
+            <p>Error: ${safeError}</p>
+            <p>Description: ${safeErrorDesc}</p>
             <p>You can close this window.</p>
           `);
                     server.close();
@@ -74,10 +78,11 @@ export class DeviceAuthenticator {
                     });
                 } else {
                     console.log('❌ No token found in callback:', req.query);
+                    const safeParams = escapeHtml(Object.keys(req.query).join(', '));
                     res.send(`
             <h2>Authentication Failed</h2>
             <p>No access token received</p>
-            <p>Received parameters: ${Object.keys(req.query).join(', ')}</p>
+            <p>Received parameters: ${safeParams}</p>
             <p>You can close this window.</p>
           `);
                     server.close();
@@ -87,16 +92,12 @@ export class DeviceAuthenticator {
 
             // Start callback server
             server = createServer(app);
-            server.listen(callbackPort, (err) => {
+            server.listen(CALLBACK_PORT, (err) => {
                 if (err) {
                     reject(new Error(`Failed to start callback server: ${err.message}`));
                     return;
                 }
 
-                // Generate OAuth URL with callback (using Hash Fragment)
-                // Generate OAuth URL with callback (using Query Params)
-                // Updated to use root path '/'
-                // Changed agent=true to device=true
                 const authUrl = `${this.baseServerUrl}/?redirect_uri=${encodeURIComponent(callbackUrl)}&device=true`;
 
                 console.log('🌐 Opening browser for authentication...');

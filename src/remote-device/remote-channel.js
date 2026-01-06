@@ -6,6 +6,7 @@ export class RemoteChannel {
     constructor() {
         this.client = null;
         this.channel = null;
+        this.heartbeatInterval = null;
     }
 
     initialize(url, key) {
@@ -106,7 +107,7 @@ export class RemoteChannel {
     }
 
     async subscribe(userId, onToolCall) {
-        console.log(` Subscribing to job queue for user: ${userId}`);
+        console.debug(`- Subscribing to call queue for user: ${userId}`);
 
         return new Promise((resolve, reject) => {
             this.channel = this.client.channel('device_tool_call_queue')
@@ -121,16 +122,16 @@ export class RemoteChannel {
                     (payload) => onToolCall(payload)
                 )
                 .subscribe((status, err) => {
-                    console.log(`Subscription status: ${status}`);
+                    // console.log(`Subscription status: ${status}`);
                     if (status === 'SUBSCRIBED') {
-                        console.log('✅ Connected to tool call queue');
+                        console.debug('✅ Connected to call queue');
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
-                        console.error('❌ Failed to connect to tool call queue:', err);
-                        reject(err || new Error('Failed to subscribe to tool call queue'));
+                        console.error('❌ Failed to connect to call queue:', err);
+                        reject(err || new Error('Failed to initialize call queue subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error('❌ Connection to tool call queue timed out');
-                        reject(new Error('Subscription timed out'));
+                        console.error('❌ Connection to call queue timed out');
+                        reject(new Error('Call queue subscription timed out'));
                     }
                 });
         });
@@ -171,7 +172,7 @@ export class RemoteChannel {
 
     startHeartbeat(deviceId) {
         // Update last_seen every 30 seconds
-        setInterval(async () => {
+        this.heartbeatInterval = setInterval(async () => {
             await this.updateHeartbeat(deviceId);
         }, HEARTBEAT_INTERVAL);
     }
@@ -188,6 +189,7 @@ export class RemoteChannel {
 
     async unsubscribe() {
         if (this.channel) {
+            clearInterval(this.heartbeatInterval);
             await this.channel.unsubscribe();
             console.log('✓ Unsubscribed from channel');
         }
