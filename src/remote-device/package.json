@@ -1,10 +1,10 @@
 {
-  "name": "supabase-mcp-server",
+  "name": "desktop-commander-device",
   "version": "1.0.0",
-  "description": "MCP Server with Supabase OAuth and SSE transport",
+  "description": "Desktop Commander Device - MCP Server with Supabase OAuth and SSE transport",
   "type": "module",
   "bin": {
-    "mcp-device": "./device.js"
+    "desktop-commander-device": "./device.js"
   },
   "scripts": {
     "device": "node device.js",
@@ -14,5 +14,21 @@
     "@supabase/supabase-js": "^2.39.0",
     "express": "^4.18.2",
     "open": "^10.0.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git",
+    "directory": "src/remote-device"
+  },
+  "keywords": [
+    "mcp",
+    "remote",
+    "desktop",
+    "device",
+    "ai",
+    "chatgpt",
+    "claude"
+  ],
+  "author": "wonderwhy-er",
+  "license": "MIT"
 }

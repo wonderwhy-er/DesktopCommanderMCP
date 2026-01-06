@@ -29,7 +29,39 @@ Before running the device, ensure you have:
 
 ## 🛠️ Installation
 
-Currently, the device is distributed as part of the source repository.
+### Option 1: Global Installation (Recommended)
+
+Install the module globally to run it from anywhere:
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
+    cd DesktopCommanderMCP/src/remote-device
+    ```
+
+2.  **Install Dependencies**:
+    ```bash
+    npm install
+    ```
+
+3.  **Install Globally**:
+    ```bash
+    npm install -g .
+    ```
+    
+    Or for development (creates a symlink):
+    ```bash
+    npm link
+    ```
+
+4.  **Run from anywhere**:
+    ```bash
+    desktop-commander-device
+    ```
+
+### Option 2: Local Installation
+
+Run from the project repository without global installation:
 
 1.  **Clone the Repository**:
     ```bash
@@ -47,7 +79,19 @@ Currently, the device is distributed as part of the source repository.
 
 ### 1. Start the Device
 
-From the project root directory:
+**If installed globally**:
+```bash
+desktop-commander-device
+```
+
+**With session persistence** (optional):
+```bash
+desktop-commander-device --persist-session
+```
+
+> **Note**: By default, only the device ID is persisted. Use `--persist-session` to also save authentication tokens between restarts. This allows the device to reconnect automatically without re-authentication.
+
+**If using local installation** from the project root directory:
 
 ```bash
 npm run device:start

@@ -3,18 +3,21 @@
 import { RemoteChannel } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
+import { fileURLToPath } from 'url';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
 
+
 class MCPDevice {
-    constructor() {
+    constructor(options = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
         this.remoteChannel = new RemoteChannel();
         this.deviceId = null;
         this.user = null;
         this.isShuttingDown = false;
-        this.configPath = path.join(process.cwd(), 'device.json');
+        this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+        this.persistSession = options.persistSession || false;
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -181,12 +184,15 @@ class MCPDevice {
         try {
             const config = {
                 deviceId: this.deviceId,
-                session: session ? {
+                // Only save session if --persist-session flag is set
+                session: (session && this.persistSession) ? {
                     access_token: session.access_token,
                     refresh_token: session.refresh_token
                 } : null
             };
 
+            // Ensure the config directory exists
+            await fs.mkdir(path.dirname(this.configPath), { recursive: true });
             await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
             // if (session) console.debug('💾 Session saved to device.json');
         } catch (error) {
@@ -296,9 +302,29 @@ class MCPDevice {
     }
 }
 
-// Start device if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-    const device = new MCPDevice();
+// Start device if called directly or as a bin command
+// When installed globally, npm creates a wrapper, so we need to check multiple conditions
+const isMainModule = process.argv[1] && (
+    // Direct execution: node device.js
+    import.meta.url === `file://${process.argv[1]}` ||
+    fileURLToPath(import.meta.url) === process.argv[1] ||
+    // Global bin execution: desktop-commander-device (npm creates a wrapper)
+    process.argv[1].endsWith('desktop-commander-device') ||
+    process.argv[1].endsWith('desktop-commander-device.js')
+);
+
+if (isMainModule) {
+    // Parse command-line arguments
+    const args = process.argv.slice(2);
+    const options = {
+        persistSession: args.includes('--persist-session')
+    };
+
+    if (options.persistSession) {
+        console.log('🔒 Session persistence enabled');
+    }
+
+    const device = new MCPDevice(options);
     device.start();
 }
 
