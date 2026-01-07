@@ -45,15 +45,30 @@ export class MCPDevice {
                 return;
             }
 
+            this.isShuttingDown = true;
             console.log(`\n${signal} received, initiating graceful shutdown...`);
-            await this.shutdown();
+
+            // Force exit after 3 seconds if graceful shutdown hangs
+            const forceExit = setTimeout(() => {
+                console.error('⚠️ Graceful shutdown timed out, forcing exit...');
+                process.exit(1);
+            }, 3000);
+
+            try {
+                await this.shutdown();
+                clearTimeout(forceExit);
+                process.exit(0);
+            } catch (error) {
+                console.error('Error during shutdown:', error);
+                process.exit(1);
+            }
         };
 
         process.on('SIGINT', () => {
-            handleShutdown('SIGINT').finally(() => process.exit(0));
+            handleShutdown('SIGINT');
         });
         process.on('SIGTERM', () => {
-            handleShutdown('SIGTERM').finally(() => process.exit(0));
+            handleShutdown('SIGTERM');
         });
     }
 
@@ -94,10 +109,8 @@ export class MCPDevice {
                 console.log('\n🔐 Authenticating with Remote MCP server...');
                 const authenticator = new DeviceAuthenticator(this.baseServerUrl);
                 session = await authenticator.authenticate();
-
                 // Set session in Remote Channel
                 const { error } = await this.remoteChannel.setSession(session);
-
                 if (error) throw error;
             }
 
