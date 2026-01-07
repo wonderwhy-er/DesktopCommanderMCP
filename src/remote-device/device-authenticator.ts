@@ -1,9 +1,23 @@
-import express from 'express';
-import { createServer } from 'http';
+import express, { Request, Response } from 'express';
+import { createServer, Server } from 'http';
 import open from 'open';
 import readline from 'readline';
 
-function escapeHtml(text) {
+interface AuthSession {
+    access_token: string;
+    refresh_token: string | null;
+}
+
+interface CallbackQuery {
+    access_token?: string;
+    refresh_token?: string;
+    code?: string;
+    error?: string;
+    error_description?: string;
+    [key: string]: string | undefined;
+}
+
+function escapeHtml(text: string | null | undefined): string {
     if (text === null || text === undefined) return '';
     return String(text)
         .replace(/&/g, "&amp;")
@@ -14,12 +28,15 @@ function escapeHtml(text) {
 }
 
 const CALLBACK_PORT = 8121;
+
 export class DeviceAuthenticator {
-    constructor(baseServerUrl) {
+    private baseServerUrl: string;
+
+    constructor(baseServerUrl: string) {
         this.baseServerUrl = baseServerUrl;
     }
 
-    async authenticate() {
+    async authenticate(): Promise<AuthSession> {
         // Detect environment
         const isDesktop = this.isDesktopEnvironment();
 
@@ -32,22 +49,22 @@ export class DeviceAuthenticator {
         }
     }
 
-    isDesktopEnvironment() {
+    private isDesktopEnvironment(): boolean {
         // Check if we're in a desktop environment
         return process.platform === 'darwin' ||
             process.platform === 'win32' ||
-            (process.platform === 'linux' && process.env.DISPLAY);
+            (process.platform === 'linux' && !!process.env.DISPLAY);
     }
 
-    async authenticateDesktop() {
+    private async authenticateDesktop(): Promise<AuthSession> {
         const app = express();
         const callbackUrl = `http://localhost:${CALLBACK_PORT}/callback`;
 
         return new Promise((resolve, reject) => {
-            let server;
+            let server: Server;
 
             // Setup callback handler
-            app.get('/callback', (req, res) => {
+            app.get('/callback', (req: Request<{}, {}, {}, CallbackQuery>, res: Response) => {
                 const { access_token, refresh_token, code, error, error_description } = req.query;
 
                 // Extract the actual token (could be in access_token or code parameter)
@@ -92,12 +109,7 @@ export class DeviceAuthenticator {
 
             // Start callback server
             server = createServer(app);
-            server.listen(CALLBACK_PORT, (err) => {
-                if (err) {
-                    reject(new Error(`Failed to start callback server: ${err.message}`));
-                    return;
-                }
-
+            server.listen(CALLBACK_PORT, () => {
                 const authUrl = `${this.baseServerUrl}/?redirect_uri=${encodeURIComponent(callbackUrl)}&device=true`;
 
                 console.log('   - 🌐 Opening browser for authentication...');
@@ -110,6 +122,10 @@ export class DeviceAuthenticator {
                 });
             });
 
+            server.on('error', (err: Error) => {
+                reject(new Error(`Failed to start callback server: ${err.message}`));
+            });
+
             // Timeout after 5 minutes
             setTimeout(() => {
                 if (server.listening) {
@@ -120,7 +136,7 @@ export class DeviceAuthenticator {
         });
     }
 
-    async authenticateHeadless() {
+    private async authenticateHeadless(): Promise<AuthSession> {
         console.log('\n🔗 Manual Authentication Required:');
         console.log('─'.repeat(50));
         console.log(`1. Open this URL in a browser: ${this.baseServerUrl}/`);

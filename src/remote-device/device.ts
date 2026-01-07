@@ -8,9 +8,21 @@ import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
 
+export interface MCPDeviceOptions {
+    persistSession?: boolean;
+}
 
-class MCPDevice {
-    constructor(options = {}) {
+export class MCPDevice {
+    private baseServerUrl: string;
+    private remoteChannel: RemoteChannel;
+    private deviceId: string | null;
+    private user: any;
+    private isShuttingDown: boolean;
+    private configPath: string;
+    private persistSession: boolean;
+    private desktop: DesktopCommanderIntegration;
+
+    constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
         this.remoteChannel = new RemoteChannel();
         this.deviceId = null;
@@ -26,8 +38,8 @@ class MCPDevice {
         this.setupShutdownHandlers();
     }
 
-    setupShutdownHandlers() {
-        const handleShutdown = async (signal) => {
+    private setupShutdownHandlers() {
+        const handleShutdown = async (signal: string) => {
             if (this.isShuttingDown) {
                 console.log(`\n${signal} received, but already shutting down...`);
                 return;
@@ -42,17 +54,6 @@ class MCPDevice {
         });
         process.on('SIGTERM', () => {
             handleShutdown('SIGTERM').finally(() => process.exit(0));
-        });
-
-        // Handle uncaught exceptions
-        process.on('uncaughtException', (error) => {
-            console.error('Uncaught exception:', error);
-            handleShutdown('uncaughtException').finally(() => process.exit(1));
-        });
-
-        process.on('unhandledRejection', (reason, promise) => {
-            console.error('Unhandled rejection at:', promise, 'reason:', reason);
-            handleShutdown('unhandledRejection').finally(() => process.exit(1));
         });
     }
 
@@ -101,8 +102,8 @@ class MCPDevice {
             }
 
             // 3. Setup Token Refresh Listener
-            this.remoteChannel.onAuthStateChange(async (event, newSession) => {
-                const eventMap = {
+            this.remoteChannel.onAuthStateChange(async (event: string, newSession: any) => {
+                const eventMap: { [key: string]: string } = {
                     'SIGNED_IN': '🔑 User signed in',
                     'TOKEN_REFRESHED': '🔄 Token refreshed',
                     'SIGNED_OUT': '⚠️ User signed out',
@@ -113,8 +114,9 @@ class MCPDevice {
             });
 
             // Force save the current session immediately to ensure it's persisted
+            const currentSessionStore = await this.remoteChannel.getSession();
             await this.savePersistedConfig(
-                (await this.remoteChannel.getSession()).data.session
+                currentSessionStore.data.session
             );
 
             // Get user info
@@ -136,7 +138,7 @@ class MCPDevice {
             await this.savePersistedConfig(currentSession);
 
             // Subscribe to tool calls
-            await this.remoteChannel.subscribe(this.user.id, (payload) => this.handleNewToolCall(payload));
+            await this.remoteChannel.subscribe(this.user.id, (payload: any) => this.handleNewToolCall(payload));
 
             console.log('✅ Device ready:');
             console.log(`   - Device ID:    ${this.deviceId}`);
@@ -145,7 +147,7 @@ class MCPDevice {
             // Keep process alive
             this.remoteChannel.startHeartbeat(this.deviceId);
 
-        } catch (error) {
+        } catch (error: any) {
             console.error(' - ❌ Device startup failed:', error.message);
             if (error.stack && process.env.DEBUG_MODE === 'true') {
                 console.error('Stack trace:', error.stack);
@@ -169,7 +171,7 @@ class MCPDevice {
             }
 
             return null;
-        } catch (error) {
+        } catch (error: any) {
 
             if (error.code !== 'ENOENT') {
                 console.warn('⚠️ Failed to load config:', error.message);
@@ -180,7 +182,7 @@ class MCPDevice {
         }
     }
 
-    async savePersistedConfig(session) {
+    async savePersistedConfig(session: any) {
         try {
             const config = {
                 deviceId: this.deviceId,
@@ -195,7 +197,7 @@ class MCPDevice {
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
             await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
             // if (session) console.debug('💾 Session saved to device.json');
-        } catch (error) {
+        } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
         }
     }
@@ -217,7 +219,7 @@ class MCPDevice {
 
     // Methods moved to RemoteChannel
 
-    async handleNewToolCall(payload) {
+    async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
         // Assuming database also renames agent_id to device_id, but user only said rename agent -> device everywhere but only inside src/remote-device
         // If the database column is still agent_id, we need a mapping.
@@ -269,7 +271,7 @@ class MCPDevice {
             // Update database with result
             await this.remoteChannel.updateCallResult(call_id, 'completed', result);
 
-        } catch (error) {
+        } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
             await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
         }
@@ -296,7 +298,7 @@ class MCPDevice {
             await this.desktop.shutdown();
 
             console.log('✓ Device shutdown complete');
-        } catch (error) {
+        } catch (error: any) {
             console.error('Shutdown error:', error.message);
         }
     }
@@ -327,5 +329,3 @@ if (isMainModule) {
     const device = new MCPDevice(options);
     device.start();
 }
-
-export default MCPDevice;

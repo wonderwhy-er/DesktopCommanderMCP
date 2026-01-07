@@ -9,11 +9,12 @@ import { runSetup } from './npm-scripts/setup.js';
 import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
+import { runRemote } from './npm-scripts/remote.js';
 
 // Store messages to defer until after initialization
-const deferredMessages: Array<{level: string, message: string}> = [];
+const deferredMessages: Array<{ level: string, message: string }> = [];
 function deferLog(level: string, message: string) {
-    deferredMessages.push({level, message});
+  deferredMessages.push({ level, message });
 }
 
 async function runServer() {
@@ -30,38 +31,44 @@ async function runServer() {
       return;
     }
 
+    // Check if first argument is "remote"
+    if (process.argv[2] === 'remote') {
+      await runRemote();
+      return;
+    }
+
     // Parse command line arguments for onboarding control
     const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');
     if (DISABLE_ONBOARDING) {
       logToStderr('info', 'Onboarding disabled via --no-onboarding flag');
     }
-    
+
     // Set global flag for onboarding control
     (global as any).disableOnboarding = DISABLE_ONBOARDING;
 
     // Create transport FIRST so all logging gets properly buffered
     // This must happen before any code that might use logger.*
     const transport = new FilteredStdioServerTransport();
-    
+
     // Export transport for use throughout the application
     global.mcpTransport = transport;
 
-      try {
-          deferLog('info', 'Loading configuration...');
-          await configManager.loadConfig();
-          deferLog('info', 'Configuration loaded successfully');
-          
-          // Initialize feature flags (non-blocking)
-          deferLog('info', 'Initializing feature flags...');
-          await featureFlagManager.initialize();
-      } catch (configError) {
-          deferLog('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
-          if (configError instanceof Error && configError.stack) {
-              deferLog('debug', `Stack trace: ${configError.stack}`);
-          }
-          deferLog('warning', 'Continuing with in-memory configuration only');
-          // Continue anyway - we'll use an in-memory config
+    try {
+      deferLog('info', 'Loading configuration...');
+      await configManager.loadConfig();
+      deferLog('info', 'Configuration loaded successfully');
+
+      // Initialize feature flags (non-blocking)
+      deferLog('info', 'Initializing feature flags...');
+      await featureFlagManager.initialize();
+    } catch (configError) {
+      deferLog('error', `Failed to load configuration: ${configError instanceof Error ? configError.message : String(configError)}`);
+      if (configError instanceof Error && configError.stack) {
+        deferLog('debug', `Stack trace: ${configError.stack}`);
       }
+      deferLog('warning', 'Continuing with in-memory configuration only');
+      // Continue anyway - we'll use an in-memory config
+    }
 
     // Handle uncaught exceptions
     process.on('uncaughtException', async (error) => {
@@ -108,14 +115,14 @@ async function runServer() {
       // This callback is triggered after the client sends the "initialized" notification
       // At this point, the MCP protocol handshake is fully complete
       transport.enableNotifications();
-      
+
       // Flush all deferred messages from both index.ts and server.ts
       while (deferredMessages.length > 0) {
         const msg = deferredMessages.shift()!;
         transport.sendLog('info', msg.message);
       }
       flushDeferredMessages();
-      
+
       // Now we can send regular logging messages
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
@@ -128,7 +135,7 @@ async function runServer() {
     if (error instanceof Error && error.stack) {
       logger.debug(error.stack);
     }
-    
+
     // Send a structured error notification
     const errorNotification = {
       jsonrpc: "2.0" as const,
