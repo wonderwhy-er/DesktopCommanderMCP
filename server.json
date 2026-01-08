@@ -7,13 +7,13 @@
     "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
     "source": "github"
   },
-  "version": "0.2.28",
+  "version": "0.2.29-alpha.1",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@wonderwhy-er/desktop-commander",
-      "version": "0.2.28",
+      "version": "0.2.29-alpha.1",
       "transport": {
         "type": "stdio"
       }

@@ -31,6 +31,11 @@ async function runServer() {
       return;
     }
 
+      if (process.argv[2] === 'remote') {
+        await runRemote();
+        return;
+    }
+
     // Check if first argument is "remote"
     if (process.argv[2] === 'remote') {
       await runRemote();
