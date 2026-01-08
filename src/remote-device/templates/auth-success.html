@@ -17,6 +17,12 @@
         </p>
         <p style="color: #94A3B8; font-size: 15px; line-height: 1.6; margin: 0;">You can close this window.</p>
     </div>
+    <script>
+        // Clean up URL parameters and hash
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname);
+        }
+    </script>
 </body>
 
 </html>
