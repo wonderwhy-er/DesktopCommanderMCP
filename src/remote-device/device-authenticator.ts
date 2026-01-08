@@ -2,12 +2,7 @@ import express, { Request, Response } from 'express';
 import { createServer, Server } from 'http';
 import open from 'open';
 import readline from 'readline';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { authSuccessHtml } from './templates/auth-success.js';
 
 interface AuthSession {
     access_token: string;
@@ -88,11 +83,8 @@ export class DeviceAuthenticator {
                     server.close();
                     reject(new Error(`${error}: ${error_description}`));
                 } else if (token) {
-                    const templatePath = path.join(__dirname, 'templates', 'auth-success.html');
-                    const htmlContent = fs.readFileSync(templatePath, 'utf8');
-                    res.send(htmlContent);
+                    res.send(authSuccessHtml);
                     server.close();
-                    console.log('   - ✅ Authentication successful, token received');
                     resolve({
                         access_token: token,
                         refresh_token: refresh_token || null

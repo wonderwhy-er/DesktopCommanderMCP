@@ -154,6 +154,7 @@ export class MCPDevice {
             await this.remoteChannel.subscribe(this.user.id, (payload: any) => this.handleNewToolCall(payload));
 
             console.log('✅ Device ready:');
+            console.log(`   - User:         ${this.user.email}`);
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
 
