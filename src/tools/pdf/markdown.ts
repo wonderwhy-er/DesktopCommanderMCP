@@ -173,7 +173,7 @@ async function getChromePath(): Promise<string | undefined> {
 }
 
 /**
- * Pre-emptively ensure Chrome is available for PDF generation.
+ * Preemptively ensure Chrome is available for PDF generation.
  * Call this at server startup to trigger download in background if needed.
  * Returns immediately, download happens in background.
  */

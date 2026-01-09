@@ -121,7 +121,7 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
       
-      // Pre-emptively check/download Chrome for PDF generation (runs in background)
+      // Preemptively check/download Chrome for PDF generation (runs in background)
       ensureChromeAvailable();
     };
 
