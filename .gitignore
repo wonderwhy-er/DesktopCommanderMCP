@@ -44,6 +44,8 @@ planning/
 
 # Test output files
 test/test_output/
+test/samples/*.md
+test/samples/*_images/
 
 # MCPB related files
 *.mcpb
