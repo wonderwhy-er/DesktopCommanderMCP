@@ -1,11 +1,63 @@
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { mdToPdf } from 'md-to-pdf';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
+
+/**
+ * Get the puppeteer cache directory
+ */
+function getPuppeteerCacheDir(): string {
+    return join(homedir(), '.cache', 'puppeteer');
+}
+
+/**
+ * Find Chrome in puppeteer's cache directory
+ * Returns the executable path if found, undefined otherwise
+ */
+function findPuppeteerChrome(): string | undefined {
+    const cacheDir = getPuppeteerCacheDir();
+    const chromeDir = join(cacheDir, 'chrome');
+    
+    if (!existsSync(chromeDir)) {
+        return undefined;
+    }
+    
+    try {
+        // Look for chrome directories (e.g., win64-143.0.7499.169)
+        const { readdirSync } = require('fs');
+        const versions = readdirSync(chromeDir);
+        
+        for (const version of versions) {
+            const chromePath = process.platform === 'win32'
+                ? join(chromeDir, version, 'chrome-win64', 'chrome.exe')
+                : process.platform === 'darwin'
+                ? join(chromeDir, version, 'chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
+                : join(chromeDir, version, 'chrome-linux64', 'chrome');
+            
+            if (existsSync(chromePath)) {
+                return chromePath;
+            }
+            
+            // Also check for arm64 mac
+            if (process.platform === 'darwin') {
+                const armPath = join(chromeDir, version, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
+                if (existsSync(armPath)) {
+                    return armPath;
+                }
+            }
+        }
+    } catch {
+        // Ignore errors reading cache directory
+    }
+    
+    return undefined;
+}
 
 /**
  * Find system-installed Chrome/Chromium browser
@@ -38,6 +90,60 @@ function findSystemChrome(): string | undefined {
     return paths.find(p => existsSync(p));
 }
 
+/**
+ * Download and install Chrome using @puppeteer/browsers
+ * Returns the executable path after installation
+ */
+async function installChrome(): Promise<string> {
+    // Dynamic import to avoid loading if not needed
+    const { install, Browser, detectBrowserPlatform, resolveBuildId } = await import('@puppeteer/browsers');
+    
+    const cacheDir = getPuppeteerCacheDir();
+    const platform = detectBrowserPlatform()!;
+    const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
+    
+    console.error('Downloading Chrome for PDF generation (this may take a few minutes)...');
+    
+    const installedBrowser = await install({
+        browser: Browser.CHROME,
+        buildId,
+        cacheDir,
+        downloadProgressCallback: (downloadedBytes: number, totalBytes: number) => {
+            const percent = Math.round((downloadedBytes / totalBytes) * 100);
+            process.stderr.write(`\rDownloading Chrome: ${percent}%`);
+        },
+    });
+    
+    console.error('\nChrome download complete.');
+    
+    return installedBrowser.executablePath;
+}
+
+/**
+ * Find or install Chrome for PDF generation
+ * Priority: 1. Puppeteer cache, 2. System Chrome, 3. Install Chrome
+ */
+async function getChromePath(): Promise<string | undefined> {
+    // 1. Check puppeteer cache first (exact compatible version)
+    const cachedChrome = findPuppeteerChrome();
+    if (cachedChrome) {
+        return cachedChrome;
+    }
+    
+    // 2. Check system Chrome
+    const systemChrome = findSystemChrome();
+    if (systemChrome) {
+        return systemChrome;
+    }
+    
+    // 3. Install Chrome as last resort
+    try {
+        return await installChrome();
+    } catch (error) {
+        console.error('Failed to install Chrome:', error);
+        return undefined;
+    }
+}
 
 async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
     if (isUrl(source)) {
@@ -51,7 +157,6 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
 /**
  * Convert PDF to Markdown using @opendocsg/pdf2md
  */
-
 export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
@@ -67,17 +172,15 @@ export async function parsePdfToMarkdown(source: string, pageNumbers: number[] |
 
 export async function parseMarkdownToPdf(markdown: string, options: any = {}): Promise<Buffer> {
     try {
-        // Try to find system Chrome to use as fallback
-        // This is especially important for MCPB bundles where puppeteer's Chromium isn't installed
-        const systemChrome = findSystemChrome();
+        // Find Chrome: puppeteer cache -> system Chrome -> install
+        const chromePath = await getChromePath();
         
-        if (systemChrome) {
-            // Merge system Chrome path into launch_options
+        if (chromePath) {
             options = {
                 ...options,
                 launch_options: {
                     ...options.launch_options,
-                    executablePath: systemChrome,
+                    executablePath: chromePath,
                 }
             };
         }
