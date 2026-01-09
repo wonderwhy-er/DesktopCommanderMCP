@@ -45,7 +45,7 @@ export class MCPDevice {
                 return;
             }
 
-            this.isShuttingDown = true;
+
             console.log(`\n${signal} received, initiating graceful shutdown...`);
 
             // Force exit after 3 seconds if graceful shutdown hangs
