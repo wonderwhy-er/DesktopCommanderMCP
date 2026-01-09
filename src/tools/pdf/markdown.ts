@@ -9,6 +9,10 @@ import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
 
+// Cached Chrome path to avoid repeated lookups
+let cachedChromePath: string | undefined | null = null; // null = not checked yet
+let chromeCheckPromise: Promise<string | undefined> | null = null;
+
 /**
  * Get the puppeteer cache directory
  */
@@ -122,27 +126,62 @@ async function installChrome(): Promise<string> {
 /**
  * Find or install Chrome for PDF generation
  * Priority: 1. Puppeteer cache, 2. System Chrome, 3. Install Chrome
+ * Results are cached to avoid repeated lookups
  */
 async function getChromePath(): Promise<string | undefined> {
-    // 1. Check puppeteer cache first (exact compatible version)
-    const cachedChrome = findPuppeteerChrome();
-    if (cachedChrome) {
-        return cachedChrome;
+    // Return cached result if available
+    if (cachedChromePath !== null) {
+        return cachedChromePath;
     }
     
-    // 2. Check system Chrome
-    const systemChrome = findSystemChrome();
-    if (systemChrome) {
-        return systemChrome;
+    // If a check is already in progress, wait for it
+    if (chromeCheckPromise) {
+        return chromeCheckPromise;
     }
     
-    // 3. Install Chrome as last resort
-    try {
-        return await installChrome();
-    } catch (error) {
-        console.error('Failed to install Chrome:', error);
-        return undefined;
-    }
+    // Start the check
+    chromeCheckPromise = (async () => {
+        // 1. Check puppeteer cache first (exact compatible version)
+        const cachedChrome = findPuppeteerChrome();
+        if (cachedChrome) {
+            cachedChromePath = cachedChrome;
+            return cachedChrome;
+        }
+        
+        // 2. Check system Chrome
+        const systemChrome = findSystemChrome();
+        if (systemChrome) {
+            cachedChromePath = systemChrome;
+            return systemChrome;
+        }
+        
+        // 3. Install Chrome as last resort
+        try {
+            const installedChrome = await installChrome();
+            cachedChromePath = installedChrome;
+            return installedChrome;
+        } catch (error) {
+            console.error('Failed to install Chrome:', error);
+            cachedChromePath = undefined;
+            return undefined;
+        }
+    })();
+    
+    const result = await chromeCheckPromise;
+    chromeCheckPromise = null;
+    return result;
+}
+
+/**
+ * Pre-emptively ensure Chrome is available for PDF generation.
+ * Call this at server startup to trigger download in background if needed.
+ * Returns immediately, download happens in background.
+ */
+export function ensureChromeAvailable(): void {
+    // Don't await - let it run in background
+    getChromePath().catch((error) => {
+        console.error('Background Chrome check failed:', error);
+    });
 }
 
 async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
