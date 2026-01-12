@@ -94,18 +94,19 @@ export class DesktopCommanderIntegration {
         return null;
     }
 
-    async executeTool(toolName: string, args: any) {
+    async callClientTool(toolName: string, args: any, metadata?: any) {
         if (!this.isReady || !this.mcpClient) {
             throw new Error('DesktopIntegration not initialized');
         }
 
         // Proxy other tools to MCP server
         try {
-            console.log(`Forwarding tool call ${toolName} to MCP server`);
+            console.log(`Forwarding tool call ${toolName} to MCP server`, metadata);
             const result = await this.mcpClient.callTool({
                 name: toolName,
-                arguments: args
-            });
+                arguments: args,
+                _meta: { remote: true, ...metadata || {} }
+            } as any);
             return result;
         } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
@@ -113,7 +114,7 @@ export class DesktopCommanderIntegration {
         }
     }
 
-    async getCapabilities() {
+    async listClientTools() {
         if (!this.mcpClient) return { tools: [] };
 
         try {

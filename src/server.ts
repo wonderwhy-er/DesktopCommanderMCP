@@ -112,26 +112,39 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 // Store current client info (simple variable)
 let currentClient = { name: 'uninitialized', version: 'uninitialized' };
 
+/**
+ * Unified way to update client information
+ */
+async function updateCurrentClient(clientInfo: { name?: string, version?: string }) {
+    if (clientInfo.name !== currentClient.name || clientInfo.version !== currentClient.version) {
+        const nameChanged = clientInfo.name !== currentClient.name;
+
+        currentClient = {
+            name: clientInfo.name || currentClient.name,
+            version: clientInfo.version || currentClient.version
+        };
+
+        // Configure transport for client-specific behavior only if name changed
+        if (nameChanged) {
+            const transport = (global as any).mcpTransport;
+            if (transport && typeof transport.configureForClient === 'function') {
+                transport.configureForClient(currentClient.name);
+            }
+        }
+
+        return true;
+    }
+    return false;
+}
+
 // Add handler for initialization method - capture client info
 server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
     try {
         // Extract and store current client information
         const clientInfo = request.params?.clientInfo;
         if (clientInfo) {
-            currentClient = {
-                name: clientInfo.name || 'unknown',
-                version: clientInfo.version || 'unknown'
-            };
+            await updateCurrentClient(clientInfo);
 
-            // Configure transport for client-specific behavior
-            const transport = (global as any).mcpTransport;
-            if (transport && typeof transport.configureForClient === 'function') {
-                transport.configureForClient(currentClient.name);
-            }
-
-            // Defer client connection message until after initialization
-            deferLog('info', `Client connected: ${currentClient.name} v${currentClient.version}`);
-            
             // Welcome page for new claude-ai users (A/B test controlled)
             if (currentClient.name === 'claude-ai' && !(global as any).disableOnboarding) {
                 await handleWelcomePageOnboarding();
@@ -1073,13 +1086,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         The prompt content will be injected and execution begins immediately.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                    inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                    annotations: {
-                        title: "Get Prompts",
-                        readOnlyHint: true,
-                    },
-                }
-            ];
+                inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
+                annotations: {
+                    title: "Get Prompts",
+                    readOnlyHint: true,
+                },
+            }
+        ];
 
         // Filter tools based on current client
         const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
@@ -1103,8 +1116,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     const startTime = Date.now();
 
     try {
+        // Include _meta in debug log if present
+
         // Prepare telemetry data - add config key for set_config_value
         const telemetryData: any = { name };
+        // Extract metadata from _meta field if present
+        const metadata = request.params._meta as any;
+        if (metadata && typeof metadata === 'object') {
+            // add remote flag if present
+            if (metadata.remote) {
+                telemetryData.remote = metadata.remote;
+            }
+            // Dynamically update client info if provided in _meta
+            // To use in capture later
+            if (metadata.clientInfo) {
+                await updateCurrentClient(metadata.clientInfo);
+                telemetryData.client_name = metadata.clientInfo.name;
+                telemetryData.client_version = metadata.clientInfo.version;
+            }
+        }
+
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
         }
@@ -1121,6 +1152,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         capture_call_tool('server_call_tool', telemetryData);
+        // console.log(`[TELEMETRY DEBUG] Captured for tool ${name}:`, JSON.stringify(telemetryData, null, 2));
 
         // Log every tool request name
         // logger.info(`Tool request: ${name}`, { toolName: name, timestamp: new Date().toISOString() });

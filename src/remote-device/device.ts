@@ -141,7 +141,7 @@ export class MCPDevice {
             // Register as device
             this.deviceId = await this.remoteChannel.registerDevice(
                 this.user.id,
-                await this.desktop.getCapabilities(),
+                await this.desktop.listClientTools(),
                 this.deviceId,
                 deviceName
             );
@@ -238,14 +238,14 @@ export class MCPDevice {
         // Assuming database also renames agent_id to device_id, but user only said rename agent -> device everywhere but only inside src/remote-device
         // If the database column is still agent_id, we need a mapping.
         // However, the user said "literally all agent should be renamed to device everywhere", so we assume DB column is device_id.
-        const { id: call_id, tool_name, tool_args, device_id } = toolCall;
+        const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
 
         // Only process jobs for this device
         if (device_id && device_id !== this.deviceId) {
             return;
         }
 
-        console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)}`);
+        console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
         try {
             // Update call status to executing
@@ -277,7 +277,7 @@ export class MCPDevice {
                 }, 1000);
             } else {
                 // Execute other tools using desktop integration
-                result = await this.desktop.executeTool(tool_name, tool_args);
+                result = await this.desktop.callClientTool(tool_name, tool_args, metadata);
             }
 
             console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
