@@ -137,8 +137,12 @@ export const EditBlockArgsSchema = z.object({
   content: z.any().optional(),
   options: z.record(z.any()).optional()
 }).refine(
-  data => (data.old_string !== undefined && data.new_string !== undefined) ||
-          (data.range !== undefined && data.content !== undefined),
+  data => {
+    // Helper to check if value is actually provided (not undefined, not empty string)
+    const hasValue = (v: unknown) => v !== undefined && v !== '';
+    return (hasValue(data.old_string) && hasValue(data.new_string)) ||
+           (hasValue(data.range) && hasValue(data.content));
+  },
   { message: "Must provide either (old_string + new_string) or (range + content)" }
 );
 

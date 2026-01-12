@@ -20,6 +20,7 @@ import fs from 'fs/promises';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
+import { createErrorResponse } from '../error-handlers.js';
 import { EditBlockArgsSchema } from "./schemas.js";
 import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
@@ -371,7 +372,10 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     const parsed = EditBlockArgsSchema.parse(args);
 
     // Structured files: Range rewrite
-    if (parsed.range !== undefined && parsed.content !== undefined) {
+    // Note: Check for truthy range to handle empty strings from AI clients that send all optional params
+    const hasRange = parsed.range !== undefined && parsed.range !== '';
+    const hasContent = parsed.content !== undefined && parsed.content !== '';
+    if (hasRange && hasContent) {
         try {
             // Validate path before any filesystem operations
             const validatedPath = await validatePath(parsed.file_path);
@@ -391,7 +395,8 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
 
             // Check if handler supports range editing
             if ('editRange' in handler && typeof handler.editRange === 'function') {
-                await handler.editRange(validatedPath, parsed.range, content, parsed.options);
+                // parsed.range is guaranteed non-empty string by hasRange check above
+                await handler.editRange(validatedPath, parsed.range!, content, parsed.options);
                 return {
                     content: [{
                         type: "text",
@@ -399,36 +404,18 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                     }],
                 };
             } else {
-                return {
-                    content: [{
-                        type: "text",
-                        text: `Error: Range-based editing not supported for ${parsed.file_path}`
-                    }],
-                    isError: true
-                };
+                return createErrorResponse(`Range-based editing not supported for ${parsed.file_path}. For text files, use old_string and new_string parameters instead. If your client requires range/content parameters, set them to empty strings ("").`);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                content: [{
-                    type: "text",
-                    text: `Error: ${errorMessage}`
-                }],
-                isError: true
-            };
+            return createErrorResponse(errorMessage);
         }
     }
 
     // Text files: String replacement
     // Validate required parameters for text replacement
     if (parsed.old_string === undefined || parsed.new_string === undefined) {
-        return {
-            content: [{
-                type: "text",
-                text: `Error: Text replacement requires both old_string and new_string parameters`
-            }],
-            isError: true
-        };
+        return createErrorResponse(`Text replacement requires both old_string and new_string parameters`);
     }
 
     const searchReplace = {
