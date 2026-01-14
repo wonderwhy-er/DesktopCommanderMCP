@@ -101,11 +101,33 @@ npm run device:start
 
 ### 2. Authenticate
 
-When you start the device for the first time, it will ask you to authenticate:
+On first run, the device uses the **OAuth 2.0 Device Authorization Flow** for secure authentication:
 
-*   **Desktop Mode**: It will attempt to open your default browser to the authentication page. Sign in with your account.
-*   **Headless Mode**: If a browser cannot be opened, it will print a URL. Open this URL on another device, sign in, and paste the resulting Access Token back into the terminal.
+1. **Request Device Code**: The device requests a unique verification code from the server.
+2. **User Verification**: 
+   - A browser window will automatically open to the verification page
+   - If the browser doesn't open, you'll see a URL to visit manually
+   - Enter the displayed code when prompted (e.g., `BLPU-9E9R`)
+3. **Authorization**: Sign in with your account and authorize the device
+4. **Automatic Connection**: The device polls the server and automatically connects once you've authorized
 
+**Example Output**:
+```
+🔐 Starting device authorization flow...
+   - 📡 Requesting device code...
+   - ✅ Device code received
+
+📋 Please complete authentication:
+   1. Open this URL in your browser:
+      https://test.acidpictures.org/device/verify
+   2. Enter this code when prompted:
+      BLPU-9E9R
+   Code expires in 15 minutes.
+   - ⏳ Waiting for authorization...
+   - ✅ Authorization successful!
+```
+
+> **Note**: This flow works in all environments (desktop, server, container) without requiring a local callback server. The device simply polls the server until you complete authentication in your browser.
 
 ### 3. Connect your AI
 

@@ -1,34 +1,30 @@
-import express, { Request, Response } from 'express';
-import { createServer, Server } from 'http';
 import open from 'open';
-import readline from 'readline';
-import { authSuccessHtml } from './templates/auth-success.js';
+import os from 'os';
 
 interface AuthSession {
     access_token: string;
     refresh_token: string | null;
 }
 
-interface CallbackQuery {
+interface DeviceAuthResponse {
+    device_code: string;
+    user_code: string;
+    verification_uri: string;
+    verification_uri_complete: string;
+    expires_in: number;
+    interval: number;
+}
+
+interface PollResponse {
     access_token?: string;
     refresh_token?: string;
-    code?: string;
+    token_type?: string;
+    expires_in?: number;
     error?: string;
     error_description?: string;
-    [key: string]: string | undefined;
 }
 
-function escapeHtml(text: string | null | undefined): string {
-    if (text === null || text === undefined) return '';
-    return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
-const CALLBACK_PORT = 8121;
+const CLIENT_ID = 'mcp-device';
 
 export class DeviceAuthenticator {
     private baseServerUrl: string;
@@ -38,149 +34,124 @@ export class DeviceAuthenticator {
     }
 
     async authenticate(): Promise<AuthSession> {
-        // Detect environment
-        const isDesktop = this.isDesktopEnvironment();
+        console.log('🔐 Starting device authorization flow...\n');
 
-        console.log(`🔐 Starting authentication (${isDesktop ? 'desktop' : 'headless'} mode)...`);
+        // Step 1: Request device code
+        const deviceAuth = await this.requestDeviceCode();
 
-        if (isDesktop) {
-            return this.authenticateDesktop();
-        } else {
-            return this.authenticateHeadless();
+        // Step 2: Display user instructions and open browser
+        this.displayUserInstructions(deviceAuth);
+
+        // Step 3: Poll for authorization
+        const tokens = await this.pollForAuthorization(deviceAuth);
+
+        console.log('   - ✅ Authorization successful!\n');
+
+        return tokens;
+    }
+
+    private async requestDeviceCode(): Promise<DeviceAuthResponse> {
+        console.log('   - 📡 Requesting device code...');
+
+        const response = await fetch(`${this.baseServerUrl}/device/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                client_id: CLIENT_ID,
+                scope: 'mcp:tools',
+                device_name: os.hostname(),
+                device_type: 'mcp',
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(error.error_description || 'Failed to start device flow');
         }
+
+        const data = await response.json();
+        console.log('   - ✅ Device code received\n');
+        return data;
     }
 
-    private isDesktopEnvironment(): boolean {
-        // Check if we're in a desktop environment
-        return process.platform === 'darwin' ||
-            process.platform === 'win32' ||
-            (process.platform === 'linux' && !!process.env.DISPLAY);
+    private displayUserInstructions(deviceAuth: DeviceAuthResponse): void {
+        console.log('📋 Please complete authentication:\n');
+        console.log('   1. Open this URL in your browser:');
+        console.log(`      ${deviceAuth.verification_uri}\n`);
+        console.log('   2. Enter this code when prompted:');
+        console.log(`      ${deviceAuth.user_code}\n`);
+        console.log(`   Code expires in ${Math.floor(deviceAuth.expires_in / 60)} minutes.\n`);
+
+        // Try to open browser automatically
+        open(deviceAuth.verification_uri_complete).catch(() => {
+            console.log('   - Could not open browser automatically.');
+            console.log(`   - Please visit: ${deviceAuth.verification_uri}\n`);
+        });
+
+        console.log('   - ⏳ Waiting for authorization...\n');
     }
 
-    private async authenticateDesktop(): Promise<AuthSession> {
-        const app = express();
-        const callbackUrl = `http://localhost:${CALLBACK_PORT}/callback`;
+    private async pollForAuthorization(deviceAuth: DeviceAuthResponse): Promise<AuthSession> {
+        const interval = (deviceAuth.interval || 5) * 1000;
+        const maxAttempts = Math.floor(deviceAuth.expires_in / (deviceAuth.interval || 5));
+        let attempt = 0;
 
-        return new Promise((resolve, reject) => {
-            let server: Server;
+        while (attempt < maxAttempts) {
+            attempt++;
 
-            // Setup callback handler
-            app.get('/callback', (req: Request<{}, {}, {}, CallbackQuery>, res: Response) => {
-                const { access_token, refresh_token, code, error, error_description } = req.query;
+            // Wait before polling
+            await this.sleep(interval);
 
-                // Extract the actual token (could be in access_token or code parameter)
-                const token = access_token || code;
-
-                if (error) {
-                    const safeError = escapeHtml(error);
-                    const safeErrorDesc = escapeHtml(error_description || 'Unknown error');
-                    res.send(`
-            <h2>Authentication Failed</h2>
-            <p>Error: ${safeError}</p>
-            <p>Description: ${safeErrorDesc}</p>
-            <p>You can close this window.</p>
-          `);
-                    server.close();
-                    reject(new Error(`${error}: ${error_description}`));
-                } else if (token) {
-                    res.send(authSuccessHtml);
-                    server.close();
-                    resolve({
-                        access_token: token,
-                        refresh_token: refresh_token || null
-                    });
-                } else {
-                    console.log('❌ No token found in callback:', req.query);
-                    const safeParams = escapeHtml(Object.keys(req.query).join(', '));
-                    res.send(`
-            <h2>Authentication Failed</h2>
-            <p>No access token received</p>
-            <p>Received parameters: ${safeParams}</p>
-            <p>You can close this window.</p>
-          `);
-                    server.close();
-                    reject(new Error('No access token received'));
-                }
-            });
-
-            // Start callback server
-            server = createServer(app);
-            server.listen(CALLBACK_PORT, () => {
-                const authUrl = `${this.baseServerUrl}/?redirect_uri=${encodeURIComponent(callbackUrl)}&device=true`;
-
-                console.log('   - 🌐 Opening browser for authentication...');
-                console.log(`   - If browser doesn't open, visit: ${authUrl}`);
-
-                // Open browser
-                open(authUrl).catch(() => {
-                    console.log('   - Could not open browser automatically.');
-                    console.log(`   - Please visit: ${authUrl}`);
+            try {
+                const response = await fetch(`${this.baseServerUrl}/device/poll`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        device_code: deviceAuth.device_code,
+                        client_id: CLIENT_ID,
+                    }),
                 });
-            });
 
-            server.on('error', (err: Error) => {
-                reject(new Error(`Failed to start callback server: ${err.message}`));
-            });
-
-            // Timeout after 5 minutes
-            setTimeout(() => {
-                if (server.listening) {
-                    server.close();
-                    reject(new Error('   - Authentication timeout - no response received'));
+                if (response.ok) {
+                    const tokens: PollResponse = await response.json();
+                    if (tokens.access_token) {
+                        return {
+                            access_token: tokens.access_token,
+                            refresh_token: tokens.refresh_token || null,
+                        };
+                    }
                 }
-            }, 5 * 60 * 1000);
-        });
+
+                const error: PollResponse = await response.json().catch(() => ({ error: 'unknown' }));
+
+                // Check error type
+                if (error.error === 'authorization_pending') {
+                    // Still waiting - continue polling
+                    continue;
+                }
+
+                if (error.error === 'slow_down') {
+                    // Server requested slower polling
+                    await this.sleep(interval);
+                    continue;
+                }
+
+                // Terminal error
+                throw new Error(error.error_description || error.error || 'Authorization failed');
+            } catch (fetchError) {
+                // Network error - retry unless we're out of attempts
+                if (attempt >= maxAttempts) {
+                    throw fetchError;
+                }
+                // Continue polling on network errors
+                continue;
+            }
+        }
+
+        throw new Error('Authorization timeout - user did not authorize within the time limit');
     }
 
-    private async authenticateHeadless(): Promise<AuthSession> {
-        console.log('\n🔗 Manual Authentication Required:');
-        console.log('─'.repeat(50));
-        console.log(`1. Open this URL in a browser: ${this.baseServerUrl}/`);
-        console.log('2. Complete the authentication process');
-        console.log('3. You will be redirected to a URL with parameters.');
-        console.log('   If using device mode, look for access_token and refresh_token.');
-        console.log('4. Copy the access_token (and refresh_token if available) and paste here.');
-        console.log('   Format: access_token OR {"access_token":"...", "refresh_token":"..."}');
-        console.log('─'.repeat(50));
-
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-
-        return new Promise((resolve, reject) => {
-            rl.question('\n🔑 Enter Access Token or JSON: ', (input) => {
-                rl.close();
-
-                const trimmedInput = input.trim();
-                if (!trimmedInput) {
-                    reject(new Error('Empty input provided'));
-                    return;
-                }
-
-                try {
-                    // Try parsing as JSON first
-                    const json = JSON.parse(trimmedInput);
-                    if (json.access_token) {
-                        resolve({
-                            access_token: json.access_token,
-                            refresh_token: json.refresh_token || null
-                        });
-                        return;
-                    }
-                } catch (e) {
-                    // Not JSON, treat as raw token
-                }
-
-                if (trimmedInput.length < 10) {
-                    reject(new Error('Invalid token format (too short)'));
-                } else {
-                    resolve({
-                        access_token: trimmedInput,
-                        refresh_token: null
-                    });
-                }
-            });
-        });
+    private sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
 }

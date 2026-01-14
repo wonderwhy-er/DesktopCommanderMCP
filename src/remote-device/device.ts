@@ -42,17 +42,18 @@ export class MCPDevice {
         const handleShutdown = async (signal: string) => {
             if (this.isShuttingDown) {
                 console.log(`\n${signal} received, but already shutting down...`);
+                // Force exit if we get multiple signals
+                process.exit(1);
                 return;
             }
 
-
             console.log(`\n${signal} received, initiating graceful shutdown...`);
 
-            // Force exit after 3 seconds if graceful shutdown hangs
+            // Force exit after 2 seconds if graceful shutdown hangs
             const forceExit = setTimeout(() => {
-                console.error('⚠️ Graceful shutdown timed out, forcing exit...');
+                console.error('\n⚠️ Graceful shutdown timed out, forcing exit...');
                 process.exit(1);
-            }, 3000);
+            }, 2000);
 
             try {
                 await this.shutdown();
@@ -64,11 +65,23 @@ export class MCPDevice {
             }
         };
 
+        // Remove any existing SIGINT/SIGTERM listeners to prevent default behavior
+        process.removeAllListeners('SIGINT');
+        process.removeAllListeners('SIGTERM');
+
+        // Add our custom handlers
         process.on('SIGINT', () => {
-            handleShutdown('SIGINT');
+            handleShutdown('SIGINT').catch((error) => {
+                console.error('Fatal error during shutdown:', error);
+                process.exit(1);
+            });
         });
+
         process.on('SIGTERM', () => {
-            handleShutdown('SIGTERM');
+            handleShutdown('SIGTERM').catch((error) => {
+                console.error('Fatal error during shutdown:', error);
+                process.exit(1);
+            });
         });
     }
 
@@ -206,11 +219,10 @@ export class MCPDevice {
                     refresh_token: session.refresh_token
                 } : null
             };
-
             // Ensure the config directory exists
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
             await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            // if (session) console.debug('💾 Session saved to device.json');
+            // if (session) console.debug('💾 Session saved to ' + this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
         }
@@ -304,8 +316,13 @@ export class MCPDevice {
         console.log('\n🛑 Shutting down device...');
 
         try {
-            // Remote shutdown
+            // Stop heartbeat first to prevent new operations
+            this.remoteChannel.stopHeartbeat();
+
+            // Unsubscribe from channel
             await this.remoteChannel.unsubscribe();
+
+            // Mark device offline
             await this.remoteChannel.setOffline(this.deviceId);
 
             // Shutdown desktop integration

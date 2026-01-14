@@ -127,7 +127,7 @@ export class RemoteChannel {
 
     async subscribe(userId: string, onToolCall: (payload: any) => void): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
-        console.debug(` - ⏳ Subscribing to call queue...`);
+        console.debug(` - ⏳ Subscribing to tool call channel...`);
 
         return new Promise((resolve, reject) => {
             if (!this.client) return reject(new Error('Client not initialized'));
@@ -145,14 +145,14 @@ export class RemoteChannel {
                 )
                 .subscribe((status: string, err: any) => {
                     if (status === 'SUBSCRIBED') {
-                        console.debug(' - 🔌 Connected to call queue');
+                        console.debug(' - 🔌 Connected to tool call channel');
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
-                        console.error(' - ❌ Failed to connect to call queue:', err);
-                        reject(err || new Error('Failed to initialize call queue subscription'));
+                        console.error(' - ❌ Failed to connect to tool call channel:', err);
+                        reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error(' - ❌ Connection to call queue timed out');
-                        reject(new Error('Call queue subscription timed out'));
+                        console.error(' - ❌ Connection to tool call channel timed out');
+                        reject(new Error('Tool call channel subscription timed out'));
                     }
                 });
         });
@@ -201,6 +201,13 @@ export class RemoteChannel {
         }, HEARTBEAT_INTERVAL);
     }
 
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+    }
+
     async setOffline(deviceId: string | null) {
         if (deviceId && this.client) {
             await this.client
@@ -213,9 +220,9 @@ export class RemoteChannel {
 
     async unsubscribe() {
         if (this.channel) {
-            if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
             await this.channel.unsubscribe();
-            console.log('✓ Unsubscribed from channel');
+            this.channel = null;
+            console.log('✓ Unsubscribed from tool call channel');
         }
     }
 }
