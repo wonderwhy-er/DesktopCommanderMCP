@@ -1,5 +1,6 @@
 import open from 'open';
 import os from 'os';
+import crypto from 'crypto';
 
 interface AuthSession {
     access_token: string;
@@ -36,21 +37,30 @@ export class DeviceAuthenticator {
     async authenticate(): Promise<AuthSession> {
         console.log('🔐 Starting device authorization flow...\n');
 
+        // Generate PKCE
+        const pkce = this.generatePKCE();
+
         // Step 1: Request device code
-        const deviceAuth = await this.requestDeviceCode();
+        const deviceAuth = await this.requestDeviceCode(pkce.challenge);
 
         // Step 2: Display user instructions and open browser
         this.displayUserInstructions(deviceAuth);
 
         // Step 3: Poll for authorization
-        const tokens = await this.pollForAuthorization(deviceAuth);
+        const tokens = await this.pollForAuthorization(deviceAuth, pkce.verifier);
 
         console.log('   - ✅ Authorization successful!\n');
 
         return tokens;
     }
 
-    private async requestDeviceCode(): Promise<DeviceAuthResponse> {
+    private generatePKCE() {
+        const verifier = crypto.randomBytes(32).toString('base64url');
+        const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+        return { verifier, challenge };
+    }
+
+    private async requestDeviceCode(codeChallenge: string): Promise<DeviceAuthResponse> {
         console.log('   - 📡 Requesting device code...');
 
         const response = await fetch(`${this.baseServerUrl}/device/start`, {
@@ -61,6 +71,8 @@ export class DeviceAuthenticator {
                 scope: 'mcp:tools',
                 device_name: os.hostname(),
                 device_type: 'mcp',
+                code_challenge: codeChallenge,
+                code_challenge_method: 'S256',
             }),
         });
 
@@ -91,7 +103,7 @@ export class DeviceAuthenticator {
         console.log('   - ⏳ Waiting for authorization...\n');
     }
 
-    private async pollForAuthorization(deviceAuth: DeviceAuthResponse): Promise<AuthSession> {
+    private async pollForAuthorization(deviceAuth: DeviceAuthResponse, codeVerifier: string): Promise<AuthSession> {
         const interval = (deviceAuth.interval || 5) * 1000;
         const maxAttempts = Math.floor(deviceAuth.expires_in / (deviceAuth.interval || 5));
         let attempt = 0;
@@ -109,6 +121,7 @@ export class DeviceAuthenticator {
                     body: JSON.stringify({
                         device_code: deviceAuth.device_code,
                         client_id: CLIENT_ID,
+                        code_verifier: codeVerifier,
                     }),
                 });
 

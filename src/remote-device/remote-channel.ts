@@ -96,7 +96,7 @@ export class RemoteChannel {
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
-                capabilities: capabilities,
+                capabilities: {}, // Not used atm
                 device_name: deviceName
             });
 
@@ -112,7 +112,7 @@ export class RemoteChannel {
             const { data: newDevice, error } = await this.createDevice({
                 user_id: userId,
                 device_name: deviceName,
-                capabilities: capabilities,
+                capabilities: {}, // Not used atm
                 status: 'online',
                 last_seen: new Date().toISOString()
             });

@@ -239,7 +239,7 @@ export class MCPDevice {
         const config = await response.json();
         return {
             supabaseUrl: config.supabaseUrl,
-            anonKey: config.supabaseAnonKey
+            anonKey: config.supabasePublishableKey
         };
     }
 
