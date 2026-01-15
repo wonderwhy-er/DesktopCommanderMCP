@@ -3,6 +3,7 @@ import { createClient, SupabaseClient, Session, UserResponse, RealtimeChannel } 
 export interface AuthSession {
     access_token: string;
     refresh_token: string | null;
+    device_id?: string;
 }
 
 interface DeviceData {
@@ -78,16 +79,11 @@ export class RemoteChannel {
             .single();
     }
 
-    async registerDevice(userId: string, capabilities: any, currentDeviceId: string | null, deviceName: string): Promise<string> {
+    async registerDevice(userId: string, capabilities: any, currentDeviceId: string | undefined, deviceName: string): Promise<void> {
         let existingDevice = null;
 
         if (currentDeviceId) {
-            try {
-                existingDevice = await this.findDevice(currentDeviceId, userId);
-            } catch (e: any) {
-                // ignore error, treat as not found
-                console.warn('Error checking existing device:', e.message);
-            }
+            existingDevice = await this.findDevice(currentDeviceId, userId);
         }
 
         if (existingDevice) {
@@ -99,29 +95,9 @@ export class RemoteChannel {
                 capabilities: {}, // Not used atm
                 device_name: deviceName
             });
-
-            return existingDevice.id;
-
         } else {
-            if (currentDeviceId) {
-                console.log(`   - ⚠️ persisted deviceId ${currentDeviceId} not found for user ${userId}. Creating new device...`);
-            } else {
-                console.log('   - 📝 No existing device found, creating new registration...');
-            }
-
-            const { data: newDevice, error } = await this.createDevice({
-                user_id: userId,
-                device_name: deviceName,
-                capabilities: {}, // Not used atm
-                status: 'online',
-                last_seen: new Date().toISOString()
-            });
-
-            if (error) throw error;
-
-            console.log(`   - ✅ Device registered: ${newDevice.device_name}`);
-            console.log(`   - ✅ Assigned new Device ID: ${newDevice.id}`);
-            return newDevice.id;
+            console.error(`   - ❌ Device not found: ${currentDeviceId}`);
+            throw new Error(`Device not found: ${currentDeviceId}`);
         }
     }
 
@@ -208,7 +184,7 @@ export class RemoteChannel {
         }
     }
 
-    async setOffline(deviceId: string | null) {
+    async setOffline(deviceId: string | undefined) {
         if (deviceId && this.client) {
             await this.client
                 .from('mcp_devices')

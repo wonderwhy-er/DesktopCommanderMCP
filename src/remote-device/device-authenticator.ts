@@ -5,6 +5,7 @@ import crypto from 'crypto';
 interface AuthSession {
     access_token: string;
     refresh_token: string | null;
+    device_id?: string;
 }
 
 interface DeviceAuthResponse {
@@ -23,6 +24,7 @@ interface PollResponse {
     expires_in?: number;
     error?: string;
     error_description?: string;
+    device_id?: string;
 }
 
 const CLIENT_ID = 'mcp-device';
@@ -34,14 +36,14 @@ export class DeviceAuthenticator {
         this.baseServerUrl = baseServerUrl;
     }
 
-    async authenticate(): Promise<AuthSession> {
+    async authenticate(deviceId?: string): Promise<AuthSession> {
         console.log('🔐 Starting device authorization flow...\n');
 
         // Generate PKCE
         const pkce = this.generatePKCE();
 
         // Step 1: Request device code
-        const deviceAuth = await this.requestDeviceCode(pkce.challenge);
+        const deviceAuth = await this.requestDeviceCode(pkce.challenge, deviceId);
 
         // Step 2: Display user instructions and open browser
         this.displayUserInstructions(deviceAuth);
@@ -60,7 +62,7 @@ export class DeviceAuthenticator {
         return { verifier, challenge };
     }
 
-    private async requestDeviceCode(codeChallenge: string): Promise<DeviceAuthResponse> {
+    private async requestDeviceCode(codeChallenge: string, deviceId?: string): Promise<DeviceAuthResponse> {
         console.log('   - 📡 Requesting device code...');
 
         const response = await fetch(`${this.baseServerUrl}/device/start`, {
@@ -71,6 +73,7 @@ export class DeviceAuthenticator {
                 scope: 'mcp:tools',
                 device_name: os.hostname(),
                 device_type: 'mcp',
+                device_id: deviceId,
                 code_challenge: codeChallenge,
                 code_challenge_method: 'S256',
             }),
@@ -129,6 +132,7 @@ export class DeviceAuthenticator {
                     const tokens: PollResponse = await response.json();
                     if (tokens.access_token) {
                         return {
+                            device_id: tokens.device_id,
                             access_token: tokens.access_token,
                             refresh_token: tokens.refresh_token || null,
                         };

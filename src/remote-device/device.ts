@@ -15,7 +15,7 @@ export interface MCPDeviceOptions {
 export class MCPDevice {
     private baseServerUrl: string;
     private remoteChannel: RemoteChannel;
-    private deviceId: string | null;
+    private deviceId?: string;
     private user: any;
     private isShuttingDown: boolean;
     private configPath: string;
@@ -25,7 +25,7 @@ export class MCPDevice {
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
         this.remoteChannel = new RemoteChannel();
-        this.deviceId = null;
+        this.deviceId = undefined;
         this.user = null;
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
@@ -121,7 +121,17 @@ export class MCPDevice {
             if (!session) {
                 console.log('\n🔐 Authenticating with Remote MCP server...');
                 const authenticator = new DeviceAuthenticator(this.baseServerUrl);
-                session = await authenticator.authenticate();
+                session = await authenticator.authenticate(this.deviceId);
+                if (session.device_id) {
+                    if (!this.deviceId) {
+                        console.log(`   - ✅ Device ID assigned: ${session.device_id}`);
+                    } else if (this.deviceId !== session.device_id) {
+                        console.log(`   - ⚠️ Device ID changed: ${this.deviceId} → ${session.device_id}`);
+                    } else {
+                        console.log(`   - ✅ Device ID authenticated: ${session.device_id}`);
+                    }
+                    this.deviceId = session.device_id;
+                }
                 // Set session in Remote Channel
                 const { error } = await this.remoteChannel.setSession(session);
                 if (error) throw error;
@@ -152,7 +162,7 @@ export class MCPDevice {
 
             const deviceName = os.hostname();
             // Register as device
-            this.deviceId = await this.remoteChannel.registerDevice(
+            await this.remoteChannel.registerDevice(
                 this.user.id,
                 await this.desktop.listClientTools(),
                 this.deviceId,
@@ -172,7 +182,7 @@ export class MCPDevice {
             console.log(`   - Device Name:  ${deviceName}`);
 
             // Keep process alive
-            this.remoteChannel.startHeartbeat(this.deviceId);
+            this.remoteChannel.startHeartbeat(this.deviceId!);
 
         } catch (error: any) {
             console.error(' - ❌ Device startup failed:', error.message);
