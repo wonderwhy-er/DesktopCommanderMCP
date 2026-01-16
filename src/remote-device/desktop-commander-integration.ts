@@ -135,20 +135,39 @@ export class DesktopCommanderIntegration {
     }
 
     async shutdown() {
+        const closeWithTimeout = async (operation: () => Promise<void>, name: string, timeoutMs: number = 3000) => {
+            return Promise.race([
+                operation(),
+                new Promise<void>((_, reject) =>
+                    setTimeout(() => reject(new Error(`${name} timeout after ${timeoutMs}ms`)), timeoutMs)
+                )
+            ]);
+        };
+
         if (this.mcpClient) {
             try {
-                await this.mcpClient.close();
-            } catch (e) {
-                console.error('Error closing MCP client:', e);
+                console.log('  → Closing MCP client...');
+                await closeWithTimeout(
+                    () => this.mcpClient!.close(),
+                    'MCP client close'
+                );
+                console.log('  ✓ MCP client closed');
+            } catch (e: any) {
+                console.warn('  ⚠️  MCP client close timeout or error:', e.message);
             }
             this.mcpClient = null;
         }
 
         if (this.mcpTransport) {
             try {
-                await this.mcpTransport.close();
-            } catch (e) {
-                console.error('Error closing MCP transport:', e);
+                console.log('  → Closing MCP transport...');
+                await closeWithTimeout(
+                    () => this.mcpTransport!.close(),
+                    'MCP transport close'
+                );
+                console.log('  ✓ MCP transport closed');
+            } catch (e: any) {
+                console.warn('  ⚠️  MCP transport close timeout or error:', e.message);
             }
             this.mcpTransport = null;
         }

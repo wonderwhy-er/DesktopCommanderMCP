@@ -49,11 +49,11 @@ export class MCPDevice {
 
             console.log(`\n${signal} received, initiating graceful shutdown...`);
 
-            // Force exit after 2 seconds if graceful shutdown hangs
+            // Force exit after 5 seconds if graceful shutdown hangs
             const forceExit = setTimeout(() => {
                 console.error('\n⚠️ Graceful shutdown timed out, forcing exit...');
                 process.exit(1);
-            }, 2000);
+            }, 5000);
 
             try {
                 await this.shutdown();
@@ -327,16 +327,22 @@ export class MCPDevice {
 
         try {
             // Stop heartbeat first to prevent new operations
+            console.log('  → Stopping heartbeat...');
             this.remoteChannel.stopHeartbeat();
+            console.log('  ✓ Heartbeat stopped');
 
             // Unsubscribe from channel
+            console.log('  → Unsubscribing from channel...');
             await this.remoteChannel.unsubscribe();
 
             // Mark device offline
+            console.log('  → Marking device offline...');
             await this.remoteChannel.setOffline(this.deviceId);
 
             // Shutdown desktop integration
+            console.log('  → Shutting down desktop integration...');
             await this.desktop.shutdown();
+            console.log('  ✓ Desktop integration shut down');
 
             console.log('✓ Device shutdown complete');
         } catch (error: any) {
