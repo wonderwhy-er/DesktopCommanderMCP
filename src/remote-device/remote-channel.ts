@@ -14,7 +14,7 @@ interface DeviceData {
     last_seen: string;
 }
 
-const HEARTBEAT_INTERVAL = 30000;
+const HEARTBEAT_INTERVAL = 15000;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -169,6 +169,7 @@ export class RemoteChannel {
                 .from('mcp_devices')
                 .update({ last_seen: new Date().toISOString() })
                 .eq('id', deviceId);
+            // console.log(`🔌 Heartbeat sent for device: ${deviceId}`);
         } catch (error: any) {
             console.error('Heartbeat failed:', error.message);
         }
