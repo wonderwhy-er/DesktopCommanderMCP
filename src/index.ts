@@ -10,6 +10,7 @@ import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
+import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -31,9 +32,9 @@ async function runServer() {
       return;
     }
 
-      if (process.argv[2] === 'remote') {
-        await runRemote();
-        return;
+    if (process.argv[2] === 'remote') {
+      await runRemote();
+      return;
     }
 
     // Check if first argument is "remote"
@@ -131,6 +132,9 @@ async function runServer() {
       // Now we can send regular logging messages
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
+
+      // Preemptively check/download Chrome for PDF generation (runs in background)
+      ensureChromeAvailable();
     };
 
     await server.connect(transport);
