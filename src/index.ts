@@ -32,6 +32,12 @@ async function runServer() {
       return;
     }
 
+    // Check if first argument is "remote"
+    if (process.argv[2] === 'remote') {
+      await runRemote();
+      return;
+    }
+
     // Parse command line arguments for onboarding control
     const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');
     if (DISABLE_ONBOARDING) {

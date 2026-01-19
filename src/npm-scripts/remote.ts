@@ -10,7 +10,7 @@ export async function runRemote() {
     if (!disableNoSleep && os.platform() === 'darwin') {
         try {
             const { default: caffeinate } = await import('caffeinate');
-            await caffeinate({ pid: process.pid });
+            caffeinate({ pid: process.pid });
             console.log('☕ No sleep mode enabled');
         } catch (error) {
             console.warn('⚠️ Failed to start caffeinate:', error);

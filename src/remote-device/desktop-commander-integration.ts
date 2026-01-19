@@ -76,9 +76,10 @@ export class DesktopCommanderIntegration {
         const commandName = 'desktop-commander';
         try {
             await new Promise<void>((resolve, reject) => {
-                // Use 'which' to check if the command exists in PATH
+                // Use platform-appropriate command to check if the command exists in PATH
                 // We can't run it directly as it's an stdio MCP server that waits for input
-                const check = spawn('which', [commandName]);
+                const whichCommand = process.platform === 'win32' ? 'where' : 'which';
+                const check = spawn(whichCommand, [commandName]);
                 check.on('error', reject);
                 check.on('close', (code) => code === 0 ? resolve() : reject(new Error('Command not found')));
             });
