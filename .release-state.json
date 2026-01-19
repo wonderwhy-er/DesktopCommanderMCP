@@ -1,0 +1,9 @@
+{
+  "startTime": "2026-01-19T16:49:41.029Z",
+  "completedSteps": [
+    "bump"
+  ],
+  "lastStep": "bump",
+  "version": "0.2.29-alpha.12",
+  "bumpType": "patch"
+}

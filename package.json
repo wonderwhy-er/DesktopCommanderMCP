@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.29-alpha.11",
+  "version": "0.2.29-alpha.12",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -85,7 +85,6 @@
     "@opendocsg/pdf2md": "^0.2.2",
     "@supabase/supabase-js": "^2.89.0",
     "@vscode/ripgrep": "^1.15.9",
-    "caffeinate": "^1.0.1",
     "cross-fetch": "^4.1.0",
     "exceljs": "^4.4.0",
     "fastest-levenshtein": "^1.0.16",
@@ -103,6 +102,9 @@
     "unpdf": "^1.4.0",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
+  },
+  "optionalDependencies": {
+    "caffeinate": "^1.0.1"
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "^1.2.0",

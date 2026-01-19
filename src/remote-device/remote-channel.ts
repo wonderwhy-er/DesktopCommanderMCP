@@ -102,7 +102,7 @@ export class RemoteChannel {
     }
 
 
-    async subscribe(userId: string, onToolCall: (payload: any) => void): Promise<void> {
+    async subscribe(userId: string, deviceId: string, onToolCall: (payload: any) => void): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
         console.debug(` - ⏳ Subscribing to tool call channel...`);
 
@@ -123,15 +123,15 @@ export class RemoteChannel {
                 .subscribe((status: string, err: any) => {
                     if (status === 'SUBSCRIBED') {
                         // console.debug(' - 🔌 Connected to tool call channel');
-                        this.setOnlineStatus(userId, 'online');
+                        this.setOnlineStatus(deviceId, 'online');
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
                         // console.error(' - ❌ Failed to connect to tool call channel:', err);
-                        this.setOnlineStatus(userId, 'offline');
+                        this.setOnlineStatus(deviceId, 'offline');
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
                         // console.error(' - ❌ Connection to tool call channel timed out');
-                        this.setOnlineStatus(userId, 'offline');
+                        this.setOnlineStatus(deviceId, 'offline');
                         reject(new Error('Tool call channel subscription timed out'));
                     }
                 });

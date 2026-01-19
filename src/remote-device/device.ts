@@ -66,8 +66,8 @@ export class MCPDevice {
         };
 
         // Remove any existing SIGINT/SIGTERM listeners to prevent default behavior
-        process.removeAllListeners('SIGINT');
-        process.removeAllListeners('SIGTERM');
+        // process.removeAllListeners('SIGINT');
+        // process.removeAllListeners('SIGTERM');
 
         // Add our custom handlers
         process.on('SIGINT', () => {
@@ -174,7 +174,7 @@ export class MCPDevice {
             await this.savePersistedConfig(currentSession);
 
             // Subscribe to tool calls
-            await this.remoteChannel.subscribe(this.user.id, (payload: any) => this.handleNewToolCall(payload));
+            await this.remoteChannel.subscribe(this.user.id, this.deviceId!, (payload: any) => this.handleNewToolCall(payload));
 
             console.log('✅ Device ready:');
             console.log(`   - User:         ${this.user.email}`);
