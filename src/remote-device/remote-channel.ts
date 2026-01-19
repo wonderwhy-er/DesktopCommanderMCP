@@ -101,6 +101,7 @@ export class RemoteChannel {
         }
     }
 
+
     async subscribe(userId: string, onToolCall: (payload: any) => void): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
         console.debug(` - ⏳ Subscribing to tool call channel...`);
@@ -121,13 +122,16 @@ export class RemoteChannel {
                 )
                 .subscribe((status: string, err: any) => {
                     if (status === 'SUBSCRIBED') {
-                        console.debug(' - 🔌 Connected to tool call channel');
+                        // console.debug(' - 🔌 Connected to tool call channel');
+                        this.setOnlineStatus(userId, 'online');
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
-                        console.error(' - ❌ Failed to connect to tool call channel:', err);
+                        // console.error(' - ❌ Failed to connect to tool call channel:', err);
+                        this.setOnlineStatus(userId, 'offline');
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error(' - ❌ Connection to tool call channel timed out');
+                        // console.error(' - ❌ Connection to tool call channel timed out');
+                        this.setOnlineStatus(userId, 'offline');
                         reject(new Error('Tool call channel subscription timed out'));
                     }
                 });
@@ -184,13 +188,92 @@ export class RemoteChannel {
         }
     }
 
+    async setOnlineStatus(deviceId: string, status: 'online' | 'offline') {
+        if (!this.client) return;
+        const { error } = await this.client
+            .from('mcp_devices')
+            .update({ status: status, last_seen: new Date().toISOString() })
+            .eq('id', deviceId);
+
+        if (error) {
+            console.error('Failed to update device status:', error.message);
+            return;
+        }
+
+        console.log(status === 'online' ? `🔌 Device marked as ${status}` : `❌ Device marked as ${status}`);
+    }
+
     async setOffline(deviceId: string | undefined) {
-        if (deviceId && this.client) {
-            await this.client
-                .from('mcp_devices')
-                .update({ status: 'offline' })
-                .eq('id', deviceId);
-            console.log('✓ Device marked as offline');
+        if (!deviceId || !this.client) {
+            return;
+        }
+
+        // console.log('🔍 [setOffline] Initiating blocking update...');
+
+        try {
+            // Get current session for the subprocess
+            const { data: sessionData } = await this.client.auth.getSession();
+
+            if (!sessionData?.session?.access_token) {
+                console.error('❌ No valid session for offline update');
+                return;
+            }
+
+            // Get Supabase config from client
+            const supabaseUrl = (this.client as any).supabaseUrl;
+            const supabaseKey = (this.client as any).supabaseKey;
+
+            if (!supabaseUrl || !supabaseKey) {
+                console.error('❌ Missing Supabase configuration');
+                return;
+            }
+
+            // Use spawnSync to run the blocking update script
+            const { spawnSync } = await import('child_process');
+            const { fileURLToPath } = await import('url');
+            const path = await import('path');
+
+            // Get the script path relative to this file
+            const __filename = fileURLToPath(import.meta.url);
+            const __dirname = path.dirname(__filename);
+            const scriptPath = path.join(__dirname, 'scripts', 'blocking-offline-update.js');
+
+            const result = spawnSync('node', [
+                scriptPath,
+                deviceId,
+                supabaseUrl,
+                supabaseKey,
+                sessionData.session.access_token,
+                sessionData.session.refresh_token || ''
+            ], {
+                timeout: 3000,
+                stdio: 'pipe', // Capture output to prevent blocking
+                encoding: 'utf-8'
+            });
+
+            // Log subprocess output (with encoding:'utf-8', these are already strings)
+            if (result.stdout && result.stdout.trim()) {
+                console.log(result.stdout.trim());
+            }
+            if (result.stderr && result.stderr.trim()) {
+                console.error(result.stderr.trim());
+            }
+
+            // Handle exit codes
+            if (result.error) {
+                console.error('❌ Failed to spawn update process:', result.error.message);
+            } else if (result.status === 0) {
+                console.log('✓ Device marked as offline (blocking)');
+            } else if (result.status === 2) {
+                console.warn('⚠️ Device offline update timed out');
+            } else if (result.signal) {
+                console.error(`❌ Update process killed by signal: ${result.signal}`);
+            } else {
+                console.error(`❌ Update process failed with exit code: ${result.status}`);
+            }
+
+        } catch (error: any) {
+            console.error('❌ Error in blocking offline update:', error.message);
         }
     }
 
