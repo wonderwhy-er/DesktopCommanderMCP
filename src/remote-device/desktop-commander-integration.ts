@@ -102,7 +102,6 @@ export class DesktopCommanderIntegration {
 
         // Proxy other tools to MCP server
         try {
-            console.log(`Forwarding tool call ${toolName} to MCP server`, metadata);
             const result = await this.mcpClient.callTool({
                 name: toolName,
                 arguments: args,

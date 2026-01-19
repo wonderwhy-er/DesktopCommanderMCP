@@ -1116,16 +1116,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     const startTime = Date.now();
 
     try {
-        // Include _meta in debug log if present
-
         // Prepare telemetry data - add config key for set_config_value
         const telemetryData: any = { name };
         // Extract metadata from _meta field if present
         const metadata = request.params._meta as any;
         if (metadata && typeof metadata === 'object') {
-            // add remote flag if present
+            // add remote flag if present (convert to string for GA4)
             if (metadata.remote) {
-                telemetryData.remote = metadata.remote;
+                telemetryData.remote = String(metadata.remote);
             }
             // Dynamically update client info if provided in _meta
             // To use in capture later
@@ -1152,9 +1150,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         capture_call_tool('server_call_tool', telemetryData);
-
-        // Log every tool request name
-        // logger.info(`Tool request: ${name}`, { toolName: name, timestamp: new Date().toISOString() });
 
         // Track tool call
         trackToolCall(name, args);
