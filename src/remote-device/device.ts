@@ -257,9 +257,7 @@ export class MCPDevice {
 
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
-        // Assuming database also renames agent_id to device_id, but user only said rename agent -> device everywhere but only inside src/remote-device
-        // If the database column is still agent_id, we need a mapping.
-        // However, the user said "literally all agent should be renamed to device everywhere", so we assume DB column is device_id.
+        // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
 
         // Only process jobs for this device
@@ -312,10 +310,6 @@ export class MCPDevice {
             await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
         }
     }
-
-    // Moved to RemoteChannel
-
-    // Moved to RemoteChannel
 
     async shutdown() {
         if (this.isShuttingDown) {

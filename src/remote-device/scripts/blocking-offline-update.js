@@ -42,7 +42,7 @@ try {
     }
 
     // Update device status to offline
-    const { data, error } = await client
+    const { error } = await client
         .from('mcp_devices')
         .update({ status: 'offline' })
         .eq('id', deviceId);

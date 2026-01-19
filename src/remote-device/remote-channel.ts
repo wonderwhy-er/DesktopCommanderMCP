@@ -92,7 +92,7 @@ export class RemoteChannel {
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
-                capabilities: {}, // Not used atm
+                capabilities: {}, // TODO: Capabilities are not yet implemented; keep this empty object for schema compatibility until device capabilities are defined and stored.
                 device_name: deviceName
             });
         } else {

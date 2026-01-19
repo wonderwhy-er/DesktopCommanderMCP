@@ -1152,7 +1152,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         capture_call_tool('server_call_tool', telemetryData);
-        // console.log(`[TELEMETRY DEBUG] Captured for tool ${name}:`, JSON.stringify(telemetryData, null, 2));
 
         // Log every tool request name
         // logger.info(`Tool request: ${name}`, { toolName: name, timestamp: new Date().toISOString() });
