@@ -128,33 +128,32 @@ export class DeviceAuthenticator {
                     }),
                 });
 
-                if (response.ok) {
-                    const tokens: PollResponse = await response.json();
-                    if (tokens.access_token) {
-                        return {
-                            device_id: tokens.device_id,
-                            access_token: tokens.access_token,
-                            refresh_token: tokens.refresh_token || null,
-                        };
-                    }
+                // Parse response body exactly once
+                const data: PollResponse = await response.json().catch(() => ({ error: 'unknown' }));
+
+                // Successful authentication
+                if (response.ok && data.access_token) {
+                    return {
+                        device_id: data.device_id,
+                        access_token: data.access_token,
+                        refresh_token: data.refresh_token || null,
+                    };
                 }
 
-                const error: PollResponse = await response.json().catch(() => ({ error: 'unknown' }));
-
                 // Check error type
-                if (error.error === 'authorization_pending') {
+                if (data.error === 'authorization_pending') {
                     // Still waiting - continue polling
                     continue;
                 }
 
-                if (error.error === 'slow_down') {
+                if (data.error === 'slow_down') {
                     // Server requested slower polling
                     await this.sleep(interval);
                     continue;
                 }
 
                 // Terminal error
-                throw new Error(error.error_description || error.error || 'Authorization failed');
+                throw new Error(data.error_description || data.error || 'Authorization failed');
             } catch (fetchError) {
                 // Network error - retry unless we're out of attempts
                 if (attempt >= maxAttempts) {
