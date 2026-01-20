@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
+import { captureRemote } from '../utils/capture.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -61,6 +62,7 @@ export class MCPDevice {
                 process.exit(0);
             } catch (error) {
                 console.error('Error during shutdown:', error);
+                await captureRemote('remote_device_shutdown_handler_error', { error });
                 process.exit(1);
             }
         };
@@ -73,6 +75,7 @@ export class MCPDevice {
         process.on('SIGINT', () => {
             handleShutdown('SIGINT').catch((error) => {
                 console.error('Fatal error during shutdown:', error);
+                captureRemote('remote_device_shutdown_handler_error', { error, signal: 'SIGINT' }).catch(() => { });
                 process.exit(1);
             });
         });
@@ -80,6 +83,7 @@ export class MCPDevice {
         process.on('SIGTERM', () => {
             handleShutdown('SIGTERM').catch((error) => {
                 console.error('Fatal error during shutdown:', error);
+                captureRemote('remote_device_shutdown_handler_error', { error, signal: 'SIGTERM' }).catch(() => { });
                 process.exit(1);
             });
         });
@@ -124,10 +128,19 @@ export class MCPDevice {
                 session = await authenticator.authenticate(this.deviceId);
                 if (session.device_id) {
                     if (!this.deviceId) {
+                        await captureRemote('remote_device_auth_success', {
+                            "device": "assigned"
+                        });
                         console.log(`   - ✅ Device ID assigned: ${session.device_id}`);
                     } else if (this.deviceId !== session.device_id) {
+                        await captureRemote('remote_device_auth_success', {
+                            "device": "changed"
+                        });
                         console.log(`   - ⚠️ Device ID changed: ${this.deviceId} → ${session.device_id}`);
                     } else {
+                        await captureRemote('remote_device_auth_success', {
+                            "device": "authenticated"
+                        });
                         console.log(`   - ✅ Device ID authenticated: ${session.device_id}`);
                     }
                     this.deviceId = session.device_id;
@@ -189,6 +202,7 @@ export class MCPDevice {
             if (error.stack && process.env.DEBUG_MODE === 'true') {
                 console.error('Stack trace:', error.stack);
             }
+            await captureRemote('remote_device_startup_failed', { error });
             await this.shutdown();
             process.exit(1);
         }
@@ -212,6 +226,7 @@ export class MCPDevice {
 
             if (error.code !== 'ENOENT') {
                 console.warn('⚠️ Failed to load config:', error.message);
+                await captureRemote('remote_device_config_load_error', { error });
             }
             return null;
         } finally {
@@ -235,6 +250,7 @@ export class MCPDevice {
             // if (session) console.debug('💾 Session saved to ' + this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
+            await captureRemote('remote_device_config_save_error', { error });
         }
     }
 
@@ -307,6 +323,7 @@ export class MCPDevice {
 
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            await captureRemote('remote_device_tool_call_failed', { error, tool_name });
             await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
         }
     }
@@ -341,6 +358,7 @@ export class MCPDevice {
             console.log('✓ Device shutdown complete');
         } catch (error: any) {
             console.error('Shutdown error:', error.message);
+            await captureRemote('remote_device_shutdown_error', { error });
         }
     }
 }

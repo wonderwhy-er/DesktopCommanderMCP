@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient, Session, UserResponse, RealtimeChannel } from '@supabase/supabase-js';
+import { captureRemote } from '../utils/capture.js';
 
 export interface AuthSession {
     access_token: string;
@@ -97,6 +98,7 @@ export class RemoteChannel {
             });
         } else {
             console.error(`   - ❌ Device not found: ${currentDeviceId}`);
+            await captureRemote('remote_channel_register_device_error', { error: 'Device not found', deviceId: currentDeviceId });
             throw new Error(`Device not found: ${currentDeviceId}`);
         }
     }
@@ -123,15 +125,26 @@ export class RemoteChannel {
                 .subscribe((status: string, err: any) => {
                     if (status === 'SUBSCRIBED') {
                         // console.debug(' - 🔌 Connected to tool call channel');
-                        this.setOnlineStatus(deviceId, 'online');
+                        this.setOnlineStatus(deviceId, 'online').catch(e => {
+                            console.error('Failed to set online status during subscription:', e.message);
+                            captureRemote('remote_channel_status_update_error', { error: e, context: 'subscription_online' }).catch(() => { });
+                        });
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
                         // console.error(' - ❌ Failed to connect to tool call channel:', err);
-                        this.setOnlineStatus(deviceId, 'offline');
+                        this.setOnlineStatus(deviceId, 'offline').catch(e => {
+                            console.error('Failed to set offline status during channel error:', e.message);
+                            captureRemote('remote_channel_status_update_error', { error: e, context: 'channel_error_offline' }).catch(() => { });
+                        });
+                        captureRemote('remote_channel_subscription_error', { error: err || 'Channel error' }).catch(() => { });
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
                         // console.error(' - ❌ Connection to tool call channel timed out');
-                        this.setOnlineStatus(deviceId, 'offline');
+                        this.setOnlineStatus(deviceId, 'offline').catch(e => {
+                            console.error('Failed to set offline status during timeout:', e.message);
+                            captureRemote('remote_channel_status_update_error', { error: e, context: 'timeout_offline' }).catch(() => { });
+                        });
+                        captureRemote('remote_channel_subscription_error', { error: 'Subscription timeout' }).catch(() => { });
                         reject(new Error('Tool call channel subscription timed out'));
                     }
                 });
@@ -172,6 +185,7 @@ export class RemoteChannel {
             // console.log(`🔌 Heartbeat sent for device: ${deviceId}`);
         } catch (error: any) {
             console.error('Heartbeat failed:', error.message);
+            await captureRemote('remote_channel_heartbeat_error', { error });
         }
     }
 
@@ -198,6 +212,7 @@ export class RemoteChannel {
 
         if (error) {
             console.error('Failed to update device status:', error.message);
+            await captureRemote('remote_channel_status_update_error', { error, status });
             return;
         }
 
@@ -275,6 +290,7 @@ export class RemoteChannel {
 
         } catch (error: any) {
             console.error('❌ Error in blocking offline update:', error.message);
+            await captureRemote('remote_channel_offline_update_error', { error });
         }
     }
 

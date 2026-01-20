@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
+import { captureRemote } from '../utils/capture.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +52,7 @@ export class DesktopCommanderIntegration {
 
         } catch (error) {
             console.error(' - ❌ Failed to connect to Desktop Commander MCP:', error);
+            await captureRemote('desktop_integration_init_failed', { error });
             throw error;
         }
     }
@@ -110,6 +112,7 @@ export class DesktopCommanderIntegration {
             return result;
         } catch (error) {
             console.error(`Error executing tool ${toolName}:`, error);
+            await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
             throw error;
         }
     }
@@ -127,6 +130,7 @@ export class DesktopCommanderIntegration {
             };
         } catch (error) {
             console.error('Error fetching capabilities:', error);
+            await captureRemote('desktop_integration_list_tools_failed', { error });
             // Fallback to local tools
             return {
                 tools: []
@@ -154,6 +158,7 @@ export class DesktopCommanderIntegration {
                 console.log('  ✓ MCP client closed');
             } catch (e: any) {
                 console.warn('  ⚠️  MCP client close timeout or error:', e.message);
+                await captureRemote('desktop_integration_shutdown_error', { error: e, component: 'client' });
             }
             this.mcpClient = null;
         }
@@ -168,6 +173,7 @@ export class DesktopCommanderIntegration {
                 console.log('  ✓ MCP transport closed');
             } catch (e: any) {
                 console.warn('  ⚠️  MCP transport close timeout or error:', e.message);
+                await captureRemote('desktop_integration_shutdown_error', { error: e, component: 'transport' });
             }
             this.mcpTransport = null;
         }

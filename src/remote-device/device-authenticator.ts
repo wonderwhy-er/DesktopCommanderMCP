@@ -1,6 +1,7 @@
 import open from 'open';
 import os from 'os';
 import crypto from 'crypto';
+import { captureRemote } from '../utils/capture.js';
 
 interface AuthSession {
     access_token: string;
@@ -81,7 +82,9 @@ export class DeviceAuthenticator {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-            throw new Error(error.error_description || 'Failed to start device flow');
+            const errorMessage = error.error_description || 'Failed to start device flow';
+            await captureRemote('remote_device_auth_request_failed', { error: errorMessage });
+            throw new Error(errorMessage);
         }
 
         const data = await response.json();
@@ -153,10 +156,13 @@ export class DeviceAuthenticator {
                 }
 
                 // Terminal error
-                throw new Error(data.error_description || data.error || 'Authorization failed');
+                const errorMessage = data.error_description || data.error || 'Authorization failed';
+                await captureRemote('remote_device_auth_failed', { error: errorMessage });
+                throw new Error(errorMessage);
             } catch (fetchError) {
                 // Network error - retry unless we're out of attempts
                 if (attempt >= maxAttempts) {
+                    await captureRemote('remote_device_auth_network_error', { error: fetchError });
                     throw fetchError;
                 }
                 // Continue polling on network errors
@@ -164,7 +170,9 @@ export class DeviceAuthenticator {
             }
         }
 
-        throw new Error('Authorization timeout - user did not authorize within the time limit');
+        const timeoutError = 'Authorization timeout - user did not authorize within the time limit';
+        await captureRemote('remote_device_auth_timeout', { error: timeoutError });
+        throw new Error(timeoutError);
     }
 
     private sleep(ms: number): Promise<void> {
