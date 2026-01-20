@@ -136,8 +136,11 @@ class ConfigManager {
         if (os.platform() === 'win32') {
           return 'powershell.exe';
         }
-        // Use user's actual shell from environment, or fall back to /bin/sh
-        const userShell = process.env.SHELL || '/bin/sh';
+        // Use user's actual shell from environment
+        // On macOS, default to zsh (default since Catalina) since process.env.SHELL
+        // may not be set when running inside Claude Desktop
+        const fallbackShell = os.platform() === 'darwin' ? '/bin/zsh' : '/bin/sh';
+        const userShell = process.env.SHELL || fallbackShell;
         // Return just the shell path - we'll handle login shell flag elsewhere
         return userShell;
       })(),
