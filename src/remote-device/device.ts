@@ -17,7 +17,6 @@ export class MCPDevice {
     private baseServerUrl: string;
     private remoteChannel: RemoteChannel;
     private deviceId?: string;
-    private user: any;
     private isShuttingDown: boolean;
     private configPath: string;
     private persistSession: boolean;
@@ -27,7 +26,6 @@ export class MCPDevice {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
         this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
-        this.user = null;
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
         this.persistSession = options.persistSession || false;
@@ -150,47 +148,22 @@ export class MCPDevice {
                 if (error) throw error;
             }
 
-            // 3. Setup Token Refresh Listener
-            this.remoteChannel.onAuthStateChange(async (event: string, newSession: any) => {
-                const eventMap: { [key: string]: string } = {
-                    'SIGNED_IN': '🔑 User signed in',
-                    'TOKEN_REFRESHED': '🔄 Token refreshed',
-                    'SIGNED_OUT': '⚠️ User signed out',
-                };
-                if (eventMap[event]) {
-                    console.log(eventMap[event]);
-                }
-            });
 
             // Force save the current session immediately to ensure it's persisted
-            const currentSessionStore = await this.remoteChannel.getSession();
-            await this.savePersistedConfig(
-                currentSessionStore.data.session
-            );
-
-            // Get user info
-            const { data: { user }, error: userError } = await this.remoteChannel.getUser();
-            if (userError) throw userError;
-            this.user = user;
+            await this.savePersistedConfig();
 
             const deviceName = os.hostname();
+
             // Register as device
             await this.remoteChannel.registerDevice(
-                this.user.id,
                 await this.desktop.listClientTools(),
                 this.deviceId,
-                deviceName
+                deviceName,
+                (payload: any) => this.handleNewToolCall(payload)
             );
 
-            // Also save session again just in case (optional, but harmless)
-            const { data: { session: currentSession } } = await this.remoteChannel.getSession();
-            await this.savePersistedConfig(currentSession);
-
-            // Subscribe to tool calls
-            await this.remoteChannel.subscribe(this.user.id, this.deviceId!, (payload: any) => this.handleNewToolCall(payload));
-
             console.log('✅ Device ready:');
-            console.log(`   - User:         ${this.user.email}`);
+            console.log(`   - User:         ${this.remoteChannel.user!.email}`);
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
 
@@ -234,8 +207,11 @@ export class MCPDevice {
         }
     }
 
-    async savePersistedConfig(session: any) {
+    async savePersistedConfig() {
         try {
+            const currentSessionStore = await this.remoteChannel.getSession();
+            const session = currentSessionStore.data.session;
+
             const config = {
                 deviceId: this.deviceId,
                 // Only save session if --persist-session flag is set
