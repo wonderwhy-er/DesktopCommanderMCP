@@ -657,6 +657,12 @@ async function publishRelease() {
                 newVersion = getAlphaVersion(currentVersion);
                 updateVersionFiles(newVersion);
             } else {
+                // Guard: fail fast if current version is alpha but --alpha flag not provided
+                if (currentVersion.includes('-alpha')) {
+                    printError(`Current version "${currentVersion}" is an alpha version.`);
+                    printError('Use --alpha for alpha releases, or manually set a stable version in package.json first.');
+                    process.exit(1);
+                }
                 // Regular version: use npm run bump
                 const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
                                    options.bumpType === 'major' ? 'npm run bump:major' :
