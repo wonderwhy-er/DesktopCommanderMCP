@@ -112,6 +112,7 @@ const bundlePackageJson = {
     name: manifest.name,
     version: manifest.version,
     description: manifest.description,
+    type: "module", // Required for ESM - without this, Node.js defaults to CommonJS and shows warnings
     main: "dist/index.js",
     author: manifest.author,
     license: manifest.license,
