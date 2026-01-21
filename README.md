@@ -19,6 +19,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 ## Table of Contents
 - [Features](#features)
 - [How to install](#how-to-install)
+- [Remote MCP (ChatGPT, Claude Web)](#remote-mcp-chatgpt-claude-web)
 - [Getting Started](#getting-started)
 - [Usage](#usage)
 - [Handling Long-Running Commands](#handling-long-running-commands)
@@ -37,6 +38,7 @@ Execute long-running terminal commands on your computer and manage processes thr
 
 ## Features
 
+- **Remote AI Control** - Use Desktop Commander from ChatGPT, Claude web, and other AI services via [Remote MCP](https://mcp.desktopcommander.app)
 - **Enhanced terminal commands with interactive process control**
 - **Execute code in memory (Python, Node.js, R) without saving files**
 - **Instant data analysis - just ask to analyze CSV/JSON/Excel files**
@@ -319,6 +321,31 @@ If you broke the Docker container or need a fresh start:
 bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset && bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
 ```
 This will completely reset your persistent environment and reinstall everything fresh with exception of not touching mounted folders
+
+## Remote MCP (ChatGPT, Claude Web) 🌐
+
+Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services through their MCP/Connector integrations - no Claude Desktop app required.
+
+**👉 Get started at [mcp.desktopcommander.app](https://mcp.desktopcommander.app)**
+
+The website provides complete instructions for:
+- Installing and running the Remote Device on your computer
+- Connecting your AI service (ChatGPT, Claude, etc.)
+- Managing your devices and sessions
+
+### How It Works
+
+1. You run a lightweight **Remote Device** on your computer
+2. It connects securely to the cloud Remote MCP service
+3. Your AI sends commands through the cloud to your device
+4. Commands execute locally, results return to your AI
+5. **You stay in control** - stop anytime with `Ctrl+C`
+
+### Security
+
+- ✅ Device only runs when you start it
+- ✅ Commands execute under your user permissions
+- ✅ Secure OAuth authentication and encrypted communication channel
 
 ## Updating & Uninstalling Desktop Commander
 

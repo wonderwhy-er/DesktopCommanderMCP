@@ -1,0 +1,183 @@
+import { spawn } from 'child_process';
+import path from 'path';
+import fs from 'fs/promises';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fileURLToPath } from 'url';
+import { captureRemote } from '../utils/capture.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+interface McpConfig {
+    command: string;
+    args: string[];
+    cwd?: string;
+    env?: Record<string, string>;
+}
+
+export class DesktopCommanderIntegration {
+    private mcpClient: Client | null = null;
+    private mcpTransport: StdioClientTransport | null = null;
+    private isReady: boolean = false;
+
+    async initialize() {
+        const config = await this.resolveMcpConfig();
+
+        if (!config) {
+            throw new Error('Desktop Commander MCP not found. Please install it globally via `npm install -g @wonderwhy-er/desktop-commander` or build the local project.');
+        }
+
+        console.log(` - ⏳ Connecting to Local Desktop Commander MCP using: ${config.command} ${config.args.join(' ')}`);
+
+        try {
+            this.mcpTransport = new StdioClientTransport(config);
+
+            // Create MCP client
+            this.mcpClient = new Client(
+                {
+                    name: "desktop-commander-client",
+                    version: "1.0.0"
+                },
+                {
+                    capabilities: {}
+                }
+            );
+
+            // Connect to Desktop Commander
+            await this.mcpClient.connect(this.mcpTransport);
+            this.isReady = true;
+
+            console.log(' - 🔌 Connected to Desktop Commander MCP');
+
+        } catch (error) {
+            console.error(' - ❌ Failed to connect to Desktop Commander MCP:', error);
+            await captureRemote('desktop_integration_init_failed', { error });
+            throw error;
+        }
+    }
+
+    async resolveMcpConfig(): Promise<McpConfig | null> {
+        // Option 1: Development/Local Build
+        // Adjusting path resolution since we are now in src/remote-device and dist is in root/dist
+        // Original: path.resolve(__dirname, '../../dist/index.js')
+        const devPath = path.resolve(__dirname, '../../dist/index.js');
+        try {
+            await fs.access(devPath);
+            console.debug(' - 🔍 Found local MCP server at:', devPath);
+            return {
+                command: process.execPath, // Use the current node executable
+                args: [devPath],
+                cwd: path.dirname(devPath)
+            };
+        } catch {
+            // Local file not found, continue...
+        }
+
+        // Option 2: Global Installation
+        const commandName = 'desktop-commander';
+        try {
+            await new Promise<void>((resolve, reject) => {
+                // Use platform-appropriate command to check if the command exists in PATH
+                // We can't run it directly as it's an stdio MCP server that waits for input
+                const whichCommand = process.platform === 'win32' ? 'where' : 'which';
+                const check = spawn(whichCommand, [commandName]);
+                check.on('error', reject);
+                check.on('close', (code) => code === 0 ? resolve() : reject(new Error('Command not found')));
+            });
+            console.debug(' - Found global desktop-commander CLI');
+            return {
+                command: commandName,
+                args: []
+            };
+        } catch {
+            // Global command not found
+        }
+
+        return null;
+    }
+
+    async callClientTool(toolName: string, args: any, metadata?: any) {
+        if (!this.isReady || !this.mcpClient) {
+            throw new Error('DesktopIntegration not initialized');
+        }
+
+        // Proxy other tools to MCP server
+        try {
+            const result = await this.mcpClient.callTool({
+                name: toolName,
+                arguments: args,
+                _meta: { remote: true, ...metadata || {} }
+            } as any);
+            return result;
+        } catch (error) {
+            console.error(`Error executing tool ${toolName}:`, error);
+            await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
+            throw error;
+        }
+    }
+
+    async listClientTools() {
+        if (!this.mcpClient) return { tools: [] };
+
+        try {
+            // List tools from MCP server
+            const mcpTools = await this.mcpClient.listTools();
+
+            // Merge tools
+            return {
+                tools: mcpTools.tools || []
+            };
+        } catch (error) {
+            console.error('Error fetching capabilities:', error);
+            await captureRemote('desktop_integration_list_tools_failed', { error });
+            // Fallback to local tools
+            return {
+                tools: []
+            };
+        }
+    }
+
+    async shutdown() {
+        const closeWithTimeout = async (operation: () => Promise<void>, name: string, timeoutMs: number = 3000) => {
+            return Promise.race([
+                operation(),
+                new Promise<void>((_, reject) =>
+                    setTimeout(() => reject(new Error(`${name} timeout after ${timeoutMs}ms`)), timeoutMs)
+                )
+            ]);
+        };
+
+        if (this.mcpClient) {
+            try {
+                console.log('  → Closing MCP client...');
+                await closeWithTimeout(
+                    () => this.mcpClient!.close(),
+                    'MCP client close'
+                );
+                console.log('  ✓ MCP client closed');
+            } catch (e: any) {
+                console.warn('  ⚠️  MCP client close timeout or error:', e.message);
+                await captureRemote('desktop_integration_shutdown_error', { error: e, component: 'client' });
+            }
+            this.mcpClient = null;
+        }
+
+        if (this.mcpTransport) {
+            try {
+                console.log('  → Closing MCP transport...');
+                await closeWithTimeout(
+                    () => this.mcpTransport!.close(),
+                    'MCP transport close'
+                );
+                console.log('  ✓ MCP transport closed');
+            } catch (e: any) {
+                console.warn('  ⚠️  MCP transport close timeout or error:', e.message);
+                await captureRemote('desktop_integration_shutdown_error', { error: e, component: 'transport' });
+            }
+            this.mcpTransport = null;
+        }
+
+        this.isReady = false;
+    }
+}
