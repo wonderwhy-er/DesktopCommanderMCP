@@ -1,6 +1,6 @@
-import {platform} from 'os';
+import { platform } from 'os';
 import * as https from 'https';
-import {configManager} from '../config-manager.js';
+import { configManager } from '../config-manager.js';
 import { currentClient } from '../server.js';
 
 let VERSION = 'unknown';
@@ -117,7 +117,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
                 delete sanitizedProperties[key];
             }
         }
-    
+
         // Is MCP installed with DXT
         let isDXT: string = 'false';
         if (process.env.MCP_DXT) {
@@ -130,14 +130,14 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const isContainer: string = systemInfo.docker.isContainer ? 'true' : 'false';
         const containerType: string = systemInfo.docker.containerType || 'none';
         const orchestrator: string = systemInfo.docker.orchestrator || 'none';
-        
+
         // Add container metadata (with privacy considerations)
         let containerName: string = 'none';
         let containerImage: string = 'none';
-        
+
         if (systemInfo.docker.isContainer && systemInfo.docker.containerEnvironment) {
             const env = systemInfo.docker.containerEnvironment;
-            
+
             // Container name - sanitize to remove potentially sensitive info
             if (env.containerName) {
                 // Keep only alphanumeric chars, dashes, and underscores
@@ -147,7 +147,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
                     .replace(/[0-9]{8,}/g, 'ID')      // Replace long numeric IDs with 'ID'
                     .substring(0, 50);                // Limit length
             }
-            
+
             // Docker image - sanitize registry info for privacy
             if (env.dockerImage) {
                 // Remove registry URLs and keep just image:tag format
@@ -158,7 +158,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
                     .substring(0, 100);               // Limit length
             }
         }
-        
+
         // Detect if we're running through Smithery at runtime
         let runtimeSource: string = 'unknown';
         const processArgs = process.argv.join(' ');
@@ -173,7 +173,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
         } catch (error) {
             // Ignore detection errors
         }
-        
+
         // Prepare standard properties
         const baseProperties = {
             timestamp: new Date().toISOString(),
@@ -252,11 +252,11 @@ export const captureBase = async (captureURL: string, event: string, properties?
     }
 };
 
-export const capture_call_tool = async (event: string, properties?:any) => {
+export const capture_call_tool = async (event: string, properties?: any) => {
     const GA_MEASUREMENT_ID = 'G-35YKFM782B'; // Replace with your GA4 Measurement ID
     const GA_API_SECRET = 'qM5VNk6aQy6NN5s-tCppZw'; // Replace with your GA4 API Secret
     const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;    
+    const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
     return await captureBase(GA_BASE_URL, event, properties);
 }
 
@@ -267,4 +267,28 @@ export const capture = async (event: string, properties?: any) => {
     const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
 
     return await captureBase(GA_BASE_URL, event, properties);
+}
+
+/**
+ * Wrapper for capture() that automatically adds remote flag for remote-device telemetry
+ * Also adds additional privacy filtering to remove sensitive identity information
+ * @param event Event name
+ * @param properties Optional event properties
+ */
+export const captureRemote = async (event: string, properties?: any) => {
+    // Create a copy of properties to avoid mutating the original
+    const sanitizedProps = properties ? { ...properties } : {};
+
+    // Remove sensitive identity keys specific to remote devices
+    const sensitiveIdentityKeys = ['deviceId', 'userId', 'email', 'user_id', 'device_id', 'user_email'];
+    for (const key of sensitiveIdentityKeys) {
+        if (key in sanitizedProps) {
+            delete sanitizedProps[key];
+        }
+    }
+
+    return await capture(event, {
+        ...sanitizedProps,
+        remote: String(true)
+    });
 }

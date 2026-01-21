@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.29",
+  "version": "0.2.29-alpha.14",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -24,6 +24,9 @@
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
     "open-chat": "open -n /Applications/Claude.app",
+    "device:install": "cd src/remote-device && npm install",
+    "device:start": "tsx src/remote-device/device.ts",
+    "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
@@ -49,6 +52,7 @@
     "release:major": "node scripts/publish-release.cjs --major",
     "release:dry": "node scripts/publish-release.cjs --dry-run",
     "release:mcp": "node scripts/publish-release.cjs --mcp-only",
+    "release:alpha": "node scripts/publish-release.cjs --npm-only --alpha",
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
@@ -79,6 +83,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
     "@opendocsg/pdf2md": "^0.2.2",
+    "@supabase/supabase-js": "^2.89.0",
     "@vscode/ripgrep": "^1.15.9",
     "cross-fetch": "^4.1.0",
     "exceljs": "^4.4.0",
@@ -87,6 +92,7 @@
     "glob": "^10.3.10",
     "isbinaryfile": "^5.0.4",
     "md-to-pdf": "^5.2.5",
+    "open": "^10.2.0",
     "pdf-lib": "^1.17.1",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
@@ -97,6 +103,9 @@
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
+  "optionalDependencies": {
+    "caffeinate": "^1.0.1"
+  },
   "devDependencies": {
     "@anthropic-ai/mcpb": "^1.2.0",
     "@types/node": "^20.17.24",
@@ -104,6 +113,8 @@
     "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   }
 }

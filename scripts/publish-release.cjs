@@ -108,6 +108,55 @@ function execSilent(command, options = {}) {
     return exec(command, { silent: true, ...options });
 }
 
+/**
+ * Calculate alpha version from current version
+ * - "0.2.28" → "0.2.29-alpha.0"
+ * - "0.2.29-alpha.0" → "0.2.29-alpha.1"
+ * - "0.2.29-alpha.5" → "0.2.29-alpha.6"
+ */
+function getAlphaVersion(currentVersion) {
+    const alphaMatch = currentVersion.match(/^(\d+\.\d+\.\d+)-alpha\.(\d+)$/);
+    
+    if (alphaMatch) {
+        // Already an alpha, increment the alpha number
+        const baseVersion = alphaMatch[1];
+        const alphaNum = parseInt(alphaMatch[2], 10) + 1;
+        return `${baseVersion}-alpha.${alphaNum}`;
+    } else {
+        // Regular version, bump patch and add -alpha.0
+        const [major, minor, patch] = currentVersion.split('.').map(Number);
+        return `${major}.${minor}.${patch + 1}-alpha.0`;
+    }
+}
+
+/**
+ * Update version in package.json, server.json, and version.ts
+ */
+function updateVersionFiles(newVersion) {
+    // Update package.json
+    const pkgPath = path.join(process.cwd(), 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    pkg.version = newVersion;
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    
+    // Update server.json
+    const serverJsonPath = path.join(process.cwd(), 'server.json');
+    const serverJson = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
+    serverJson.version = newVersion;
+    if (serverJson.packages && serverJson.packages.length > 0) {
+        serverJson.packages.forEach(p => {
+            if (p.registryType === 'npm' && p.identifier === '@wonderwhy-er/desktop-commander') {
+                p.version = newVersion;
+            }
+        });
+    }
+    fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
+    
+    // Update version.ts
+    const versionTsPath = path.join(process.cwd(), 'src', 'version.ts');
+    fs.writeFileSync(versionTsPath, `export const VERSION = '${newVersion}';\n`);
+}
+
 // Parse command line arguments
 function parseArgs() {
     const args = process.argv.slice(2);
@@ -122,6 +171,8 @@ function parseArgs() {
         skipMcpb: false,
         skipGit: false,
         skipNpm: false,
+        skipMcp: false,
+        alpha: false,
     };
 
     for (const arg of args) {
@@ -149,6 +200,18 @@ function parseArgs() {
                 break;
             case '--skip-npm':
                 options.skipNpm = true;
+                break;
+            case '--skip-mcp':
+                options.skipMcp = true;
+                break;
+            case '--npm-only':
+                // Skip everything except NPM publish
+                options.skipMcpb = true;
+                options.skipGit = true;
+                options.skipMcp = true;
+                break;
+            case '--alpha':
+                options.alpha = true;
                 break;
             case '--mcp-only':
                 // Skip everything except MCP Registry publish
@@ -191,6 +254,9 @@ function showHelp() {
     console.log('  --skip-mcpb     Skip building MCPB bundle');
     console.log('  --skip-git      Skip git commit and tag');
     console.log('  --skip-npm      Skip NPM publishing');
+    console.log('  --skip-mcp      Skip MCP Registry publishing');
+    console.log('  --npm-only      Only publish to NPM (skip MCPB, git, MCP Registry)');
+    console.log('  --alpha         Publish as alpha version (e.g., 0.2.29-alpha.0)');
     console.log('  --mcp-only      Only publish to MCP Registry (skip all other steps)');
     console.log('  --clear-state   Clear release state and start fresh');
     console.log('  --dry-run       Simulate the release without publishing');
@@ -206,6 +272,7 @@ function showHelp() {
     console.log('  node scripts/publish-release.cjs --major      # Major release (0.2.16 -> 1.0.0)');
     console.log('  node scripts/publish-release.cjs --dry-run    # Test without publishing');
     console.log('  node scripts/publish-release.cjs --mcp-only   # Only publish to MCP Registry');
+    console.log('  node scripts/publish-release.cjs --npm-only --alpha  # Alpha release to NPM only');
     console.log('  node scripts/publish-release.cjs --clear-state # Reset state and start over');
 }
 
@@ -436,27 +503,31 @@ function runPreFlightChecks(options) {
     let allPassed = true;
     let schemaUpdated = false;
     
-    // Check mcp-publisher installation and version
-    if (!checkMcpPublisher()) {
-        allPassed = false;
-    }
-    
-    // Update schema if needed
-    if (allPassed) {
-        schemaUpdated = updateServerJsonSchema();
-    }
-    
-    // Validate server.json
-    if (allPassed && !validateServerJson()) {
-        allPassed = false;
-    }
-    
-    // Check MCP auth and token expiration
-    if (allPassed) {
-        checkMcpAuth();
-        if (!checkMcpTokenExpiration()) {
+    // Check mcp-publisher installation and version (skip if not publishing to MCP)
+    if (!options.skipMcp) {
+        if (!checkMcpPublisher()) {
             allPassed = false;
         }
+        
+        // Update schema if needed
+        if (allPassed) {
+            schemaUpdated = updateServerJsonSchema();
+        }
+        
+        // Validate server.json
+        if (allPassed && !validateServerJson()) {
+            allPassed = false;
+        }
+        
+        // Check MCP auth and token expiration
+        if (allPassed) {
+            checkMcpAuth();
+            if (!checkMcpTokenExpiration()) {
+                allPassed = false;
+            }
+        }
+    } else {
+        printInfo('Skipping MCP Registry checks (--skip-mcp or --npm-only)');
     }
     
     // Check NPM auth
@@ -561,7 +632,11 @@ async function publishRelease() {
     printStep(`Current version: ${currentVersion}`);
     
     if (!isResume) {
-        printStep(`Bump type: ${options.bumpType}`);
+        printStep(`Bump type: ${options.alpha ? 'alpha' : options.bumpType}`);
+    }
+
+    if (options.alpha) {
+        printWarning('ALPHA MODE - Will publish with alpha tag');
     }
 
     if (options.dryRun) {
@@ -576,13 +651,27 @@ async function publishRelease() {
         const shouldSkipBump = options.skipBump || isStepComplete(state, 'bump');
         if (!shouldSkipBump) {
             printStep('Step 1/6: Bumping version...');
-            const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
-                               options.bumpType === 'major' ? 'npm run bump:major' :
-                               'npm run bump';
-            exec(bumpCommand);
+            
+            if (options.alpha) {
+                // Alpha version: calculate and update directly
+                newVersion = getAlphaVersion(currentVersion);
+                updateVersionFiles(newVersion);
+            } else {
+                // Guard: fail fast if current version is alpha but --alpha flag not provided
+                if (currentVersion.includes('-alpha')) {
+                    printError(`Current version "${currentVersion}" is an alpha version.`);
+                    printError('Use --alpha for alpha releases, or manually set a stable version in package.json first.');
+                    process.exit(1);
+                }
+                // Regular version: use npm run bump
+                const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
+                                   options.bumpType === 'major' ? 'npm run bump:major' :
+                                   'npm run bump';
+                exec(bumpCommand);
+                const newPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+                newVersion = newPackageJson.version;
+            }
 
-            const newPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-            newVersion = newPackageJson.version;
             state.version = newVersion;
             markStepComplete(state, 'bump');
             printSuccess(`Version bumped: ${currentVersion} → ${newVersion}`);
@@ -691,18 +780,23 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
             printSuccess(`NPM user: ${npmUser}`);
 
             if (options.dryRun) {
-                printWarning('Would publish to NPM: npm publish');
+                const publishCmd = options.alpha ? 'npm publish --tag alpha' : 'npm publish';
+                printWarning(`Would publish to NPM: ${publishCmd}`);
                 printWarning('Skipping NPM publish (dry run)');
             } else {
-                exec('npm publish');
+                const publishCmd = options.alpha ? 'npm publish --tag alpha' : 'npm publish';
+                exec(publishCmd);
                 markStepComplete(state, 'npm');
-                printSuccess('Published to NPM');
+                printSuccess(`Published to NPM${options.alpha ? ' (alpha tag)' : ''}`);
                 
                 // Verify NPM publication
                 await new Promise(resolve => setTimeout(resolve, 3000));
-                const npmVersion = execSilent('npm view @wonderwhy-er/desktop-commander version', { ignoreError: true }).trim();
+                const viewCmd = options.alpha 
+                    ? 'npm view @wonderwhy-er/desktop-commander dist-tags.alpha'
+                    : 'npm view @wonderwhy-er/desktop-commander version';
+                const npmVersion = execSilent(viewCmd, { ignoreError: true }).trim();
                 if (npmVersion === newVersion) {
-                    printSuccess(`NPM publication verified: v${npmVersion}`);
+                    printSuccess(`NPM publication verified: v${npmVersion}${options.alpha ? ' (alpha)' : ''}`);
                 } else {
                     printWarning(`NPM version mismatch: expected ${newVersion}, got ${npmVersion} (may take a moment to propagate)`);
                 }
@@ -715,7 +809,7 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
         console.log('');
 
         // Step 6: Publish to MCP Registry
-        const shouldSkipMcp = isStepComplete(state, 'mcp');
+        const shouldSkipMcp = options.skipMcp || isStepComplete(state, 'mcp');
         if (!shouldSkipMcp) {
             printStep('Step 6/6: Publishing to MCP Registry...');
             
@@ -798,8 +892,10 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
                     printWarning('Could not verify MCP Registry publication');
                 }
             }
-        } else {
+        } else if (isStepComplete(state, 'mcp')) {
             printInfo('Step 6/6: MCP Registry publish already completed ✓');
+        } else {
+            printWarning('Step 6/6: MCP Registry publish skipped (manual override)');
         }
         console.log('');
 
