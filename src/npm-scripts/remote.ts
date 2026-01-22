@@ -5,9 +5,9 @@ export async function runRemote() {
     const persistSession = process.argv.includes('--persist-session');
     const disableNoSleep = process.argv.includes('--disable-no-sleep');
     const verbose = process.argv.includes('--debug');
-    console.log('-------verbose', verbose);
+    console.debug('[DEBUG] Verbose mode: ', verbose);
     // Override console.debug based on verbose flag
-    // When --verbose is not provided, console.debug becomes a no-op
+    // When --debug is not provided, console.debug becomes a no-op
     if (!verbose) {
         console.debug = () => { };
     }
