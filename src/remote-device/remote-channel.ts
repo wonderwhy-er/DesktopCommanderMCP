@@ -32,6 +32,9 @@ export class RemoteChannel {
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
 
+    // Track last channel state for debug logging
+    private lastChannelState: string | null = null;
+
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
@@ -42,14 +45,19 @@ export class RemoteChannel {
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
         if (!this.client) throw new Error('Client not initialized');
+        console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
         const { error } = await this.client.auth.setSession({
             access_token: session.access_token,
             refresh_token: session.refresh_token || ''
         });
         // Get user info
         const { data: { user }, error: userError } = await this.client.auth.getUser();
-        if (userError) throw userError;
+        if (userError) {
+            console.debug('[DEBUG] Failed to get user:', userError.message);
+            throw userError;
+        }
         this._user = user;
+        console.debug('[DEBUG] Session set successfully, user:', user?.email);
 
         return { error };
     }
@@ -91,14 +99,18 @@ export class RemoteChannel {
 
     async registerDevice(capabilities: any, currentDeviceId: string | undefined, deviceName: string, onToolCall: (payload: any) => void): Promise<void> {
 
+        console.debug('[DEBUG] RemoteChannel.registerDevice() called, deviceId:', currentDeviceId);
 
         let existingDevice = null;
 
         if (currentDeviceId && this.user) {
+            console.debug('[DEBUG] Finding existing device...');
             existingDevice = await this.findDevice(currentDeviceId);
+            console.debug('[DEBUG] Existing device found:', !!existingDevice);
         }
 
         if (existingDevice) {
+            console.debug('[DEBUG] Updating device status to online');
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
@@ -113,6 +125,7 @@ export class RemoteChannel {
             console.debug(`⏳ Subscribing to tool call channel...`);
 
             // Create and subscribe to the channel
+            console.debug('[DEBUG] Calling createChannel()');
             await this.createChannel();
         } else {
             console.error(`   - ❌ Device not found: ${currentDeviceId}`);
@@ -142,9 +155,11 @@ export class RemoteChannel {
     private createChannel(): Promise<void> {
         return new Promise((resolve, reject) => {
             if (!this.client || !this.user?.id || !this.onToolCall) {
+                console.debug('[DEBUG] createChannel() failed - missing prerequisites');
                 return reject(new Error('Client not initialized or missing subscription parameters'));
             }
 
+            console.debug('[DEBUG] Creating channel: device_tool_call_queue');
             this.channel = this.client.channel('device_tool_call_queue')
                 .on(
                     'postgres_changes' as any,
@@ -155,12 +170,16 @@ export class RemoteChannel {
                         filter: `user_id=eq.${this.user.id}`
                     },
                     (payload: any) => {
+                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
                         if (this.onToolCall) {
                             this.onToolCall(payload);
                         }
                     }
                 )
                 .subscribe((status: string, err: any) => {
+                    // Debug: Log all subscription status events
+                    console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + err + ')' : ''}`);
+
                     if (status === 'SUBSCRIBED') {
                         console.log('✅ Channel subscribed');
                         // Update device status on successful connection
@@ -195,9 +214,18 @@ export class RemoteChannel {
 
         const state = this.channel.state;
 
-        // If channel is in error or closed state, recreate it
-        if (state === 'closed' || state === 'errored') {
-            // console.log(`⚠️ Channel in ${state} state - recreating...`);
+        // Debug: Log current channel state (only if changed)
+        if (!this.lastChannelState || this.lastChannelState !== state) {
+            console.debug(`[DEBUG] channel state: ${state}`);
+            this.lastChannelState = state;
+        }
+
+        // Aggressive health check: Only 'joined' is considered healthy
+        // Any other state (joining, leaving, closed, errored, etc.) triggers recreation
+        if (state !== 'joined') {
+            captureRemote('remote_channel_state_health', { state });
+
+            console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating...`);
             this.recreateChannel();
         }
     }
@@ -208,19 +236,24 @@ export class RemoteChannel {
     private recreateChannel(): void {
         if (!this.client || !this.user?.id || !this.onToolCall) {
             console.warn('Cannot recreate channel - missing parameters');
+            console.debug('[DEBUG] recreateChannel() aborted - missing prerequisites');
             return;
         }
 
         // Destroy old channel
         if (this.channel) {
-            // console.debug('🔄 Destroying old channel');
+            console.debug('[DEBUG] Destroying old channel');
             this.client.removeChannel(this.channel);
             this.channel = null;
         }
 
         // Create fresh channel
         console.log('🔄 Recreating channel...');
+        console.debug('[DEBUG] Calling createChannel() for recreation');
         this.createChannel().catch(err => {
+            captureRemote('remote_channel_recreate_error', { err });
+            console.debug('[DEBUG] Channel recreation failed:', err.message);
+
             // TODO: enable only for debug mode
             // console.error('Failed to recreate channel:', err);
         });
@@ -265,6 +298,7 @@ export class RemoteChannel {
     }
 
     startHeartbeat(deviceId: string) {
+        console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
         }, 10000);
@@ -273,6 +307,7 @@ export class RemoteChannel {
         this.heartbeatInterval = setInterval(async () => {
             await this.updateHeartbeat(deviceId);
         }, HEARTBEAT_INTERVAL);
+        console.debug('[DEBUG] Heartbeat intervals set - connectionCheck: 10s, heartbeat: 15s');
     }
 
     stopHeartbeat() {
@@ -313,10 +348,11 @@ export class RemoteChannel {
 
     async setOffline(deviceId: string | undefined) {
         if (!deviceId || !this.client) {
+            console.debug('[DEBUG] setOffline() skipped - no deviceId or client');
             return;
         }
 
-        // console.log('🔍 [setOffline] Initiating blocking update...');
+        console.debug('[DEBUG] setOffline() initiating blocking update for device:', deviceId);
 
         try {
             // Get current session for the subprocess
@@ -324,6 +360,7 @@ export class RemoteChannel {
 
             if (!sessionData?.session?.access_token) {
                 console.error('❌ No valid session for offline update');
+                console.debug('[DEBUG] Session data missing or invalid');
                 return;
             }
 
@@ -333,6 +370,7 @@ export class RemoteChannel {
 
             if (!supabaseUrl || !supabaseKey) {
                 console.error('❌ Missing Supabase configuration');
+                console.debug('[DEBUG] supabaseUrl or supabaseKey is missing');
                 return;
             }
 
@@ -345,6 +383,9 @@ export class RemoteChannel {
             const __filename = fileURLToPath(import.meta.url);
             const __dirname = path.dirname(__filename);
             const scriptPath = path.join(__dirname, 'scripts', 'blocking-offline-update.js');
+
+            console.debug('[DEBUG] Spawning blocking update script:', scriptPath);
+            console.debug('[DEBUG] Using node executable:', process.execPath);
 
             const result = spawnSync('node', [
                 scriptPath,
@@ -359,6 +400,8 @@ export class RemoteChannel {
                 encoding: 'utf-8'
             });
 
+            console.debug('[DEBUG] spawnSync completed, exit code:', result.status, 'signal:', result.signal);
+
             // Log subprocess output (with encoding:'utf-8', these are already strings)
             if (result.stdout && result.stdout.trim()) {
                 console.log(result.stdout.trim());
@@ -370,6 +413,7 @@ export class RemoteChannel {
             // Handle exit codes
             if (result.error) {
                 console.error('❌ Failed to spawn update process:', result.error.message);
+                console.debug('[DEBUG] spawn error:', result.error);
             } else if (result.status === 0) {
                 console.log('✓ Device marked as offline (blocking)');
             } else if (result.status === 2) {
@@ -382,6 +426,7 @@ export class RemoteChannel {
 
         } catch (error: any) {
             console.error('❌ Error in blocking offline update:', error.message);
+            console.debug('[DEBUG] setOffline() error stack:', error.stack);
             await captureRemote('remote_channel_offline_update_error', { error });
         }
     }
