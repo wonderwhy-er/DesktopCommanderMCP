@@ -1,5 +1,5 @@
 import fs from 'fs/promises';
-import { PDFDocument, PDFPage } from 'pdf-lib';
+import { PDFDocument, PDFPage } from 'pdf-lib/es/index.js';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
 import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
