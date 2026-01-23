@@ -184,22 +184,28 @@ export class MCPDevice {
 
     async loadPersistedConfig() {
         try {
+            console.debug('[DEBUG] Loading persisted config from:', this.configPath);
             const data = await fs.readFile(this.configPath, 'utf8');
             const config = JSON.parse(data);
 
             this.deviceId = config?.deviceId;
+            console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
             console.log('💾 Found persisted session for device ' + this.deviceId);
             if (config.session) {
+                console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
             }
 
+            console.debug('[DEBUG] No session in config');
             return null;
         } catch (error: any) {
 
             if (error.code !== 'ENOENT') {
                 console.warn('⚠️ Failed to load config:', error.message);
                 await captureRemote('remote_device_config_load_error', { error });
+            } else {
+                console.debug('[DEBUG] Config file does not exist (ENOENT)');
             }
             return null;
         } finally {
@@ -209,6 +215,7 @@ export class MCPDevice {
 
     async savePersistedConfig() {
         try {
+            console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             const currentSessionStore = await this.remoteChannel.getSession();
             const session = currentSessionStore.data.session;
 
@@ -221,24 +228,29 @@ export class MCPDevice {
                 } : null
             };
             // Ensure the config directory exists
+            console.debug('[DEBUG] Creating config directory:', path.dirname(this.configPath));
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
             await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            // if (session) console.debug('💾 Session saved to ' + this.configPath);
+            console.debug('[DEBUG] Config saved to:', this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
+            console.debug('[DEBUG] Config save error details:', error);
             await captureRemote('remote_device_config_save_error', { error });
         }
     }
 
     async fetchSupabaseConfig() {
         // No auth header needed for this public endpoint
+        console.debug('[DEBUG] Fetching Supabase config from:', `${this.baseServerUrl}/api/mcp-info`);
         const response = await fetch(`${this.baseServerUrl}/api/mcp-info`);
 
         if (!response.ok) {
+            console.debug('[DEBUG] Supabase config fetch failed, status:', response.status, response.statusText);
             throw new Error(`Failed to fetch Supabase config: ${response.statusText}`);
         }
 
         const config = await response.json();
+        console.debug('[DEBUG] Supabase config received, URL:', config.supabaseUrl?.substring(0, 30) + '...');
         return {
             supabaseUrl: config.supabaseUrl,
             anonKey: config.supabasePublishableKey
@@ -252,8 +264,11 @@ export class MCPDevice {
         // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
 
+        console.debug('[DEBUG] Tool call received, device_id:', device_id, 'this.deviceId:', this.deviceId);
+
         // Only process jobs for this device
         if (device_id && device_id !== this.deviceId) {
+            console.debug('[DEBUG] Ignoring tool call for different device');
             return;
         }
 
@@ -306,34 +321,42 @@ export class MCPDevice {
 
     async shutdown() {
         if (this.isShuttingDown) {
+            console.debug('[DEBUG] Shutdown already in progress, returning');
             return;
         }
 
         this.isShuttingDown = true;
         console.log('\n🛑 Shutting down device...');
+        console.debug('[DEBUG] Shutdown initiated for device:', this.deviceId);
 
         try {
             // Stop heartbeat first to prevent new operations
             console.log('  → Stopping heartbeat...');
+            console.debug('[DEBUG] Calling stopHeartbeat()');
             this.remoteChannel.stopHeartbeat();
             console.log('  ✓ Heartbeat stopped');
 
             // Unsubscribe from channel
             console.log('  → Unsubscribing from channel...');
+            console.debug('[DEBUG] Calling channel.unsubscribe()');
             await this.remoteChannel.unsubscribe();
 
             // Mark device offline
             console.log('  → Marking device offline...');
+            console.debug('[DEBUG] Calling setOffline() with deviceId:', this.deviceId);
             await this.remoteChannel.setOffline(this.deviceId);
 
             // Shutdown desktop integration
             console.log('  → Shutting down desktop integration...');
+            console.debug('[DEBUG] Calling desktop.shutdown()');
             await this.desktop.shutdown();
             console.log('  ✓ Desktop integration shut down');
 
             console.log('✓ Device shutdown complete');
+            console.debug('[DEBUG] Shutdown sequence completed successfully');
         } catch (error: any) {
             console.error('Shutdown error:', error.message);
+            console.debug('[DEBUG] Shutdown error stack:', error.stack);
             await captureRemote('remote_device_shutdown_error', { error });
         }
     }
