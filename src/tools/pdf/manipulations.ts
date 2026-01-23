@@ -1,9 +1,14 @@
 import fs from 'fs/promises';
-import { PDFDocument, PDFPage } from 'pdf-lib';
+import { createRequire } from 'module';
+import type { PDFDocument as PDFDocumentType, PDFPage } from 'pdf-lib';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
 import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
 import { z } from 'zod';
+
+// Use createRequire to load pdf-lib as CJS (works around Node 25 ESM resolution issues)
+const require = createRequire(import.meta.url);
+const { PDFDocument } = require('pdf-lib') as { PDFDocument: typeof PDFDocumentType };
 
 // Infer TypeScript types from Zod schemas for consistency
 type PdfInsertOperation = z.infer<typeof PdfInsertOperationSchema>;
@@ -12,7 +17,7 @@ type PdfOperations = z.infer<typeof PdfOperationSchema>;
 
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
-async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocument> {
+async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocumentType> {
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);
@@ -23,7 +28,7 @@ async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uin
  * @param pdfDoc PDF document to delete pages from
  * @param pageIndexes Page indices to delete, negative indices are from end
  */
-function deletePages(pdfDoc: PDFDocument, pageIndexes: number[]): PDFDocument {
+function deletePages(pdfDoc: PDFDocumentType, pageIndexes: number[]): PDFDocumentType {
     const pageCount = pdfDoc.getPageCount();
 
     // Transform negative indices to absolute and filter valid ones
@@ -71,7 +76,7 @@ function getPageLayout(page: PDFPage) {
     };
 }
 
-async function insertPages(destPdfDocument: PDFDocument, pageIndex: number, sourcePdfDocument: PDFDocument): Promise<PDFDocument> {
+async function insertPages(destPdfDocument: PDFDocumentType, pageIndex: number, sourcePdfDocument: PDFDocumentType): Promise<PDFDocumentType> {
     let insertPosition = pageIndex < 0 ? destPdfDocument.getPageCount() + pageIndex : pageIndex;
 
     if (insertPosition < 0 || insertPosition > destPdfDocument.getPageCount()) {
@@ -107,7 +112,7 @@ export async function editPdf(
             deletePages(pdfDoc, op.pageIndexes);
         }
         else if (op.type == 'insert') {
-            let sourcePdfDocument: PDFDocument;
+            let sourcePdfDocument: PDFDocumentType;
             if (op.markdown !== undefined) {
                 const pdfOptions = pageLayout ? { pdf_options: pageLayout } : undefined;
                 const pdfBuffer = await parseMarkdownToPdf(op.markdown, pdfOptions);
