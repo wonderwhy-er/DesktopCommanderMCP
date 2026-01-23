@@ -751,10 +751,26 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
                 printWarning(`Would create tag: ${tagName}`);
                 printWarning(`Would push to origin: main and ${tagName}`);
             } else {
-                exec(`git tag ${tagName}`);
-                exec('git push origin main');
-                exec(`git push origin ${tagName}`);
-                printSuccess(`Tag ${tagName} created and pushed`);
+                // Check if tag already exists locally
+                const existingTag = execSilent(`git tag -l "${tagName}"`, { ignoreError: true }).trim();
+                if (existingTag === tagName) {
+                    printWarning(`Tag ${tagName} already exists locally`);
+                } else {
+                    exec(`git tag ${tagName}`);
+                    printSuccess(`Tag ${tagName} created`);
+                }
+                
+                // Push main (ignore error if already up to date)
+                exec('git push origin main', { ignoreError: true });
+                
+                // Push tag (check if already on remote first)
+                const remoteTag = execSilent(`git ls-remote --tags origin refs/tags/${tagName}`, { ignoreError: true }).trim();
+                if (remoteTag) {
+                    printWarning(`Tag ${tagName} already exists on remote`);
+                } else {
+                    exec(`git push origin ${tagName}`);
+                    printSuccess(`Tag ${tagName} pushed to remote`);
+                }
             }
             
             markStepComplete(state, 'git');
