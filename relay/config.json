@@ -1,0 +1,61 @@
+{
+  "relay": {
+    "name": "LMAOS Design System Relay",
+    "version": "1.0.0",
+    "charter_version": "v1.3.1"
+  },
+  "endpoints": {
+    "base_url": "https://relay.activ8ai.app",
+    "webhooks": {
+      "claude": "/webhook/claude",
+      "prime": "/webhook/prime",
+      "notion": "/webhook/notion"
+    },
+    "health": "/health"
+  },
+  "agents": {
+    "claude": {
+      "role": "orchestrator",
+      "capabilities": ["planning", "coordination", "evidence_logging"]
+    },
+    "prime": {
+      "role": "executor",
+      "capabilities": ["git_operations", "file_management", "deployment"]
+    },
+    "repo_agent": {
+      "role": "repository_manager",
+      "level": "L4",
+      "capabilities": ["branch_creation", "pr_creation", "code_staging"]
+    }
+  },
+  "repositories": {
+    "maos": {
+      "org": "Activ8-AI",
+      "name": "MAOS",
+      "branch_pattern": "codex/lmaos-design-system/{date}-v{version}"
+    },
+    "mcp": {
+      "org": "Activ8-AI",
+      "name": "mcp",
+      "branch_pattern": "codex/lmaos-design-system/{date}-v{version}"
+    },
+    "mcp_lmaos": {
+      "org": "Activ8-AI",
+      "name": "mcp-lmaos",
+      "branch_pattern": "codex/lmaos-design-system/{date}-v{version}"
+    }
+  },
+  "notion": {
+    "relay_database": "2765dd73706e81b99164c8ab690be72a",
+    "secrets_registry": "f5ad1f96-3ea6-4ad1-aec5-fbe1dcf2d5fa"
+  },
+  "teamwork": {
+    "project_id": "510271",
+    "task_list_id": "2082293"
+  },
+  "security": {
+    "secrets_source": "notion_registry",
+    "pat_key": "GITHUB_PAT_RELAY_TEMP_v1",
+    "no_plaintext_values": true
+  }
+}
