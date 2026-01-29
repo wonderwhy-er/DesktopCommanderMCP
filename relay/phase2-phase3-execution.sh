@@ -137,14 +137,17 @@ AGENT_LOG_LEVEL=info
 AGENT_TIMEOUT_MS=30000
 
 # Notion Integration
-NOTION_RELAY_DATABASE=2765dd73706e81b99164c8ab690be72a
-NOTION_SECRETS_REGISTRY=f5ad1f96-3ea6-4ad1-aec5-fbe1dcf2d5fa
+# Do NOT hardcode production IDs/secrets in files checked into source control.
+# Inject the real values from a secure secrets manager or environment at runtime.
+NOTION_RELAY_DATABASE=<NOTION_DATABASE_ID>
+NOTION_SECRETS_REGISTRY=<NOTION_SECRETS_REGISTRY_ID>
 
 # Teamwork Integration
 TEAMWORK_PROJECT_ID=510271
 TEAMWORK_TASK_LIST_ID=2082293
 
 # Security
+# Secrets should be injected securely; keep NO_PLAINTEXT_VALUES=true if using a secret backend
 SECRETS_SOURCE=notion_registry
 NO_PLAINTEXT_VALUES=true
 EOF
