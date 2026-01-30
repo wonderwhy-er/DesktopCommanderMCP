@@ -180,12 +180,34 @@ export async function validatePath(requestedPath: string): Promise<string> {
         const expandedPath = expandHome(requestedPath);
 
         // Convert to absolute path
-        const absolute = path.isAbsolute(expandedPath)
+        const absoluteOriginal = path.isAbsolute(expandedPath)
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
 
+        // Attempt to resolve symlinks to get the real path
+        // This will succeed if the path exists and all symlinks in the chain are valid
+        // It will fail with ENOENT if:
+        //   - The path itself doesn't exist, OR
+        //   - A symlink exists but points to a non-existent target (broken symlink)
+        let resolvedRealPath: string | null = null;
+        try {
+            resolvedRealPath = await fs.realpath(absoluteOriginal, { encoding: 'utf8' });
+        } catch (error) {
+            const err = error as NodeJS.ErrnoException;
+            // Only throw for non-ENOENT errors (e.g., permission denied, I/O errors)
+            if (!err.code || err.code !== 'ENOENT') {
+                capture('server_path_realpath_error', {
+                    error: err.message,
+                    path: absoluteOriginal
+                });
+                throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
+            }
+        }
+
+        const pathForNextCheck = resolvedRealPath ?? absoluteOriginal;
+
         // Check if path is allowed
-        if (!(await isPathAllowed(absolute))) {
+        if (!(await isPathAllowed(pathForNextCheck))) {
             capture('server_path_validation_error', {
                 error: 'Path not allowed',
                 allowedDirsCount: (await getAllowedDirs()).length
@@ -196,18 +218,23 @@ export async function validatePath(requestedPath: string): Promise<string> {
 
         // Check if path exists
         try {
-            const stats = await fs.stat(absolute);
+            // fs.stat() will automatically follow symlinks, so we get existence info
+            const stats = await fs.stat(absoluteOriginal);
             // If path exists, resolve any symlinks
-            return await fs.realpath(absolute);
+            if (resolvedRealPath) {
+                return resolvedRealPath;
+            }
+
+            return absoluteOriginal;
         } catch (error) {
             // Path doesn't exist - validate parent directories
-            if (await validateParentDirectories(absolute)) {
+            if (await validateParentDirectories(absoluteOriginal)) {
                 // Return the path if a valid parent exists
                 // This will be used for folder creation and many other file operations
-                return absolute;
+                return absoluteOriginal;
             }
             // If no valid parent found, return the absolute path anyway
-            return absolute;
+            return absoluteOriginal;
         }
     };
 
