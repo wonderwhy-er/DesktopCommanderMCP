@@ -57,6 +57,7 @@ class CommandManager {
 
                 // Handle $() command substitution even inside quotes (fixes blocklist bypass)
                 if (char === '$' && i + 1 < commandString.length && commandString[i + 1] === '(') {
+                    const startIndex = i;
                     let openParens = 1;
                     let j = i + 2; // skip past $(
                     while (j < commandString.length && openParens > 0) {
@@ -72,7 +73,7 @@ class CommandManager {
                         if (!inQuote) {
                             continue;
                         } else {
-                            currentCmd += commandString.substring(i - (j - i - 1), i + 1);
+                            currentCmd += commandString.substring(startIndex, j);
                             continue;
                         }
                     }
@@ -80,6 +81,7 @@ class CommandManager {
 
                 // Handle backtick command substitution even inside quotes
                 if (char === '`') {
+                    const startIndex = i;
                     let j = i + 1;
                     while (j < commandString.length && commandString[j] !== '`') {
                         j++;
@@ -92,7 +94,7 @@ class CommandManager {
                         if (!inQuote) {
                             continue;
                         } else {
-                            currentCmd += commandString.substring(i - (j - i), i + 1);
+                            currentCmd += commandString.substring(startIndex, j + 1);
                             continue;
                         }
                     }

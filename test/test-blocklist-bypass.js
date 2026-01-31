@@ -52,6 +52,7 @@ async function runTests() {
         const cmds8 = commandManager.extractCommands('$MYVAR ls');
         console.log('  $MYVAR ls =>', cmds8);
         assert.ok(cmds8.includes('ls'), 'FAIL: should extract "ls" and ignore $MYVAR');
+        assert.ok(!cmds8.includes('$MYVAR'), 'FAIL: should not include $MYVAR as a command');
 
         console.log('\nAll tests passed!');
     } catch (error) {
