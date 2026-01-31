@@ -4,12 +4,15 @@ import { featureFlagManager } from './feature-flags.js';
 /**
  * A/B Test controlled feature flags
  * 
- * Experiments are defined in remote feature flags JSON:
+ * Experiments are defined in remote feature flags JSON (v2 format with weights):
  * {
  *   "flags": {
  *     "experiments": {
  *       "OnboardingPreTool": {
- *         "variants": ["noOnboardingPage", "showOnboardingPage"]
+ *         "variants": [
+ *           { "name": "noOnboardingPage", "weight": 20 },
+ *           { "name": "showOnboardingPage", "weight": 80 }
+ *         ]
  *       }
  *     }
  *   }
@@ -19,8 +22,13 @@ import { featureFlagManager } from './feature-flags.js';
  *   if (await hasFeature('showOnboardingPage')) { ... }
  */
 
+interface WeightedVariant {
+  name: string;
+  weight: number;
+}
+
 interface Experiment {
-  variants: string[];
+  variants: WeightedVariant[];
 }
 
 // Cache for variant assignments (loaded once per session)
@@ -35,6 +43,7 @@ function getExperiments(): Record<string, Experiment> {
 
 /**
  * Get user's variant for an experiment (cached, deterministic)
+ * Supports weighted variants for unequal splits
  */
 async function getVariant(experimentName: string): Promise<string | null> {
   const experiments = getExperiments();
@@ -50,16 +59,30 @@ async function getVariant(experimentName: string): Promise<string | null> {
   const configKey = `abTest_${experimentName}`;
   const existing = await configManager.getValue(configKey);
   
-  if (existing && experiment.variants.includes(existing)) {
+  // Validate existing assignment is still a valid variant
+  const variantNames = experiment.variants.map(v => v.name);
+  if (existing && variantNames.includes(existing)) {
     variantCache[experimentName] = existing;
     return existing;
   }
   
-  // New assignment based on clientId
+  // New assignment based on clientId with weighted selection
   const clientId = await configManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
-  const variantIndex = hash % experiment.variants.length;
-  const variant = experiment.variants[variantIndex];
+  
+  // Calculate total weight and select variant
+  const totalWeight = experiment.variants.reduce((sum, v) => sum + v.weight, 0);
+  const roll = hash % totalWeight;
+  
+  let cumulative = 0;
+  let variant = experiment.variants[0].name; // fallback
+  for (const v of experiment.variants) {
+    cumulative += v.weight;
+    if (roll < cumulative) {
+      variant = v.name;
+      break;
+    }
+  }
   
   await configManager.setValue(configKey, variant);
   variantCache[experimentName] = variant;
@@ -74,7 +97,8 @@ export async function hasFeature(featureName: string): Promise<boolean> {
   if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    if (experiment?.variants?.includes(featureName)) {
+    const variantNames = experiment?.variants?.map(v => v.name) || [];
+    if (variantNames.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
     }

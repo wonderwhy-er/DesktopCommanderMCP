@@ -26,9 +26,9 @@ class FeatureFlagManager {
     const configDir = path.dirname(CONFIG_FILE);
     this.cachePath = path.join(configDir, 'feature-flags.json');
     
-    // Use production flags
+    // Use production flags (v2 supports weighted variants)
     this.flagUrl = process.env.DC_FLAG_URL || 
-      'https://desktopcommander.app/flags/v1/production.json';
+      'https://desktopcommander.app/flags/v2/production.json';
     
     // Set up promise for waiting on fresh fetch
     this.freshFetchPromise = new Promise((resolve) => {
