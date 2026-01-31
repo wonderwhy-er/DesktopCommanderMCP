@@ -1,3 +1,4 @@
+import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 
@@ -58,6 +59,39 @@ class CommandManager {
                 if (inQuote) {
                     currentCmd += char;
                     continue;
+                }
+
+                // Handle $() command substitution (fixes blocklist bypass via $(...))
+                if (char === '$' && i + 1 < commandString.length && commandString[i + 1] === '(') {
+                    let openParens = 1;
+                    let j = i + 2; // skip past $(
+                    while (j < commandString.length && openParens > 0) {
+                        if (commandString[j] === '(') openParens++;
+                        if (commandString[j] === ')') openParens--;
+                        j++;
+                    }
+                    if (j <= commandString.length) {
+                        const subContent = commandString.substring(i + 2, j - 1);
+                        const subCommands = this.extractCommands(subContent);
+                        commands.push(...subCommands);
+                        i = j - 1;
+                        continue;
+                    }
+                }
+
+                // Handle backtick command substitution
+                if (char === '`') {
+                    let j = i + 1;
+                    while (j < commandString.length && commandString[j] !== '`') {
+                        j++;
+                    }
+                    if (j < commandString.length) {
+                        const subContent = commandString.substring(i + 1, j);
+                        const subCommands = this.extractCommands(subContent);
+                        commands.push(...subCommands);
+                        i = j;
+                        continue;
+                    }
                 }
 
                 // Handle subshells - if we see an opening parenthesis, we need to find its matching closing parenthesis
@@ -137,12 +171,24 @@ class CommandManager {
             const tokens = withoutEnvVars.split(/\s+/);
             const firstToken = tokens[0];
 
-            // Check if it starts with special characters like (, $ that might indicate it's not a regular command
-            if (['(', '$'].includes(firstToken[0])) {
+            // Check if it starts with special characters like ( that might indicate it's not a regular command
+            if (firstToken[0] === '(') {
                 return null;
             }
 
-            return firstToken.toLowerCase();
+            // handle $() command substitution - extract the inner command
+            if (firstToken.startsWith('$(') && firstToken.endsWith(')')) {
+                const inner = firstToken.slice(2, -1).trim();
+                if (inner) {
+                    const innerTokens = inner.split(/\s+/);
+                    return path.basename(innerTokens[0]).toLowerCase();
+                }
+                return null;
+            }
+
+            // strip path prefix so /usr/bin/sudo gets caught as "sudo"
+            const baseName = path.basename(firstToken);
+            return baseName.toLowerCase();
         } catch (error) {
             capture('Error extracting base command');
             return null;
