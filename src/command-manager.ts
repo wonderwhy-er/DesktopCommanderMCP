@@ -1,3 +1,4 @@
+import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 
@@ -54,6 +55,51 @@ class CommandManager {
                     continue;
                 }
 
+                // Handle $() command substitution even inside quotes (fixes blocklist bypass)
+                if (char === '$' && i + 1 < commandString.length && commandString[i + 1] === '(') {
+                    const startIndex = i;
+                    let openParens = 1;
+                    let j = i + 2; // skip past $(
+                    while (j < commandString.length && openParens > 0) {
+                        if (commandString[j] === '(') openParens++;
+                        if (commandString[j] === ')') openParens--;
+                        j++;
+                    }
+                    if (j <= commandString.length && openParens === 0) {
+                        const subContent = commandString.substring(i + 2, j - 1);
+                        const subCommands = this.extractCommands(subContent);
+                        commands.push(...subCommands);
+                        i = j - 1;
+                        if (!inQuote) {
+                            continue;
+                        } else {
+                            currentCmd += commandString.substring(startIndex, j);
+                            continue;
+                        }
+                    }
+                }
+
+                // Handle backtick command substitution even inside quotes
+                if (char === '`') {
+                    const startIndex = i;
+                    let j = i + 1;
+                    while (j < commandString.length && commandString[j] !== '`') {
+                        j++;
+                    }
+                    if (j < commandString.length) {
+                        const subContent = commandString.substring(i + 1, j);
+                        const subCommands = this.extractCommands(subContent);
+                        commands.push(...subCommands);
+                        i = j;
+                        if (!inQuote) {
+                            continue;
+                        } else {
+                            currentCmd += commandString.substring(startIndex, j + 1);
+                            continue;
+                        }
+                    }
+                }
+
                 // If we're inside quotes, just add the character
                 if (inQuote) {
                     currentCmd += char;
@@ -71,8 +117,8 @@ class CommandManager {
                         j++;
                     }
 
-                    // Skip to after the closing parenthesis
-                    if (j <= commandString.length) {
+                    // Skip to after the closing parenthesis only if properly balanced
+                    if (j <= commandString.length && openParens === 0) {
                         const subshellContent = commandString.substring(i + 1, j - 1);
                         // Recursively extract commands from the subshell
                         const subCommands = this.extractCommands(subshellContent);
@@ -120,7 +166,8 @@ class CommandManager {
             capture('server_request_error', {
                 error: 'Error extracting commands'
             });
-            return [this.getBaseCommand(commandString)];
+            const baseCmd = this.extractBaseCommand(commandString);
+            return baseCmd ? [baseCmd] : [];
         }
     }
 
@@ -135,14 +182,44 @@ class CommandManager {
 
             // Get the first token (the command)
             const tokens = withoutEnvVars.split(/\s+/);
-            const firstToken = tokens[0];
+            let firstToken = null;
 
-            // Check if it starts with special characters like (, $ that might indicate it's not a regular command
-            if (['(', '$'].includes(firstToken[0])) {
+            // Find the first valid token (skip variables)
+            for (let i = 0; i < tokens.length; i++) {
+                const token = tokens[i];
+                
+                // Skip dollar-prefixed tokens (variables) but not $() command substitutions
+                if (token.startsWith('$') && !token.startsWith('$(')) {
+                    continue;
+                }
+                
+                // Check if it starts with special characters like ( that might indicate it's not a regular command
+                if (token[0] === '(') {
+                    continue;
+                }
+                
+                firstToken = token;
+                break;
+            }
+
+            // No valid command token found
+            if (!firstToken) {
                 return null;
             }
 
-            return firstToken.toLowerCase();
+            // handle $() command substitution - extract the inner command
+            if (firstToken.startsWith('$(') && firstToken.endsWith(')')) {
+                const inner = firstToken.slice(2, -1).trim();
+                if (inner) {
+                    const innerTokens = inner.split(/\s+/);
+                    return path.basename(innerTokens[0]).toLowerCase();
+                }
+                return null;
+            }
+
+            // strip path prefix so /usr/bin/sudo gets caught as "sudo"
+            const baseName = path.basename(firstToken);
+            return baseName.toLowerCase();
         } catch (error) {
             capture('Error extracting base command');
             return null;
