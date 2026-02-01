@@ -6,6 +6,8 @@ import {
     ListResourceTemplatesRequestSchema,
     ListPromptsRequestSchema,
     InitializeRequestSchema,
+    LATEST_PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
     type CallToolRequest,
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -154,9 +156,15 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
         capture('run_server_mcp_initialized');
 
+        // Negotiate protocol version with client
+        const requestedVersion = request.params?.protocolVersion;
+        const protocolVersion = (requestedVersion && SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion))
+            ? requestedVersion
+            : LATEST_PROTOCOL_VERSION;
+
         // Return standard initialization response
         return {
-            protocolVersion: "2024-11-05",
+            protocolVersion,
             capabilities: {
                 tools: {},
                 resources: {},
