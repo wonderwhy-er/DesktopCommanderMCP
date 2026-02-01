@@ -72,16 +72,23 @@ async function getVariant(experimentName: string): Promise<string | null> {
   
   // Calculate total weight and select variant
   const totalWeight = experiment.variants.reduce((sum, v) => sum + v.weight, 0);
-  const roll = hash % totalWeight;
   
-  let cumulative = 0;
-  let variant = experiment.variants[0].name; // fallback
-  for (const v of experiment.variants) {
-    cumulative += v.weight;
-    if (roll < cumulative) {
-      variant = v.name;
-      break;
+  let variant: string;
+  if (totalWeight > 0) {
+    const roll = hash % totalWeight;
+    let cumulative = 0;
+    variant = experiment.variants[0].name; // fallback
+    for (const v of experiment.variants) {
+      cumulative += v.weight;
+      if (roll < cumulative) {
+        variant = v.name;
+        break;
+      }
     }
+  } else {
+    // Fallback to equal split when weights are misconfigured (all zero)
+    const index = hash % experiment.variants.length;
+    variant = experiment.variants[index].name;
   }
   
   await configManager.setValue(configKey, variant);
