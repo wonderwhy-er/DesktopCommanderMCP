@@ -31,7 +31,7 @@
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/",
+    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/ && shx mkdir -p dist/remote-device/scripts && shx cp src/remote-device/scripts/blocking-offline-update.js dist/remote-device/scripts/",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",
