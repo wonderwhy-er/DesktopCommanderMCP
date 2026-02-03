@@ -91,6 +91,8 @@
     "file-type": "^21.1.1",
     "glob": "^10.3.10",
     "isbinaryfile": "^5.0.4",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
     "md-to-pdf": "^5.2.5",
     "open": "^10.2.0",
     "pdf-lib": "^1.17.1",

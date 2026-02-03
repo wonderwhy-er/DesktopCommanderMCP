@@ -264,7 +264,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "read_file",
                 description: `
                         Read contents from files and URLs.
-                        Read PDF files and extract content as markdown and images.
+                        Read PDF and DOCX files and extract content as markdown and images.
                         
                         Prefer this over 'execute_command' with cat/type for viewing files.
                         
@@ -301,6 +301,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
+                        - DOCX (.docx): Extracts text content as markdown with formatting
+                          * Preserves headings, lists, tables, bold, italic
+                          * Includes embedded images as base64
+                          * Extracts document metadata (title, author, dates)
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,

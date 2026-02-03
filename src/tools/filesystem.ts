@@ -533,6 +533,7 @@ export interface MultiFileResult {
     isImage?: boolean;
     error?: string;
     isPdf?: boolean;
+    isDocx?: boolean;
     payload?: FileResultPayloads;
 }
 
@@ -558,6 +559,7 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
                     mimeType: fileResult.mimeType,
                     isImage: fileResult.metadata?.isImage ?? false,
                     isPdf: fileResult.metadata?.isPdf ?? false,
+                    isDocx: fileResult.metadata?.isDocx ?? false,
                     payload: fileResult.metadata?.isPdf ? {
                         metadata: {
                             author: fileResult.metadata.author,

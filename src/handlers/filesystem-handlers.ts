@@ -106,6 +106,50 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             };
         }
 
+        // Handle DOCX files
+        if (fileResult.metadata?.isDocx) {
+            const meta = fileResult.metadata;
+            const contentItems: Array<{ type: string, text?: string, data?: string, mimeType?: string }> = [];
+
+            // Add document info
+            const infoParts = [`DOCX file: ${parsed.path}`];
+            if (meta?.title) infoParts.push(`Title: "${meta.title}"`);
+            if (meta?.author) infoParts.push(`Author: ${meta.author}`);
+            if (meta?.images && meta.images.length > 0) {
+                infoParts.push(`${meta.images.length} embedded images`);
+            }
+            
+            contentItems.push({
+                type: "text",
+                text: infoParts.join(', ') + '\n\n'
+            });
+
+            // Add embedded images first
+            if (meta?.images && meta.images.length > 0) {
+                for (const image of meta.images) {
+                    contentItems.push({
+                        type: "image",
+                        data: image.data,
+                        mimeType: image.mimeType
+                    });
+                }
+            }
+
+            // Add the main document content as markdown
+            const textContent = typeof fileResult.content === 'string'
+                ? fileResult.content
+                : fileResult.content.toString('utf8');
+            
+            contentItems.push({
+                type: "text",
+                text: textContent
+            });
+
+            return {
+                content: contentItems
+            };
+        }
+
         // Handle image files
         if (fileResult.metadata?.isImage) {
             // For image files, return as an image content type
@@ -164,6 +208,8 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
             return `${result.path}: Error - ${result.error}`;
         } else if (result.isPdf) {
             return `${result.path}: PDF file with ${result.payload?.pages?.length} pages`;
+        } else if (result.isDocx) {
+            return `${result.path}: DOCX file (Word document)`;
         } else if (result.mimeType) {
             return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
         } else {

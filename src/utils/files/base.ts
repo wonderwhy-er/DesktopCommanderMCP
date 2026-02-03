@@ -130,6 +130,29 @@ export interface FileMetadata {
     totalPages?: number;
     pages?: PdfPageItem[];
 
+    /** For DOCX files */
+    isDocx?: boolean;
+    subject?: string;
+    description?: string;
+    creationDate?: Date;
+    modificationDate?: Date;
+    lastModifiedBy?: string;
+    revision?: string;
+    images?: Array<{
+        id: string;
+        data: string;
+        mimeType: string;
+        altText?: string;
+        originalSize?: number;
+    }>;
+    sections?: Array<{
+        type: 'heading' | 'paragraph' | 'list' | 'table' | 'image';
+        content: string;
+        level?: number;
+    }>;
+    imageCount?: number;
+    sectionCount?: number;
+
     /** Error information if operation failed */
     error?: boolean;
     errorMessage?: string;
@@ -212,7 +235,7 @@ export interface FileInfo {
     permissions: string;
 
     /** File type classification */
-    fileType: 'text' | 'excel' | 'image' | 'binary';
+    fileType: 'text' | 'excel' | 'image' | 'binary' | 'docx';
 
     /** Type-specific metadata */
     metadata?: FileMetadata;
