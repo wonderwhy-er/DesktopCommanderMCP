@@ -152,31 +152,33 @@ export async function createDocxFromMarkdown(
           continue;
         }
 
-        // 3) Heading
-        const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-        if (headingMatch) {
-          const level = headingMatch[1].length;
-          const text = headingMatch[2].trim();
-          
-          const heading = new Paragraph({
-            text,
-            heading: getHeadingLevel(level),
-          });
-          
-          children.push(heading);
-          i++;
-          continue;
-        }
+         // 3) Heading with inline formatting
+         const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+         if (headingMatch) {
+           const level = headingMatch[1].length;
+           const text = headingMatch[2].trim();
+           const textRuns = parseInlineFormatting(text);
+           
+           const heading = new Paragraph({
+             children: textRuns,
+             heading: getHeadingLevel(level),
+           });
+           
+           children.push(heading);
+           i++;
+           continue;
+         }
 
-        // 4) Regular paragraph
-        const paragraph = new Paragraph({
-          text: rawLine,
-          alignment: AlignmentType.LEFT,
-        });
-        
-        children.push(paragraph);
-        i++;
-      }
+         // 4) Regular paragraph with inline formatting support
+         const textRuns = parseInlineFormatting(rawLine);
+         const paragraph = new Paragraph({
+           children: textRuns,
+           alignment: AlignmentType.LEFT,
+         });
+         
+         children.push(paragraph);
+         i++;
+       }
 
       // Create the document with all the built children
       const doc = new Document({
@@ -418,6 +420,74 @@ async function applyInsertImage(
 }
 
 /**
+ * Parse inline markdown formatting (bold, italic) into TextRun array
+ * Supports: **bold**, __bold__, *italic*, _italic_
+ */
+function parseInlineFormatting(text: string): InstanceType<typeof TextRun>[] {
+  const runs: InstanceType<typeof TextRun>[] = [];
+  
+  // Pattern to match bold (**text** or __text__) and italic (*text* or _text_)
+  // Using a more precise regex that handles nested and adjacent formatting
+  const pattern = /(\*\*|__)(.*?)\1|(\*|_)(.*?)\3|([^*_]+)/g;
+  
+  let match;
+  let lastIndex = 0;
+  
+  // Simpler approach: process character by character with state tracking
+  let currentText = '';
+  let i = 0;
+  
+  while (i < text.length) {
+    // Check for **bold**
+    if (text.substring(i, i + 2) === '**') {
+      // Save any accumulated text
+      if (currentText) {
+        runs.push(new TextRun({ text: currentText }));
+        currentText = '';
+      }
+      
+      // Find the closing **
+      const closeIndex = text.indexOf('**', i + 2);
+      if (closeIndex !== -1) {
+        const boldText = text.substring(i + 2, closeIndex);
+        runs.push(new TextRun({ text: boldText, bold: true }));
+        i = closeIndex + 2;
+        continue;
+      }
+    }
+    
+    // Check for *italic*
+    if (text[i] === '*' && text[i + 1] !== '*') {
+      // Save any accumulated text
+      if (currentText) {
+        runs.push(new TextRun({ text: currentText }));
+        currentText = '';
+      }
+      
+      // Find the closing *
+      const closeIndex = text.indexOf('*', i + 1);
+      if (closeIndex !== -1) {
+        const italicText = text.substring(i + 1, closeIndex);
+        runs.push(new TextRun({ text: italicText, italics: true }));
+        i = closeIndex + 1;
+        continue;
+      }
+    }
+    
+    // Regular character
+    currentText += text[i];
+    i++;
+  }
+  
+  // Add any remaining text
+  if (currentText) {
+    runs.push(new TextRun({ text: currentText }));
+  }
+  
+  return runs.length > 0 ? runs : [new TextRun({ text: text })];
+}
+
+/**
  * Get DOCX heading level from markdown level (1-6)
  */
 function getHeadingLevel(level: number): any {
@@ -472,38 +542,50 @@ function createTableFromMarkdown(lines: string[]): InstanceType<typeof Table> {
   const headerCells = splitTableRow(lines[0]);
   const rows: InstanceType<typeof TableRow>[] = [];
 
-  // Header row (with center alignment and bold)
+  // Header row (with center alignment and bold formatting)
   rows.push(
     new TableRow({
       children: headerCells.map(
-        (cell) =>
-          new TableCell({
+        (cell) => {
+          const cellText = cell.trim();
+          const textRuns = parseInlineFormatting(cellText);
+          
+          // Make all runs bold (in addition to any existing formatting)
+          textRuns.forEach(run => {
+            (run as any).bold = true;
+          });
+          
+          return new TableCell({
             children: [
               new Paragraph({
-                children: [
-                  new TextRun({
-                    text: cell.trim(),
-                    bold: true,
-                  }),
-                ],
+                children: textRuns,
                 alignment: AlignmentType.CENTER,
               }),
             ],
-          }),
+          });
+        }
       ),
     }),
   );
 
-  // Data rows (skip separator at index 1)
+  // Data rows (skip separator at index 1) with inline formatting
   for (let i = 2; i < lines.length; i++) {
     const cells = splitTableRow(lines[i]);
     rows.push(
       new TableRow({
         children: cells.map(
-          (cell) =>
-            new TableCell({
-              children: [new Paragraph(cell.trim())],
-            }),
+          (cell) => {
+            const cellText = cell.trim();
+            const textRuns = parseInlineFormatting(cellText);
+            
+            return new TableCell({
+              children: [
+                new Paragraph({
+                  children: textRuns,
+                }),
+              ],
+            });
+          }
         ),
       }),
     );
