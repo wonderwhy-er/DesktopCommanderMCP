@@ -39,5 +39,11 @@ export {
   getFileNameWithoutExtension,
   DocxError,
   withErrorContext,
+  prepareImageForDocx,
+  createImageRun,
+} from './utils.js';
+
+export type {
+  PreparedImage,
 } from './utils.js';
 

@@ -6,6 +6,14 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+// Import types from docx for image handling
+// @ts-ignore - docx library has incomplete type definitions but exports exist at runtime
+import * as docx from 'docx';
+
+const {
+  ImageRun,
+} = docx as any;
+
 /**
  * Check if a string is a valid data URL
  */
@@ -260,6 +268,133 @@ export async function withErrorContext<T>(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new DocxError(message, errorCode, context);
+  }
+}
+
+/**
+ * Image data prepared for DOCX embedding
+ */
+export interface PreparedImage {
+  buffer: Buffer;
+  width?: number;
+  height?: number;
+  altText: string;
+  mimeType: string;
+}
+
+/**
+ * Load and prepare an image for DOCX embedding
+ * Handles both local files and data URLs
+ * 
+ * @param imagePath - Path to image file or data URL
+ * @param altText - Alternative text for the image
+ * @param baseDir - Base directory for resolving relative paths
+ * @returns Prepared image data ready for embedding
+ */
+export async function prepareImageForDocx(
+  imagePath: string,
+  altText: string = '',
+  baseDir?: string
+): Promise<PreparedImage> {
+  return withErrorContext(
+    async () => {
+      let buffer: Buffer;
+      let mimeType = 'image/png'; // Default
+
+      // Handle data URL
+      if (isDataUrl(imagePath)) {
+        const parsed = parseDataUrl(imagePath);
+        if (!parsed) {
+          throw new DocxError(
+            'Invalid data URL format',
+            'INVALID_IMAGE_DATA_URL',
+            { imagePath: imagePath.substring(0, 50) }
+          );
+        }
+        buffer = parsed;
+        
+        // Extract MIME type from data URL
+        const mimeMatch = imagePath.match(/^data:([^;]+);/);
+        if (mimeMatch) {
+          mimeType = mimeMatch[1];
+        }
+      } else {
+        // Handle file path
+        const resolved = resolveImagePath(imagePath, baseDir);
+        
+        // Validate image file
+        const validation = await validateImageFile(resolved);
+        if (!validation.valid) {
+          throw new DocxError(
+            validation.error || 'Invalid image file',
+            'INVALID_IMAGE_FILE',
+            { imagePath: resolved }
+          );
+        }
+
+        // Read image file
+        try {
+          buffer = await fs.readFile(resolved);
+        } catch (error) {
+          throw new DocxError(
+            `Failed to read image file: ${error instanceof Error ? error.message : String(error)}`,
+            'IMAGE_READ_FAILED',
+            { imagePath: resolved }
+          );
+        }
+
+        // Determine MIME type from file extension
+        const ext = path.extname(resolved).toLowerCase();
+        const mimeTypes: Record<string, string> = {
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.bmp': 'image/bmp',
+          '.webp': 'image/webp',
+        };
+        mimeType = mimeTypes[ext] || 'image/png';
+      }
+
+      return {
+        buffer,
+        altText: altText || path.basename(imagePath),
+        mimeType,
+        // Default dimensions - can be customized
+        width: 600,
+        height: 400,
+      };
+    },
+    'IMAGE_PREPARATION_FAILED',
+    { imagePath }
+  );
+}
+
+/**
+ * Create an ImageRun instance for embedding in DOCX paragraphs
+ * This is a lower-level utility for direct image insertion
+ * 
+ * @param imageData - Prepared image data
+ * @returns ImageRun instance ready to be added to a paragraph
+ */
+export function createImageRun(imageData: PreparedImage): any {
+  try {
+    return new ImageRun({
+      data: imageData.buffer,
+      transformation: {
+        width: imageData.width || 600,
+        height: imageData.height || 400,
+      },
+      altText: {
+        title: imageData.altText,
+        description: imageData.altText,
+      },
+    });
+  } catch (error) {
+    throw new DocxError(
+      `Failed to create image run: ${error instanceof Error ? error.message : String(error)}`,
+      'IMAGE_RUN_CREATION_FAILED'
+    );
   }
 }
 

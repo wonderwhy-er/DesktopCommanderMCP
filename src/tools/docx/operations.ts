@@ -53,6 +53,8 @@ import {
   normalizeLineEndings,
   DocxError,
   withErrorContext,
+  prepareImageForDocx,
+  createImageRun,
 } from './utils.js';
 
 // Infer TypeScript types from Zod schemas for type safety
@@ -139,17 +141,39 @@ export async function createDocxFromMarkdown(
           continue;
         }
 
-        // 2) Images - skip for now, will handle in second pass
+        // 2) Images - embed using utility function
         const imageMatch = line.match(/!\[([^\]]*)\]\(([^)]+)\)/);
         if (imageMatch) {
-          // Skip images temporarily - will add placeholder text
-          const paragraph = new Paragraph({
-            text: `[Image: ${imageMatch[1] || imageMatch[2]}]`,
-            alignment: AlignmentType.LEFT,
-          });
-          children.push(paragraph);
-          i++;
-          continue;
+          const altText = imageMatch[1] || '';
+          const src = imageMatch[2];
+          
+          try {
+            // Prepare image data
+            const imageData = await prepareImageForDocx(src, altText, baseDir);
+            
+            // Create image run
+            const imageRun = createImageRun(imageData);
+            
+            // Create paragraph with image
+            const paragraph = new Paragraph({
+              children: [imageRun],
+              alignment: AlignmentType.CENTER,
+            });
+            
+            children.push(paragraph);
+            i++;
+            continue;
+          } catch (error) {
+            // If image fails, add placeholder text
+            console.warn(`Failed to embed image ${src}:`, error);
+            const paragraph = new Paragraph({
+              text: `[Image: ${altText || src}]`,
+              alignment: AlignmentType.LEFT,
+            });
+            children.push(paragraph);
+            i++;
+            continue;
+          }
         }
 
          // 3) Heading with inline formatting
