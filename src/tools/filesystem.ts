@@ -9,6 +9,7 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { createDocxFromMarkdown, editDocxWithOperations, DocxOperation } from './docx/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -917,5 +918,80 @@ export async function writePdf(
         await fs.writeFile(targetPath, modifiedPdfBuffer);
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
+    }
+}
+
+/**
+ * Write content to a DOCX file.
+ * Can create a new DOCX from Markdown string, or modify an existing DOCX using operations.
+ * 
+ * @param filePath Path to the output DOCX file
+ * @param content Markdown string (for creation) or array of operations (for modification)
+ * @param outputPath Optional output path (defaults to filePath)
+ * @param options Options for DOCX generation or modification
+ */
+export async function writeDocx(
+    filePath: string,
+    content: string | DocxOperation[],
+    outputPath?: string,
+    options: any = {}
+): Promise<void> {
+    const validPath = await validatePath(filePath);
+    const fileExtension = getFileExtension(validPath);
+
+    if (typeof content === 'string') {
+        // --- DOCX CREATION MODE ---
+        capture('server_write_docx', {
+            fileExtension: fileExtension,
+            contentLength: content.length,
+            mode: 'create'
+        });
+
+        const docxBuffer = await createDocxFromMarkdown(content, options);
+        // Use outputPath if provided, otherwise overwrite input file
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+        await fs.writeFile(targetPath, docxBuffer);
+    } else if (Array.isArray(content)) {
+        // --- DOCX MODIFICATION MODE ---
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
+        const operations: DocxOperation[] = [];
+
+        // Validate image paths in operations
+        for (const o of content) {
+            if (o.type === 'insertImage' && o.imagePath) {
+                // Only validate local paths (not data URLs or web URLs)
+                if (!o.imagePath.startsWith('data:') && !o.imagePath.startsWith('http')) {
+                    try {
+                        o.imagePath = await validatePath(o.imagePath);
+                    } catch {
+                        // If validation fails, keep original path
+                        // Error will be caught during operation execution
+                    }
+                }
+            }
+            operations.push(o);
+        }
+
+        capture('server_write_docx', {
+            fileExtension: fileExtension,
+            operationCount: operations.length,
+            mode: 'modify',
+            replaceTextCount: operations.filter(op => op.type === 'replaceText').length,
+            appendMarkdownCount: operations.filter(op => op.type === 'appendMarkdown').length,
+            insertTableCount: operations.filter(op => op.type === 'insertTable').length,
+            insertImageCount: operations.filter(op => op.type === 'insertImage').length
+        });
+
+        // Perform the DOCX editing
+        const modifiedDocxBuffer = await editDocxWithOperations(validPath, operations, {
+            ...options,
+            outputPath: targetPath,
+        });
+
+        // Write the modified DOCX to the output path
+        await fs.writeFile(targetPath, modifiedDocxBuffer);
+    } else {
+        throw new Error('Invalid content type for writeDocx. Expected string (markdown) or array of operations.');
     }
 }

@@ -86,6 +86,7 @@
     "@supabase/supabase-js": "^2.89.0",
     "@vscode/ripgrep": "^1.15.9",
     "cross-fetch": "^4.1.0",
+    "docx": "^8.5.0",
     "exceljs": "^4.4.0",
     "fastest-levenshtein": "^1.0.16",
     "file-type": "^21.1.1",

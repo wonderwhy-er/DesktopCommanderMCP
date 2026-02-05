@@ -103,6 +103,70 @@ export const WritePdfArgsSchema = z.object({
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
+// DOCX modification schemas - exported for reuse
+export const DocxReplaceTextOperationSchema = z.object({
+  type: z.literal('replaceText'),
+  search: z.string(),
+  replace: z.string(),
+  matchCase: z.boolean().optional().default(true),
+  global: z.boolean().optional().default(true),
+});
+
+export const DocxAppendMarkdownOperationSchema = z.object({
+  type: z.literal('appendMarkdown'),
+  markdown: z.string(),
+});
+
+export const DocxInsertTableOperationSchema = z.object({
+  type: z.literal('insertTable'),
+  markdownTable: z.string().optional(),
+  rows: z.array(z.array(z.string())).optional(),
+}).refine(data => data.markdownTable || data.rows, {
+  message: "Either markdownTable or rows must be provided"
+});
+
+export const DocxInsertImageOperationSchema = z.object({
+  type: z.literal('insertImage'),
+  imagePath: z.string(),
+  altText: z.string().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+});
+
+export const DocxOperationSchema = z.union([
+  DocxReplaceTextOperationSchema,
+  DocxAppendMarkdownOperationSchema,
+  DocxInsertTableOperationSchema,
+  DocxInsertImageOperationSchema,
+]);
+
+export const WriteDocxArgsSchema = z.object({
+  path: z.string(),
+  // Preprocess content to handle JSON strings that should be parsed as arrays
+  content: z.preprocess(
+    (val) => {
+      // If it's a string that looks like JSON array, parse it
+      if (typeof val === 'string' && val.trim().startsWith('[')) {
+        try {
+          return JSON.parse(val);
+        } catch {
+          // If parsing fails, return as-is (might be markdown content)
+          return val;
+        }
+      }
+      // Otherwise return as-is
+      return val;
+    },
+    z.union([z.string(), z.array(DocxOperationSchema)])
+  ),
+  outputPath: z.string().optional(),
+  options: z.object({
+    baseDir: z.string().optional(),
+    includeImages: z.boolean().optional(),
+    preserveFormatting: z.boolean().optional(),
+  }).optional(),
+});
+
 export const CreateDirectoryArgsSchema = z.object({
   path: z.string(),
 });

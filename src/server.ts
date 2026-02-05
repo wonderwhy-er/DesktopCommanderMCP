@@ -49,6 +49,7 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    WriteDocxArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -438,6 +439,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: zodToJsonSchema(WritePdfArgsSchema),
                 annotations: {
                     title: "Write/Modify PDF",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "write_docx",
+                description: `
+                        Create a new DOCX (Word) file or modify an existing one.
+
+                        THIS IS THE TOOL FOR CREATING AND MODIFYING WORD DOCUMENTS (.docx).
+
+                        MODES:
+                        1. CREATE NEW DOCX:
+                           - Pass a markdown string as 'content'.
+                           - Markdown will be converted to a formatted Word document.
+                           write_docx(path="doc.docx", content="# Title\\n\\nBody text...")
+
+                        2. MODIFY EXISTING DOCX:
+                           - Pass array of operations as 'content'.
+                           - Can use 'outputPath' to save to a different file.
+                           
+                           write_docx(path="doc.docx", content=[
+                               { type: "replaceText", search: "old", replace: "new" },
+                               { type: "appendMarkdown", markdown: "# New Section" },
+                               { type: "insertTable", rows: [["Name", "Age"], ["Alice", "30"]] },
+                               { type: "insertImage", imagePath: "/path/to/image.png", altText: "Photo" }
+                           ])
+
+                        OPERATIONS:
+                        - replaceText: Search and replace text in the document.
+                          { type: "replaceText", search: "old text", replace: "new text", matchCase: true, global: true }
+                        
+                        - appendMarkdown: Add content at the end of the document.
+                          { type: "appendMarkdown", markdown: "# New Section\\n\\nContent here..." }
+                        
+                        - insertTable: Add a table to the document.
+                          { type: "insertTable", rows: [["Header1", "Header2"], ["Row1Col1", "Row1Col2"]] }
+                          or
+                          { type: "insertTable", markdownTable: "| Header1 | Header2 |\\n| --- | --- |\\n| Data1 | Data2 |" }
+                        
+                        - insertImage: Add an image to the document.
+                          { type: "insertImage", imagePath: "/path/to/image.png", altText: "Description", width: 400, height: 300 }
+                          Supports: local file paths, data URLs (data:image/png;base64,...)
+
+                        SUPPORTED MARKDOWN FEATURES:
+                        - Headings (# through ######)
+                        - Paragraphs
+                        - Tables (markdown table syntax)
+                        - Images (![alt](path))
+                        - Basic text formatting (bold, italic)
+
+                        OPTIONS:
+                        - baseDir: Base directory for resolving relative image paths
+                        - includeImages: Extract/include images (default: true)
+                        - preserveFormatting: Preserve text formatting (default: true)
+
+                        Only works within allowed directories.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(WriteDocxArgsSchema),
+                annotations: {
+                    title: "Write/Modify DOCX",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
@@ -1324,6 +1389,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "write_pdf":
                 result = await handlers.handleWritePdf(args);
+                break;
+
+            case "write_docx":
+                result = await handlers.handleWriteDocx(args);
                 break;
 
             case "create_directory":

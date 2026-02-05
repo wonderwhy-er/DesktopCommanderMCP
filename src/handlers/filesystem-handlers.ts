@@ -7,6 +7,7 @@ import {
     moveFile,
     getFileInfo,
     writePdf,
+    writeDocx,
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
@@ -25,7 +26,8 @@ import {
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
     GetFileInfoArgsSchema,
-    WritePdfArgsSchema
+    WritePdfArgsSchema,
+    WriteDocxArgsSchema
 } from '../tools/schemas.js';
 
 /**
@@ -416,6 +418,55 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
         const targetPath = parsed.outputPath || parsed.path;
         return {
             content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+}
+
+/**
+ * Handle write_docx command
+ */
+export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = WriteDocxArgsSchema.parse(args);
+        await writeDocx(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const targetPath = parsed.outputPath || parsed.path;
+        
+        // Build success message with operation details
+        let message = `Successfully wrote DOCX to ${targetPath}`;
+        if (parsed.outputPath) {
+            message += `\nOriginal file: ${parsed.path}`;
+        }
+        
+        // Add operation summary if using operations mode
+        if (Array.isArray(parsed.content)) {
+            const opCounts = {
+                replaceText: 0,
+                appendMarkdown: 0,
+                insertTable: 0,
+                insertImage: 0,
+            };
+            
+            for (const op of parsed.content) {
+                if (op.type in opCounts) {
+                    opCounts[op.type as keyof typeof opCounts]++;
+                }
+            }
+            
+            const details = Object.entries(opCounts)
+                .filter(([_, count]) => count > 0)
+                .map(([type, count]) => `${count} ${type}`)
+                .join(', ');
+            
+            if (details) {
+                message += `\nOperations applied: ${details}`;
+            }
+        }
+        
+        return {
+            content: [{ type: "text", text: message }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
