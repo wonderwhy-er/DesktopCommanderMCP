@@ -51,7 +51,6 @@ export {
   validateImageFile,
   escapeRegExp,
   isValidMarkdownTable,
-  buildMarkdownTableFromRows,
   parseMarkdownTable,
   getMimeType,
   formatFileSize,
@@ -60,4 +59,11 @@ export {
   isDocxPath,
   getFileNameWithoutExtension,
 } from './utils.js';
+
+// Converters
+export {
+  markdownToHtml,
+  markdownTableToHtml,
+  buildMarkdownTableFromRows,
+} from './converters/index.js';
 

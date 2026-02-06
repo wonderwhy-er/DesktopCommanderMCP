@@ -45,9 +45,13 @@ export interface DocxSection {
  * Complete DOCX parse result
  */
 export interface DocxParseResult {
-  markdown: string;
+  /** Document content as HTML */
+  html: string;
+  /** Document metadata */
   metadata: DocxMetadata;
+  /** Extracted images */
   images: DocxImage[];
+  /** Structured sections (optional, for advanced parsing) */
   sections?: DocxSection[];
 }
 

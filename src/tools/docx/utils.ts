@@ -124,23 +124,7 @@ export function isValidMarkdownTable(markdown: string): boolean {
   return true;
 }
 
-/**
- * Build a markdown table from a 2D array of rows
- */
-export function buildMarkdownTableFromRows(rows: string[][]): string {
-  if (!rows || rows.length === 0) {
-    return '';
-  }
-
-  const header = rows[0];
-  const dataRows = rows.slice(1);
-
-  const headerLine = `| ${header.join(' | ')} |`;
-  const separatorLine = `| ${header.map(() => '---').join(' | ')} |`;
-  const dataLines = dataRows.map((r) => `| ${r.join(' | ')} |`);
-
-  return [headerLine, separatorLine, ...dataLines].join('\n');
-}
+// buildMarkdownTableFromRows moved to converters/markdown-to-html.ts
 
 /**
  * Parse markdown table into 2D array
