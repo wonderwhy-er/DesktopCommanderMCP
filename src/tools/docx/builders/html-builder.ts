@@ -24,9 +24,23 @@ const HTMLtoDOCX = require('html-to-docx');
 function ensureHtmlStructure(html: string): string {
   const trimmed = html.trim();
 
-  // If already has body/html tags, return as-is
-  if (trimmed.includes('<body') || trimmed.includes('<html')) {
+  if (!trimmed) {
+    return HTML_WRAPPER_TEMPLATE.replace('{content}', '');
+  }
+
+  // Check if HTML already has proper structure
+  const hasDoctype = trimmed.toLowerCase().startsWith('<!doctype');
+  const hasHtmlTag = trimmed.toLowerCase().includes('<html');
+  const hasBodyTag = trimmed.toLowerCase().includes('<body');
+
+  // If already has complete structure, return as-is
+  if (hasDoctype && hasHtmlTag && hasBodyTag) {
     return trimmed;
+  }
+
+  // If has body/html tags but no doctype, add doctype
+  if (hasHtmlTag || hasBodyTag) {
+    return `<!DOCTYPE html>\n${trimmed}`;
   }
 
   // Wrap content in proper HTML structure

@@ -69,6 +69,8 @@ export interface DocxBuildOptions {
  */
 export interface DocxEditOptions extends DocxBuildOptions {
   outputPath?: string;
+  /** Custom style mapping for DOCX parsing */
+  styleMap?: string[];
 }
 
 /**
@@ -81,18 +83,11 @@ export interface DocxParseOptions {
 }
 
 /**
- * Image data prepared for DOCX embedding
+ * DOCX Operation Types
  */
-export interface PreparedImage {
-  buffer: Buffer;
-  width?: number;
-  height?: number;
-  altText: string;
-  mimeType: string;
-}
 
 /**
- * DOCX Operation Types
+ * Replace text in HTML content
  */
 export interface DocxReplaceTextOperation {
   type: 'replaceText';
@@ -102,17 +97,26 @@ export interface DocxReplaceTextOperation {
   global?: boolean;
 }
 
+/**
+ * Append markdown content (converted to HTML)
+ */
 export interface DocxAppendMarkdownOperation {
   type: 'appendMarkdown';
   markdown: string;
 }
 
+/**
+ * Insert table from markdown or rows array
+ */
 export interface DocxInsertTableOperation {
   type: 'insertTable';
   markdownTable?: string;
   rows?: string[][];
 }
 
+/**
+ * Insert image into document
+ */
 export interface DocxInsertImageOperation {
   type: 'insertImage';
   imagePath: string;
@@ -121,9 +125,60 @@ export interface DocxInsertImageOperation {
   height?: number;
 }
 
+/**
+ * Append HTML content directly
+ */
+export interface DocxAppendHtmlOperation {
+  type: 'appendHtml';
+  html: string;
+}
+
+/**
+ * Insert HTML content at a specific position
+ */
+export interface DocxInsertHtmlOperation {
+  type: 'insertHtml';
+  html: string;
+  /** CSS selector to find the target element */
+  selector?: string;
+  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
+  position?: 'before' | 'after' | 'inside';
+}
+
+/**
+ * Replace HTML elements/components
+ */
+export interface DocxReplaceHtmlOperation {
+  type: 'replaceHtml';
+  /** CSS selector to find elements to replace */
+  selector: string;
+  /** HTML content to replace with */
+  html: string;
+  /** Replace all matching elements (default: false, only first match) */
+  replaceAll?: boolean;
+}
+
+/**
+ * Update/modify HTML elements
+ */
+export interface DocxUpdateHtmlOperation {
+  type: 'updateHtml';
+  /** CSS selector to find elements to update */
+  selector: string;
+  /** HTML content to set as innerHTML */
+  html?: string;
+  /** Attributes to set/update */
+  attributes?: Record<string, string>;
+  /** Update all matching elements (default: false, only first match) */
+  updateAll?: boolean;
+}
+
 export type DocxOperation =
   | DocxReplaceTextOperation
   | DocxAppendMarkdownOperation
   | DocxInsertTableOperation
-  | DocxInsertImageOperation;
-
+  | DocxInsertImageOperation
+  | DocxAppendHtmlOperation
+  | DocxInsertHtmlOperation
+  | DocxReplaceHtmlOperation
+  | DocxUpdateHtmlOperation;

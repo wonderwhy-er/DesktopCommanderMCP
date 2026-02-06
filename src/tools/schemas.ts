@@ -133,11 +133,42 @@ export const DocxInsertImageOperationSchema = z.object({
   height: z.number().optional(),
 });
 
+export const DocxAppendHtmlOperationSchema = z.object({
+  type: z.literal('appendHtml'),
+  html: z.string(),
+});
+
+export const DocxInsertHtmlOperationSchema = z.object({
+  type: z.literal('insertHtml'),
+  html: z.string(),
+  selector: z.string().optional(),
+  position: z.enum(['before', 'after', 'inside']).optional(),
+});
+
+export const DocxReplaceHtmlOperationSchema = z.object({
+  type: z.literal('replaceHtml'),
+  selector: z.string(),
+  html: z.string(),
+  replaceAll: z.boolean().optional(),
+});
+
+export const DocxUpdateHtmlOperationSchema = z.object({
+  type: z.literal('updateHtml'),
+  selector: z.string(),
+  html: z.string().optional(),
+  attributes: z.record(z.string(), z.string()).optional(),
+  updateAll: z.boolean().optional(),
+});
+
 export const DocxOperationSchema = z.union([
   DocxReplaceTextOperationSchema,
   DocxAppendMarkdownOperationSchema,
   DocxInsertTableOperationSchema,
   DocxInsertImageOperationSchema,
+  DocxAppendHtmlOperationSchema,
+  DocxInsertHtmlOperationSchema,
+  DocxReplaceHtmlOperationSchema,
+  DocxUpdateHtmlOperationSchema,
 ]);
 
 export const WriteDocxArgsSchema = z.object({

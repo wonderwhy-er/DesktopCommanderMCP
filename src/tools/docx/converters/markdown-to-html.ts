@@ -119,14 +119,15 @@ export function markdownTableToHtml(markdown: string): string {
 
 /**
  * Parse a markdown table row into cells
+ * @param row - Markdown table row string
+ * @returns Array of cell values
  */
 function parseTableRow(row: string): string[] {
   return row
     .replace(/^\|/, '')
     .replace(/\|$/, '')
     .split('|')
-    .map((cell) => cell.trim())
-    .filter((cell) => cell.length > 0);
+    .map((cell) => cell.trim());
 }
 
 /**

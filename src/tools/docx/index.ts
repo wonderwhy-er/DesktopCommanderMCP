@@ -14,19 +14,21 @@ export type {
 
 
 // Creating and editing - using html-to-docx for HTML to DOCX conversion
-export {
-  createDocxFromHtml,
-  editDocxWithOperations,
-} from './operations.js';
+export { createDocxFromHtml } from './builders/html-builder.js';
+export { editDocxWithOperations } from './operations/index.js';
 export type {
   DocxOperation,
   DocxReplaceTextOperation,
   DocxAppendMarkdownOperation,
   DocxInsertTableOperation,
   DocxInsertImageOperation,
+  DocxAppendHtmlOperation,
+  DocxInsertHtmlOperation,
+  DocxReplaceHtmlOperation,
+  DocxUpdateHtmlOperation,
   DocxBuildOptions,
   DocxEditOptions,
-} from './operations.js';
+} from './types.js';
 
 // Types
 export type {
@@ -38,7 +40,6 @@ export {
   DocxError,
   DocxErrorCode,
   withErrorContext,
-  createDocxError,
 } from './errors.js';
 
 // Utilities
@@ -53,12 +54,17 @@ export {
   isValidMarkdownTable,
   parseMarkdownTable,
   getMimeType,
-  formatFileSize,
-  normalizeLineEndings,
-  splitMarkdownLines,
   isDocxPath,
-  getFileNameWithoutExtension,
 } from './utils.js';
+
+// Validators
+export {
+  validateDocxPath,
+  validateOperations,
+  validateHtml,
+  validateSelector,
+  validateImageDimensions,
+} from './validators.js';
 
 // Converters
 export {

@@ -42,11 +42,8 @@ export enum DocxErrorCode {
   DOCX_CREATE_FAILED = 'DOCX_CREATE_FAILED',
   DOCX_EDIT_FAILED = 'DOCX_EDIT_FAILED',
   DOCX_READ_FAILED = 'DOCX_READ_FAILED',
-  INVALID_TABLE = 'INVALID_TABLE',
-  INVALID_IMAGE = 'INVALID_IMAGE',
   INVALID_IMAGE_FILE = 'INVALID_IMAGE_FILE',
   INVALID_IMAGE_DATA_URL = 'INVALID_IMAGE_DATA_URL',
-  IMAGE_READ_FAILED = 'IMAGE_READ_FAILED',
   GET_INFO_FAILED = 'GET_INFO_FAILED',
 }
 
@@ -73,14 +70,4 @@ export async function withErrorContext<T>(
   }
 }
 
-/**
- * Create a standardized error response
- */
-export function createDocxError(
-  message: string,
-  code: DocxErrorCode,
-  context?: Record<string, unknown>
-): DocxError {
-  return new DocxError(message, code, context);
-}
 

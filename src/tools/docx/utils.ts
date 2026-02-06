@@ -124,8 +124,6 @@ export function isValidMarkdownTable(markdown: string): boolean {
   return true;
 }
 
-// buildMarkdownTableFromRows moved to converters/markdown-to-html.ts
-
 /**
  * Parse markdown table into 2D array
  */
@@ -178,45 +176,10 @@ export function getMimeType(source: string): string | null {
 }
 
 /**
- * Format file size in human-readable format
- */
-export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 Bytes';
-  
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-/**
- * Normalize line endings to \n
- */
-export function normalizeLineEndings(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-/**
- * Split markdown into lines, preserving empty lines
- */
-export function splitMarkdownLines(markdown: string): string[] {
-  return normalizeLineEndings(markdown).split('\n');
-}
-
-/**
  * Validate DOCX file path
  */
 export function isDocxPath(filePath: string): boolean {
   return filePath.toLowerCase().endsWith('.docx');
-}
-
-/**
- * Extract file name without extension
- */
-export function getFileNameWithoutExtension(filePath: string): string {
-  const basename = path.basename(filePath);
-  return basename.replace(/\.docx$/i, '');
 }
 
 // Re-export error handling from errors module

@@ -29,36 +29,26 @@ export type { DocxParseResult, DocxMetadata, DocxImage, DocxSection, DocxParseOp
  * @throws {DocxError} If file cannot be loaded
  */
 async function loadDocxToBuffer(source: string): Promise<Buffer> {
-  if (isUrl(source)) {
-    try {
-      const response = await fetch(source);
-      if (!response.ok) {
-        throw new DocxError(
-          `Failed to fetch DOCX from URL: ${response.statusText}`,
-          DocxErrorCode.DOCX_READ_FAILED,
-          { url: source, status: response.status }
-        );
+  return withErrorContext(
+    async () => {
+      if (isUrl(source)) {
+        const response = await fetch(source);
+        if (!response.ok) {
+          throw new DocxError(
+            `Failed to fetch DOCX from URL: ${response.statusText}`,
+            DocxErrorCode.DOCX_READ_FAILED,
+            { url: source, status: response.status }
+          );
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
       }
-      const arrayBuffer = await response.arrayBuffer();
-      return Buffer.from(arrayBuffer);
-    } catch (error) {
-      throw new DocxError(
-        `Failed to load DOCX from URL: ${error instanceof Error ? error.message : String(error)}`,
-        DocxErrorCode.DOCX_READ_FAILED,
-        { url: source }
-      );
-    }
-  }
 
-  try {
-    return await fs.readFile(source);
-  } catch (error) {
-    throw new DocxError(
-      `Failed to read DOCX file: ${error instanceof Error ? error.message : String(error)}`,
-      DocxErrorCode.DOCX_READ_FAILED,
-      { path: source }
-    );
-  }
+      return await fs.readFile(source);
+    },
+    DocxErrorCode.DOCX_READ_FAILED,
+    { source }
+  );
 }
 
 /**
@@ -95,7 +85,8 @@ function extractImagesFromHtml(html: string): DocxImage[] {
     }
   } catch (error) {
     // If image extraction fails, continue without images
-    console.warn('Failed to extract images from HTML:', error);
+    // This is non-critical, so we silently continue
+    // Error details are available in the catch block if needed for debugging
   }
 
   return images;
@@ -174,7 +165,7 @@ async function extractMetadata(
     metadata.modificationDate = getDateContent('modified');
   } catch (metaError) {
     // Metadata extraction is optional, don't fail if it doesn't work
-    console.warn('Could not extract detailed metadata:', metaError);
+    // Return metadata with only fileSize if extraction fails
   }
 
   return metadata;
@@ -281,7 +272,7 @@ function parseIntoSections(html: string, images: DocxImage[]): DocxSection[] {
     }
   } catch (error) {
     // If parsing fails, return entire HTML as one section
-    console.warn('Failed to parse HTML into sections:', error);
+    // This is a fallback to ensure we always return valid sections
     sections.push({
       type: 'paragraph',
       content: html,
