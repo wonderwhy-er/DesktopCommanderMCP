@@ -9,7 +9,7 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
-import { createDocxFromMarkdown, editDocxWithOperations, DocxOperation } from './docx/index.js';
+import { createDocxFromHtml, editDocxWithOperations, DocxOperation } from './docx/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -922,11 +922,42 @@ export async function writePdf(
 }
 
 /**
+ * Convert markdown to HTML if needed, otherwise return HTML as-is
+ */
+function convertToHtmlIfNeeded(content: string): string {
+    // Simple heuristic: if content has markdown patterns but no HTML tags, convert it
+    const hasMarkdown = /^#{1,6}\s|^\*\*|^\[.*\]\(|^\|.*\|/.test(content);
+    const hasHtmlTags = /<[a-z][\s\S]*>/i.test(content);
+    
+    if (hasMarkdown && !hasHtmlTags) {
+        // Convert markdown to HTML
+        let html = content;
+        // Headings
+        html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
+        // Bold
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        // Italic
+        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+        // Images
+        html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
+        // Links
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+        // Paragraphs
+        html = html.split('\n\n').map(p => p.trim()).filter(p => p).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
+        return html;
+    }
+    
+    return content;
+}
+
+/**
  * Write content to a DOCX file.
- * Can create a new DOCX from Markdown string, or modify an existing DOCX using operations.
+ * Can create a new DOCX from HTML/Markdown string, or modify an existing DOCX using operations.
  * 
  * @param filePath Path to the output DOCX file
- * @param content Markdown string (for creation) or array of operations (for modification)
+ * @param content HTML/Markdown string (for creation) or array of operations (for modification)
  * @param outputPath Optional output path (defaults to filePath)
  * @param options Options for DOCX generation or modification
  */
@@ -947,7 +978,9 @@ export async function writeDocx(
             mode: 'create'
         });
 
-        const docxBuffer = await createDocxFromMarkdown(content, options);
+        // Convert markdown to HTML if needed (backward compatibility)
+        const html = convertToHtmlIfNeeded(content);
+        const docxBuffer = await createDocxFromHtml(html, options);
         // Use outputPath if provided, otherwise overwrite input file
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
         await fs.writeFile(targetPath, docxBuffer);
@@ -983,6 +1016,13 @@ export async function writeDocx(
             insertImageCount: operations.filter(op => op.type === 'insertImage').length
         });
 
+        // Check if source file exists (required for modification)
+        try {
+            await fs.access(validPath);
+        } catch {
+            throw new Error(`Cannot modify DOCX: source file does not exist: ${validPath}. Use string content to create a new DOCX file.`);
+        }
+
         // Perform the DOCX editing
         const modifiedDocxBuffer = await editDocxWithOperations(validPath, operations, {
             ...options,
@@ -992,6 +1032,6 @@ export async function writeDocx(
         // Write the modified DOCX to the output path
         await fs.writeFile(targetPath, modifiedDocxBuffer);
     } else {
-        throw new Error('Invalid content type for writeDocx. Expected string (markdown) or array of operations.');
+        throw new Error('Invalid content type for writeDocx. Expected string (HTML/markdown) or array of operations.');
     }
 }

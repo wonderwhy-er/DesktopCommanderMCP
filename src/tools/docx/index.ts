@@ -3,28 +3,19 @@
  * Main exports for DOCX functionality
  */
 
-// Reading
-export { parseDocxToMarkdown } from './markdown.js';
+// Reading - using mammoth for DOCX to HTML conversion
+export { parseDocxToHtml } from './html.js';
 export type {
   DocxParseResult,
   DocxMetadata,
   DocxSection,
   DocxImage,
-} from './markdown.js';
+} from './html.js';
 
-// Structure parsing/building
-export {
-  parseDocxStructure,
-  buildDocxFromStructure,
-} from './structure.js';
-export type {
-  DocxElement,
-  DocxStructure,
-} from './structure.js';
 
-// Creating and editing
+// Creating and editing - using html-to-docx for HTML to DOCX conversion
 export {
-  createDocxFromMarkdown,
+  createDocxFromHtml,
   editDocxWithOperations,
 } from './operations.js';
 export type {
@@ -39,8 +30,6 @@ export type {
 
 // Types
 export type {
-  DocxElementType,
-  DocxRelationship,
   DocxParseOptions,
 } from './types.js';
 
@@ -70,11 +59,5 @@ export {
   splitMarkdownLines,
   isDocxPath,
   getFileNameWithoutExtension,
-  prepareImageForDocx,
-  createImageRun,
-} from './utils.js';
-
-export type {
-  PreparedImage,
 } from './utils.js';
 

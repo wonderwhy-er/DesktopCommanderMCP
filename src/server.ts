@@ -302,7 +302,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
-                        - DOCX (.docx): Extracts text content as markdown with formatting
+                        - DOCX (.docx): Extracts text content as HTML with formatting
                           * Preserves headings, lists, tables, bold, italic
                           * Includes embedded images as base64
                           * Extracts document metadata (title, author, dates)
@@ -453,8 +453,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         MODES:
                         1. CREATE NEW DOCX:
-                           - Pass a markdown string as 'content'.
-                           - Markdown will be converted to a formatted Word document.
+                           - Pass an HTML or markdown string as 'content'.
+                           - HTML/markdown will be converted to a formatted Word document.
+                           write_docx(path="new_doc.docx", content="<h1>Title</h1><p>Body text...</p>")
+                           or
                            write_docx(path="new_doc.docx", content="# Title\\n\\nBody text...")
 
                         2. UPDATE/MODIFY EXISTING DOCX (DEFAULT: OVERWRITES ORIGINAL):
@@ -476,7 +478,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - replaceText: Search and replace text in the document.
                           { type: "replaceText", search: "old text", replace: "new text", matchCase: true, global: true }
                         
-                        - appendMarkdown: Add content at the end of the document.
+                        - appendMarkdown: Add HTML or markdown content at the end of the document.
+                          { type: "appendMarkdown", markdown: "<h1>New Section</h1><p>Content here...</p>" }
+                          or
                           { type: "appendMarkdown", markdown: "# New Section\\n\\nContent here..." }
                         
                         - insertTable: Add a table to the document.
@@ -488,12 +492,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           { type: "insertImage", imagePath: "/path/to/image.png", altText: "Description", width: 400, height: 300 }
                           Supports: local file paths, data URLs (data:image/png;base64,...)
 
-                        SUPPORTED MARKDOWN FEATURES:
-                        - Headings (# through ######)
-                        - Paragraphs
-                        - Tables (markdown table syntax)
-                        - Images (![alt](path))
-                        - Basic text formatting (bold, italic)
+                        SUPPORTED HTML/MARKDOWN FEATURES:
+                        - HTML: Full HTML support (headings, paragraphs, tables, images, formatting)
+                        - Markdown: Headings (# through ######), paragraphs, tables, images, basic formatting
+                        - Both formats are automatically converted to DOCX
 
                         OPTIONS:
                         - baseDir: Base directory for resolving relative image paths

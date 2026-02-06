@@ -7,9 +7,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
 import {
-    parseDocxToMarkdown,
+    parseDocxToHtml,
     type DocxParseResult,
-    createDocxFromMarkdown,
+    createDocxFromHtml,
     editDocxWithOperations,
     type DocxOperation,
     DocxError
@@ -31,18 +31,18 @@ export class DocxFileHandler implements FileHandler {
     }
 
     /**
-     * Read DOCX content - extracts text as markdown with images
+     * Read DOCX content - extracts text as HTML with images
      */
     async read(path: string, options?: ReadOptions): Promise<FileResult> {
         try {
-            // Parse DOCX to markdown
-            const docxResult: DocxParseResult = await parseDocxToMarkdown(path, {
+            // Parse DOCX to HTML using mammoth
+            const docxResult: DocxParseResult = await parseDocxToHtml(path, {
                 includeImages: true,
                 preserveFormatting: true
             });
 
             // Format the content for MCP response
-            let content = docxResult.markdown;
+            let content = docxResult.html;
 
             // Add status message if requested (default: true)
             const includeStatusMessage = options?.includeStatusMessage !== false;
@@ -104,26 +104,28 @@ export class DocxFileHandler implements FileHandler {
      *
      * Behaviour:
      * - When content is a string:
-     *   - mode === 'rewrite' (default): create a new DOCX from markdown content
-     *   - mode === 'append': append markdown content to existing DOCX (round-trip)
+     *   - mode === 'rewrite' (default): create a new DOCX from HTML content
+     *   - mode === 'append': append HTML content to existing DOCX (round-trip)
      * - When content is an array: treat as high-level DocxOperation[] and apply edits
      */
     async write(path: string, content: any, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
         const baseDir = path ? this.getBaseDir(path) : process.cwd();
 
-        // String content → treat as markdown
+        // String content → treat as HTML (or markdown which will be converted)
         if (typeof content === 'string') {
             if (mode === 'append') {
-                // Append markdown to existing document via operations
+                // Append HTML/markdown to existing document via operations
                 const operations: DocxOperation[] = [{
                     type: 'appendMarkdown',
-                    markdown: content
+                    markdown: content // Will be converted to HTML internally
                 }];
                 const buffer = await editDocxWithOperations(path, operations, { baseDir });
                 await fs.writeFile(path, buffer);
             } else {
-                // Create a brand new DOCX from markdown
-                const buffer = await createDocxFromMarkdown(content, { baseDir });
+                // Create a brand new DOCX from HTML
+                // If content looks like markdown, convert it to HTML first
+                const html = this.convertToHtmlIfNeeded(content);
+                const buffer = await createDocxFromHtml(html, { baseDir });
                 await fs.writeFile(path, buffer);
             }
             return;
@@ -137,7 +139,7 @@ export class DocxFileHandler implements FileHandler {
             return;
         }
 
-        throw new Error('Unsupported content type for DOCX write. Expected markdown string or array of operations.');
+        throw new Error('Unsupported content type for DOCX write. Expected HTML/markdown string or array of operations.');
     }
 
     /**
@@ -153,7 +155,7 @@ export class DocxFileHandler implements FileHandler {
         let operations: DocxOperation[];
 
         if (typeof content === 'string') {
-            // Treat string content as markdown to append
+            // Treat string content as HTML/markdown to append (will be converted to HTML internally)
             operations = [{
                 type: 'appendMarkdown',
                 markdown: content
@@ -166,7 +168,7 @@ export class DocxFileHandler implements FileHandler {
                 editsApplied: 0,
                 errors: [{
                     location: range,
-                    error: 'Unsupported content type for DOCX edit. Expected markdown string or array of operations.'
+                    error: 'Unsupported content type for DOCX edit. Expected HTML/markdown string or array of operations.'
                 }]
             };
         }
@@ -206,7 +208,7 @@ export class DocxFileHandler implements FileHandler {
             let metadata: any = { isDocx: true };
             
             try {
-                const docxResult = await parseDocxToMarkdown(path, {
+                const docxResult = await parseDocxToHtml(path, {
                     includeImages: false, // Don't extract images for metadata only
                     preserveFormatting: false
                 });
@@ -260,6 +262,37 @@ export class DocxFileHandler implements FileHandler {
         } catch {
             return process.cwd();
         }
+    }
+
+    /**
+     * Convert markdown to HTML if needed, otherwise return HTML as-is
+     */
+    private convertToHtmlIfNeeded(content: string): string {
+        // Simple heuristic: if content has markdown patterns but no HTML tags, convert it
+        const hasMarkdown = /^#{1,6}\s|^\*\*|^\[.*\]\(|^\|.*\|/.test(content);
+        const hasHtmlTags = /<[a-z][\s\S]*>/i.test(content);
+        
+        if (hasMarkdown && !hasHtmlTags) {
+            // Convert markdown to HTML
+            let html = content;
+            // Headings
+            html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
+            html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
+            html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
+            // Bold
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            // Italic
+            html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+            // Images
+            html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
+            // Links
+            html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+            // Paragraphs
+            html = html.split('\n\n').map(p => p.trim()).filter(p => p).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
+            return html;
+        }
+        
+        return content;
     }
 }
 

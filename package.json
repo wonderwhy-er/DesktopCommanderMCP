@@ -95,6 +95,8 @@
     "glob": "^10.3.10",
     "isbinaryfile": "^5.0.4",
     "jszip": "^3.10.1",
+    "mammoth": "^1.6.0",
+    "html-to-docx": "^1.4.0",
     "pizzip": "^3.1.6",
     "md-to-pdf": "^5.2.5",
     "open": "^10.2.0",
