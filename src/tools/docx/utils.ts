@@ -14,6 +14,8 @@ const {
   ImageRun,
 } = docx as any;
 
+import { DocxError, DocxErrorCode, withErrorContext } from './errors.js';
+
 /**
  * Check if a string is a valid data URL
  */
@@ -241,35 +243,8 @@ export function getFileNameWithoutExtension(filePath: string): string {
   return basename.replace(/\.docx$/i, '');
 }
 
-/**
- * Create error with context
- */
-export class DocxError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly context?: Record<string, any>
-  ) {
-    super(message);
-    this.name = 'DocxError';
-  }
-}
-
-/**
- * Wrap async operations with error context
- */
-export async function withErrorContext<T>(
-  operation: () => Promise<T>,
-  errorCode: string,
-  context?: Record<string, any>
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new DocxError(message, errorCode, context);
-  }
-}
+// Re-export error handling from errors module
+export { DocxError, DocxErrorCode, withErrorContext } from './errors.js';
 
 /**
  * Image data prepared for DOCX embedding
@@ -307,7 +282,7 @@ export async function prepareImageForDocx(
         if (!parsed) {
           throw new DocxError(
             'Invalid data URL format',
-            'INVALID_IMAGE_DATA_URL',
+            DocxErrorCode.INVALID_IMAGE_DATA_URL,
             { imagePath: imagePath.substring(0, 50) }
           );
         }
@@ -327,7 +302,7 @@ export async function prepareImageForDocx(
         if (!validation.valid) {
           throw new DocxError(
             validation.error || 'Invalid image file',
-            'INVALID_IMAGE_FILE',
+            DocxErrorCode.INVALID_IMAGE_FILE,
             { imagePath: resolved }
           );
         }
@@ -338,7 +313,7 @@ export async function prepareImageForDocx(
         } catch (error) {
           throw new DocxError(
             `Failed to read image file: ${error instanceof Error ? error.message : String(error)}`,
-            'IMAGE_READ_FAILED',
+            DocxErrorCode.IMAGE_READ_FAILED,
             { imagePath: resolved }
           );
         }
@@ -365,7 +340,7 @@ export async function prepareImageForDocx(
         height: 400,
       };
     },
-    'IMAGE_PREPARATION_FAILED',
+    DocxErrorCode.IMAGE_PREPARATION_FAILED,
     { imagePath }
   );
 }
@@ -393,7 +368,7 @@ export function createImageRun(imageData: PreparedImage): any {
   } catch (error) {
     throw new DocxError(
       `Failed to create image run: ${error instanceof Error ? error.message : String(error)}`,
-      'IMAGE_RUN_CREATION_FAILED'
+      DocxErrorCode.IMAGE_RUN_CREATION_FAILED
     );
   }
 }

@@ -1,13 +1,16 @@
 /**
  * DOCX to Markdown Conversion
- * Uses mammoth.js for reading and converting Word documents
+ * Uses Docxtemplater + XML parsing for reading Word documents
  */
 
 import fs from 'fs/promises';
+import path from 'path';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const mammoth = require('mammoth');
+const PizZip = require('pizzip');
+const Docxtemplater = require('docxtemplater');
+const { DOMParser } = require('@xmldom/xmldom');
 
 /**
  * DOCX metadata structure
@@ -98,8 +101,256 @@ async function loadDocxToBuffer(source: string): Promise<Buffer> {
     }
 }
 
+function readZipFileText(zip: any, filePath: string): string | null {
+    const file = zip.file(filePath);
+    if (!file) return null;
+    if (typeof file.asText === 'function') {
+        return file.asText();
+    }
+    if (typeof file.asBinary === 'function') {
+        return Buffer.from(file.asBinary(), 'binary').toString('utf8');
+    }
+    return null;
+}
+
+function readZipFileBuffer(zip: any, filePath: string): Buffer | null {
+    const file = zip.file(filePath);
+    if (!file) return null;
+    if (typeof file.asUint8Array === 'function') {
+        return Buffer.from(file.asUint8Array());
+    }
+    if (typeof file.asNodeBuffer === 'function') {
+        return file.asNodeBuffer();
+    }
+    if (typeof file.asBinary === 'function') {
+        return Buffer.from(file.asBinary(), 'binary');
+    }
+    return null;
+}
+
+function getMimeTypeForTarget(target: string): string {
+    const ext = path.extname(target).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp',
+        '.svg': 'image/svg+xml',
+    };
+    return mimeTypes[ext] || 'application/octet-stream';
+}
+
+function escapeTableCell(text: string): string {
+    return text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+function getElementChildren(node: Node): Element[] {
+    const children: Element[] = [];
+    for (let i = 0; i < node.childNodes.length; i++) {
+        const child = node.childNodes[i];
+        if (child.nodeType === 1) {
+            children.push(child as Element);
+        }
+    }
+    return children;
+}
+
+function getAttributeValue(node: Element, name: string): string | null {
+    return node.getAttribute(name) || node.getAttribute(`w:${name}`) || null;
+}
+
+function getHeadingLevelFromParagraph(paragraph: Element): number | null {
+    const pPr = paragraph.getElementsByTagName('w:pPr')[0];
+    if (!pPr) return null;
+    const pStyle = pPr.getElementsByTagName('w:pStyle')[0];
+    if (!pStyle) return null;
+    const styleVal = getAttributeValue(pStyle, 'val');
+    if (!styleVal) return null;
+    const match = styleVal.match(/heading\s*([1-6])/i);
+    if (!match) return null;
+    return Number(match[1]);
+}
+
+function extractRelationshipMap(relsXml: string | null): Map<string, { target: string; type: string }> {
+    const relMap = new Map<string, { target: string; type: string }>();
+    if (!relsXml) return relMap;
+    const relDoc = new DOMParser().parseFromString(relsXml, 'application/xml');
+    const rels = relDoc.getElementsByTagName('Relationship');
+    for (let i = 0; i < rels.length; i++) {
+        const rel = rels[i];
+        const id = rel.getAttribute('Id');
+        const type = rel.getAttribute('Type') || '';
+        const target = rel.getAttribute('Target') || '';
+        if (id && target) {
+            relMap.set(id, { target, type });
+        }
+    }
+    return relMap;
+}
+
+function buildImageResolver(
+    zip: any,
+    relMap: Map<string, { target: string; type: string }>,
+    images: DocxImage[],
+    includeImages: boolean
+): (relId: string | null) => string {
+    const cache = new Map<string, DocxImage>();
+    return (relId: string | null) => {
+        if (!includeImages || !relId) return '';
+        const rel = relMap.get(relId);
+        if (!rel || !rel.type.includes('/image')) return '';
+        if (cache.has(relId)) {
+            const cached = cache.get(relId)!;
+            return `![image](data:${cached.mimeType};base64,${cached.data})`;
+        }
+        const targetPath = rel.target.startsWith('word/')
+            ? rel.target
+            : `word/${rel.target.replace(/^\/?/, '')}`;
+        const buffer = readZipFileBuffer(zip, targetPath);
+        if (!buffer) return '';
+        const mimeType = getMimeTypeForTarget(rel.target);
+        const base64 = buffer.toString('base64');
+        const image: DocxImage = {
+            id: relId,
+            data: base64,
+            mimeType,
+            originalSize: buffer.length,
+        };
+        images.push(image);
+        cache.set(relId, image);
+        return `![image](data:${mimeType};base64,${base64})`;
+    };
+}
+
+function extractTextFromRun(run: Element, resolveImage: (relId: string | null) => string): string {
+    let text = '';
+    const children = getElementChildren(run);
+    for (const child of children) {
+        const nodeName = child.nodeName;
+        if (nodeName === 'w:t') {
+            text += child.textContent || '';
+            continue;
+        }
+        if (nodeName === 'w:tab') {
+            text += '\t';
+            continue;
+        }
+        if (nodeName === 'w:br') {
+            text += '\n';
+            continue;
+        }
+        if (nodeName === 'w:drawing' || nodeName === 'w:pict') {
+            const blips = child.getElementsByTagName('a:blip');
+            for (let i = 0; i < blips.length; i++) {
+                const blip = blips[i];
+                const relId = blip.getAttribute('r:embed') || blip.getAttribute('embed');
+                const imageMarkdown = resolveImage(relId);
+                if (imageMarkdown) {
+                    text += imageMarkdown;
+                }
+            }
+        }
+    }
+    return text;
+}
+
+function extractParagraphText(paragraph: Element, resolveImage: (relId: string | null) => string): string {
+    let text = '';
+    const children = getElementChildren(paragraph);
+    for (const child of children) {
+        const nodeName = child.nodeName;
+        if (nodeName === 'w:r') {
+            text += extractTextFromRun(child, resolveImage);
+            continue;
+        }
+        if (nodeName === 'w:hyperlink') {
+            const runs = child.getElementsByTagName('w:r');
+            for (let i = 0; i < runs.length; i++) {
+                text += extractTextFromRun(runs[i], resolveImage);
+            }
+            continue;
+        }
+    }
+    return text;
+}
+
+function convertTableToMarkdown(table: Element, resolveImage: (relId: string | null) => string): string | null {
+    const rows: string[][] = [];
+    const rowNodes = table.getElementsByTagName('w:tr');
+    for (let i = 0; i < rowNodes.length; i++) {
+        const row = rowNodes[i];
+        const cells = row.getElementsByTagName('w:tc');
+        const rowCells: string[] = [];
+        for (let j = 0; j < cells.length; j++) {
+            const cell = cells[j];
+            const paragraphs = cell.getElementsByTagName('w:p');
+            const cellTexts: string[] = [];
+            for (let k = 0; k < paragraphs.length; k++) {
+                const text = extractParagraphText(paragraphs[k], resolveImage).trim();
+                if (text) {
+                    cellTexts.push(text);
+                }
+            }
+            const combined = cellTexts.length > 0 ? cellTexts.join('<br>') : ' ';
+            rowCells.push(escapeTableCell(combined));
+        }
+        if (rowCells.length > 0) {
+            rows.push(rowCells);
+        }
+    }
+
+    if (rows.length === 0) return null;
+    const maxCols = Math.max(...rows.map(row => row.length));
+    for (const row of rows) {
+        while (row.length < maxCols) {
+            row.push(' ');
+        }
+    }
+
+    const header = rows[0];
+    const bodyRows = rows.slice(1);
+    const headerLine = `| ${header.join(' | ')} |`;
+    const separatorLine = `| ${header.map(() => '---').join(' | ')} |`;
+    const dataLines = bodyRows.map(row => `| ${row.join(' | ')} |`);
+    return [headerLine, separatorLine, ...dataLines].join('\n');
+}
+
+function convertBodyToMarkdown(
+    body: Element,
+    resolveImage: (relId: string | null) => string
+): string {
+    const blocks: string[] = [];
+    const children = getElementChildren(body);
+
+    for (const child of children) {
+        const nodeName = child.nodeName;
+        if (nodeName === 'w:p') {
+            const text = extractParagraphText(child, resolveImage).trim();
+            if (!text) continue;
+            const headingLevel = getHeadingLevelFromParagraph(child);
+            if (headingLevel && headingLevel >= 1 && headingLevel <= 6) {
+                blocks.push(`${'#'.repeat(headingLevel)} ${text}`);
+            } else {
+                blocks.push(text);
+            }
+            continue;
+        }
+        if (nodeName === 'w:tbl') {
+            const tableMarkdown = convertTableToMarkdown(child, resolveImage);
+            if (tableMarkdown) {
+                blocks.push(tableMarkdown);
+            }
+            continue;
+        }
+    }
+
+    return blocks.join('\n\n');
+}
+
 /**
- * Convert DOCX to Markdown using mammoth.js
+ * Convert DOCX to Markdown using Docxtemplater + XML parsing
  * @param source Path to DOCX file or URL
  * @param options Conversion options
  * @returns Parsed DOCX result with markdown and metadata
@@ -124,7 +375,7 @@ export async function parseDocxToMarkdown(
     try {
         // Load DOCX file
         const buffer = await loadDocxToBuffer(source);
-        
+
         // Get file size (for local files)
         let fileSize: number | undefined;
         if (!isUrl(source)) {
@@ -136,87 +387,34 @@ export async function parseDocxToMarkdown(
             }
         }
 
-        // Configure mammoth options
-        const mammothOptions: any = {
-            convertImage: includeImages
-                ? mammoth.images.imgElement(async (image: any) => {
-                    // Extract image as base64
-                    const imageBuffer = await image.read();
-                    const base64 = imageBuffer.toString('base64');
-                    const contentType = image.contentType || 'image/png';
-                    
-                    // Return data URI for inline embedding
-                    return {
-                        src: `data:${contentType};base64,${base64}`,
-                        altText: image.altText || ''
-                    };
-                })
-                : mammoth.images.imgElement(() => ({ src: '' })),
-            
-            // Style mappings for better markdown conversion
-            styleMap: [
-                // Default mappings for common styles
-                "p[style-name='Heading 1'] => h1:fresh",
-                "p[style-name='Heading 2'] => h2:fresh",
-                "p[style-name='Heading 3'] => h3:fresh",
-                "p[style-name='Heading 4'] => h4:fresh",
-                "p[style-name='Heading 5'] => h5:fresh",
-                "p[style-name='Heading 6'] => h6:fresh",
-                "p[style-name='Title'] => h1:fresh",
-                "p[style-name='Subtitle'] => h2:fresh",
-                "p[style-name='Quote'] => blockquote:fresh",
-                "p[style-name='Intense Quote'] => blockquote:fresh",
-                "r[style-name='Strong'] => strong",
-                "r[style-name='Emphasis'] => em",
-                ...styleMap
-            ]
-        };
-
-        // Convert to HTML first (mammoth's primary output)
-        const htmlResult = await mammoth.convertToHtml({ buffer }, mammothOptions);
-        
-        // Convert to Markdown (better structured format)
-        const markdownResult = await mammoth.convertToMarkdown({ buffer }, mammothOptions);
-        
-        // Extract images separately for structured access
-        const images: DocxImage[] = [];
-        if (includeImages) {
-            const imageExtractor = await mammoth.extractRawText({ buffer });
-            
-            // Use mammoth's image extraction
-            const docxImages = await mammoth.images.inline(async (element: any) => {
-                try {
-                    const imageBuffer = await element.read();
-                    const base64 = imageBuffer.toString('base64');
-                    const contentType = element.contentType || 'image/png';
-                    
-                    images.push({
-                        id: element.imageId || `img_${images.length}`,
-                        data: base64,
-                        mimeType: contentType,
-                        altText: element.altText,
-                        originalSize: imageBuffer.length
-                    });
-                    
-                    return { src: '' }; // We're just extracting, not converting
-                } catch (error) {
-                    console.warn('Failed to extract image:', error);
-                    return { src: '' };
-                }
-            });
-            
-            // Extract images by converting with custom image handler
-            await mammoth.convertToHtml({ buffer }, {
-                convertImage: imageExtractor
-            });
+        const zip = new PizZip(buffer);
+        try {
+            new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+        } catch (error) {
+            console.warn('Docxtemplater validation failed, continuing with raw XML parsing:', error);
         }
+
+        const documentXml = readZipFileText(zip, 'word/document.xml');
+        if (!documentXml) {
+            throw new Error('Invalid DOCX file: word/document.xml not found');
+        }
+
+        const relsXml = readZipFileText(zip, 'word/_rels/document.xml.rels');
+        const relMap = extractRelationshipMap(relsXml);
+        const images: DocxImage[] = [];
+        const resolveImage = buildImageResolver(zip, relMap, images, includeImages);
+
+        const doc = new DOMParser().parseFromString(documentXml, 'application/xml');
+        const body = doc.getElementsByTagName('w:body')[0];
+        if (!body) {
+            throw new Error('Invalid DOCX file: <w:body> not found');
+        }
+
+        let markdown = convertBodyToMarkdown(body, resolveImage);
 
         // Extract metadata from DOCX
         const metadata = await extractMetadata(source, buffer, fileSize);
 
-        // Get the markdown content
-        let markdown = markdownResult.value;
-        
         // Post-process markdown for better formatting
         markdown = postProcessMarkdown(markdown);
 
@@ -229,7 +427,6 @@ export async function parseDocxToMarkdown(
             images,
             sections
         };
-
     } catch (error) {
         console.error('Error converting DOCX to Markdown:', error);
         throw new Error(
@@ -247,7 +444,7 @@ async function extractMetadata(
     fileSize?: number
 ): Promise<DocxMetadata> {
     try {
-        // Mammoth doesn't directly expose core properties, so we'll use docx package
+        // Core properties aren't exposed by the parser, so we'll use JSZip directly
         // For now, return basic metadata structure
         // TODO: Could enhance with docx-parser or officegen for full metadata
         
@@ -330,6 +527,10 @@ function postProcessMarkdown(markdown: string): string {
     // Ensure proper spacing around code blocks
     markdown = markdown.replace(/([^\n])\n```/g, '$1\n\n```');
     markdown = markdown.replace(/```\n([^\n])/g, '```\n\n$1');
+    
+    // Ensure proper spacing around tables
+    markdown = markdown.replace(/([^\n])\n(\|[^\n]+\|)/g, '$1\n\n$2');
+    markdown = markdown.replace(/(\|[^\n]+\|)\n([^\n|])/g, '$1\n\n$2');
     
     // Trim leading/trailing whitespace
     markdown = markdown.trim();

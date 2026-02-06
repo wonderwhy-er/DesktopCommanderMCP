@@ -435,9 +435,11 @@ export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
         const targetPath = parsed.outputPath || parsed.path;
         
         // Build success message with operation details
-        let message = `Successfully wrote DOCX to ${targetPath}`;
+        let message: string;
         if (parsed.outputPath) {
-            message += `\nOriginal file: ${parsed.path}`;
+            message = `Successfully created new DOCX file: ${targetPath}\nOriginal file preserved: ${parsed.path}`;
+        } else {
+            message = `Successfully updated DOCX file: ${targetPath}`;
         }
         
         // Add operation summary if using operations mode

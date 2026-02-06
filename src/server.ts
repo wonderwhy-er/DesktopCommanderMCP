@@ -455,18 +455,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         1. CREATE NEW DOCX:
                            - Pass a markdown string as 'content'.
                            - Markdown will be converted to a formatted Word document.
-                           write_docx(path="doc.docx", content="# Title\\n\\nBody text...")
+                           write_docx(path="new_doc.docx", content="# Title\\n\\nBody text...")
 
-                        2. MODIFY EXISTING DOCX:
+                        2. UPDATE/MODIFY EXISTING DOCX (DEFAULT: OVERWRITES ORIGINAL):
                            - Pass array of operations as 'content'.
-                           - Can use 'outputPath' to save to a different file.
+                           - WITHOUT 'outputPath': UPDATES the original file (OVERWRITES IT)
+                           - WITH 'outputPath': Creates a NEW file, preserving the original
                            
-                           write_docx(path="doc.docx", content=[
-                               { type: "replaceText", search: "old", replace: "new" },
-                               { type: "appendMarkdown", markdown: "# New Section" },
-                               { type: "insertTable", rows: [["Name", "Age"], ["Alice", "30"]] },
-                               { type: "insertImage", imagePath: "/path/to/image.png", altText: "Photo" }
+                           // Update the original file (RECOMMENDED for edits):
+                           write_docx(path="document.docx", content=[
+                               { type: "replaceText", search: "old", replace: "new" }
                            ])
+                           
+                           // Create a modified copy (use when you need to preserve original):
+                           write_docx(path="document.docx", content=[
+                               { type: "appendMarkdown", markdown: "# New Section" }
+                           ], outputPath="document_updated.docx")
 
                         OPERATIONS:
                         - replaceText: Search and replace text in the document.

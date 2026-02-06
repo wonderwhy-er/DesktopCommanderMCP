@@ -1,11 +1,28 @@
 /**
  * DOCX Operations Library
- * Exports all DOCX functionality for reading, creating and editing Word documents
+ * Main exports for DOCX functionality
  */
 
+// Reading
 export { parseDocxToMarkdown } from './markdown.js';
-export type { DocxParseResult, DocxMetadata, DocxSection, DocxImage } from './markdown.js';
+export type {
+  DocxParseResult,
+  DocxMetadata,
+  DocxSection,
+  DocxImage,
+} from './markdown.js';
 
+// Structure parsing/building
+export {
+  parseDocxStructure,
+  buildDocxFromStructure,
+} from './structure.js';
+export type {
+  DocxElement,
+  DocxStructure,
+} from './structure.js';
+
+// Creating and editing
 export {
   createDocxFromMarkdown,
   editDocxWithOperations,
@@ -20,12 +37,28 @@ export type {
   DocxEditOptions,
 } from './operations.js';
 
+// Types
+export type {
+  DocxElementType,
+  DocxRelationship,
+  DocxParseOptions,
+} from './types.js';
+
+// Error handling
+export {
+  DocxError,
+  DocxErrorCode,
+  withErrorContext,
+  createDocxError,
+} from './errors.js';
+
 // Utilities
 export {
   isDataUrl,
   isUrl,
   parseDataUrl,
   resolveImagePath,
+  fileExists,
   validateImageFile,
   escapeRegExp,
   isValidMarkdownTable,
@@ -37,8 +70,6 @@ export {
   splitMarkdownLines,
   isDocxPath,
   getFileNameWithoutExtension,
-  DocxError,
-  withErrorContext,
   prepareImageForDocx,
   createImageRun,
 } from './utils.js';
