@@ -115,7 +115,7 @@ export class DocxFileHandler implements FileHandler {
         if (typeof content === 'string') {
             if (mode === 'append') {
                 // Append HTML/markdown — write to _v1 file, preserve original
-                const targetPath = generateOutputPath(path);
+                const targetPath = await generateOutputPath(path);
                 const operations: DocxOperation[] = [{
                     type: 'appendMarkdown',
                     markdown: content
@@ -138,7 +138,7 @@ export class DocxFileHandler implements FileHandler {
                 throw new Error(`Cannot modify DOCX: source file does not exist: ${path}. Use string content to create a new DOCX file.`);
             }
             
-            const targetPath = generateOutputPath(path);
+            const targetPath = await generateOutputPath(path);
             const operations = content as DocxOperation[];
             const buffer = await editDocxWithOperations(path, operations, { baseDir });
             await fs.writeFile(targetPath, buffer);
@@ -156,7 +156,7 @@ export class DocxFileHandler implements FileHandler {
         const baseDir = this.getBaseDir(path);
         
         // Use provided outputPath, otherwise write to _v1 file
-        const outputPath = options?.outputPath ?? generateOutputPath(path);
+        const outputPath = options?.outputPath ?? await generateOutputPath(path);
         try {
             await fs.access(path);
         } catch {

@@ -3,6 +3,7 @@
  * Helper functions for DOCX operations and data transformation
  */
 
+import fs from 'fs/promises';
 import path from 'path';
 
 /**
@@ -72,15 +73,15 @@ export function isDocxPath(filePath: string): boolean {
 }
 
 /**
- * Generate the output path for a DOCX modification.
- * Always produces `{baseName}_v1.docx` — strips any existing `_vN` suffix first
- * so that repeated edits always target the same single file (no cascading).
+ * Generate the next versioned output path for a DOCX modification.
+ * Strips any existing `_vN` suffix from the input, then finds the next
+ * available version number by scanning the directory.
  *
- * Example: demo.docx       → demo_v1.docx
- *          demo_v1.docx    → demo_v1.docx  (same file, will be overwritten)
- *          demo_v1_v1.docx → demo_v1.docx  (cleans up cascading legacy names)
+ * Example: demo.docx   → demo_v1.docx  (first edit)
+ *          demo.docx   → demo_v2.docx  (second edit, _v1 already exists)
+ *          demo_v1.docx → demo_v2.docx (strips _v1, finds next)
  */
-export function generateOutputPath(filePath: string): string {
+export async function generateOutputPath(filePath: string): Promise<string> {
   const dir = path.dirname(filePath);
   const ext = path.extname(filePath);
   let baseName = path.basename(filePath, ext);
@@ -88,7 +89,19 @@ export function generateOutputPath(filePath: string): string {
   // Strip any trailing _vN suffixes (e.g., demo_v1_v1 → demo)
   baseName = baseName.replace(/(_v\d+)+$/, '');
 
-  return path.join(dir, `${baseName}_v1${ext}`);
+  let version = 1;
+  let outputPath: string;
+  do {
+    outputPath = path.join(dir, `${baseName}_v${version}${ext}`);
+    try {
+      await fs.access(outputPath);
+      version++;
+    } catch {
+      break; // File doesn't exist — use this version
+    }
+  } while (version < 1000);
+
+  return outputPath;
 }
 
 /**

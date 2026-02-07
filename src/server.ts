@@ -462,7 +462,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         2. UPDATE/MODIFY EXISTING DOCX:
                            - Pass array of operations as 'content'.
                            - The original file is PRESERVED. The result is written to {name}_v1.docx.
-                           - Repeated edits always overwrite the SAME _v1 file (no cascading copies).
+                           - Each subsequent edit creates the next version: _v2, _v3, etc.
                            - Optionally provide 'outputPath' to write to a custom location instead.
                            
                            // Reads document.docx, writes result to document_v1.docx:

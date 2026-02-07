@@ -967,7 +967,7 @@ export async function writeDocx(
         }
 
         // Write to outputPath if provided, otherwise create/overwrite {name}_v1.docx (preserves original)
-        const targetPath = outputPath ? await validatePath(outputPath) : generateOutputPath(validPath);
+        const targetPath = outputPath ? await validatePath(outputPath) : await generateOutputPath(validPath);
 
         const operations: DocxOperation[] = [];
 
