@@ -3,8 +3,9 @@
  * Main exports for DOCX functionality
  */
 
-// Reading - using mammoth for DOCX to HTML conversion
+// Reading - direct DOCX XML parsing with mammoth.js fallback
 export { parseDocxToHtml } from './html.js';
+export { convertDocxToStyledHtml } from './styled-html-parser.js';
 export type {
   DocxParseResult,
   DocxMetadata,
