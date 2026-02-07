@@ -12,7 +12,7 @@
  */
 
 import { createRequire } from 'module';
-import type { DocxImage } from './types.js';
+import type { DocxImage, DocxDocumentDefaults } from './types.js';
 
 const require = createRequire(import.meta.url);
 const { DOMParser } = require('@xmldom/xmldom');
@@ -76,10 +76,16 @@ interface StyleDef {
   runStyle?: RunStyle;
 }
 
+interface ThemeFonts {
+  major: string;  // heading font (e.g. 'Calibri Light')
+  minor: string;  // body font (e.g. 'Calibri')
+}
+
 interface ConversionContext {
   imageMap: Map<string, string>;   // rId → data:... URL
   linkMap: Map<string, string>;    // rId → href URL
   stylesMap: Map<string, StyleDef>;
+  themeFonts: ThemeFonts;
 }
 
 // ─── DOM Helpers ─────────────────────────────────────────────────────────────
@@ -126,7 +132,7 @@ function escapeHtml(text: string): string {
 // ─── Style Extraction ────────────────────────────────────────────────────────
 
 /** Extract run-level styles from a w:rPr element */
-function extractRunStyles(rPr: Element): RunStyle {
+function extractRunStyles(rPr: Element, themeFonts?: ThemeFonts): RunStyle {
   const style: RunStyle = {};
 
   // Font color (w:color)
@@ -148,13 +154,26 @@ function extractRunStyles(rPr: Element): RunStyle {
     }
   }
 
-  // Font family (w:rFonts)
+  // Font family (w:rFonts) — with theme font resolution
   const rFontsEl = getDirectChild(rPr, NS.W, 'rFonts');
   if (rFontsEl) {
-    const font =
+    let font =
       rFontsEl.getAttribute('w:ascii') ||
       rFontsEl.getAttribute('w:hAnsi') ||
       rFontsEl.getAttribute('w:cs');
+
+    // Resolve theme font references (e.g. w:asciiTheme="minorHAnsi")
+    if (!font && themeFonts) {
+      const themeAttr =
+        rFontsEl.getAttribute('w:asciiTheme') ||
+        rFontsEl.getAttribute('w:hAnsiTheme') ||
+        rFontsEl.getAttribute('w:cstheme');
+      if (themeAttr) {
+        if (themeAttr.includes('minor')) font = themeFonts.minor;
+        else if (themeAttr.includes('major')) font = themeFonts.major;
+      }
+    }
+
     if (font) style.fontFamily = font;
   }
 
@@ -291,7 +310,7 @@ function extractParagraphStyle(
 /** Get default run style for a paragraph (from pPr/rPr + inherited style def) */
 function getDefaultRunStyle(
   pPr: Element | null,
-  stylesMap: Map<string, StyleDef>
+  ctx: ConversionContext
 ): RunStyle | undefined {
   if (!pPr) return undefined;
 
@@ -301,14 +320,14 @@ function getDefaultRunStyle(
   const pStyleEl = getDirectChild(pPr, NS.W, 'pStyle');
   if (pStyleEl) {
     const styleId = pStyleEl.getAttribute('w:val') || '';
-    const mapped = stylesMap.get(styleId);
+    const mapped = ctx.stylesMap.get(styleId);
     if (mapped?.runStyle) inherited = { ...mapped.runStyle };
   }
 
   // Check explicit rPr within pPr
   const rPr = getDirectChild(pPr, NS.W, 'rPr');
   if (rPr) {
-    const explicit = extractRunStyles(rPr);
+    const explicit = extractRunStyles(rPr, ctx.themeFonts);
     return mergeRunStyles(inherited, explicit);
   }
 
@@ -318,7 +337,7 @@ function getDefaultRunStyle(
 // ─── styles.xml Parsing ──────────────────────────────────────────────────────
 
 /** Parse word/styles.xml to build a style-ID → StyleDef map */
-function parseStylesXml(xml: string): Map<string, StyleDef> {
+function parseStylesXml(xml: string, themeFonts: ThemeFonts): Map<string, StyleDef> {
   const map = new Map<string, StyleDef>();
   try {
     const doc = new DOMParser().parseFromString(xml, 'application/xml');
@@ -340,10 +359,10 @@ function parseStylesXml(xml: string): Map<string, StyleDef> {
         }
       }
 
-      // Default run properties for this style
+      // Default run properties for this style (with theme font resolution)
       const rPr = getDirectChild(styleEl, NS.W, 'rPr');
       if (rPr) {
-        entry.runStyle = extractRunStyles(rPr);
+        entry.runStyle = extractRunStyles(rPr, themeFonts);
       }
 
       map.set(styleId, entry);
@@ -393,9 +412,9 @@ function convertRunToHtml(
   ctx: ConversionContext,
   defaultRunStyle?: RunStyle
 ): string {
-  // Extract explicit run properties
+  // Extract explicit run properties (with theme font resolution)
   const rPr = getDirectChild(runEl, NS.W, 'rPr');
-  const explicitStyle = rPr ? extractRunStyles(rPr) : {};
+  const explicitStyle = rPr ? extractRunStyles(rPr, ctx.themeFonts) : {};
   const style = mergeRunStyles(defaultRunStyle, explicitStyle);
 
   // Collect content parts
@@ -481,7 +500,7 @@ function convertParagraphInner(
   ctx: ConversionContext
 ): string {
   const pPr = getDirectChild(paraEl, NS.W, 'pPr');
-  const defaultRunStyle = getDefaultRunStyle(pPr, ctx.stylesMap);
+  const defaultRunStyle = getDefaultRunStyle(pPr, ctx);
 
   let innerHtml = '';
   const children = paraEl.childNodes;
@@ -596,6 +615,57 @@ async function loadRelationships(
   return { imageMap, linkMap };
 }
 
+// ─── Document Defaults Extraction ────────────────────────────────────────────
+
+/** Parse theme fonts from word/theme/theme1.xml (major = heading font, minor = body font) */
+async function parseThemeFonts(zip: any): Promise<ThemeFonts> {
+  try {
+    const themeFile = zip.file('word/theme/theme1.xml');
+    if (!themeFile) return { major: '', minor: '' };
+
+    const themeXml = await themeFile.async('string');
+    const themeDoc = new DOMParser().parseFromString(themeXml, 'application/xml');
+
+    let major = '';
+    let minor = '';
+
+    const majorFonts = themeDoc.getElementsByTagNameNS(NS.A, 'majorFont');
+    if (majorFonts.length > 0) {
+      const latin = getDirectChild(majorFonts[0] as Element, NS.A, 'latin');
+      if (latin) major = latin.getAttribute('typeface') || '';
+    }
+
+    const minorFonts = themeDoc.getElementsByTagNameNS(NS.A, 'minorFont');
+    if (minorFonts.length > 0) {
+      const latin = getDirectChild(minorFonts[0] as Element, NS.A, 'latin');
+      if (latin) minor = latin.getAttribute('typeface') || '';
+    }
+
+    return { major, minor };
+  } catch {
+    return { major: '', minor: '' };
+  }
+}
+
+/** Parse w:docDefaults from styles.xml to get document-level default run properties */
+function parseDocDefaults(stylesXml: string, themeFonts: ThemeFonts): RunStyle {
+  try {
+    const doc = new DOMParser().parseFromString(stylesXml, 'application/xml');
+    const docDefaultsEls = doc.getElementsByTagNameNS(NS.W, 'docDefaults');
+    if (docDefaultsEls.length === 0) return {};
+
+    const rPrDefault = getDirectChild(docDefaultsEls[0] as Element, NS.W, 'rPrDefault');
+    if (!rPrDefault) return {};
+
+    const rPr = getDirectChild(rPrDefault, NS.W, 'rPr');
+    if (!rPr) return {};
+
+    return extractRunStyles(rPr, themeFonts);
+  } catch {
+    return {};
+  }
+}
+
 // ─── Main Entry Point ────────────────────────────────────────────────────────
 
 /**
@@ -618,7 +688,7 @@ async function loadRelationships(
 export async function convertDocxToStyledHtml(
   buffer: Buffer,
   includeImages: boolean = true
-): Promise<{ html: string; images: DocxImage[] }> {
+): Promise<{ html: string; images: DocxImage[]; documentDefaults: DocxDocumentDefaults }> {
   const JSZip = require('jszip');
   const zip = await JSZip.loadAsync(buffer);
 
@@ -630,23 +700,38 @@ export async function convertDocxToStyledHtml(
   const docXml = await docXmlFile.async('string');
   const doc = new DOMParser().parseFromString(docXml, 'application/xml');
 
-  // ── Parse styles.xml ──
+  // ── Parse theme fonts (major = headings, minor = body) ──
+  const themeFonts = await parseThemeFonts(zip);
+
+  // ── Parse styles.xml (with theme font resolution) ──
   const stylesXmlFile = zip.file('word/styles.xml');
   let stylesMap = new Map<string, StyleDef>();
+  let docDefaultsStyle: RunStyle = {};
   if (stylesXmlFile) {
     const stylesXml = await stylesXmlFile.async('string');
-    stylesMap = parseStylesXml(stylesXml);
+    stylesMap = parseStylesXml(stylesXml, themeFonts);
+    docDefaultsStyle = parseDocDefaults(stylesXml, themeFonts);
   }
+
+  // ── Compute effective document defaults ──
+  // Priority: docDefaults → merged with "Normal" style overrides → effective default
+  const normalStyle = stylesMap.get('Normal');
+  const effectiveDefault = mergeRunStyles(docDefaultsStyle, normalStyle?.runStyle || {});
+
+  const documentDefaults: DocxDocumentDefaults = {
+    font: effectiveDefault.fontFamily || themeFonts.minor || 'Calibri',
+    fontSize: effectiveDefault.fontSize ? parseFloat(effectiveDefault.fontSize) : 11,
+  };
 
   // ── Parse relationships (images + hyperlinks) ──
   const { imageMap, linkMap } = await loadRelationships(zip, includeImages);
 
-  const ctx: ConversionContext = { imageMap, linkMap, stylesMap };
+  const ctx: ConversionContext = { imageMap, linkMap, stylesMap, themeFonts };
 
   // ── Find body ──
   const bodyEl = doc.getElementsByTagNameNS(NS.W, 'body')[0];
   if (!bodyEl) {
-    return { html: '', images: [] };
+    return { html: '', images: [], documentDefaults };
   }
 
   // ── Walk body children and build HTML ──
@@ -709,6 +794,6 @@ export async function convertDocxToStyledHtml(
     }
   });
 
-  return { html, images };
+  return { html, images, documentDefaults };
 }
 

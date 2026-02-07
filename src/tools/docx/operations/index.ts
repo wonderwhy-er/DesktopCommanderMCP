@@ -92,6 +92,9 @@ export async function editDocxWithOperations(
       const docxResult = await parseDocxToHtml(normalizedPath, parseOptions);
       let html = docxResult.html;
 
+      // Extract original document defaults (font, fontSize) for style preservation
+      const documentDefaults = docxResult.documentDefaults;
+
       // Pre-process: convert local image paths to base64 data URLs
       // This is CRITICAL — html-to-docx cannot handle file:// URLs
       const preprocessedOps = await preprocessOperations(operations, baseDir);
@@ -139,8 +142,8 @@ export async function editDocxWithOperations(
         }
       }
 
-      // Convert modified HTML back to DOCX
-      return await createDocxFromHtml(html, { baseDir });
+      // Convert modified HTML back to DOCX, preserving original document defaults
+      return await createDocxFromHtml(html, { baseDir, documentDefaults });
     },
     DocxErrorCode.DOCX_EDIT_FAILED,
     { path: docxPath, operationCount: operations.length }

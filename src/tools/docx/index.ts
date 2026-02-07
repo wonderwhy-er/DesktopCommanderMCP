@@ -20,6 +20,7 @@ export type {
   DocxImage,
   DocxSection,
   DocxOperation,
+  DocxDocumentDefaults,
 } from './types.js';
 
 // ── Errors ──────────────────────────────────────────────────────────────────

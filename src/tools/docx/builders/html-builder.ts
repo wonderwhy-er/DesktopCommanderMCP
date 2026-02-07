@@ -9,7 +9,7 @@
  */
 
 import { createRequire } from 'module';
-import type { DocxBuildOptions } from '../types.js';
+import type { DocxBuildOptions, DocxDocumentDefaults } from '../types.js';
 import { DocxError, DocxErrorCode, withErrorContext } from '../errors.js';
 import { DEFAULT_BUILD_OPTIONS, HTML_WRAPPER_TEMPLATE } from '../constants.js';
 
@@ -17,15 +17,34 @@ const require = createRequire(import.meta.url);
 const HTMLtoDOCX = require('html-to-docx');
 
 /**
- * Ensure HTML has proper structure (DOCTYPE, html, head, body tags)
+ * Build a CSS style tag with document default styles.
+ * This ensures html-to-docx applies the original document's font/size
+ * to any content that doesn't have explicit inline styles.
+ */
+function buildDefaultStyleTag(defaults?: DocxDocumentDefaults): string {
+  if (!defaults) return '';
+  const rules: string[] = [];
+  if (defaults.font) rules.push(`font-family: '${defaults.font}'`);
+  if (defaults.fontSize) rules.push(`font-size: ${defaults.fontSize}pt`);
+  if (rules.length === 0) return '';
+  return `<style>body { ${rules.join('; ')}; }</style>`;
+}
+
+/**
+ * Ensure HTML has proper structure (DOCTYPE, html, head, body tags).
+ * Optionally injects default document styles into the <head>.
  * @param html - HTML content to validate/wrap
+ * @param defaults - Original document defaults (font, fontSize)
  * @returns Properly structured HTML
  */
-function ensureHtmlStructure(html: string): string {
+function ensureHtmlStructure(html: string, defaults?: DocxDocumentDefaults): string {
   const trimmed = html.trim();
+  const styleTag = buildDefaultStyleTag(defaults);
 
   if (!trimmed) {
-    return HTML_WRAPPER_TEMPLATE.replace('{content}', '');
+    let wrapped = HTML_WRAPPER_TEMPLATE.replace('{content}', '');
+    if (styleTag) wrapped = wrapped.replace('</head>', `${styleTag}\n</head>`);
+    return wrapped;
   }
 
   // Check if HTML already has proper structure
@@ -33,18 +52,27 @@ function ensureHtmlStructure(html: string): string {
   const hasHtmlTag = trimmed.toLowerCase().includes('<html');
   const hasBodyTag = trimmed.toLowerCase().includes('<body');
 
-  // If already has complete structure, return as-is
+  // If already has complete structure, inject styles and return
   if (hasDoctype && hasHtmlTag && hasBodyTag) {
+    if (styleTag && trimmed.includes('</head>')) {
+      return trimmed.replace('</head>', `${styleTag}\n</head>`);
+    }
     return trimmed;
   }
 
-  // If has body/html tags but no doctype, add doctype
+  // If has body/html tags but no doctype, add doctype and inject styles
   if (hasHtmlTag || hasBodyTag) {
-    return `<!DOCTYPE html>\n${trimmed}`;
+    let result = `<!DOCTYPE html>\n${trimmed}`;
+    if (styleTag && result.includes('</head>')) {
+      result = result.replace('</head>', `${styleTag}\n</head>`);
+    }
+    return result;
   }
 
-  // Wrap content in proper HTML structure
-  return HTML_WRAPPER_TEMPLATE.replace('{content}', trimmed);
+  // Wrap content in proper HTML structure with default styles
+  let wrapped = HTML_WRAPPER_TEMPLATE.replace('{content}', trimmed);
+  if (styleTag) wrapped = wrapped.replace('</head>', `${styleTag}\n</head>`);
+  return wrapped;
 }
 
 /**
@@ -78,16 +106,19 @@ export async function createDocxFromHtml(
         );
       }
 
-      // Ensure HTML has proper structure (DOCTYPE, html, head, body)
-      let processedHtml = ensureHtmlStructure(html);
+      const defaults = options.documentDefaults;
 
-      // html-to-docx converts inline CSS styles (color, font-size, etc.) to DOCX formatting
+      // Ensure HTML has proper structure (DOCTYPE, html, head, body)
+      // Inject original document default styles as CSS in <head>
+      let processedHtml = ensureHtmlStructure(html, defaults);
+
+      // Use original document defaults if available, otherwise fall back to built-in defaults
       const docxOptions = {
         table: { row: { cantSplit: true } },
         footer: DEFAULT_BUILD_OPTIONS.footer,
         pageNumber: DEFAULT_BUILD_OPTIONS.pageNumber,
-        font: DEFAULT_BUILD_OPTIONS.font,
-        fontSize: DEFAULT_BUILD_OPTIONS.fontSize,
+        font: defaults?.font || DEFAULT_BUILD_OPTIONS.font,
+        fontSize: defaults?.fontSize || DEFAULT_BUILD_OPTIONS.fontSize,
         orientation: DEFAULT_BUILD_OPTIONS.orientation,
         margins: { ...DEFAULT_BUILD_OPTIONS.margins },
       };

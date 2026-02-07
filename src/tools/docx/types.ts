@@ -5,6 +5,17 @@
 
 
 /**
+ * Document-level default styles extracted from the original DOCX.
+ * Used to preserve font/size defaults when converting HTML → DOCX.
+ */
+export interface DocxDocumentDefaults {
+  /** Default font family (e.g. 'Calibri', 'Times New Roman') */
+  font: string;
+  /** Default font size in points (e.g. 11, 12) */
+  fontSize: number;
+}
+
+/**
  * DOCX metadata structure
  */
 export interface DocxMetadata {
@@ -52,6 +63,8 @@ export interface DocxParseResult {
   images: DocxImage[];
   /** Structured sections (optional, for advanced parsing) */
   sections?: DocxSection[];
+  /** Original document defaults (font, fontSize) — used to preserve styles during editing */
+  documentDefaults?: DocxDocumentDefaults;
 }
 
 /**
@@ -61,6 +74,8 @@ export interface DocxBuildOptions {
   baseDir?: string;
   includeImages?: boolean;
   preserveFormatting?: boolean;
+  /** Original document defaults to preserve font/size when creating DOCX from HTML */
+  documentDefaults?: DocxDocumentDefaults;
 }
 
 /**

@@ -10,7 +10,7 @@
 
 import fs from 'fs/promises';
 import { createRequire } from 'module';
-import type { DocxParseResult, DocxMetadata, DocxImage, DocxSection, DocxParseOptions } from './types.js';
+import type { DocxParseResult, DocxMetadata, DocxImage, DocxSection, DocxParseOptions, DocxDocumentDefaults } from './types.js';
 import { DocxError, DocxErrorCode, withErrorContext } from './errors.js';
 import { DEFAULT_CONVERSION_OPTIONS, CORE_PROPERTIES_PATH, DOCX_NAMESPACES } from './constants.js';
 import { isUrl } from './utils.js';
@@ -301,6 +301,7 @@ export async function parseDocxToHtml(
 
       let html: string;
       let images: DocxImage[];
+      let documentDefaults: DocxDocumentDefaults | undefined;
 
       // Primary: direct XML parsing (preserves inline styles)
       if (preserveFormatting && styleMap.length === 0) {
@@ -308,6 +309,7 @@ export async function parseDocxToHtml(
           const result = await convertDocxToStyledHtml(buffer, includeImages);
           html = result.html;
           images = result.images;
+          documentDefaults = result.documentDefaults;
         } catch {
           // Fall back to mammoth if XML parsing fails
           const fallback = await convertWithMammoth(buffer, includeImages, styleMap, preserveFormatting);
@@ -335,6 +337,7 @@ export async function parseDocxToHtml(
         metadata,
         images,
         sections,
+        documentDefaults,
       };
     },
     DocxErrorCode.DOCX_READ_FAILED,
