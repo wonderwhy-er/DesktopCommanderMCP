@@ -489,14 +489,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           or
                           { type: "appendMarkdown", markdown: "# New Section\\n\\nContent here..." }
                         
-                        - insertTable: Add a table to the document.
+                        - insertTable: Add a table to the document. Use 'selector' and 'position' to place at a specific location.
                           { type: "insertTable", rows: [["Header1", "Header2"], ["Row1Col1", "Row1Col2"]] }
                           or
                           { type: "insertTable", markdownTable: "| Header1 | Header2 |\\n| --- | --- |\\n| Data1 | Data2 |" }
+                          With positioning (optional):
+                          { type: "insertTable", rows: [...], selector: "h2", position: "after" }
+                          selector: CSS selector (tag name like "h1", "p", ".class-name", "#id") to find target element.
+                          position: "before" | "after" | "inside" (default: "after"). Without selector, appends to end.
                         
-                        - insertImage: Add an image to the document.
+                        - insertImage: Add an image to the document. Use 'selector' and 'position' to place at a specific location.
                           { type: "insertImage", imagePath: "/path/to/image.png", altText: "Description", width: 400, height: 300 }
-                          Supports: local file paths, data URLs (data:image/png;base64,...)
+                          With positioning (optional):
+                          { type: "insertImage", imagePath: "...", selector: "h1", position: "after" }
+                          selector: CSS selector to find target element. position: "before" | "after" | "inside" (default: "after").
+                          Without selector, appends to end. Supports: local file paths, data URLs (data:image/png;base64,...)
 
                         SUPPORTED HTML/MARKDOWN FEATURES:
                         - HTML: Full HTML support (headings, paragraphs, tables, images, formatting)

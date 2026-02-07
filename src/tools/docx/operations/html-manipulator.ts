@@ -14,15 +14,34 @@ const require = createRequire(import.meta.url);
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
 
 /**
- * Parse HTML string into DOM document
- * @param html - HTML content
- * @returns Parsed DOM document
+ * Parse HTML string into DOM document.
+ * 
+ * CRITICAL: @xmldom/xmldom is an XML parser — it does NOT auto-create <html>/<body>
+ * wrappers like a browser DOMParser would. Without them, getElementsByTagName('body')
+ * returns nothing, and all DOM-based operations (insert, replace, update) break
+ * because they can't find elements or the root container.
+ * 
+ * We always wrap content in a proper HTML structure before parsing.
+ * 
+ * @param html - HTML content (fragment or full document)
+ * @returns Parsed DOM document with guaranteed <body> element
  * @throws {DocxError} If parsing fails
  */
 function parseHtml(html: string): Document {
   try {
     const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
+    
+    // Ensure proper HTML structure for xmldom
+    let htmlToParse = html;
+    const lower = html.toLowerCase();
+    if (!lower.includes('<body')) {
+      // Wrap fragment in full HTML structure so xmldom creates proper DOM
+      htmlToParse = `<html><body>${html}</body></html>`;
+    } else if (!lower.includes('<html')) {
+      htmlToParse = `<html>${html}</html>`;
+    }
+    
+    const doc = parser.parseFromString(htmlToParse, 'text/html');
     
     // Check for parsing errors
     const parserError = doc.getElementsByTagName('parsererror');
@@ -48,9 +67,15 @@ function parseHtml(html: string): Document {
 }
 
 /**
- * Serialize DOM document back to HTML string
+ * Serialize DOM document back to HTML string.
+ * 
+ * Returns ONLY the inner content of <body> — NOT the <body>/<html> wrapper tags.
+ * This is because we added those wrappers in parseHtml() for xmldom compatibility,
+ * but the output should be a clean HTML fragment for further processing by
+ * ensureHtmlStructure() in the html-builder.
+ * 
  * @param doc - DOM document
- * @returns HTML string
+ * @returns HTML content string (body inner content only)
  */
 function serializeHtml(doc: Document): string {
   try {
@@ -58,7 +83,13 @@ function serializeHtml(doc: Document): string {
     const body = doc.getElementsByTagName('body')[0];
     
     if (body) {
-      return serializer.serializeToString(body);
+      // Serialize each child node of <body> individually to avoid
+      // including the <body> wrapper tags in the output
+      let content = '';
+      for (let i = 0; i < body.childNodes.length; i++) {
+        content += serializer.serializeToString(body.childNodes[i]);
+      }
+      return content;
     }
     
     // Fallback: return document element content
@@ -155,7 +186,7 @@ function cloneNodesToDocument(sourceNodes: NodeList, targetDoc: Document): Node[
  * Append HTML content to the end of the document
  * @param html - Current HTML content
  * @param appendHtmlContent - HTML to append
- * @returns Modified HTML
+ * @returns Modified HTML (body inner content only, no wrapper tags)
  */
 export function appendHtml(html: string, appendHtmlContent: string): string {
   if (!appendHtmlContent?.trim()) {
@@ -163,17 +194,20 @@ export function appendHtml(html: string, appendHtmlContent: string): string {
   }
 
   try {
+    // parseHtml() wraps in <html><body>...</body></html> if needed,
+    // ensuring body is always available for DOM operations
     const doc = parseHtml(html);
     const body = doc.getElementsByTagName('body')[0];
 
     if (!body) {
-      // If no body, concatenate as plain text
+      // Shouldn't happen after parseHtml fix, but fallback gracefully
       return html.trim() + '\n' + appendHtmlContent.trim();
     }
 
-    // Parse the HTML to append
+    // Parse the HTML to append (also gets wrapped in body)
     const appendDoc = parseHtml(appendHtmlContent);
-    const appendRoot = getRootElement(appendDoc);
+    const appendBody = appendDoc.getElementsByTagName('body')[0];
+    const appendRoot = appendBody || getRootElement(appendDoc);
     const nodesToAppend = cloneNodesToDocument(appendRoot.childNodes, doc);
 
     // Append all child nodes
@@ -181,6 +215,7 @@ export function appendHtml(html: string, appendHtmlContent: string): string {
       body.appendChild(node);
     }
 
+    // serializeHtml returns only body inner content (no body/html wrapper tags)
     return serializeHtml(doc);
   } catch (error) {
     if (error instanceof DocxError) {
@@ -216,9 +251,10 @@ export function insertHtml(
     const doc = parseHtml(html);
     const root = getRootElement(doc);
 
-    // Parse the HTML to insert
+    // Parse the HTML to insert (parseHtml wraps in body, so use body's children)
     const insertDoc = parseHtml(insertHtmlContent);
-    const insertRoot = getRootElement(insertDoc);
+    const insertBody = insertDoc.getElementsByTagName('body')[0];
+    const insertRoot = insertBody || getRootElement(insertDoc);
     const nodesToInsert = cloneNodesToDocument(insertRoot.childNodes, doc);
 
     // If no selector, append to root
@@ -308,9 +344,10 @@ export function replaceHtml(
       );
     }
 
-    // Parse replacement HTML
+    // Parse replacement HTML (parseHtml wraps in body, so use body's children)
     const replaceDoc = parseHtml(replaceHtmlContent);
-    const replaceRoot = getRootElement(replaceDoc);
+    const replaceBody = replaceDoc.getElementsByTagName('body')[0];
+    const replaceRoot = replaceBody || getRootElement(replaceDoc);
     const replaceNodes = cloneNodesToDocument(replaceRoot.childNodes, doc);
 
     const elementsToReplace = replaceAll ? targets : [targets[0]];
@@ -378,8 +415,20 @@ export function updateHtml(
 
     for (const target of elementsToUpdate) {
       // Update innerHTML if provided
+      // NOTE: xmldom does NOT support .innerHTML setter — we must use DOM methods
       if (htmlContent !== undefined) {
-        target.innerHTML = htmlContent;
+        // Remove all existing children
+        while (target.firstChild) {
+          target.removeChild(target.firstChild);
+        }
+        // Parse new content and append children
+        const contentDoc = parseHtml(htmlContent);
+        const contentBody = contentDoc.getElementsByTagName('body')[0];
+        const contentRoot = contentBody || getRootElement(contentDoc);
+        const newChildren = cloneNodesToDocument(contentRoot.childNodes, doc);
+        for (const child of newChildren) {
+          target.appendChild(child);
+        }
       }
 
       // Update attributes if provided

@@ -121,6 +121,8 @@ export const DocxInsertTableOperationSchema = z.object({
   type: z.literal('insertTable'),
   markdownTable: z.string().optional(),
   rows: z.array(z.array(z.string())).optional(),
+  selector: z.string().optional(),
+  position: z.enum(['before', 'after', 'inside']).optional(),
 }).refine(data => data.markdownTable || data.rows, {
   message: "Either markdownTable or rows must be provided"
 });
@@ -131,6 +133,8 @@ export const DocxInsertImageOperationSchema = z.object({
   altText: z.string().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
+  selector: z.string().optional(),
+  position: z.enum(['before', 'after', 'inside']).optional(),
 });
 
 export const DocxAppendHtmlOperationSchema = z.object({

@@ -101,12 +101,16 @@ export function handleUpdateHtml(
 }
 
 /**
- * Handler for insertTable operation
+ * Handler for insertTable operation.
+ * Supports optional selector/position to place the table at a specific location.
+ * Without selector, appends to end of document.
  */
 export function handleInsertTable(
   html: string,
   markdownTable?: string,
-  rows?: string[][]
+  rows?: string[][],
+  selector?: string,
+  position: 'before' | 'after' | 'inside' = 'after'
 ): string {
   let tableHtml = '';
 
@@ -119,11 +123,24 @@ export function handleInsertTable(
     }
   }
 
-  return tableHtml ? appendHtml(html, tableHtml) : html;
+  if (!tableHtml) return html;
+
+  // If selector provided, insert at that position; otherwise append to end
+  if (selector?.trim()) {
+    return insertHtml(html, tableHtml, selector, position);
+  }
+  return appendHtml(html, tableHtml);
 }
 
 /**
- * Handler for insertImage operation
+ * Handler for insertImage operation.
+ * 
+ * IMPORTANT: By the time this handler runs, local file paths should already
+ * be converted to base64 data URLs by preprocessOperations() in operations/index.ts.
+ * html-to-docx CANNOT handle file:// URLs — only base64 data URLs and HTTP URLs work.
+ * 
+ * Supports optional selector/position to place the image at a specific location.
+ * Without selector, appends to end of document.
  */
 export function handleInsertImage(
   html: string,
@@ -131,7 +148,9 @@ export function handleInsertImage(
   altText: string = '',
   width?: number,
   height?: number,
-  baseDir?: string
+  baseDir?: string,
+  selector?: string,
+  position: 'before' | 'after' | 'inside' = 'after'
 ): string {
   if (!imagePath?.trim()) {
     return html;
@@ -148,8 +167,22 @@ export function handleInsertImage(
   if (isDataUrl(trimmedPath) || isUrl(trimmedPath)) {
     imageSrc = trimmedPath;
   } else {
+    // This shouldn't happen if preprocessOperations() ran, but handle gracefully.
+    // Convert backslashes to forward slashes for valid file:// URL on Windows.
     const resolvedPath = resolveImagePath(trimmedPath, baseDir);
-    imageSrc = `file://${resolvedPath}`;
+    const normalizedPath = resolvedPath.replace(/\\/g, '/');
+    imageSrc = normalizedPath.startsWith('/') 
+      ? `file://${normalizedPath}` 
+      : `file:///${normalizedPath}`;
+  }
+
+  // Build style attribute for dimensions (more reliable than width/height attributes for html-to-docx)
+  const styles: string[] = [];
+  if (width !== undefined && width > 0) {
+    styles.push(`width:${width}px`);
+  }
+  if (height !== undefined && height > 0) {
+    styles.push(`height:${height}px`);
   }
 
   // Build image attributes with proper escaping
@@ -167,7 +200,17 @@ export function handleInsertImage(
     attributes.push(`height="${height}"`);
   }
 
-  const imgTag = `<img ${attributes.join(' ')} />`;
+  if (styles.length > 0) {
+    attributes.push(`style="${styles.join('; ')}"`);
+  }
+
+  // Wrap in <p> for proper block-level placement in DOCX
+  const imgTag = `<p><img ${attributes.join(' ')} /></p>`;
+
+  // If selector provided, insert at that position; otherwise append to end
+  if (selector?.trim()) {
+    return insertHtml(html, imgTag, selector, position);
+  }
   return appendHtml(html, imgTag);
 }
 
@@ -239,7 +282,9 @@ export function applyOperation(
       return handleInsertTable(
         html,
         operation.markdownTable,
-        operation.rows
+        operation.rows,
+        operation.selector,
+        operation.position ?? 'after'
       );
 
     case 'insertImage':
@@ -249,7 +294,9 @@ export function applyOperation(
         operation.altText,
         operation.width,
         operation.height,
-        baseDir
+        baseDir,
+        operation.selector,
+        operation.position ?? 'after'
       );
 
     default:

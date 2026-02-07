@@ -90,12 +90,17 @@ export function markdownTableToHtml(markdown: string): string {
   // Skip separator row (index 1)
   const dataRows = lines.slice(2).map(parseTableRow);
 
-  // Build HTML table
-  let html = '<table>\n';
+  // Build HTML table with inline CSS borders so it renders properly in DOCX
+  // html-to-docx needs explicit border styles — without them, tables appear invisible in Word
+  const tableBorder = 'border:1px solid #000;';
+  const cellStyle = `${tableBorder} padding:6px 10px;`;
+  const headerStyle = `${cellStyle} background-color:#f2f2f2; font-weight:bold;`;
+
+  let html = `<table style="border-collapse:collapse; width:100%; ${tableBorder}">\n`;
   html += '  <thead>\n';
   html += '    <tr>\n';
   for (const cell of headerCells) {
-    html += `      <th>${escapeHtml(cell)}</th>\n`;
+    html += `      <th style="${headerStyle}">${escapeHtml(cell)}</th>\n`;
   }
   html += '    </tr>\n';
   html += '  </thead>\n';
@@ -105,7 +110,7 @@ export function markdownTableToHtml(markdown: string): string {
     for (const row of dataRows) {
       html += '    <tr>\n';
       for (const cell of row) {
-        html += `      <td>${escapeHtml(cell)}</td>\n`;
+        html += `      <td style="${cellStyle}">${escapeHtml(cell)}</td>\n`;
       }
       html += '    </tr>\n';
     }

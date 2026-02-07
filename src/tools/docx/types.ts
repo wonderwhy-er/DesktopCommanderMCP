@@ -112,6 +112,10 @@ export interface DocxInsertTableOperation {
   type: 'insertTable';
   markdownTable?: string;
   rows?: string[][];
+  /** CSS selector to find the target element for positioning (optional, appends to end if omitted) */
+  selector?: string;
+  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
+  position?: 'before' | 'after' | 'inside';
 }
 
 /**
@@ -123,6 +127,10 @@ export interface DocxInsertImageOperation {
   altText?: string;
   width?: number;
   height?: number;
+  /** CSS selector to find the target element for positioning (optional, appends to end if omitted) */
+  selector?: string;
+  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
+  position?: 'before' | 'after' | 'inside';
 }
 
 /**
