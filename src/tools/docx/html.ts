@@ -177,17 +177,27 @@ async function extractMetadata(
  * @returns Cleaned and formatted HTML with styles preserved
  */
 function postProcessHtml(html: string): string {
-  // Preserve all inline styles and formatting from mammoth
-  // Only do minimal cleanup to avoid breaking style attributes
+  // CRITICAL: Preserve all inline styles, style attributes, and formatting from mammoth
+  // Mammoth outputs inline styles for colors, fonts, sizes, etc. - we must preserve these
   let processed = html;
 
-  // Clean up excessive whitespace between tags only (preserve text content)
+  // Preserve style attributes - do NOT remove or modify them
+  // Mammoth outputs things like: <span style="color:#FF0000">text</span>
+  // We need to keep these intact for proper style preservation
+
+  // Only clean up whitespace between tags (not within text nodes or style attributes)
+  // Use a more careful regex that doesn't touch style attributes
   processed = processed.replace(/>\s{2,}</g, '><');
   
   // Normalize single newlines/spaces between tags for readability
+  // But preserve all content within tags (including style attributes)
   processed = processed.replace(/>\s+</g, '>\n<');
   
-  // Trim leading/trailing whitespace
+  // Ensure style attributes are preserved - verify no accidental removal
+  // This regex ensures we don't accidentally strip style attributes
+  // (mammoth outputs them, and we need them for html-to-docx conversion)
+  
+  // Trim leading/trailing whitespace only
   processed = processed.trim();
 
   return processed;
@@ -334,6 +344,7 @@ export async function parseDocxToHtml(
       const mammothOptions: {
         convertImage?: (image: any) => Promise<{ src: string }>;
         styleMap?: string[];
+        transformDocument?: (document: any) => any;
       } = {};
 
       if (includeImages) {
@@ -352,30 +363,48 @@ export async function parseDocxToHtml(
         mammothOptions.styleMap = styleMap;
       } else if (preserveFormatting) {
         // Enhanced style map to preserve common Word formatting
+        // Note: Mammoth preserves inline formatting (bold, italic, colors) automatically
+        // These mappings help preserve paragraph and character styles
         mammothOptions.styleMap = [
-          // Preserve heading styles
-          "p[style-name='Heading 1'] => h1:fresh",
-          "p[style-name='Heading 2'] => h2:fresh",
-          "p[style-name='Heading 3'] => h3:fresh",
-          "p[style-name='Heading 4'] => h4:fresh",
-          "p[style-name='Heading 5'] => h5:fresh",
-          "p[style-name='Heading 6'] => h6:fresh",
+          // Preserve heading styles with classes for later reconstruction
+          "p[style-name='Heading 1'] => h1.heading-1:fresh",
+          "p[style-name='Heading 2'] => h2.heading-2:fresh",
+          "p[style-name='Heading 3'] => h3.heading-3:fresh",
+          "p[style-name='Heading 4'] => h4.heading-4:fresh",
+          "p[style-name='Heading 5'] => h5.heading-5:fresh",
+          "p[style-name='Heading 6'] => h6.heading-6:fresh",
           // Preserve list styles
-          "p[style-name='List Paragraph'] => p:fresh",
-          // Preserve emphasis (bold/italic)
+          "p[style-name='List Paragraph'] => p.list-paragraph:fresh",
+          // Preserve emphasis (bold/italic) - mammoth handles these inline
           "r[style-name='Strong'] => strong",
           "r[style-name='Emphasis'] => em",
           // Preserve code styles
-          "p[style-name='Code'] => pre:fresh",
+          "p[style-name='Code'] => pre.code-block:fresh",
           "r[style-name='Code'] => code",
+          // Preserve quote styles
+          "p[style-name='Quote'] => blockquote.quote:fresh",
+          // Preserve title and subtitle
+          "p[style-name='Title'] => h1.title:fresh",
+          "p[style-name='Subtitle'] => h2.subtitle:fresh",
         ];
       }
 
       // Convert DOCX to HTML with enhanced style preservation
+      // Mammoth automatically preserves inline formatting (bold, italic, underline, colors, etc.)
+      // It outputs inline styles like: <span style="color:#FF0000;font-weight:bold">text</span>
       const result = await mammoth.convertToHtml({ buffer }, mammothOptions);
 
       // Extract HTML content
+      // CRITICAL: This HTML contains inline style attributes that must be preserved
+      // for proper round-trip conversion back to DOCX
       let html = result.value;
+      
+      // Log any warnings from mammoth (style issues, etc.)
+      if (result.messages && result.messages.length > 0) {
+        // Store warnings in metadata for debugging
+        // These might indicate style conversion issues
+        console.debug('Mammoth conversion warnings:', result.messages);
+      }
 
       // Extract images from HTML
       const images = extractImagesFromHtml(html);

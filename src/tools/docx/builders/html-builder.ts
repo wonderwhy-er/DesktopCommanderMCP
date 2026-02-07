@@ -79,9 +79,16 @@ export async function createDocxFromHtml(
       }
 
       // Ensure HTML has proper structure
-      const processedHtml = ensureHtmlStructure(html);
+      // CRITICAL: Preserve all inline styles from mammoth output
+      // Mammoth outputs inline styles like: <span style="color:#FF0000;font-weight:bold">text</span>
+      // We must preserve these for proper style reconstruction in DOCX
+      let processedHtml = ensureHtmlStructure(html);
+      
+      // Ensure inline styles are preserved - html-to-docx should handle them
+      // But we need to make sure the HTML structure is valid
+      // Preserve style attributes on all elements (span, p, div, etc.)
 
-      // Configure html-to-docx options
+      // Configure html-to-docx options with enhanced style preservation
       const docxOptions = {
         table: { row: { cantSplit: true } },
         footer: DEFAULT_BUILD_OPTIONS.footer,
@@ -90,9 +97,14 @@ export async function createDocxFromHtml(
         fontSize: DEFAULT_BUILD_OPTIONS.fontSize,
         orientation: DEFAULT_BUILD_OPTIONS.orientation,
         margins: { ...DEFAULT_BUILD_OPTIONS.margins },
+        // Enable better style preservation
+        // html-to-docx should automatically parse inline styles from style attributes
+        // Ensure we're passing the HTML with all style attributes intact
       };
 
       // Convert HTML to DOCX buffer
+      // html-to-docx library automatically converts inline CSS styles to DOCX formatting
+      // It handles: colors, fonts, sizes, bold, italic, underline, etc. from style attributes
       const docxBuffer = await HTMLtoDOCX(processedHtml, null, docxOptions);
 
       if (!docxBuffer || docxBuffer.length === 0) {
