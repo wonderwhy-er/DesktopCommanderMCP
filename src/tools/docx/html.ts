@@ -172,21 +172,25 @@ async function extractMetadata(
 }
 
 /**
- * Post-process HTML for better formatting
+ * Post-process HTML for better formatting while preserving styles
  * @param html - Raw HTML from mammoth
- * @returns Cleaned and formatted HTML
+ * @returns Cleaned and formatted HTML with styles preserved
  */
 function postProcessHtml(html: string): string {
-  // Clean up excessive whitespace
-  let processed = html.replace(/\s+/g, ' ');
+  // Preserve all inline styles and formatting from mammoth
+  // Only do minimal cleanup to avoid breaking style attributes
+  let processed = html;
 
-  // Ensure proper spacing around block elements
-  processed = processed.replace(/>\s+</g, '><');
-  processed = processed.replace(/>\s+/g, '>');
-  processed = processed.replace(/\s+</g, '<');
-
+  // Clean up excessive whitespace between tags only (preserve text content)
+  processed = processed.replace(/>\s{2,}</g, '><');
+  
+  // Normalize single newlines/spaces between tags for readability
+  processed = processed.replace(/>\s+</g, '>\n<');
+  
   // Trim leading/trailing whitespace
-  return processed.trim();
+  processed = processed.trim();
+
+  return processed;
 }
 
 /**
@@ -326,7 +330,7 @@ export async function parseDocxToHtml(
         }
       }
 
-      // Configure mammoth options
+      // Configure mammoth options with enhanced style preservation
       const mammothOptions: {
         convertImage?: (image: any) => Promise<{ src: string }>;
         styleMap?: string[];
@@ -343,11 +347,31 @@ export async function parseDocxToHtml(
         });
       }
 
+      // Use custom style map if provided, otherwise use enhanced defaults
       if (styleMap.length > 0) {
         mammothOptions.styleMap = styleMap;
+      } else if (preserveFormatting) {
+        // Enhanced style map to preserve common Word formatting
+        mammothOptions.styleMap = [
+          // Preserve heading styles
+          "p[style-name='Heading 1'] => h1:fresh",
+          "p[style-name='Heading 2'] => h2:fresh",
+          "p[style-name='Heading 3'] => h3:fresh",
+          "p[style-name='Heading 4'] => h4:fresh",
+          "p[style-name='Heading 5'] => h5:fresh",
+          "p[style-name='Heading 6'] => h6:fresh",
+          // Preserve list styles
+          "p[style-name='List Paragraph'] => p:fresh",
+          // Preserve emphasis (bold/italic)
+          "r[style-name='Strong'] => strong",
+          "r[style-name='Emphasis'] => em",
+          // Preserve code styles
+          "p[style-name='Code'] => pre:fresh",
+          "r[style-name='Code'] => code",
+        ];
       }
 
-      // Convert DOCX to HTML
+      // Convert DOCX to HTML with enhanced style preservation
       const result = await mammoth.convertToHtml({ buffer }, mammothOptions);
 
       // Extract HTML content
