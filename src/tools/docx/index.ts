@@ -1,9 +1,11 @@
 /**
  * DOCX Operations Library — Public API
  *
- * Only the symbols that external consumers actually import are re-exported here.
- * Internal helpers (styled-html-parser, validators, converters, etc.) are
- * consumed directly by sibling modules and are NOT part of the public surface.
+ * Re-exports only the symbols that external consumers need.
+ * Internal modules (styled-html-parser, validators, converters, etc.)
+ * are consumed by sibling files and are NOT part of the public surface.
+ *
+ * @module docx
  */
 
 // ── Reading ─────────────────────────────────────────────────────────────────

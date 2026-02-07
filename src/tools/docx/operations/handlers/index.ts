@@ -2,6 +2,9 @@
  * DOCX Operation Handlers
  *
  * Pure functions: HTML in → modified HTML out.
+ * Each handler corresponds to one DocxOperation type.
+ *
+ * @module docx/operations/handlers
  */
 
 import type { DocxOperation } from '../../types.js';
@@ -11,96 +14,70 @@ import {
   markdownTableToHtml,
   buildMarkdownTableFromRows,
 } from '../../converters/markdown-to-html.js';
-import {
-  appendHtml,
-  insertHtml,
-  replaceHtml,
-  updateHtml,
-} from '../html-manipulator.js';
-import { escapeRegExp, isUrl, isDataUrl, resolveImagePath } from '../../utils.js';
+import { appendHtml, insertHtml, replaceHtml, updateHtml } from '../html-manipulator.js';
+import { escapeHtmlAttribute, escapeRegExp, isUrl, isDataUrl, resolveImagePath } from '../../utils.js';
 import { validateImageDimensions } from '../../validators.js';
 
-/**
- * Handler for replaceText operation
- */
+// ─── Text Operations ─────────────────────────────────────────────────────────
+
 export function handleReplaceText(
   html: string,
   search: string,
   replace: string,
-  matchCase: boolean = false,
-  global: boolean = true
+  matchCase = false,
+  global = true
 ): string {
-  if (!search?.trim()) {
-    return html;
-  }
-
-  const escapedSearch = escapeRegExp(search);
+  if (!search?.trim()) return html;
   const flags = matchCase ? (global ? 'g' : '') : global ? 'gi' : 'i';
-  const searchRegex = new RegExp(escapedSearch, flags);
-  
-  return html.replace(searchRegex, replace);
+  return html.replace(new RegExp(escapeRegExp(search), flags), replace);
 }
 
-/**
- * Handler for appendMarkdown operation
- */
+// ─── HTML / Markdown Append & Insert ─────────────────────────────────────────
+
 export function handleAppendMarkdown(html: string, markdown: string): string {
-  if (!markdown?.trim()) {
-    return html;
-  }
-
-  const convertedHtml = markdownToHtml(markdown);
-  return convertedHtml ? appendHtml(html, convertedHtml) : html;
+  if (!markdown?.trim()) return html;
+  const converted = markdownToHtml(markdown);
+  return converted ? appendHtml(html, converted) : html;
 }
 
-/**
- * Handler for appendHtml operation
- */
-export function handleAppendHtml(html: string, appendHtmlContent: string): string {
-  return appendHtml(html, appendHtmlContent);
+export function handleAppendHtml(html: string, content: string): string {
+  return appendHtml(html, content);
 }
 
-/**
- * Handler for insertHtml operation
- */
 export function handleInsertHtml(
   html: string,
-  insertHtmlContent: string,
+  content: string,
   selector?: string,
   position: 'before' | 'after' | 'inside' = 'after'
 ): string {
-  return insertHtml(html, insertHtmlContent, selector, position);
+  return insertHtml(html, content, selector, position);
 }
 
-/**
- * Handler for replaceHtml operation
- */
 export function handleReplaceHtml(
   html: string,
   selector: string,
-  replaceHtmlContent: string,
-  replaceAll: boolean = false
+  content: string,
+  replaceAll = false
 ): string {
-  return replaceHtml(html, selector, replaceHtmlContent, replaceAll);
+  return replaceHtml(html, selector, content, replaceAll);
 }
 
-/**
- * Handler for updateHtml operation
- */
 export function handleUpdateHtml(
   html: string,
   selector: string,
-  htmlContent?: string,
+  content?: string,
   attributes?: Record<string, string>,
-  updateAll: boolean = false
+  updateAll = false
 ): string {
-  return updateHtml(html, selector, htmlContent, attributes, updateAll);
+  return updateHtml(html, selector, content, attributes, updateAll);
 }
 
+// ─── Table Insertion ─────────────────────────────────────────────────────────
+
 /**
- * Handler for insertTable operation.
- * Supports optional selector/position to place the table at a specific location.
- * Without selector, appends to end of document.
+ * Insert a table from markdown or a rows array.
+ * If a selector is given, the table is placed relative to that element;
+ * otherwise it is appended to the end of the document.
  */
 export function handleInsertTable(
   html: string,
@@ -114,49 +91,38 @@ export function handleInsertTable(
   if (markdownTable?.trim()) {
     tableHtml = markdownTableToHtml(markdownTable);
   } else if (rows?.length) {
-    const markdown = buildMarkdownTableFromRows(rows);
-    if (markdown) {
-      tableHtml = markdownTableToHtml(markdown);
-    }
+    const md = buildMarkdownTableFromRows(rows);
+    if (md) tableHtml = markdownTableToHtml(md);
   }
 
   if (!tableHtml) return html;
 
-  // If selector provided, insert at that position; otherwise append to end
-  if (selector?.trim()) {
-    return insertHtml(html, tableHtml, selector, position);
-  }
-  return appendHtml(html, tableHtml);
+  return selector?.trim()
+    ? insertHtml(html, tableHtml, selector, position)
+    : appendHtml(html, tableHtml);
 }
 
+// ─── Image Insertion ─────────────────────────────────────────────────────────
+
 /**
- * Handler for insertImage operation.
- * 
- * IMPORTANT: By the time this handler runs, local file paths should already
- * be converted to base64 data URLs by preprocessOperations() in operations/index.ts.
- * html-to-docx CANNOT handle file:// URLs — only base64 data URLs and HTTP URLs work.
- * 
- * Supports optional selector/position to place the image at a specific location.
- * Without selector, appends to end of document.
+ * Insert an image into the document.
+ *
+ * By the time this handler runs, local file paths should already be converted
+ * to base64 data URLs by `preprocessOperations()` in `operations/index.ts`.
+ * html-to-docx only supports base64 data URLs and HTTP URLs.
  */
 export function handleInsertImage(
   html: string,
   imagePath: string,
-  altText: string = '',
+  altText = '',
   width?: number,
   height?: number,
   baseDir?: string,
   selector?: string,
   position: 'before' | 'after' | 'inside' = 'after'
 ): string {
-  if (!imagePath?.trim()) {
-    return html;
-  }
-
-  // Validate dimensions if provided
-  if (width !== undefined || height !== undefined) {
-    validateImageDimensions(width, height);
-  }
+  if (!imagePath?.trim()) return html;
+  if (width !== undefined || height !== undefined) validateImageDimensions(width, height);
 
   const trimmedPath = imagePath.trim();
   let imageSrc: string;
@@ -164,85 +130,37 @@ export function handleInsertImage(
   if (isDataUrl(trimmedPath) || isUrl(trimmedPath)) {
     imageSrc = trimmedPath;
   } else {
-    // This shouldn't happen if preprocessOperations() ran, but handle gracefully.
-    // Convert backslashes to forward slashes for valid file:// URL on Windows.
-    const resolvedPath = resolveImagePath(trimmedPath, baseDir);
-    const normalizedPath = resolvedPath.replace(/\\/g, '/');
-    imageSrc = normalizedPath.startsWith('/') 
-      ? `file://${normalizedPath}` 
-      : `file:///${normalizedPath}`;
+    // Fallback: should not normally occur after preprocessing
+    const resolved = resolveImagePath(trimmedPath, baseDir).replace(/\\/g, '/');
+    imageSrc = resolved.startsWith('/') ? `file://${resolved}` : `file:///${resolved}`;
   }
 
-  // Build style attribute for dimensions (more reliable than width/height attributes for html-to-docx)
+  // Build style attribute
   const styles: string[] = [];
-  if (width !== undefined && width > 0) {
-    styles.push(`width:${width}px`);
-  }
-  if (height !== undefined && height > 0) {
-    styles.push(`height:${height}px`);
-  }
+  if (width && width > 0) styles.push(`width:${width}px`);
+  if (height && height > 0) styles.push(`height:${height}px`);
 
-  // Build image attributes with proper escaping
-  const attributes: string[] = [`src="${escapeHtmlAttribute(imageSrc)}"`];
-  
-  if (altText?.trim()) {
-    attributes.push(`alt="${escapeHtmlAttribute(altText.trim())}"`);
-  }
-  
-  if (width !== undefined && width > 0) {
-    attributes.push(`width="${width}"`);
-  }
-  
-  if (height !== undefined && height > 0) {
-    attributes.push(`height="${height}"`);
-  }
+  // Build img attributes
+  const attrs: string[] = [`src="${escapeHtmlAttribute(imageSrc)}"`];
+  if (altText?.trim()) attrs.push(`alt="${escapeHtmlAttribute(altText.trim())}"`);
+  if (width && width > 0) attrs.push(`width="${width}"`);
+  if (height && height > 0) attrs.push(`height="${height}"`);
+  if (styles.length > 0) attrs.push(`style="${styles.join('; ')}"`);
 
-  if (styles.length > 0) {
-    attributes.push(`style="${styles.join('; ')}"`);
-  }
+  const imgTag = `<p><img ${attrs.join(' ')} /></p>`;
 
-  // Wrap in <p> for proper block-level placement in DOCX
-  const imgTag = `<p><img ${attributes.join(' ')} /></p>`;
-
-  // If selector provided, insert at that position; otherwise append to end
-  if (selector?.trim()) {
-    return insertHtml(html, imgTag, selector, position);
-  }
-  return appendHtml(html, imgTag);
+  return selector?.trim()
+    ? insertHtml(html, imgTag, selector, position)
+    : appendHtml(html, imgTag);
 }
 
-/**
- * Escape HTML attribute values
- */
-function escapeHtmlAttribute(value: string): string {
-  return value.replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
+// ─── Operation Router ────────────────────────────────────────────────────────
 
-/**
- * Apply a single operation to HTML content
- * 
- * Routes to the appropriate handler based on operation type.
- * 
- * @param html - Current HTML content
- * @param operation - Operation to apply
- * @param baseDir - Base directory for resolving paths
- * @returns Modified HTML
- * @throws {Error} If operation type is unknown
- */
-export function applyOperation(
-  html: string,
-  operation: DocxOperation,
-  baseDir?: string
-): string {
+/** Apply a single DocxOperation to HTML content, routing to the correct handler. */
+export function applyOperation(html: string, operation: DocxOperation, baseDir?: string): string {
   switch (operation.type) {
     case 'replaceText':
-      return handleReplaceText(
-        html,
-        operation.search,
-        operation.replace,
-        operation.matchCase ?? false,
-        operation.global ?? true
-      );
+      return handleReplaceText(html, operation.search, operation.replace, operation.matchCase ?? false, operation.global ?? true);
 
     case 'appendMarkdown':
       return handleAppendMarkdown(html, operation.markdown);
@@ -251,60 +169,26 @@ export function applyOperation(
       return handleAppendHtml(html, operation.html);
 
     case 'insertHtml':
-      return handleInsertHtml(
-        html,
-        operation.html,
-        operation.selector,
-        operation.position ?? 'after'
-      );
+      return handleInsertHtml(html, operation.html, operation.selector, operation.position ?? 'after');
 
     case 'replaceHtml':
-      return handleReplaceHtml(
-        html,
-        operation.selector,
-        operation.html,
-        operation.replaceAll ?? false
-      );
+      return handleReplaceHtml(html, operation.selector, operation.html, operation.replaceAll ?? false);
 
     case 'updateHtml':
-      return handleUpdateHtml(
-        html,
-        operation.selector,
-        operation.html,
-        operation.attributes,
-        operation.updateAll ?? false
-      );
+      return handleUpdateHtml(html, operation.selector, operation.html, operation.attributes, operation.updateAll ?? false);
 
     case 'insertTable':
-      return handleInsertTable(
-        html,
-        operation.markdownTable,
-        operation.rows,
-        operation.selector,
-        operation.position ?? 'after'
-      );
+      return handleInsertTable(html, operation.markdownTable, operation.rows, operation.selector, operation.position ?? 'after');
 
     case 'insertImage':
       return handleInsertImage(
-        html,
-        operation.imagePath,
-        operation.altText,
-        operation.width,
-        operation.height,
-        baseDir,
-        operation.selector,
-        operation.position ?? 'after'
+        html, operation.imagePath, operation.altText, operation.width, operation.height,
+        baseDir, operation.selector, operation.position ?? 'after'
       );
 
-    default:
-      // Exhaustive check - TypeScript should catch this at compile time
-      const _exhaustive: never = operation;
+    default: {
       const unknownOp = operation as { type: string };
-      throw new DocxError(
-        `Unknown operation type: ${unknownOp.type}`,
-        DocxErrorCode.UNKNOWN_OPERATION,
-        { operation: unknownOp }
-      );
+      throw new DocxError(`Unknown operation type: ${unknownOp.type}`, DocxErrorCode.UNKNOWN_OPERATION, { operation: unknownOp });
+    }
   }
 }
-

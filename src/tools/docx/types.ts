@@ -1,13 +1,14 @@
 /**
  * DOCX Type Definitions
- * Centralized type definitions for DOCX operations
+ *
+ * Centralised type definitions for every DOCX operation in the module.
+ *
+ * @module docx/types
  */
 
+// ─── Document Defaults ───────────────────────────────────────────────────────
 
-/**
- * Document-level default styles extracted from the original DOCX.
- * Used to preserve font/size defaults when converting HTML → DOCX.
- */
+/** Default font and size extracted from the original DOCX, used to preserve styles on re-creation. */
 export interface DocxDocumentDefaults {
   /** Default font family (e.g. 'Calibri', 'Times New Roman') */
   font: string;
@@ -15,9 +16,8 @@ export interface DocxDocumentDefaults {
   fontSize: number;
 }
 
-/**
- * DOCX metadata structure
- */
+// ─── Metadata & Structure ────────────────────────────────────────────────────
+
 export interface DocxMetadata {
   title?: string;
   author?: string;
@@ -30,20 +30,15 @@ export interface DocxMetadata {
   fileSize?: number;
 }
 
-/**
- * Embedded image information
- */
 export interface DocxImage {
   id: string;
-  data: string; // Base64-encoded
+  /** Base64-encoded image data */
+  data: string;
   mimeType: string;
   altText?: string;
   originalSize?: number;
 }
 
-/**
- * DOCX section/paragraph structure
- */
 export interface DocxSection {
   type: 'heading' | 'paragraph' | 'list' | 'table' | 'image';
   content: string;
@@ -51,58 +46,40 @@ export interface DocxSection {
   images?: DocxImage[];
 }
 
-/**
- * Complete DOCX parse result
- */
+// ─── Parse Result ────────────────────────────────────────────────────────────
+
 export interface DocxParseResult {
-  /** Document content as HTML */
   html: string;
-  /** Document metadata */
   metadata: DocxMetadata;
-  /** Extracted images */
   images: DocxImage[];
-  /** Structured sections (optional, for advanced parsing) */
   sections?: DocxSection[];
-  /** Original document defaults (font, fontSize) — used to preserve styles during editing */
+  /** Original document defaults — passed through the pipeline to preserve styles during editing. */
   documentDefaults?: DocxDocumentDefaults;
 }
 
-/**
- * Options for DOCX creation and editing
- */
-export interface DocxBuildOptions {
-  baseDir?: string;
-  includeImages?: boolean;
-  preserveFormatting?: boolean;
-  /** Original document defaults to preserve font/size when creating DOCX from HTML */
-  documentDefaults?: DocxDocumentDefaults;
-}
+// ─── Options ─────────────────────────────────────────────────────────────────
 
-/**
- * Options for editing existing DOCX files
- */
-export interface DocxEditOptions extends DocxBuildOptions {
-  outputPath?: string;
-  /** Custom style mapping for DOCX parsing */
-  styleMap?: string[];
-}
-
-/**
- * Parsing options for DOCX to HTML conversion
- */
 export interface DocxParseOptions {
   includeImages?: boolean;
   preserveFormatting?: boolean;
   styleMap?: string[];
 }
 
-/**
- * DOCX Operation Types
- */
+export interface DocxBuildOptions {
+  baseDir?: string;
+  includeImages?: boolean;
+  preserveFormatting?: boolean;
+  /** Original document defaults to preserve font/size when converting HTML → DOCX. */
+  documentDefaults?: DocxDocumentDefaults;
+}
 
-/**
- * Replace text in HTML content
- */
+export interface DocxEditOptions extends DocxBuildOptions {
+  outputPath?: string;
+  styleMap?: string[];
+}
+
+// ─── Operations ──────────────────────────────────────────────────────────────
+
 export interface DocxReplaceTextOperation {
   type: 'replaceText';
   search: string;
@@ -111,87 +88,53 @@ export interface DocxReplaceTextOperation {
   global?: boolean;
 }
 
-/**
- * Append markdown content (converted to HTML)
- */
 export interface DocxAppendMarkdownOperation {
   type: 'appendMarkdown';
   markdown: string;
 }
 
-/**
- * Insert table from markdown or rows array
- */
 export interface DocxInsertTableOperation {
   type: 'insertTable';
   markdownTable?: string;
   rows?: string[][];
-  /** CSS selector to find the target element for positioning (optional, appends to end if omitted) */
   selector?: string;
-  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
   position?: 'before' | 'after' | 'inside';
 }
 
-/**
- * Insert image into document
- */
 export interface DocxInsertImageOperation {
   type: 'insertImage';
   imagePath: string;
   altText?: string;
   width?: number;
   height?: number;
-  /** CSS selector to find the target element for positioning (optional, appends to end if omitted) */
   selector?: string;
-  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
   position?: 'before' | 'after' | 'inside';
 }
 
-/**
- * Append HTML content directly
- */
 export interface DocxAppendHtmlOperation {
   type: 'appendHtml';
   html: string;
 }
 
-/**
- * Insert HTML content at a specific position
- */
 export interface DocxInsertHtmlOperation {
   type: 'insertHtml';
   html: string;
-  /** CSS selector to find the target element */
   selector?: string;
-  /** Position relative to target: 'before', 'after', 'inside' (default: 'after') */
   position?: 'before' | 'after' | 'inside';
 }
 
-/**
- * Replace HTML elements/components
- */
 export interface DocxReplaceHtmlOperation {
   type: 'replaceHtml';
-  /** CSS selector to find elements to replace */
   selector: string;
-  /** HTML content to replace with */
   html: string;
-  /** Replace all matching elements (default: false, only first match) */
   replaceAll?: boolean;
 }
 
-/**
- * Update/modify HTML elements
- */
 export interface DocxUpdateHtmlOperation {
   type: 'updateHtml';
-  /** CSS selector to find elements to update */
   selector: string;
-  /** HTML content to set as innerHTML */
   html?: string;
-  /** Attributes to set/update */
   attributes?: Record<string, string>;
-  /** Update all matching elements (default: false, only first match) */
   updateAll?: boolean;
 }
 

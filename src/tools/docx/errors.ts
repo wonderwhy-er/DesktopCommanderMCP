@@ -1,11 +1,11 @@
 /**
  * DOCX Error Handling
- * Centralized error classes and error handling utilities
+ *
+ * Centralised error class and async error-wrapping utility.
+ *
+ * @module docx/errors
  */
 
-/**
- * Base error class for DOCX operations
- */
 export class DocxError extends Error {
   constructor(
     message: string,
@@ -17,22 +17,11 @@ export class DocxError extends Error {
     Error.captureStackTrace?.(this, DocxError);
   }
 
-  /**
-   * Convert error to JSON for logging
-   */
   toJSON(): Record<string, unknown> {
-    return {
-      name: this.name,
-      message: this.message,
-      code: this.code,
-      context: this.context,
-    };
+    return { name: this.name, message: this.message, code: this.code, context: this.context };
   }
 }
 
-/**
- * Error codes for DOCX operations
- */
 export enum DocxErrorCode {
   INVALID_DOCX = 'INVALID_DOCX',
   INVALID_PATH = 'INVALID_PATH',
@@ -47,9 +36,7 @@ export enum DocxErrorCode {
   GET_INFO_FAILED = 'GET_INFO_FAILED',
 }
 
-/**
- * Wrap async operations with error context
- */
+/** Wrap an async operation — re-throws existing DocxErrors, wraps everything else. */
 export async function withErrorContext<T>(
   operation: () => Promise<T>,
   errorCode: DocxErrorCode | string,
@@ -58,10 +45,7 @@ export async function withErrorContext<T>(
   try {
     return await operation();
   } catch (error) {
-    if (error instanceof DocxError) {
-      throw error;
-    }
-    
+    if (error instanceof DocxError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new DocxError(message, errorCode, {
       ...context,
@@ -69,4 +53,3 @@ export async function withErrorContext<T>(
     });
   }
 }
-

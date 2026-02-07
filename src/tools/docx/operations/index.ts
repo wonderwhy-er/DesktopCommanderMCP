@@ -2,7 +2,8 @@
  * DOCX Editing Operations
  *
  * Reads DOCX → HTML (via direct XML parser or mammoth fallback),
- * applies operations to the HTML DOM, then converts HTML → DOCX (html-to-docx).
+ * applies a sequence of operations to the HTML DOM,
+ * then converts the modified HTML → DOCX (html-to-docx).
  *
  * @module docx/operations
  */
@@ -18,55 +19,52 @@ import { DocxOperationSchema } from '../../schemas.js';
 import { validateDocxPath, validateOperations } from '../validators.js';
 import { applyOperation } from './handlers/index.js';
 import { isDataUrl, isUrl, resolveImagePath, getMimeType } from '../utils.js';
+
+// ─── Image Preprocessing ─────────────────────────────────────────────────────
+
 /**
- * Pre-process operations to resolve local image paths to base64 data URLs.
- * html-to-docx CANNOT handle file:// URLs — it needs base64 data URLs or HTTP URLs.
- * This function reads local image files from disk and embeds them as base64.
+ * Resolve local image paths to base64 data URLs before operations are applied.
+ * html-to-docx cannot handle `file://` URLs — only base64 data URLs and HTTP URLs work.
  */
-async function preprocessOperations(
-  operations: DocxOperation[],
-  baseDir: string
-): Promise<DocxOperation[]> {
+async function preprocessOperations(operations: DocxOperation[], baseDir: string): Promise<DocxOperation[]> {
   const processed: DocxOperation[] = [];
 
   for (const op of operations) {
-    if (op.type === 'insertImage') {
-      const imgOp = op as DocxInsertImageOperation;
-      const trimmedPath = imgOp.imagePath?.trim();
-
-      // Skip if already a data URL or HTTP URL
-      if (!trimmedPath || isDataUrl(trimmedPath) || isUrl(trimmedPath)) {
-        processed.push(op);
-        continue;
-      }
-
-      // Resolve and read local file, convert to base64 data URL
-      try {
-        const resolvedPath = resolveImagePath(trimmedPath, baseDir);
-        const imageBuffer = await fs.readFile(resolvedPath);
-        const mimeType = getMimeType(resolvedPath) || 'image/png';
-        const base64 = imageBuffer.toString('base64');
-        const dataUrl = `data:${mimeType};base64,${base64}`;
-
-        processed.push({
-          ...imgOp,
-          imagePath: dataUrl,
-        });
-      } catch (readError) {
-        throw new DocxError(
-          `Failed to read image file: ${trimmedPath} (resolved: ${resolveImagePath(trimmedPath, baseDir)}). ${readError instanceof Error ? readError.message : String(readError)}`,
-          DocxErrorCode.INVALID_IMAGE_FILE,
-          { imagePath: trimmedPath, baseDir }
-        );
-      }
-    } else {
+    if (op.type !== 'insertImage') {
       processed.push(op);
+      continue;
+    }
+
+    const imgOp = op as DocxInsertImageOperation;
+    const trimmedPath = imgOp.imagePath?.trim();
+
+    if (!trimmedPath || isDataUrl(trimmedPath) || isUrl(trimmedPath)) {
+      processed.push(op);
+      continue;
+    }
+
+    const resolvedPath = resolveImagePath(trimmedPath, baseDir);
+    try {
+      const imageBuffer = await fs.readFile(resolvedPath);
+      const mimeType = getMimeType(resolvedPath) || 'image/png';
+      processed.push({ ...imgOp, imagePath: `data:${mimeType};base64,${imageBuffer.toString('base64')}` });
+    } catch (err) {
+      throw new DocxError(
+        `Failed to read image file: ${trimmedPath} (resolved: ${resolvedPath}). ${err instanceof Error ? err.message : String(err)}`,
+        DocxErrorCode.INVALID_IMAGE_FILE,
+        { imagePath: trimmedPath, resolvedPath, baseDir }
+      );
     }
   }
 
   return processed;
 }
 
+// ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Apply a sequence of edit operations to a DOCX file and return the modified DOCX as a Buffer.
+ */
 export async function editDocxWithOperations(
   docxPath: string,
   operations: DocxOperation[],
@@ -74,75 +72,49 @@ export async function editDocxWithOperations(
 ): Promise<Buffer> {
   return withErrorContext(
     async () => {
-      // Validate inputs
       validateDocxPath(docxPath);
       validateOperations(operations);
 
       const normalizedPath = docxPath.trim();
       const baseDir = options.baseDir ?? path.dirname(normalizedPath);
 
-      // Configure parse options
       const parseOptions = {
         includeImages: options.includeImages ?? DEFAULT_CONVERSION_OPTIONS.includeImages,
         preserveFormatting: options.preserveFormatting ?? DEFAULT_CONVERSION_OPTIONS.preserveFormatting,
         ...(options.styleMap && { styleMap: options.styleMap }),
       };
-      
-      // Read and convert DOCX to HTML
+
+      // Read DOCX → HTML
       const docxResult = await parseDocxToHtml(normalizedPath, parseOptions);
       let html = docxResult.html;
+      const { documentDefaults } = docxResult;
 
-      // Extract original document defaults (font, fontSize) for style preservation
-      const documentDefaults = docxResult.documentDefaults;
-
-      // Pre-process: convert local image paths to base64 data URLs
-      // This is CRITICAL — html-to-docx cannot handle file:// URLs
+      // Resolve local image paths to base64
       const preprocessedOps = await preprocessOperations(operations, baseDir);
 
-      // Apply operations sequentially
+      // Apply each operation
       for (let i = 0; i < preprocessedOps.length; i++) {
         const op = preprocessedOps[i];
-        
         try {
-          // Validate operation schema
-          const validatedOp = DocxOperationSchema.parse(op);
-          
-          // Apply the operation using handler
-          html = applyOperation(html, validatedOp, baseDir);
+          html = applyOperation(html, DocxOperationSchema.parse(op), baseDir);
         } catch (error) {
-          // Re-throw DocxError as-is (preserves context)
-          if (error instanceof DocxError) {
-            throw error;
-          }
-          
-          // Handle Zod validation errors
+          if (error instanceof DocxError) throw error;
           if (error instanceof Error && 'issues' in error) {
             throw new DocxError(
               `Invalid operation at index ${i}: ${error.message}`,
               DocxErrorCode.OPERATION_FAILED,
-              { 
-                path: normalizedPath,
-                operationIndex: i,
-                operation: op,
-                validationError: error
-              }
+              { path: normalizedPath, operationIndex: i, operation: op, validationError: error }
             );
           }
-          
-          // Wrap other errors
           throw new DocxError(
             `Failed to apply operation at index ${i}: ${error instanceof Error ? error.message : String(error)}`,
             DocxErrorCode.OPERATION_FAILED,
-            { 
-              path: normalizedPath,
-              operationIndex: i,
-              operation: op
-            }
+            { path: normalizedPath, operationIndex: i, operation: op }
           );
         }
       }
 
-      // Convert modified HTML back to DOCX, preserving original document defaults
+      // HTML → DOCX, preserving the original document's default styles
       return await createDocxFromHtml(html, { baseDir, documentDefaults });
     },
     DocxErrorCode.DOCX_EDIT_FAILED,

@@ -213,24 +213,20 @@ export class DocxFileHandler implements FileHandler {
     }
 
     /**
-     * Get DOCX file information including metadata
-     * 
-     * @param path - Path to the DOCX file
-     * @returns FileInfo with size, dates, permissions, and DOCX-specific metadata
+     * Get DOCX file information including metadata.
      */
     async getInfo(path: string): Promise<FileInfo> {
         try {
             const stats = await fs.stat(path);
 
-            // Get basic DOCX metadata
-            let metadata: any = { isDocx: true };
-            
+            let metadata: Record<string, unknown> = { isDocx: true };
+
             try {
                 const docxResult = await parseDocxToHtml(path, {
-                    includeImages: false, // Don't extract images for metadata only
-                    preserveFormatting: false
+                    includeImages: false,
+                    preserveFormatting: false,
                 });
-                
+
                 metadata = {
                     isDocx: true,
                     title: docxResult.metadata.title,
@@ -242,11 +238,10 @@ export class DocxFileHandler implements FileHandler {
                     lastModifiedBy: docxResult.metadata.lastModifiedBy,
                     revision: docxResult.metadata.revision,
                     imageCount: docxResult.images.length,
-                    sectionCount: docxResult.sections?.length
+                    sectionCount: docxResult.sections?.length,
                 };
-            } catch (parseError) {
-                // If we can't parse, log warning but return basic info
-                console.warn(`Could not parse DOCX metadata for ${path}:`, parseError);
+            } catch {
+                // Non-critical — return basic info if parsing fails
             }
 
             return {
@@ -270,16 +265,9 @@ export class DocxFileHandler implements FileHandler {
         }
     }
 
-    /**
-     * Helper to get base directory for resolving relative image paths.
-     */
+    /** Get base directory for resolving relative image paths. */
     private getBaseDir(docxPath: string): string {
-        try {
-            if (!docxPath) return process.cwd();
-            return path.dirname(docxPath);
-        } catch {
-            return process.cwd();
-        }
+        return docxPath ? path.dirname(docxPath) : process.cwd();
     }
 
 }

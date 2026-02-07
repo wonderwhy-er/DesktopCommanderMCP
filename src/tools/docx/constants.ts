@@ -1,20 +1,21 @@
 /**
  * DOCX Constants
- * Centralized constants for DOCX operations
+ *
+ * Centralised constants shared across the DOCX module.
+ *
+ * @module docx/constants
  */
 
-/**
- * Default DOCX conversion options
- */
+// ─── Conversion Defaults ─────────────────────────────────────────────────────
+
 export const DEFAULT_CONVERSION_OPTIONS = {
   includeImages: true,
   preserveFormatting: true,
   styleMap: [] as string[],
 } as const;
 
-/**
- * Default DOCX build options
- */
+// ─── Build (html-to-docx) Defaults ──────────────────────────────────────────
+
 export const DEFAULT_BUILD_OPTIONS = {
   font: 'Calibri',
   fontSize: 11,
@@ -32,23 +33,31 @@ export const DEFAULT_BUILD_OPTIONS = {
   pageNumber: false,
 } as const;
 
-/**
- * XML namespaces used in DOCX files
- */
+// ─── DOCX Internal XML Namespaces ────────────────────────────────────────────
+
 export const DOCX_NAMESPACES = {
   DUBLIN_CORE: 'dc',
   CUSTOM_PROPERTIES: 'cp',
   DCTERMS: 'dcterms',
 } as const;
 
-/**
- * DOCX core properties file path
- */
+// ─── DOCX Archive Paths ─────────────────────────────────────────────────────
+
 export const CORE_PROPERTIES_PATH = 'docProps/core.xml';
 
-/**
- * HTML wrapper template for incomplete HTML
- */
+// ─── Image MIME Types (extension → MIME) ─────────────────────────────────────
+
+export const IMAGE_MIME_TYPES: Readonly<Record<string, string>> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  png: 'image/png',
+};
+
+// ─── HTML Wrapper Template ───────────────────────────────────────────────────
+
 export const HTML_WRAPPER_TEMPLATE = `<!DOCTYPE html>
 <html>
 <head>
@@ -58,4 +67,3 @@ export const HTML_WRAPPER_TEMPLATE = `<!DOCTYPE html>
 {content}
 </body>
 </html>`;
-
