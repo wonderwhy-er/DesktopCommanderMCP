@@ -436,19 +436,10 @@ export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
         // Build success message with operation details
         let message: string;
         const isModification = Array.isArray(parsed.content);
-        const isVersioned = actualOutputPath !== parsed.path;
         
-        if (isModification && isVersioned) {
-            // Modification created a versioned file
-            message = `Successfully created versioned DOCX file: ${actualOutputPath}\nOriginal file preserved: ${parsed.path}`;
-        } else if (parsed.outputPath) {
-            // Explicit output path provided
-            message = `Successfully created new DOCX file: ${actualOutputPath}\nOriginal file preserved: ${parsed.path}`;
-        } else if (isModification) {
-            // Should not happen, but handle gracefully
-            message = `Successfully updated DOCX file: ${actualOutputPath}`;
+        if (isModification) {
+            message = `Successfully wrote modified DOCX to: ${actualOutputPath}\nOriginal preserved: ${parsed.path}`;
         } else {
-            // New file creation
             message = `Successfully created DOCX file: ${actualOutputPath}`;
         }
         

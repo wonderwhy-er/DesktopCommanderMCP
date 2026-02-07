@@ -33,31 +33,6 @@ export const DEFAULT_BUILD_OPTIONS = {
 } as const;
 
 /**
- * Supported image MIME types
- */
-export const SUPPORTED_IMAGE_TYPES = [
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/bmp',
-  'image/webp',
-  'image/svg+xml',
-] as const;
-
-/**
- * Supported image file extensions
- */
-export const SUPPORTED_IMAGE_EXTENSIONS = [
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.bmp',
-  '.webp',
-  '.svg',
-] as const;
-
-/**
  * XML namespaces used in DOCX files
  */
 export const DOCX_NAMESPACES = {

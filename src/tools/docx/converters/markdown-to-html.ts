@@ -186,4 +186,3 @@ export function buildMarkdownTableFromRows(rows: string[][]): string {
 
   return lines.join('\n');
 }
-

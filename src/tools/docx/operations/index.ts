@@ -1,10 +1,9 @@
 /**
  * DOCX Editing Operations
- * 
- * This module provides functionality to edit DOCX files using HTML-based operations.
- * It reads DOCX → HTML, applies operations to HTML, then html-to-docx
- * to write back to DOCX format.
- * 
+ *
+ * Reads DOCX → HTML (via direct XML parser or mammoth fallback),
+ * applies operations to the HTML DOM, then converts HTML → DOCX (html-to-docx).
+ *
  * @module docx/operations
  */
 
@@ -19,66 +18,6 @@ import { DocxOperationSchema } from '../../schemas.js';
 import { validateDocxPath, validateOperations } from '../validators.js';
 import { applyOperation } from './handlers/index.js';
 import { isDataUrl, isUrl, resolveImagePath, getMimeType } from '../utils.js';
-
-/**
- * Edit DOCX file using HTML-based operations
- * 
- * This function reads a DOCX file, converts it to HTML using mammoth, applies
- * the specified operations sequentially, and converts the modified HTML back
- * to DOCX format using html-to-docx.
- * 
- * The workflow is:
- * 1. Read DOCX file
- * 2. Convert DOCX → HTML (mammoth)
- * 3. Apply operations to HTML
- * 4. Convert HTML → DOCX (html-to-docx)
- * 
- * @param docxPath - Path to the DOCX file to edit
- * @param operations - Array of operations to apply sequentially
- * @param options - Edit options
- * @returns Buffer containing the modified DOCX file
- * @throws {DocxError} If editing fails
- * 
- * @example
- * ```typescript
- * // Replace text and append HTML content
- * const buffer = await editDocxWithOperations('document.docx', [
- *   { type: 'replaceText', search: 'old', replace: 'new', global: true },
- *   { type: 'appendHtml', html: '<h1>New Section</h1><p>Content here</p>' }
- * ]);
- * 
- * // Insert HTML after a specific element
- * const buffer2 = await editDocxWithOperations('document.docx', [
- *   { 
- *     type: 'insertHtml', 
- *     html: '<div>New content</div>',
- *     selector: 'h1',
- *     position: 'after'
- *   }
- * ]);
- * 
- * // Replace HTML elements
- * const buffer3 = await editDocxWithOperations('document.docx', [
- *   { 
- *     type: 'replaceHtml',
- *     selector: '.old-class',
- *     html: '<div class="new-class">New content</div>',
- *     replaceAll: true
- *   }
- * ]);
- * 
- * // Update HTML elements
- * const buffer4 = await editDocxWithOperations('document.docx', [
- *   { 
- *     type: 'updateHtml',
- *     selector: 'p',
- *     html: 'Updated content',
- *     attributes: { class: 'updated' },
- *     updateAll: false
- *   }
- * ]);
- * ```
- */
 /**
  * Pre-process operations to resolve local image paths to base64 data URLs.
  * html-to-docx CANNOT handle file:// URLs — it needs base64 data URLs or HTTP URLs.

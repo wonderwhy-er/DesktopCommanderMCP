@@ -459,26 +459,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                            or
                            write_docx(path="new_doc.docx", content="# Title\\n\\nBody text...")
 
-                        2. UPDATE/MODIFY EXISTING DOCX (AUTOMATIC VERSIONING):
+                        2. UPDATE/MODIFY EXISTING DOCX:
                            - Pass array of operations as 'content'.
-                           - WITHOUT 'outputPath': Automatically creates a VERSIONED copy (e.g., document_v1.docx)
-                             The original file is ALWAYS preserved. Subsequent edits create document_v2.docx, etc.
-                           - WITH 'outputPath': Creates a NEW file at the specified path, preserving the original
+                           - The original file is PRESERVED. The result is written to {name}_v1.docx.
+                           - Repeated edits always overwrite the SAME _v1 file (no cascading copies).
+                           - Optionally provide 'outputPath' to write to a custom location instead.
                            
-                           // Automatically creates document_v1.docx (original preserved):
+                           // Reads document.docx, writes result to document_v1.docx:
                            write_docx(path="document.docx", content=[
                                { type: "replaceText", search: "old", replace: "new" }
                            ])
                            
-                           // Next edit creates document_v2.docx:
+                           // Custom output path:
                            write_docx(path="document.docx", content=[
                                { type: "appendMarkdown", markdown: "# New Section" }
-                           ])
-                           
-                           // Use custom output path if needed:
-                           write_docx(path="document.docx", content=[
-                               { type: "appendMarkdown", markdown: "# New Section" }
-                           ], outputPath="document_updated.docx")
+                           ], outputPath="document_final.docx")
 
                         OPERATIONS:
                         - replaceText: Search and replace text in the document.
@@ -494,16 +489,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           or
                           { type: "insertTable", markdownTable: "| Header1 | Header2 |\\n| --- | --- |\\n| Data1 | Data2 |" }
                           With positioning (optional):
-                          { type: "insertTable", rows: [...], selector: "h2", position: "after" }
-                          selector: CSS selector (tag name like "h1", "p", ".class-name", "#id") to find target element.
+                          { type: "insertTable", rows: [...], selector: "h2:contains(Results)", position: "after" }
                           position: "before" | "after" | "inside" (default: "after"). Without selector, appends to end.
                         
                         - insertImage: Add an image to the document. Use 'selector' and 'position' to place at a specific location.
                           { type: "insertImage", imagePath: "/path/to/image.png", altText: "Description", width: 400, height: 300 }
                           With positioning (optional):
-                          { type: "insertImage", imagePath: "...", selector: "h1", position: "after" }
-                          selector: CSS selector to find target element. position: "before" | "after" | "inside" (default: "after").
+                          { type: "insertImage", imagePath: "...", selector: "h2:contains(Overview)", position: "before" }
+                          position: "before" | "after" | "inside" (default: "after").
                           Without selector, appends to end. Supports: local file paths, data URLs (data:image/png;base64,...)
+
+                        SELECTOR SYNTAX (for insertTable, insertImage, insertHtml, replaceHtml, updateHtml):
+                          Use selectors to target a SPECIFIC element in the document:
+                          - "h2:contains(Introduction)"  — the h2 heading whose text includes "Introduction" (case-insensitive)
+                          - "p:contains(some text)"       — the paragraph containing "some text"
+                          - ":contains(any text)"         — any element containing "any text"
+                          - "h2:nth-of-type(3)"           — the 3rd h2 heading in the document (1-based)
+                          - "h2:first-of-type"            — the first h2 heading
+                          - "h2:last-of-type"             — the last h2 heading
+                          - "h1", "p", "table"            — first element of that tag (for insert) / all (for replace/update)
+                          - "#myId", ".myClass"           — by ID or class name
+                          IMPORTANT: Always use :contains(text) to target a SPECIFIC heading or paragraph by its content.
+                          Plain tag selectors like "h2" only match the first element for insert operations.
 
                         SUPPORTED HTML/MARKDOWN FEATURES:
                         - HTML: Full HTML support (headings, paragraphs, tables, images, formatting)

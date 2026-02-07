@@ -10,6 +10,7 @@ import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.j
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { createDocxFromHtml, editDocxWithOperations, DocxOperation } from './docx/index.js';
+import { convertToHtmlIfNeeded, generateOutputPath } from './docx/utils.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -922,74 +923,13 @@ export async function writePdf(
 }
 
 /**
- * Convert markdown to HTML if needed, otherwise return HTML as-is
- */
-function convertToHtmlIfNeeded(content: string): string {
-    // Simple heuristic: if content has markdown patterns but no HTML tags, convert it
-    const hasMarkdown = /^#{1,6}\s|^\*\*|^\[.*\]\(|^\|.*\|/.test(content);
-    const hasHtmlTags = /<[a-z][\s\S]*>/i.test(content);
-    
-    if (hasMarkdown && !hasHtmlTags) {
-        // Convert markdown to HTML
-        let html = content;
-        // Headings
-        html = html.replace(/^### (.*)$/gm, '<h3>$1</h3>');
-        html = html.replace(/^## (.*)$/gm, '<h2>$1</h2>');
-        html = html.replace(/^# (.*)$/gm, '<h1>$1</h1>');
-        // Bold
-        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        // Italic
-        html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-        // Images
-        html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" />');
-        // Links
-        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-        // Paragraphs
-        html = html.split('\n\n').map(p => p.trim()).filter(p => p).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
-        return html;
-    }
-    
-    return content;
-}
-
-/**
- * Generate a versioned filename for DOCX files to preserve originals
- * @param filePath Original file path
- * @returns Versioned filename (e.g., document_v1.docx, document_v2.docx)
- */
-async function generateVersionedDocxPath(filePath: string): Promise<string> {
-    const dir = path.dirname(filePath);
-    const ext = path.extname(filePath);
-    const baseName = path.basename(filePath, ext);
-    
-    // Try to find the next available version number
-    let version = 1;
-    let versionedPath: string;
-    
-    do {
-        versionedPath = path.join(dir, `${baseName}_v${version}${ext}`);
-        try {
-            await fs.access(versionedPath);
-            // File exists, try next version
-            version++;
-        } catch {
-            // File doesn't exist, we can use this version
-            break;
-        }
-    } while (version < 1000); // Safety limit
-    
-    return versionedPath;
-}
-
-/**
  * Write content to a DOCX file.
  * Can create a new DOCX from HTML/Markdown string, or modify an existing DOCX using operations.
+ * Modifications write to {name}_v1.docx (original preserved) unless outputPath is provided.
  * 
- * When modifying an existing DOCX file, automatically creates a versioned copy to preserve the original.
- * 
- * @param filePath Path to the output DOCX file
+ * @param filePath Path to the DOCX file
  * @param content HTML/Markdown string (for creation) or array of operations (for modification)
- * @param outputPath Optional output path (if not provided and modifying, creates versioned file)
+ * @param outputPath Optional output path (defaults to {name}_v1.docx for modifications)
  * @param options Options for DOCX generation or modification
  * @returns The actual output path used (may differ from input if versioning occurred)
  */
@@ -1026,14 +966,8 @@ export async function writeDocx(
             throw new Error(`Cannot modify DOCX: source file does not exist: ${validPath}. Use string content to create a new DOCX file.`);
         }
 
-        // Determine target path: use outputPath if provided, otherwise create versioned file
-        let targetPath: string;
-        if (outputPath) {
-            targetPath = await validatePath(outputPath);
-        } else {
-            // Automatically create versioned file to preserve original
-            targetPath = await generateVersionedDocxPath(validPath);
-        }
+        // Write to outputPath if provided, otherwise create/overwrite {name}_v1.docx (preserves original)
+        const targetPath = outputPath ? await validatePath(outputPath) : generateOutputPath(validPath);
 
         const operations: DocxOperation[] = [];
 

@@ -10,7 +10,6 @@
 export interface DocxMetadata {
   title?: string;
   author?: string;
-  creator?: string;
   subject?: string;
   description?: string;
   creationDate?: Date;

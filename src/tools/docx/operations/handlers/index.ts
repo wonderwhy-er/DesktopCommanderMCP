@@ -1,10 +1,7 @@
 /**
  * DOCX Operation Handlers
- * 
- * Individual handlers for each operation type. Each handler is a pure function
- * that takes HTML and operation parameters and returns modified HTML.
- * 
- * @module docx/operations/handlers
+ *
+ * Pure functions: HTML in → modified HTML out.
  */
 
 import type { DocxOperation } from '../../types.js';
@@ -310,5 +307,4 @@ export function applyOperation(
       );
   }
 }
-
 

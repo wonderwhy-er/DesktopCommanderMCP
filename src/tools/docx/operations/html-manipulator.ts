@@ -1,10 +1,6 @@
 /**
- * HTML Manipulation Utilities
- * 
- * Provides functions for manipulating HTML content using DOM parsing.
- * Used by DOCX operations to modify HTML components.
- * 
- * @module docx/operations/html-manipulator
+ * HTML Manipulation — DOM-based insert / append / replace / update.
+ * Uses @xmldom/xmldom for parsing (not a browser DOMParser).
  */
 
 import { createRequire } from 'module';
@@ -111,11 +107,19 @@ function getRootElement(doc: Document): Element {
 }
 
 /**
- * Find elements in HTML using CSS selector
- * Supports: tag names, class selectors (.class), ID selectors (#id)
- * @param doc - DOM document
- * @param selector - CSS selector
- * @returns Array of matching elements
+ * Find elements in HTML using an extended CSS-like selector.
+ *
+ * Supported selectors:
+ *   #id                        – by ID
+ *   .class                     – by class name
+ *   tag                        – by tag name (e.g. "h2", "p")
+ *   tag:contains(text)         – tag whose textContent includes `text` (case-insensitive)
+ *   :contains(text)            – any element whose textContent includes `text`
+ *   tag:nth-of-type(N)         – Nth element of that tag (1-based)
+ *   tag:first-of-type          – shorthand for :nth-of-type(1)
+ *   tag:last-of-type           – last element of that tag
+ *
+ * All pseudo-selectors can be combined with a tag prefix (e.g. "h2:contains(Intro)").
  */
 function querySelectorAll(doc: Document, selector: string): Element[] {
   if (!selector || !selector.trim()) {
@@ -127,40 +131,84 @@ function querySelectorAll(doc: Document, selector: string): Element[] {
   const elements: Element[] = [];
 
   try {
-    // ID selector (e.g., "#idname")
+    // ── #id ──
     if (trimmedSelector.startsWith('#')) {
       const id = trimmedSelector.substring(1);
       const element = doc.getElementById(id);
-      if (element) {
-        elements.push(element);
-      }
+      if (element) elements.push(element);
       return elements;
     }
 
-    // Class selector (e.g., ".classname")
+    // ── .class ──
     if (trimmedSelector.startsWith('.')) {
       const className = trimmedSelector.substring(1);
       const found = root.getElementsByClassName(className);
-      for (let i = 0; i < found.length; i++) {
-        elements.push(found[i] as Element);
+      for (let i = 0; i < found.length; i++) elements.push(found[i] as Element);
+      return elements;
+    }
+
+    // ── :contains(text) — with optional tag prefix ──
+    const containsMatch = trimmedSelector.match(
+      /^([a-zA-Z][a-zA-Z0-9]*)?:contains\((.+)\)$/i
+    );
+    if (containsMatch) {
+      const tagFilter = containsMatch[1] || '*';
+      const searchText = containsMatch[2].trim();
+      const candidates = root.getElementsByTagName(tagFilter);
+      for (let i = 0; i < candidates.length; i++) {
+        const el = candidates[i] as Element;
+        const text = el.textContent || '';
+        if (text.toLowerCase().includes(searchText.toLowerCase())) {
+          elements.push(el);
+        }
       }
       return elements;
     }
 
-    // Tag name selector (e.g., "p", "div", "h1")
+    // ── tag:nth-of-type(N) ──
+    const nthMatch = trimmedSelector.match(
+      /^([a-zA-Z][a-zA-Z0-9]*):nth-of-type\((\d+)\)$/i
+    );
+    if (nthMatch) {
+      const tagName = nthMatch[1];
+      const n = parseInt(nthMatch[2], 10);
+      const found = root.getElementsByTagName(tagName);
+      if (n >= 1 && n <= found.length) {
+        elements.push(found[n - 1] as Element);
+      }
+      return elements;
+    }
+
+    // ── tag:first-of-type ──
+    const firstMatch = trimmedSelector.match(
+      /^([a-zA-Z][a-zA-Z0-9]*):first-of-type$/i
+    );
+    if (firstMatch) {
+      const found = root.getElementsByTagName(firstMatch[1]);
+      if (found.length > 0) elements.push(found[0] as Element);
+      return elements;
+    }
+
+    // ── tag:last-of-type ──
+    const lastMatch = trimmedSelector.match(
+      /^([a-zA-Z][a-zA-Z0-9]*):last-of-type$/i
+    );
+    if (lastMatch) {
+      const found = root.getElementsByTagName(lastMatch[1]);
+      if (found.length > 0) elements.push(found[found.length - 1] as Element);
+      return elements;
+    }
+
+    // ── plain tag name (e.g. "h2", "p") ──
     if (/^[a-zA-Z][a-zA-Z0-9]*$/.test(trimmedSelector)) {
       const found = root.getElementsByTagName(trimmedSelector);
-      for (let i = 0; i < found.length; i++) {
-        elements.push(found[i] as Element);
-      }
+      for (let i = 0; i < found.length; i++) elements.push(found[i] as Element);
       return elements;
     }
 
-    // Default: try as tag name
+    // Fallback: try as tag name
     const found = root.getElementsByTagName(trimmedSelector);
-    for (let i = 0; i < found.length; i++) {
-      elements.push(found[i] as Element);
-    }
+    for (let i = 0; i < found.length; i++) elements.push(found[i] as Element);
   } catch (error) {
     throw new DocxError(
       `Failed to query selector "${selector}": ${error instanceof Error ? error.message : String(error)}`,
@@ -265,7 +313,7 @@ export function insertHtml(
       return serializeHtml(doc);
     }
 
-    // Find target elements
+    // Find the FIRST matching target element only
     const targets = querySelectorAll(doc, selector);
 
     if (targets.length === 0) {
@@ -276,27 +324,25 @@ export function insertHtml(
       );
     }
 
-    // Insert relative to targets
-    for (const target of targets) {
-      for (const node of nodesToInsert) {
-        const clonedNode = node.cloneNode(true);
+    const target = targets[0];
+    for (const node of nodesToInsert) {
+      const clonedNode = node.cloneNode(true);
 
-        switch (position) {
-          case 'before':
-            target.parentNode?.insertBefore(clonedNode, target);
-            break;
-          case 'inside':
-            target.appendChild(clonedNode);
-            break;
-          case 'after':
-          default:
-            if (target.nextSibling) {
-              target.parentNode?.insertBefore(clonedNode, target.nextSibling);
-            } else {
-              target.parentNode?.appendChild(clonedNode);
-            }
-            break;
-        }
+      switch (position) {
+        case 'before':
+          target.parentNode?.insertBefore(clonedNode, target);
+          break;
+        case 'inside':
+          target.appendChild(clonedNode);
+          break;
+        case 'after':
+        default:
+          if (target.nextSibling) {
+            target.parentNode?.insertBefore(clonedNode, target.nextSibling);
+          } else {
+            target.parentNode?.appendChild(clonedNode);
+          }
+          break;
       }
     }
 

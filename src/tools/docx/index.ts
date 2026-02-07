@@ -1,76 +1,26 @@
 /**
- * DOCX Operations Library
- * Main exports for DOCX functionality
+ * DOCX Operations Library — Public API
+ *
+ * Only the symbols that external consumers actually import are re-exported here.
+ * Internal helpers (styled-html-parser, validators, converters, etc.) are
+ * consumed directly by sibling modules and are NOT part of the public surface.
  */
 
-// Reading - direct DOCX XML parsing with mammoth.js fallback
+// ── Reading ─────────────────────────────────────────────────────────────────
 export { parseDocxToHtml } from './html.js';
-export { convertDocxToStyledHtml } from './styled-html-parser.js';
+
+// ── Writing / Editing ───────────────────────────────────────────────────────
+export { createDocxFromHtml } from './builders/html-builder.js';
+export { editDocxWithOperations } from './operations/index.js';
+
+// ── Types ───────────────────────────────────────────────────────────────────
 export type {
   DocxParseResult,
   DocxMetadata,
-  DocxSection,
   DocxImage,
-} from './html.js';
-
-
-// Creating and editing - using html-to-docx for HTML to DOCX conversion
-export { createDocxFromHtml } from './builders/html-builder.js';
-export { editDocxWithOperations } from './operations/index.js';
-export type {
+  DocxSection,
   DocxOperation,
-  DocxReplaceTextOperation,
-  DocxAppendMarkdownOperation,
-  DocxInsertTableOperation,
-  DocxInsertImageOperation,
-  DocxAppendHtmlOperation,
-  DocxInsertHtmlOperation,
-  DocxReplaceHtmlOperation,
-  DocxUpdateHtmlOperation,
-  DocxBuildOptions,
-  DocxEditOptions,
 } from './types.js';
 
-// Types
-export type {
-  DocxParseOptions,
-} from './types.js';
-
-// Error handling
-export {
-  DocxError,
-  DocxErrorCode,
-  withErrorContext,
-} from './errors.js';
-
-// Utilities
-export {
-  isDataUrl,
-  isUrl,
-  parseDataUrl,
-  resolveImagePath,
-  fileExists,
-  validateImageFile,
-  escapeRegExp,
-  isValidMarkdownTable,
-  parseMarkdownTable,
-  getMimeType,
-  isDocxPath,
-} from './utils.js';
-
-// Validators
-export {
-  validateDocxPath,
-  validateOperations,
-  validateHtml,
-  validateSelector,
-  validateImageDimensions,
-} from './validators.js';
-
-// Converters
-export {
-  markdownToHtml,
-  markdownTableToHtml,
-  buildMarkdownTableFromRows,
-} from './converters/index.js';
-
+// ── Errors ──────────────────────────────────────────────────────────────────
+export { DocxError, DocxErrorCode } from './errors.js';

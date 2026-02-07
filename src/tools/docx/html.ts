@@ -1,13 +1,10 @@
 /**
- * DOCX to HTML Conversion
- * 
- * This module provides functionality to convert DOCX files to HTML format.
- * 
- * Primary method: Direct DOCX XML parsing (preserves all inline styles –
- * font colors, sizes, families, alignment, highlights, etc.)
- * 
- * Fallback: mammoth.js (semantic-only conversion, strips visual styles)
- * 
+ * DOCX → HTML Conversion
+ *
+ * Primary: Direct DOCX XML parsing (`styled-html-parser`) — preserves inline styles
+ *          (font colors, sizes, families, alignment, highlights, etc.)
+ * Fallback: mammoth.js — semantic-only conversion, strips visual styles.
+ *
  * @module docx/html
  */
 
@@ -22,9 +19,6 @@ import { convertDocxToStyledHtml } from './styled-html-parser.js';
 const require = createRequire(import.meta.url);
 const mammoth = require('mammoth');
 const { DOMParser } = require('@xmldom/xmldom');
-
-// Re-export types
-export type { DocxParseResult, DocxMetadata, DocxImage, DocxSection, DocxParseOptions };
 
 /**
  * Load DOCX file as buffer from file path or URL
@@ -175,22 +169,9 @@ async function extractMetadata(
   return metadata;
 }
 
-/**
- * Post-process HTML for better formatting while preserving all inline styles
- * @param html - HTML from either direct parser or mammoth
- * @returns Cleaned HTML with all style attributes preserved
- */
+/** Minimal whitespace cleanup — preserves all inline style attributes. */
 function postProcessHtml(html: string): string {
-  // Only do minimal cleanup – NEVER strip or modify style attributes
-  let processed = html;
-
-  // Collapse excessive whitespace between tags (but NOT within style="..." attributes)
-  processed = processed.replace(/>\s{2,}</g, '>\n<');
-
-  // Trim leading/trailing whitespace
-  processed = processed.trim();
-
-  return processed;
+  return html.replace(/>\s{2,}</g, '>\n<').trim();
 }
 
 /**
@@ -287,26 +268,10 @@ function parseIntoSections(html: string, images: DocxImage[]): DocxSection[] {
 }
 
 /**
- * Convert DOCX to HTML with full style preservation
- * 
- * Uses direct DOCX XML parsing to preserve ALL inline styles (font colors,
- * sizes, families, text alignment, highlights, etc.) that mammoth.js strips.
- * Falls back to mammoth.js if direct parsing fails.
- * 
- * @param source - Path to DOCX file or URL
- * @param options - Conversion options
- * @returns Parsed DOCX result with HTML and metadata
- * @throws {DocxError} If conversion fails
- * 
- * @example
- * ```typescript
- * const result = await parseDocxToHtml('document.docx', {
- *   includeImages: true,
- *   preserveFormatting: true
- * });
- * console.log(result.html); // HTML content with inline styles preserved
- * console.log(result.metadata.title); // Document title
- * ```
+ * Convert DOCX to HTML with full style preservation.
+ *
+ * Uses direct XML parsing when `preserveFormatting` is true (default).
+ * Falls back to mammoth.js if direct parsing fails or a custom `styleMap` is provided.
  */
 export async function parseDocxToHtml(
   source: string,
@@ -337,26 +302,20 @@ export async function parseDocxToHtml(
       let html: string;
       let images: DocxImage[];
 
-      // ── PRIMARY: Direct DOCX XML parsing (preserves all styles) ──
-      // This reads the raw DOCX XML and produces HTML with inline CSS for
-      // colors, font sizes, font families, text alignment, highlights, etc.
-      // Mammoth.js deliberately strips all of these, so direct parsing is
-      // required for style-accurate reading.
+      // Primary: direct XML parsing (preserves inline styles)
       if (preserveFormatting && styleMap.length === 0) {
         try {
-          const styledResult = await convertDocxToStyledHtml(buffer, includeImages);
-          html = styledResult.html;
-          images = styledResult.images;
-        } catch (directParseError) {
-          // If direct parsing fails, fall back to mammoth
-          console.debug('Direct DOCX XML parsing failed, falling back to mammoth:', directParseError);
+          const result = await convertDocxToStyledHtml(buffer, includeImages);
+          html = result.html;
+          images = result.images;
+        } catch {
+          // Fall back to mammoth if XML parsing fails
           const fallback = await convertWithMammoth(buffer, includeImages, styleMap, preserveFormatting);
           html = fallback.html;
           images = fallback.images;
         }
       } else {
-        // ── FALLBACK: mammoth.js (semantic conversion) ──
-        // Used when custom styleMaps are provided or preserveFormatting is off
+        // Mammoth fallback (custom styleMap or preserveFormatting off)
         const fallback = await convertWithMammoth(buffer, includeImages, styleMap, preserveFormatting);
         html = fallback.html;
         images = fallback.images;
@@ -383,11 +342,7 @@ export async function parseDocxToHtml(
   );
 }
 
-/**
- * Fallback: convert DOCX to HTML using mammoth.js
- * NOTE: mammoth deliberately strips visual styles (colors, fonts, sizes, alignment).
- * Only use this as a fallback or when custom styleMaps are needed.
- */
+/** Fallback: mammoth.js (strips visual styles — only semantic conversion). */
 async function convertWithMammoth(
   buffer: Buffer,
   includeImages: boolean,
