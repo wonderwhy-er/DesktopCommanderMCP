@@ -81,11 +81,16 @@ interface ThemeFonts {
   minor: string;  // body font (e.g. 'Calibri')
 }
 
+/** numId → Map<level, numFmt string> */
+type NumberingMap = Map<string, Map<number, string>>;
+
 interface ConversionContext {
   imageMap: Map<string, string>;   // rId → data:... URL
   linkMap: Map<string, string>;    // rId → href URL
   stylesMap: Map<string, StyleDef>;
   themeFonts: ThemeFonts;
+  docDefaultRunStyle: RunStyle;    // document-wide default font/size/color
+  numberingMap: NumberingMap;       // list numbering definitions
 }
 
 // ─── DOM Helpers ─────────────────────────────────────────────────────────────
@@ -307,28 +312,36 @@ function extractParagraphStyle(
   return result;
 }
 
-/** Get default run style for a paragraph (from pPr/rPr + inherited style def) */
+/** Get default run style for a paragraph (from docDefaults → Normal/pStyle → pPr/rPr) */
 function getDefaultRunStyle(
   pPr: Element | null,
   ctx: ConversionContext
-): RunStyle | undefined {
-  if (!pPr) return undefined;
+): RunStyle {
+  // Always start with document-wide defaults (docDefaults + Normal style)
+  // This ensures every run gets at least the correct default font-family and font-size.
+  let inherited: RunStyle = { ...ctx.docDefaultRunStyle };
 
-  let inherited: RunStyle | undefined;
-
-  // Check style definition for inherited run properties
-  const pStyleEl = getDirectChild(pPr, NS.W, 'pStyle');
-  if (pStyleEl) {
-    const styleId = pStyleEl.getAttribute('w:val') || '';
-    const mapped = ctx.stylesMap.get(styleId);
-    if (mapped?.runStyle) inherited = { ...mapped.runStyle };
+  // Get paragraph style ID; if absent, implicitly "Normal"
+  let styleId = '';
+  if (pPr) {
+    const pStyleEl = getDirectChild(pPr, NS.W, 'pStyle');
+    styleId = pStyleEl?.getAttribute('w:val') || '';
   }
 
-  // Check explicit rPr within pPr
-  const rPr = getDirectChild(pPr, NS.W, 'rPr');
-  if (rPr) {
-    const explicit = extractRunStyles(rPr, ctx.themeFonts);
-    return mergeRunStyles(inherited, explicit);
+  // Apply the named style's run properties (or Normal if implicit)
+  if (!styleId) styleId = 'Normal';
+  const mapped = ctx.stylesMap.get(styleId);
+  if (mapped?.runStyle) {
+    inherited = mergeRunStyles(inherited, mapped.runStyle);
+  }
+
+  // Apply explicit rPr within pPr (paragraph-level run override)
+  if (pPr) {
+    const rPr = getDirectChild(pPr, NS.W, 'rPr');
+    if (rPr) {
+      const explicit = extractRunStyles(rPr, ctx.themeFonts);
+      return mergeRunStyles(inherited, explicit);
+    }
   }
 
   return inherited;
@@ -615,6 +628,90 @@ async function loadRelationships(
   return { imageMap, linkMap };
 }
 
+// ─── Numbering / List Parsing ─────────────────────────────────────────────────
+
+/**
+ * Parse word/numbering.xml to build a map of numId → level → numFmt.
+ * This tells us whether each list level is bullet, decimal, lowerLetter, etc.
+ */
+async function parseNumberingXml(zip: any): Promise<NumberingMap> {
+  const result: NumberingMap = new Map();
+
+  try {
+    const numFile = zip.file('word/numbering.xml');
+    if (!numFile) return result;
+
+    const numXml = await numFile.async('string');
+    const doc = new DOMParser().parseFromString(numXml, 'application/xml');
+
+    // Parse abstract numbering definitions (abstractNumId → level → numFmt)
+    const abstractMap = new Map<string, Map<number, string>>();
+    const abstractNums = doc.getElementsByTagNameNS(NS.W, 'abstractNum');
+
+    for (let i = 0; i < abstractNums.length; i++) {
+      const absNum = abstractNums[i] as Element;
+      const absNumId = absNum.getAttribute('w:abstractNumId');
+      if (!absNumId) continue;
+
+      const levels = new Map<number, string>();
+      const lvlEls = getDirectChildren(absNum, NS.W, 'lvl');
+
+      for (const lvlEl of lvlEls) {
+        const ilvl = parseInt(lvlEl.getAttribute('w:ilvl') || '0', 10);
+        const numFmtEl = getDirectChild(lvlEl, NS.W, 'numFmt');
+        const numFmt = numFmtEl?.getAttribute('w:val') || 'bullet';
+        levels.set(ilvl, numFmt);
+      }
+
+      abstractMap.set(absNumId, levels);
+    }
+
+    // Parse concrete numbering: numId → abstractNumId mapping
+    const nums = doc.getElementsByTagNameNS(NS.W, 'num');
+    for (let i = 0; i < nums.length; i++) {
+      const numEl = nums[i] as Element;
+      const numId = numEl.getAttribute('w:numId');
+      if (!numId) continue;
+
+      const absNumIdRef = getDirectChild(numEl, NS.W, 'abstractNumId');
+      const absNumId = absNumIdRef?.getAttribute('w:val');
+      if (absNumId && abstractMap.has(absNumId)) {
+        result.set(numId, abstractMap.get(absNumId)!);
+      }
+    }
+  } catch {
+    // Numbering parsing is non-fatal
+  }
+
+  return result;
+}
+
+/** Extract numId and ilvl from a w:pPr element */
+function getNumInfo(pPr: Element | null): { numId: string; level: number } | null {
+  if (!pPr) return null;
+  const numPrEl = getDirectChild(pPr, NS.W, 'numPr');
+  if (!numPrEl) return null;
+
+  const numIdEl = getDirectChild(numPrEl, NS.W, 'numId');
+  const numId = numIdEl?.getAttribute('w:val');
+  // numId "0" means numbering is explicitly removed
+  if (!numId || numId === '0') return null;
+
+  const ilvlEl = getDirectChild(numPrEl, NS.W, 'ilvl');
+  const level = parseInt(ilvlEl?.getAttribute('w:val') || '0', 10);
+
+  return { numId, level };
+}
+
+/** Determine whether a list level is ordered (<ol>) or unordered (<ul>) */
+function getListTag(numberingMap: NumberingMap, numId: string, level: number): string {
+  const levels = numberingMap.get(numId);
+  if (!levels) return 'ul';
+  const numFmt = levels.get(level) || 'bullet';
+  // "bullet" and "none" → unordered; everything else (decimal, lowerLetter, etc.) → ordered
+  return numFmt === 'bullet' || numFmt === 'none' ? 'ul' : 'ol';
+}
+
 // ─── Document Defaults Extraction ────────────────────────────────────────────
 
 /** Parse theme fonts from word/theme/theme1.xml (major = heading font, minor = body font) */
@@ -723,10 +820,20 @@ export async function convertDocxToStyledHtml(
     fontSize: effectiveDefault.fontSize ? parseFloat(effectiveDefault.fontSize) : 11,
   };
 
+  // ── Parse numbering definitions (for bullet / numbered list detection) ──
+  const numberingMap = await parseNumberingXml(zip);
+
   // ── Parse relationships (images + hyperlinks) ──
   const { imageMap, linkMap } = await loadRelationships(zip, includeImages);
 
-  const ctx: ConversionContext = { imageMap, linkMap, stylesMap, themeFonts };
+  // ── Build document default RunStyle (docDefaults merged with Normal) ──
+  const docDefaultRunStyle = mergeRunStyles(docDefaultsStyle, normalStyle?.runStyle || {});
+
+  const ctx: ConversionContext = {
+    imageMap, linkMap, stylesMap, themeFonts,
+    docDefaultRunStyle,
+    numberingMap,
+  };
 
   // ── Find body ──
   const bodyEl = doc.getElementsByTagNameNS(NS.W, 'body')[0];
@@ -736,8 +843,30 @@ export async function convertDocxToStyledHtml(
 
   // ── Walk body children and build HTML ──
   let html = '';
-  let inList = false;
-  const listTag = 'ul';
+
+  // List state tracking: stack of open list tags with their level
+  const listStack: Array<{ tag: string; level: number }> = [];
+  let currentListNumId = '';
+
+  /** Close all open list tags down to (but not including) targetLevel. Pass -1 to close all. */
+  function closeListsToLevel(targetLevel: number): string {
+    let out = '';
+    while (listStack.length > 0 && listStack[listStack.length - 1].level > targetLevel) {
+      const closed = listStack.pop()!;
+      out += `</${closed.tag}>\n`;
+    }
+    return out;
+  }
+
+  function closeAllLists(): string {
+    let out = '';
+    while (listStack.length > 0) {
+      const closed = listStack.pop()!;
+      out += `</${closed.tag}>\n`;
+    }
+    currentListNumId = '';
+    return out;
+  }
 
   const bodyChildren = bodyEl.childNodes;
   for (let i = 0; i < bodyChildren.length; i++) {
@@ -747,38 +876,67 @@ export async function convertDocxToStyledHtml(
 
     if (el.localName === 'p') {
       const pPr = getDirectChild(el, NS.W, 'pPr');
-      const paraStyle = extractParagraphStyle(pPr, stylesMap);
+      const numInfo = getNumInfo(pPr);
 
-      if (paraStyle.isList) {
-        if (!inList) {
-          html += `<${listTag}>\n`;
-          inList = true;
+      if (numInfo) {
+        // ── List paragraph ──
+        const tag = getListTag(numberingMap, numInfo.numId, numInfo.level);
+        const level = numInfo.level;
+
+        // If numId changed, close all previous lists and start fresh
+        if (currentListNumId && currentListNumId !== numInfo.numId) {
+          html += closeAllLists();
         }
+        currentListNumId = numInfo.numId;
+
+        if (listStack.length === 0) {
+          // Start a new list
+          html += `<${tag}>\n`;
+          listStack.push({ tag, level });
+        } else if (level > listStack[listStack.length - 1].level) {
+          // Going deeper — open nested list(s)
+          html += `<${tag}>\n`;
+          listStack.push({ tag, level });
+        } else if (level < listStack[listStack.length - 1].level) {
+          // Going shallower — close deeper lists
+          html += closeListsToLevel(level);
+          // If the tag at current level differs, swap it
+          if (listStack.length > 0 && listStack[listStack.length - 1].tag !== tag) {
+            const old = listStack.pop()!;
+            html += `</${old.tag}>\n<${tag}>\n`;
+            listStack.push({ tag, level });
+          }
+        } else {
+          // Same level — check if tag type changed (e.g. ul → ol)
+          if (listStack[listStack.length - 1].tag !== tag) {
+            const old = listStack.pop()!;
+            html += `</${old.tag}>\n<${tag}>\n`;
+            listStack.push({ tag, level });
+          }
+        }
+
+        // Emit the <li>
         const liContent = convertParagraphInner(el, ctx);
+        const paraStyle = extractParagraphStyle(pPr, stylesMap);
         const cssStyles: string[] = [];
         if (paraStyle.textAlign) cssStyles.push(`text-align:${paraStyle.textAlign}`);
+        // Visual indent for nested levels (helps html-to-docx produce indented output)
+        if (level > 0) cssStyles.push(`margin-left:${level * 36}pt`);
         const styleAttr = cssStyles.length > 0 ? ` style="${cssStyles.join(';')}"` : '';
         html += `<li${styleAttr}>${liContent || '&nbsp;'}</li>\n`;
       } else {
-        if (inList) {
-          html += `</${listTag}>\n`;
-          inList = false;
-        }
+        // ── Normal paragraph ──
+        html += closeAllLists();
         html += convertParagraphToHtml(el, ctx);
       }
     } else if (el.localName === 'tbl') {
-      if (inList) {
-        html += `</${listTag}>\n`;
-        inList = false;
-      }
+      html += closeAllLists();
       html += convertTableToHtml(el, ctx);
     }
   }
 
-  // Close any open list
-  if (inList) {
-    html += `</${listTag}>\n`;
-  }
+  // Close any remaining open lists
+  html += closeAllLists();
 
   // ── Build DocxImage array from imageMap ──
   const images: DocxImage[] = [];
