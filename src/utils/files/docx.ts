@@ -100,13 +100,44 @@ export class DocxFileHandler implements FileHandler {
     }
 
     /**
+     * Generate a versioned filename for DOCX files to preserve originals
+     * @param filePath Original file path
+     * @returns Versioned filename (e.g., document_v1.docx, document_v2.docx)
+     */
+    private async generateVersionedPath(filePath: string): Promise<string> {
+        const dir = path.dirname(filePath);
+        const ext = path.extname(filePath);
+        const baseName = path.basename(filePath, ext);
+        
+        // Try to find the next available version number
+        let version = 1;
+        let versionedPath: string;
+        
+        do {
+            versionedPath = path.join(dir, `${baseName}_v${version}${ext}`);
+            try {
+                await fs.access(versionedPath);
+                // File exists, try next version
+                version++;
+            } catch {
+                // File doesn't exist, we can use this version
+                break;
+            }
+        } while (version < 1000); // Safety limit
+        
+        return versionedPath;
+    }
+
+    /**
      * Write DOCX file.
      *
      * Behaviour:
      * - When content is a string:
      *   - mode === 'rewrite' (default): create a new DOCX from HTML content
-     *   - mode === 'append': append HTML content to existing DOCX (round-trip)
-     * - When content is an array: treat as high-level DocxOperation[] and apply edits
+     *   - mode === 'append': append HTML content to existing DOCX (creates versioned file)
+     * - When content is an array: treat as high-level DocxOperation[] and apply edits (creates versioned file)
+     * 
+     * When modifying existing files, automatically creates a versioned copy to preserve the original.
      */
     async write(path: string, content: any, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
         const baseDir = path ? this.getBaseDir(path) : process.cwd();
@@ -115,12 +146,22 @@ export class DocxFileHandler implements FileHandler {
         if (typeof content === 'string') {
             if (mode === 'append') {
                 // Append HTML/markdown to existing document via operations
+                // Check if file exists - if so, create versioned copy
+                let targetPath = path;
+                try {
+                    await fs.access(path);
+                    // File exists, create versioned copy
+                    targetPath = await this.generateVersionedPath(path);
+                } catch {
+                    // File doesn't exist, create new file
+                }
+                
                 const operations: DocxOperation[] = [{
                     type: 'appendMarkdown',
                     markdown: content // Will be converted to HTML internally
                 }];
                 const buffer = await editDocxWithOperations(path, operations, { baseDir });
-                await fs.writeFile(path, buffer);
+                await fs.writeFile(targetPath, buffer);
             } else {
                 // Create a brand new DOCX from HTML
                 // If content looks like markdown, convert it to HTML first
@@ -133,9 +174,19 @@ export class DocxFileHandler implements FileHandler {
 
         // Array content → treat as DocxOperation[]
         if (Array.isArray(content)) {
+            // Check if file exists - if so, create versioned copy
+            let targetPath = path;
+            try {
+                await fs.access(path);
+                // File exists, create versioned copy to preserve original
+                targetPath = await this.generateVersionedPath(path);
+            } catch {
+                throw new Error(`Cannot modify DOCX: source file does not exist: ${path}. Use string content to create a new DOCX file.`);
+            }
+            
             const operations = content as DocxOperation[];
             const buffer = await editDocxWithOperations(path, operations, { baseDir });
-            await fs.writeFile(path, buffer);
+            await fs.writeFile(targetPath, buffer);
             return;
         }
 
@@ -147,10 +198,33 @@ export class DocxFileHandler implements FileHandler {
      *
      * The range parameter is currently advisory only; all edits are applied to
      * the document as a whole via markdown round-tripping.
+     * 
+     * Automatically creates a versioned copy to preserve the original file.
      */
     async editRange(path: string, range: string, content: any, options?: Record<string, any>): Promise<EditResult> {
         const baseDir = this.getBaseDir(path);
-        const outputPath = options?.outputPath || path;
+        
+        // Determine output path: use provided outputPath, otherwise create versioned file
+        let outputPath: string;
+        if (options?.outputPath) {
+            outputPath = options.outputPath;
+        } else {
+            // Check if file exists - if so, create versioned copy
+            try {
+                await fs.access(path);
+                // File exists, create versioned copy to preserve original
+                outputPath = await this.generateVersionedPath(path);
+            } catch {
+                return {
+                    success: false,
+                    editsApplied: 0,
+                    errors: [{
+                        location: range,
+                        error: `Cannot edit DOCX: source file does not exist: ${path}`
+                    }]
+                };
+            }
+        }
 
         let operations: DocxOperation[];
 

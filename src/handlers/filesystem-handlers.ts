@@ -431,19 +431,29 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
 export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteDocxArgsSchema.parse(args);
-        await writeDocx(parsed.path, parsed.content, parsed.outputPath, parsed.options);
-        const targetPath = parsed.outputPath || parsed.path;
+        const actualOutputPath = await writeDocx(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         
         // Build success message with operation details
         let message: string;
-        if (parsed.outputPath) {
-            message = `Successfully created new DOCX file: ${targetPath}\nOriginal file preserved: ${parsed.path}`;
+        const isModification = Array.isArray(parsed.content);
+        const isVersioned = actualOutputPath !== parsed.path;
+        
+        if (isModification && isVersioned) {
+            // Modification created a versioned file
+            message = `Successfully created versioned DOCX file: ${actualOutputPath}\nOriginal file preserved: ${parsed.path}`;
+        } else if (parsed.outputPath) {
+            // Explicit output path provided
+            message = `Successfully created new DOCX file: ${actualOutputPath}\nOriginal file preserved: ${parsed.path}`;
+        } else if (isModification) {
+            // Should not happen, but handle gracefully
+            message = `Successfully updated DOCX file: ${actualOutputPath}`;
         } else {
-            message = `Successfully updated DOCX file: ${targetPath}`;
+            // New file creation
+            message = `Successfully created DOCX file: ${actualOutputPath}`;
         }
         
         // Add operation summary if using operations mode
-        if (Array.isArray(parsed.content)) {
+        if (isModification && Array.isArray(parsed.content)) {
             const opCounts = {
                 replaceText: 0,
                 appendMarkdown: 0,
@@ -452,7 +462,7 @@ export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
             };
             
             for (const op of parsed.content) {
-                if (op.type in opCounts) {
+                if (typeof op === 'object' && op !== null && 'type' in op && op.type in opCounts) {
                     opCounts[op.type as keyof typeof opCounts]++;
                 }
             }

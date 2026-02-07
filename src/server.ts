@@ -459,17 +459,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                            or
                            write_docx(path="new_doc.docx", content="# Title\\n\\nBody text...")
 
-                        2. UPDATE/MODIFY EXISTING DOCX (DEFAULT: OVERWRITES ORIGINAL):
+                        2. UPDATE/MODIFY EXISTING DOCX (AUTOMATIC VERSIONING):
                            - Pass array of operations as 'content'.
-                           - WITHOUT 'outputPath': UPDATES the original file (OVERWRITES IT)
-                           - WITH 'outputPath': Creates a NEW file, preserving the original
+                           - WITHOUT 'outputPath': Automatically creates a VERSIONED copy (e.g., document_v1.docx)
+                             The original file is ALWAYS preserved. Subsequent edits create document_v2.docx, etc.
+                           - WITH 'outputPath': Creates a NEW file at the specified path, preserving the original
                            
-                           // Update the original file (RECOMMENDED for edits):
+                           // Automatically creates document_v1.docx (original preserved):
                            write_docx(path="document.docx", content=[
                                { type: "replaceText", search: "old", replace: "new" }
                            ])
                            
-                           // Create a modified copy (use when you need to preserve original):
+                           // Next edit creates document_v2.docx:
+                           write_docx(path="document.docx", content=[
+                               { type: "appendMarkdown", markdown: "# New Section" }
+                           ])
+                           
+                           // Use custom output path if needed:
                            write_docx(path="document.docx", content=[
                                { type: "appendMarkdown", markdown: "# New Section" }
                            ], outputPath="document_updated.docx")

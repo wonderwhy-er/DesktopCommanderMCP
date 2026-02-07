@@ -953,20 +953,52 @@ function convertToHtmlIfNeeded(content: string): string {
 }
 
 /**
+ * Generate a versioned filename for DOCX files to preserve originals
+ * @param filePath Original file path
+ * @returns Versioned filename (e.g., document_v1.docx, document_v2.docx)
+ */
+async function generateVersionedDocxPath(filePath: string): Promise<string> {
+    const dir = path.dirname(filePath);
+    const ext = path.extname(filePath);
+    const baseName = path.basename(filePath, ext);
+    
+    // Try to find the next available version number
+    let version = 1;
+    let versionedPath: string;
+    
+    do {
+        versionedPath = path.join(dir, `${baseName}_v${version}${ext}`);
+        try {
+            await fs.access(versionedPath);
+            // File exists, try next version
+            version++;
+        } catch {
+            // File doesn't exist, we can use this version
+            break;
+        }
+    } while (version < 1000); // Safety limit
+    
+    return versionedPath;
+}
+
+/**
  * Write content to a DOCX file.
  * Can create a new DOCX from HTML/Markdown string, or modify an existing DOCX using operations.
  * 
+ * When modifying an existing DOCX file, automatically creates a versioned copy to preserve the original.
+ * 
  * @param filePath Path to the output DOCX file
  * @param content HTML/Markdown string (for creation) or array of operations (for modification)
- * @param outputPath Optional output path (defaults to filePath)
+ * @param outputPath Optional output path (if not provided and modifying, creates versioned file)
  * @param options Options for DOCX generation or modification
+ * @returns The actual output path used (may differ from input if versioning occurred)
  */
 export async function writeDocx(
     filePath: string,
     content: string | DocxOperation[],
     outputPath?: string,
     options: any = {}
-): Promise<void> {
+): Promise<string> {
     const validPath = await validatePath(filePath);
     const fileExtension = getFileExtension(validPath);
 
@@ -981,12 +1013,27 @@ export async function writeDocx(
         // Convert markdown to HTML if needed (backward compatibility)
         const html = convertToHtmlIfNeeded(content);
         const docxBuffer = await createDocxFromHtml(html, options);
-        // Use outputPath if provided, otherwise overwrite input file
+        // Use outputPath if provided, otherwise use input file path
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
         await fs.writeFile(targetPath, docxBuffer);
+        return targetPath;
     } else if (Array.isArray(content)) {
         // --- DOCX MODIFICATION MODE ---
-        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+        // Check if source file exists (required for modification)
+        try {
+            await fs.access(validPath);
+        } catch {
+            throw new Error(`Cannot modify DOCX: source file does not exist: ${validPath}. Use string content to create a new DOCX file.`);
+        }
+
+        // Determine target path: use outputPath if provided, otherwise create versioned file
+        let targetPath: string;
+        if (outputPath) {
+            targetPath = await validatePath(outputPath);
+        } else {
+            // Automatically create versioned file to preserve original
+            targetPath = await generateVersionedDocxPath(validPath);
+        }
 
         const operations: DocxOperation[] = [];
 
@@ -1016,13 +1063,6 @@ export async function writeDocx(
             insertImageCount: operations.filter(op => op.type === 'insertImage').length
         });
 
-        // Check if source file exists (required for modification)
-        try {
-            await fs.access(validPath);
-        } catch {
-            throw new Error(`Cannot modify DOCX: source file does not exist: ${validPath}. Use string content to create a new DOCX file.`);
-        }
-
         // Perform the DOCX editing
         const modifiedDocxBuffer = await editDocxWithOperations(validPath, operations, {
             ...options,
@@ -1031,6 +1071,7 @@ export async function writeDocx(
 
         // Write the modified DOCX to the output path
         await fs.writeFile(targetPath, modifiedDocxBuffer);
+        return targetPath;
     } else {
         throw new Error('Invalid content type for writeDocx. Expected string (HTML/markdown) or array of operations.');
     }
