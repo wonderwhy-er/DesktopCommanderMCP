@@ -1,10 +1,10 @@
 /**
  * DOCX Editing Operations
- *
+ * 
  * Reads DOCX → HTML (via direct XML parser or mammoth fallback),
  * applies a sequence of operations to the HTML DOM,
  * then converts the modified HTML → DOCX (html-to-docx).
- *
+ * 
  * @module docx/operations
  */
 
@@ -83,7 +83,7 @@ export async function editDocxWithOperations(
         preserveFormatting: options.preserveFormatting ?? DEFAULT_CONVERSION_OPTIONS.preserveFormatting,
         ...(options.styleMap && { styleMap: options.styleMap }),
       };
-
+      
       // Read DOCX → HTML
       const docxResult = await parseDocxToHtml(normalizedPath, parseOptions);
       let html = docxResult.html;

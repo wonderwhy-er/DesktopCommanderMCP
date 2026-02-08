@@ -20,6 +20,14 @@ import { validateImageDimensions } from '../../validators.js';
 
 // ─── Text Operations ─────────────────────────────────────────────────────────
 
+/**
+ * Replace text in HTML while protecting base64 data URLs and other attribute values.
+ *
+ * Strategy: Temporarily extract `<img>` tags (which contain huge base64 data URLs)
+ * and replace them with placeholders, perform the text replacement,
+ * then restore the original `<img>` tags. This prevents the regex from
+ * accidentally matching / corrupting base64 image data.
+ */
 export function handleReplaceText(
   html: string,
   search: string,
@@ -28,8 +36,24 @@ export function handleReplaceText(
   global = true
 ): string {
   if (!search?.trim()) return html;
+
+  // Extract and protect all <img> tags from text replacement
+  const imgPlaceholders: string[] = [];
+  const protectedHtml = html.replace(/<img\s[^>]*>/gi, (match) => {
+    imgPlaceholders.push(match);
+    return `\x00IMG_PLACEHOLDER_${imgPlaceholders.length - 1}\x00`;
+  });
+
+  // Perform the text replacement on the protected HTML
   const flags = matchCase ? (global ? 'g' : '') : global ? 'gi' : 'i';
-  return html.replace(new RegExp(escapeRegExp(search), flags), replace);
+  let result = protectedHtml.replace(new RegExp(escapeRegExp(search), flags), replace);
+
+  // Restore the original <img> tags
+  for (let i = 0; i < imgPlaceholders.length; i++) {
+    result = result.replace(`\x00IMG_PLACEHOLDER_${i}\x00`, imgPlaceholders[i]);
+  }
+
+  return result;
 }
 
 // ─── HTML / Markdown Append & Insert ─────────────────────────────────────────

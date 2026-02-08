@@ -26,6 +26,8 @@ const NS = {
   WP: 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
   A: 'http://schemas.openxmlformats.org/drawingml/2006/main',
   PIC: 'http://schemas.openxmlformats.org/drawingml/2006/picture',
+  MC: 'http://schemas.openxmlformats.org/markup-compatibility/2006',
+  V: 'urn:schemas-microsoft-com:vml',
 } as const;
 
 // ─── Highlight Colour Map ────────────────────────────────────────────────────
@@ -73,6 +75,7 @@ interface ParagraphStyle {
 interface StyleDef {
   tag?: string;
   runStyle?: RunStyle;
+  basedOn?: string; // w:basedOn styleId — used to resolve inheritance chains
 }
 
 interface ThemeFonts {
@@ -90,6 +93,25 @@ interface ConversionContext {
   themeFonts: ThemeFonts;
   docDefaultRunStyle: RunStyle;     // document-wide default font/size/colour
   numberingMap: NumberingMap;
+}
+
+// ─── ZIP Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Find a file in a JSZip instance, with case-insensitive fallback.
+ * Some DOCX generators use inconsistent casing (e.g. `Word/Document.xml`
+ * vs `word/document.xml`), so we fall back to a case-insensitive search.
+ */
+function findZipFile(zip: any, path: string): any | null {
+  // Try exact path first (fast path)
+  const file = zip.file(path);
+  if (file) return file;
+
+  // Case-insensitive fallback
+  const lowerPath = path.toLowerCase();
+  const allPaths: string[] = Object.keys(zip.files);
+  const match = allPaths.find((p: string) => p.toLowerCase() === lowerPath);
+  return match ? zip.file(match) : null;
 }
 
 // ─── DOM Helpers ─────────────────────────────────────────────────────────────
@@ -315,6 +337,7 @@ function parseStylesXml(xml: string, themeFonts: ThemeFonts): Map<string, StyleD
     const doc = new DOMParser().parseFromString(xml, 'application/xml');
     const styles = doc.getElementsByTagNameNS(NS.W, 'style');
 
+    // First pass: collect all styles with their basedOn references
     for (let i = 0; i < styles.length; i++) {
       const styleEl = styles[i] as Element;
       const styleId = styleEl.getAttribute('w:styleId');
@@ -330,30 +353,104 @@ function parseStylesXml(xml: string, themeFonts: ThemeFonts): Map<string, StyleD
         }
       }
 
+      // Capture basedOn reference for inheritance resolution
+      const basedOnEl = getDirectChild(styleEl, NS.W, 'basedOn');
+      if (basedOnEl) {
+        entry.basedOn = basedOnEl.getAttribute('w:val') || undefined;
+      }
+
       const rPr = getDirectChild(styleEl, NS.W, 'rPr');
       if (rPr) entry.runStyle = extractRunStyles(rPr, themeFonts);
 
       map.set(styleId, entry);
     }
+
+    // Second pass: resolve basedOn inheritance chains
+    // Walk up each style's basedOn chain and merge inherited run styles
+    resolveStyleInheritance(map);
   } catch {
     // Non-fatal — return whatever we have
   }
   return map;
 }
 
+/**
+ * Resolve basedOn inheritance chains for all styles.
+ * Each style's runStyle is merged with its parent's (fully-resolved) runStyle,
+ * so that the final runStyle on each entry contains the complete set of inherited properties.
+ */
+function resolveStyleInheritance(map: Map<string, StyleDef>): void {
+  const resolved = new Set<string>();
+
+  function resolve(styleId: string, visited: Set<string>): void {
+    if (resolved.has(styleId) || !map.has(styleId)) return;
+    if (visited.has(styleId)) return; // Circular reference guard
+    visited.add(styleId);
+
+    const entry = map.get(styleId)!;
+    if (entry.basedOn && map.has(entry.basedOn)) {
+      // Ensure the parent is resolved first
+      resolve(entry.basedOn, visited);
+
+      const parent = map.get(entry.basedOn)!;
+      if (parent.runStyle) {
+        // Merge: parent's resolved style is the base, this style's own rPr overrides
+        entry.runStyle = mergeRunStyles(parent.runStyle, entry.runStyle || {});
+      }
+      // Inherit tag from parent if not set
+      if (!entry.tag && parent.tag) entry.tag = parent.tag;
+    }
+
+    resolved.add(styleId);
+  }
+
+  for (const styleId of map.keys()) {
+    resolve(styleId, new Set());
+  }
+}
+
 // ─── Element Converters ──────────────────────────────────────────────────────
+
+/** EMU (English Metric Units) to pixels (96 DPI). 1 inch = 914400 EMU, 1 px = 9525 EMU. */
+const EMU_PER_PX = 9525;
+
+/** Convert CSS-like units to pixels (approximate). */
+function unitToPx(value: number, unit: string): number {
+  switch (unit) {
+    case 'px': return value;
+    case 'pt': return value * (96 / 72);      // 1pt = 96/72 px
+    case 'in': return value * 96;              // 1in = 96px
+    case 'cm': return value * (96 / 2.54);     // 1cm = 96/2.54 px
+    case 'mm': return value * (96 / 25.4);     // 1mm = 96/25.4 px
+    default: return value;
+  }
+}
 
 function convertDrawingToHtml(drawingEl: Element, ctx: ConversionContext): string {
   try {
+    // Search for blip (image reference) — first by namespace, then by localName as fallback
+    let blip: Element | null = null;
     const blips = drawingEl.getElementsByTagNameNS(NS.A, 'blip');
-    if (blips.length === 0) return '';
+    if (blips.length > 0) {
+      blip = blips[0] as Element;
+    } else {
+      // Fallback: search by localName only (handles namespace prefix issues)
+      const allEls = drawingEl.getElementsByTagName('*');
+      for (let i = 0; i < allEls.length; i++) {
+        if ((allEls[i] as Element).localName === 'blip') { blip = allEls[i] as Element; break; }
+      }
+    }
+    if (!blip) return '';
 
-    const blip = blips[0] as Element;
-    const rId = blip.getAttributeNS(NS.R, 'embed') || blip.getAttribute('r:embed');
+    const rId = blip.getAttributeNS(NS.R, 'embed')
+             || blip.getAttribute('r:embed')
+             || blip.getAttributeNS(NS.R, 'link')
+             || blip.getAttribute('r:link');
     if (!rId || !ctx.imageMap.has(rId)) return '';
 
     const dataUrl = ctx.imageMap.get(rId)!;
 
+    // Extract alt text from wp:docPr
     let alt = '';
     const docPrs = drawingEl.getElementsByTagNameNS(NS.WP, 'docPr');
     if (docPrs.length > 0) {
@@ -362,45 +459,191 @@ function convertDrawingToHtml(drawingEl: Element, ctx: ConversionContext): strin
          || '';
     }
 
-    return `<img src="${dataUrl}" alt="${escapeHtml(alt)}" />`;
+    // Extract image dimensions from wp:extent (cx/cy in EMUs)
+    const attrs: string[] = [`src="${dataUrl}"`, `alt="${escapeHtml(alt)}"`];
+    const extents = drawingEl.getElementsByTagNameNS(NS.WP, 'extent');
+    if (extents.length > 0) {
+      const ext = extents[0] as Element;
+      const cx = parseInt(ext.getAttribute('cx') || '0', 10);
+      const cy = parseInt(ext.getAttribute('cy') || '0', 10);
+      if (cx > 0) attrs.push(`width="${Math.round(cx / EMU_PER_PX)}"`);
+      if (cy > 0) attrs.push(`height="${Math.round(cy / EMU_PER_PX)}"`);
+    }
+
+    return `<img ${attrs.join(' ')} />`;
   } catch {
     return '';
   }
 }
 
+/**
+ * Convert a VML `w:pict` element to an HTML `<img>` tag.
+ * Older DOCX files and mc:Fallback blocks use VML instead of DrawingML.
+ */
+function convertPictToHtml(pictEl: Element, ctx: ConversionContext): string {
+  try {
+    // Search all descendants for imagedata elements (may use v: prefix or no prefix)
+    const allEls = pictEl.getElementsByTagName('*');
+    let rId = '';
+    let shapeStyle = '';
+
+    for (let i = 0; i < allEls.length; i++) {
+      const el = allEls[i] as Element;
+      const local = el.localName || '';
+
+      if (local === 'imagedata') {
+        rId = el.getAttributeNS(NS.R, 'id') || el.getAttribute('r:id') || '';
+      }
+      if (local === 'shape' && !shapeStyle) {
+        shapeStyle = el.getAttribute('style') || '';
+      }
+    }
+
+    if (!rId || !ctx.imageMap.has(rId)) return '';
+
+    const dataUrl = ctx.imageMap.get(rId)!;
+    const attrs: string[] = [`src="${dataUrl}"`];
+
+    if (shapeStyle) {
+      const wMatch = shapeStyle.match(/width:\s*([\d.]+)\s*(pt|px|in|cm|mm)/);
+      const hMatch = shapeStyle.match(/height:\s*([\d.]+)\s*(pt|px|in|cm|mm)/);
+      // Convert to pixels for html-to-docx (approx: 1pt ≈ 1.333px, 1in = 96px, 1cm ≈ 37.8px)
+      if (wMatch) {
+        const px = unitToPx(parseFloat(wMatch[1]), wMatch[2]);
+        if (px > 0) attrs.push(`width="${Math.round(px)}"`);
+      }
+      if (hMatch) {
+        const px = unitToPx(parseFloat(hMatch[1]), hMatch[2]);
+        if (px > 0) attrs.push(`height="${Math.round(px)}"`);
+      }
+    }
+
+    return `<img ${attrs.join(' ')} />`;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Convert an `mc:AlternateContent` element within a run to HTML.
+ * Modern Word wraps drawings in mc:AlternateContent/mc:Choice with an
+ * mc:Fallback/w:pict for backward compatibility.
+ */
+function convertAlternateContentInRun(acEl: Element, ctx: ConversionContext): string {
+  // Try mc:Choice first (preferred — DrawingML)
+  for (let i = 0; i < acEl.childNodes.length; i++) {
+    const child = acEl.childNodes[i];
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+
+    if (el.localName === 'Choice') {
+      // Look for w:drawing descendants
+      const drawings = el.getElementsByTagNameNS(NS.W, 'drawing');
+      if (drawings.length > 0) return convertDrawingToHtml(drawings[0] as Element, ctx);
+      // Also check by localName (some docs omit namespace on drawing)
+      for (let j = 0; j < el.childNodes.length; j++) {
+        const cc = el.childNodes[j];
+        if (cc.nodeType === 1 && (cc as Element).localName === 'drawing') {
+          return convertDrawingToHtml(cc as Element, ctx);
+        }
+      }
+    }
+  }
+
+  // Fallback: try mc:Fallback → w:pict (VML)
+  for (let i = 0; i < acEl.childNodes.length; i++) {
+    const child = acEl.childNodes[i];
+    if (child.nodeType !== 1) continue;
+    const el = child as Element;
+
+    if (el.localName === 'Fallback') {
+      for (let j = 0; j < el.childNodes.length; j++) {
+        const fc = el.childNodes[j];
+        if (fc.nodeType === 1 && (fc as Element).localName === 'pict') {
+          return convertPictToHtml(fc as Element, ctx);
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Convert a `w:r` (run) element to HTML.
+ *
+ * CRITICAL: Images (`<img>`) must NOT be wrapped in `<span>` tags.
+ * `html-to-docx` only detects `<img>` as **direct children** of `<p>` elements —
+ * if images are nested inside `<span>`, they are silently dropped from the output DOCX.
+ *
+ * Therefore, this function separates text content (wrapped in styled `<span>`)
+ * from image content (emitted as bare `<img>` elements).
+ */
 function convertRunToHtml(runEl: Element, ctx: ConversionContext, defaultRunStyle?: RunStyle): string {
   const rPr = getDirectChild(runEl, NS.W, 'rPr');
   const explicitStyle = rPr ? extractRunStyles(rPr, ctx.themeFonts) : {};
   const style = mergeRunStyles(defaultRunStyle, explicitStyle);
 
-  const parts: string[] = [];
+  const textParts: string[] = [];
+  const imageParts: string[] = [];
+
   for (let i = 0; i < runEl.childNodes.length; i++) {
     const child = runEl.childNodes[i];
     if (child.nodeType !== 1) continue;
     const el = child as Element;
 
-    if (el.localName === 't') parts.push(escapeHtml(el.textContent || ''));
-    else if (el.localName === 'br') parts.push('<br>');
-    else if (el.localName === 'tab') parts.push('&#9;');
-    else if (el.localName === 'drawing') parts.push(convertDrawingToHtml(el, ctx));
+    if (el.localName === 't') textParts.push(escapeHtml(el.textContent || ''));
+    else if (el.localName === 'br') textParts.push('<br>');
+    else if (el.localName === 'tab') textParts.push('&#9;');
+    else if (el.localName === 'drawing') imageParts.push(convertDrawingToHtml(el, ctx));
+    else if (el.localName === 'pict') imageParts.push(convertPictToHtml(el, ctx));
+    else if (el.localName === 'AlternateContent') imageParts.push(convertAlternateContentInRun(el, ctx));
+    else if (el.localName === 'object') {
+      // w:object can contain w:pict or w:drawing
+      const objDrawing = getDirectChild(el, NS.W, 'drawing');
+      if (objDrawing) imageParts.push(convertDrawingToHtml(objDrawing, ctx));
+      else {
+        const objPict = getDirectChild(el, NS.W, 'pict');
+        if (objPict) imageParts.push(convertPictToHtml(objPict, ctx));
+        else {
+          // Try by localName without namespace
+          for (let j = 0; j < el.childNodes.length; j++) {
+            const oc = el.childNodes[j];
+            if (oc.nodeType !== 1) continue;
+            const ocEl = oc as Element;
+            if (ocEl.localName === 'pict') { imageParts.push(convertPictToHtml(ocEl, ctx)); break; }
+            if (ocEl.localName === 'drawing') { imageParts.push(convertDrawingToHtml(ocEl, ctx)); break; }
+          }
+        }
+      }
+    }
   }
 
-  const content = parts.join('');
-  if (!content) return '';
+  let result = '';
 
-  let html = content;
+  // Wrap TEXT content in styled span/formatting tags — but NOT images
+  const textContent = textParts.join('');
+  if (textContent) {
+    let html = textContent;
 
-  const cssStyle = buildCssStyle(style);
-  if (cssStyle) html = `<span style="${cssStyle}">${html}</span>`;
+    const cssStyle = buildCssStyle(style);
+    if (cssStyle) html = `<span style="${cssStyle}">${html}</span>`;
 
-  if (style.underline) html = `<u>${html}</u>`;
-  if (style.strikethrough) html = `<s>${html}</s>`;
-  if (style.italic) html = `<em>${html}</em>`;
-  if (style.bold) html = `<strong>${html}</strong>`;
-  if (style.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
-  else if (style.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
+    if (style.underline) html = `<u>${html}</u>`;
+    if (style.strikethrough) html = `<s>${html}</s>`;
+    if (style.italic) html = `<em>${html}</em>`;
+    if (style.bold) html = `<strong>${html}</strong>`;
+    if (style.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
+    else if (style.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
 
-  return html;
+    result += html;
+  }
+
+  // Append images OUTSIDE styling wrappers — html-to-docx needs them as direct <p> children
+  const imageContent = imageParts.filter(Boolean).join('');
+  if (imageContent) result += imageContent;
+
+  return result;
 }
 
 function convertHyperlinkToHtml(
@@ -438,6 +681,19 @@ function convertParagraphInner(paraEl: Element, ctx: ConversionContext): string 
 
     if (el.localName === 'r') innerHtml += convertRunToHtml(el, ctx, defaultRunStyle);
     else if (el.localName === 'hyperlink') innerHtml += convertHyperlinkToHtml(el, ctx, defaultRunStyle);
+    else if (el.localName === 'sdt') {
+      // Inline structured document tags within a paragraph
+      const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
+      if (sdtContent) {
+        for (let j = 0; j < sdtContent.childNodes.length; j++) {
+          const sc = sdtContent.childNodes[j];
+          if (sc.nodeType !== 1) continue;
+          const sEl = sc as Element;
+          if (sEl.localName === 'r') innerHtml += convertRunToHtml(sEl, ctx, defaultRunStyle);
+          else if (sEl.localName === 'hyperlink') innerHtml += convertHyperlinkToHtml(sEl, ctx, defaultRunStyle);
+        }
+      }
+    }
   }
   return innerHtml;
 }
@@ -464,8 +720,27 @@ function convertTableToHtml(tblEl: Element, ctx: ConversionContext): string {
     html += '<tr>';
     for (const cell of getDirectChildren(row, NS.W, 'tc')) {
       html += '<td>';
-      for (const para of getDirectChildren(cell, NS.W, 'p')) {
-        html += convertParagraphToHtml(para, ctx);
+      // Table cells can contain paragraphs, nested tables, and sdt elements
+      for (let i = 0; i < cell.childNodes.length; i++) {
+        const child = cell.childNodes[i];
+        if (child.nodeType !== 1) continue;
+        const el = child as Element;
+        if (el.localName === 'p') {
+          html += convertParagraphToHtml(el, ctx);
+        } else if (el.localName === 'tbl') {
+          html += convertTableToHtml(el, ctx);
+        } else if (el.localName === 'sdt') {
+          const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
+          if (sdtContent) {
+            for (let j = 0; j < sdtContent.childNodes.length; j++) {
+              const sc = sdtContent.childNodes[j];
+              if (sc.nodeType !== 1) continue;
+              const sEl = sc as Element;
+              if (sEl.localName === 'p') html += convertParagraphToHtml(sEl, ctx);
+              else if (sEl.localName === 'tbl') html += convertTableToHtml(sEl, ctx);
+            }
+          }
+        }
       }
       html += '</td>';
     }
@@ -484,7 +759,7 @@ async function loadRelationships(
   const imageMap = new Map<string, string>();
   const linkMap = new Map<string, string>();
 
-  const relsFile = zip.file('word/_rels/document.xml.rels');
+  const relsFile = findZipFile(zip, 'word/_rels/document.xml.rels');
   if (!relsFile) return { imageMap, linkMap };
 
   const relsXml = await relsFile.async('string');
@@ -498,8 +773,10 @@ async function loadRelationships(
     const type = rel.getAttribute('Type') || '';
     if (!id || !target) continue;
 
-    if (type.includes('image') && includeImages) {
-      const imgFile = zip.file(`word/${target}`);
+    if ((type.includes('image') || type.includes('oleObject')) && includeImages) {
+      // Resolve the image path — 'target' might be relative (e.g. "media/image1.png")
+      const imgPath = target.startsWith('/') ? target.slice(1) : `word/${target}`;
+      const imgFile = findZipFile(zip, imgPath);
       if (imgFile) {
         try {
           const imgData = await imgFile.async('base64');
@@ -524,7 +801,7 @@ async function parseNumberingXml(zip: any): Promise<NumberingMap> {
   const result: NumberingMap = new Map();
 
   try {
-    const numFile = zip.file('word/numbering.xml');
+    const numFile = findZipFile(zip, 'word/numbering.xml');
     if (!numFile) return result;
 
     const numXml = await numFile.async('string');
@@ -595,7 +872,7 @@ function getListTag(numberingMap: NumberingMap, numId: string, level: number): s
 
 async function parseThemeFonts(zip: any): Promise<ThemeFonts> {
   try {
-    const themeFile = zip.file('word/theme/theme1.xml');
+    const themeFile = findZipFile(zip, 'word/theme/theme1.xml');
     if (!themeFile) return { major: '', minor: '' };
 
     const themeXml = await themeFile.async('string');
@@ -646,7 +923,7 @@ async function buildConversionContext(
 ): Promise<{ ctx: ConversionContext; documentDefaults: DocxDocumentDefaults }> {
   const themeFonts = await parseThemeFonts(zip);
 
-  const stylesXmlFile = zip.file('word/styles.xml');
+  const stylesXmlFile = findZipFile(zip, 'word/styles.xml');
   let stylesMap = new Map<string, StyleDef>();
   let docDefaultsStyle: RunStyle = {};
   if (stylesXmlFile) {
@@ -658,9 +935,18 @@ async function buildConversionContext(
   const normalStyle = stylesMap.get('Normal');
   const docDefaultRunStyle = mergeRunStyles(docDefaultsStyle, normalStyle?.runStyle || {});
 
+  // Ensure the default run style ALWAYS has fontFamily and fontSize —
+  // this prevents runs that inherit from defaults from losing their font
+  if (!docDefaultRunStyle.fontFamily) {
+    docDefaultRunStyle.fontFamily = themeFonts.minor || 'Calibri';
+  }
+  if (!docDefaultRunStyle.fontSize) {
+    docDefaultRunStyle.fontSize = '11pt';
+  }
+
   const documentDefaults: DocxDocumentDefaults = {
-    font: docDefaultRunStyle.fontFamily || themeFonts.minor || 'Calibri',
-    fontSize: docDefaultRunStyle.fontSize ? parseFloat(docDefaultRunStyle.fontSize) : 11,
+    font: docDefaultRunStyle.fontFamily,
+    fontSize: parseFloat(docDefaultRunStyle.fontSize),
   };
 
   const [numberingMap, { imageMap, linkMap }] = await Promise.all([
@@ -696,11 +982,8 @@ function convertBodyChildrenToHtml(bodyEl: Element, ctx: ConversionContext): str
     return out;
   }
 
-  for (let i = 0; i < bodyEl.childNodes.length; i++) {
-    const child = bodyEl.childNodes[i];
-    if (child.nodeType !== 1) continue;
-    const el = child as Element;
-
+  /** Process a single body-level element (paragraph, table, sdt, AlternateContent). */
+  function processBodyChild(el: Element): void {
     if (el.localName === 'p') {
       const pPr = getDirectChild(el, NS.W, 'pPr');
       const numInfo = getNumInfo(pPr);
@@ -715,7 +998,46 @@ function convertBodyChildrenToHtml(bodyEl: Element, ctx: ConversionContext): str
     } else if (el.localName === 'tbl') {
       html += closeAllLists();
       html += convertTableToHtml(el, ctx);
+    } else if (el.localName === 'sdt') {
+      // Structured document tag — unwrap and process inner content
+      const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
+      if (sdtContent) {
+        for (let j = 0; j < sdtContent.childNodes.length; j++) {
+          const sc = sdtContent.childNodes[j];
+          if (sc.nodeType === 1) processBodyChild(sc as Element);
+        }
+      }
+    } else if (el.localName === 'AlternateContent') {
+      // Body-level mc:AlternateContent — try Choice first, then Fallback
+      for (let j = 0; j < el.childNodes.length; j++) {
+        const ac = el.childNodes[j];
+        if (ac.nodeType !== 1) continue;
+        if ((ac as Element).localName === 'Choice') {
+          for (let k = 0; k < ac.childNodes.length; k++) {
+            const cc = ac.childNodes[k];
+            if (cc.nodeType === 1) processBodyChild(cc as Element);
+          }
+          return; // Don't process Fallback if Choice succeeded
+        }
+      }
+      for (let j = 0; j < el.childNodes.length; j++) {
+        const ac = el.childNodes[j];
+        if (ac.nodeType !== 1) continue;
+        if ((ac as Element).localName === 'Fallback') {
+          for (let k = 0; k < ac.childNodes.length; k++) {
+            const fc = ac.childNodes[k];
+            if (fc.nodeType === 1) processBodyChild(fc as Element);
+          }
+          return;
+        }
+      }
     }
+  }
+
+  for (let i = 0; i < bodyEl.childNodes.length; i++) {
+    const child = bodyEl.childNodes[i];
+    if (child.nodeType !== 1) continue;
+    processBodyChild(child as Element);
   }
 
   html += closeAllLists();
@@ -798,7 +1120,7 @@ export async function convertDocxToStyledHtml(
   const JSZip = require('jszip');
   const zip = await JSZip.loadAsync(buffer);
 
-  const docXmlFile = zip.file('word/document.xml');
+  const docXmlFile = findZipFile(zip, 'word/document.xml');
   if (!docXmlFile) throw new Error('Invalid DOCX: missing word/document.xml');
   const docXml = await docXmlFile.async('string');
   const doc = new DOMParser().parseFromString(docXml, 'application/xml');

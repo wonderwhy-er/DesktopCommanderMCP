@@ -1,10 +1,10 @@
 /**
  * DOCX → HTML Conversion
- *
+ * 
  * Primary:  Direct DOCX XML parsing (`styled-html-parser`) — preserves inline styles
  *           (font colours, sizes, families, alignment, highlights, etc.)
  * Fallback: mammoth.js — semantic-only conversion, strips visual styles.
- *
+ * 
  * @module docx/html
  */
 
@@ -255,14 +255,14 @@ function parseIntoSections(html: string): DocxSection[] {
       const child = body.childNodes[i];
       if (child.nodeType !== 1) continue;
 
-      const element = child as Element;
+        const element = child as Element;
       const tag = element.tagName.toLowerCase();
 
       const headingMatch = tag.match(/^h([1-6])$/);
-      if (headingMatch) {
+        if (headingMatch) {
         sections.push({ type: 'heading', level: parseInt(headingMatch[1], 10), content: element.outerHTML || element.innerHTML });
-        continue;
-      }
+          continue;
+        }
 
       if (tag === 'img') { sections.push({ type: 'image', content: element.outerHTML }); continue; }
       if (tag === 'table') { sections.push({ type: 'table', content: element.outerHTML }); continue; }

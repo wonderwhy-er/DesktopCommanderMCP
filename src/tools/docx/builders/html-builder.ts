@@ -60,7 +60,8 @@ function ensureHtmlStructure(html: string, defaults?: DocxDocumentDefaults): str
   }
 
   // Plain fragment — wrap fully
-  let wrapped = HTML_WRAPPER_TEMPLATE.replace('{content}', trimmed);
+  // Use split/join instead of replace to avoid $-pattern interpretation in base64 data URLs
+  let wrapped = HTML_WRAPPER_TEMPLATE.split('{content}').join(trimmed);
   if (styleTag) wrapped = wrapped.replace('</head>', `${styleTag}\n</head>`);
   return wrapped;
 }

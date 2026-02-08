@@ -4,6 +4,11 @@
  * DOM-based insert / append / replace / update for HTML content.
  * Uses @xmldom/xmldom as the parser (not a browser DOMParser).
  *
+ * IMPORTANT: All public functions use `Base64Guard` to protect base64 data URLs
+ * from corruption during xmldom parse/serialize cycles. Without this, images
+ * (which are embedded as long `data:image/...;base64,...` strings in `src` attributes)
+ * can be lost or mangled by the XML serializer.
+ *
  * @module docx/operations/html-manipulator
  */
 
@@ -19,6 +24,41 @@ const RE_CONTAINS = /^([a-zA-Z][a-zA-Z0-9]*)?:contains\((.+)\)$/i;
 const RE_NTH_OF_TYPE = /^([a-zA-Z][a-zA-Z0-9]*):nth-of-type\((\d+)\)$/i;
 const RE_FIRST_OF_TYPE = /^([a-zA-Z][a-zA-Z0-9]*):first-of-type$/i;
 const RE_LAST_OF_TYPE = /^([a-zA-Z][a-zA-Z0-9]*):last-of-type$/i;
+
+// ─── Base64 Data URL Protection ──────────────────────────────────────────────
+
+/**
+ * Protects base64 data URLs from corruption during xmldom parse/serialize.
+ *
+ * Problem: xmldom's DOMParser + XMLSerializer can mangle very long attribute
+ * values (base64 image data). Symptoms range from silent truncation to dropped
+ * `<img>` elements.
+ *
+ * Solution: Before DOM operations, replace all `data:…` URLs in `src` attributes
+ * with short placeholder URNs. After serialization, restore the originals.
+ * This keeps the DOM tree lightweight and avoids serializer issues.
+ */
+class Base64Guard {
+  private store: string[] = [];
+
+  /** Replace all data: URLs in src attributes with short placeholders. */
+  protect(html: string): string {
+    return html.replace(/\bsrc="(data:[^"]+)"/g, (_, dataUrl) => {
+      this.store.push(dataUrl);
+      return `src="urn:b64:${this.store.length - 1}"`;
+    });
+  }
+
+  /** Restore original data: URLs from placeholders. */
+  restore(html: string): string {
+    let result = html;
+    for (let i = 0; i < this.store.length; i++) {
+      // Use split/join to avoid $-pattern issues in String.replace
+      result = result.split(`urn:b64:${i}`).join(this.store[i]);
+    }
+    return result;
+  }
+}
 
 // ─── Internal Helpers ────────────────────────────────────────────────────────
 
@@ -208,23 +248,29 @@ function insertAtPosition(
 }
 
 // ─── Public Operations ───────────────────────────────────────────────────────
+// All public functions use Base64Guard to protect image data URLs from
+// corruption during the xmldom parse → manipulate → serialize cycle.
 
 /** Append HTML content to the end of the document body. */
 export function appendHtml(html: string, content: string): string {
   if (!content?.trim()) return html;
 
+  const guard = new Base64Guard();
+  const safeHtml = guard.protect(html);
+  const safeContent = guard.protect(content);
+
   try {
-    const doc = parseHtml(html);
+    const doc = parseHtml(safeHtml);
     const body = doc.getElementsByTagName('body')[0];
     if (!body) return html.trim() + '\n' + content.trim();
 
-    const contentDoc = parseHtml(content);
+    const contentDoc = parseHtml(safeContent);
     const contentRoot = getRootElement(contentDoc);
     for (const node of cloneNodesToDocument(contentRoot.childNodes, doc)) {
       body.appendChild(node);
     }
 
-    return serializeHtml(doc);
+    return guard.restore(serializeHtml(doc));
   } catch (error) {
     rethrowAsDocxError(error, 'Failed to append HTML');
   }
@@ -242,17 +288,21 @@ export function insertHtml(
 ): string {
   if (!content?.trim()) return html;
 
+  const guard = new Base64Guard();
+  const safeHtml = guard.protect(html);
+  const safeContent = guard.protect(content);
+
   try {
-    const doc = parseHtml(html);
+    const doc = parseHtml(safeHtml);
     const root = getRootElement(doc);
 
-    const contentDoc = parseHtml(content);
+    const contentDoc = parseHtml(safeContent);
     const contentRoot = getRootElement(contentDoc);
     const nodesToInsert = cloneNodesToDocument(contentRoot.childNodes, doc);
 
     if (!selector) {
       for (const node of nodesToInsert) root.appendChild(node);
-      return serializeHtml(doc);
+      return guard.restore(serializeHtml(doc));
     }
 
     const targets = querySelectorAll(doc, selector);
@@ -266,7 +316,7 @@ export function insertHtml(
       insertAtPosition(node.cloneNode(true), target, position);
     }
 
-    return serializeHtml(doc);
+    return guard.restore(serializeHtml(doc));
   } catch (error) {
     rethrowAsDocxError(error, 'Failed to insert HTML', { selector, position });
   }
@@ -281,14 +331,18 @@ export function replaceHtml(
 ): string {
   if (!selector?.trim()) return html;
 
+  const guard = new Base64Guard();
+  const safeHtml = guard.protect(html);
+  const safeContent = guard.protect(content);
+
   try {
-    const doc = parseHtml(html);
+    const doc = parseHtml(safeHtml);
     const targets = querySelectorAll(doc, selector);
     if (targets.length === 0) {
       throw new DocxError(`Target element not found for selector: "${selector}"`, DocxErrorCode.OPERATION_FAILED, { selector });
     }
 
-    const contentDoc = parseHtml(content);
+    const contentDoc = parseHtml(safeContent);
     const contentRoot = getRootElement(contentDoc);
     const replaceNodes = cloneNodesToDocument(contentRoot.childNodes, doc);
 
@@ -299,7 +353,7 @@ export function replaceHtml(
       parent.removeChild(target);
     }
 
-    return serializeHtml(doc);
+    return guard.restore(serializeHtml(doc));
   } catch (error) {
     rethrowAsDocxError(error, 'Failed to replace HTML', { selector, replaceAll });
   }
@@ -315,8 +369,12 @@ export function updateHtml(
 ): string {
   if (!selector?.trim()) return html;
 
+  const guard = new Base64Guard();
+  const safeHtml = guard.protect(html);
+  const safeContent = content !== undefined ? guard.protect(content) : undefined;
+
   try {
-    const doc = parseHtml(html);
+    const doc = parseHtml(safeHtml);
     const targets = querySelectorAll(doc, selector);
     if (targets.length === 0) {
       throw new DocxError(`Target element not found for selector: "${selector}"`, DocxErrorCode.OPERATION_FAILED, { selector });
@@ -324,9 +382,9 @@ export function updateHtml(
 
     for (const target of updateAll ? targets : [targets[0]]) {
       // Replace innerHTML via DOM methods (xmldom doesn't support .innerHTML setter)
-      if (content !== undefined) {
+      if (safeContent !== undefined) {
         while (target.firstChild) target.removeChild(target.firstChild);
-        const contentDoc = parseHtml(content);
+        const contentDoc = parseHtml(safeContent);
         const contentRoot = getRootElement(contentDoc);
         for (const child of cloneNodesToDocument(contentRoot.childNodes, doc)) {
           target.appendChild(child);
@@ -340,7 +398,7 @@ export function updateHtml(
       }
     }
 
-    return serializeHtml(doc);
+    return guard.restore(serializeHtml(doc));
   } catch (error) {
     rethrowAsDocxError(error, 'Failed to update HTML', { selector, updateAll });
   }
