@@ -25,7 +25,8 @@ import {
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
     GetFileInfoArgsSchema,
-    WritePdfArgsSchema
+    WritePdfArgsSchema,
+    WriteDocxArgsSchema
 } from '../tools/schemas.js';
 
 /**
@@ -106,6 +107,30 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             };
         }
 
+        // Handle DOCX files
+        if (fileResult.metadata?.isDocx) {
+            const meta = fileResult.metadata;
+            const author = meta?.author ? `, Author: ${meta?.author}` : "";
+            const title = meta?.title ? `, Title: ${meta?.title}` : "";
+            const paragraphInfo = meta?.paragraphCount ? ` (${meta.paragraphCount} paragraphs, ${meta.wordCount || 0} words)` : "";
+
+            // Body XML is returned as content - include instructions for modification
+            const extractedText = meta?.extractedText 
+                ? (meta.extractedText.length > 2000 
+                    ? `\n\n--- Extracted Text (first 2000 chars, for reference) ---\n${meta.extractedText.substring(0, 2000)}...\n\n--- End Extracted Text ---\n\n`
+                    : `\n\n--- Extracted Text (for reference) ---\n${meta.extractedText}\n\n--- End Extracted Text ---\n\n`)
+                : '';
+
+            return {
+                content: [
+                    {
+                        type: "text",
+                        text: `DOCX file: ${parsed.path}${author}${title}${paragraphInfo}\n\n--- Body XML (modify this and use write_docx to save) ---\n${fileResult.content}${extractedText}--- End Body XML ---\n\nTo modify this DOCX:\n1. Edit the body XML above based on user's query\n2. Use write_docx tool with the modified body XML\n3. All styles and formatting will be preserved`
+                    }
+                ]
+            };
+        }
+
         // Handle image files
         if (fileResult.metadata?.isImage) {
             // For image files, return as an image content type
@@ -162,8 +187,12 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     const textSummary = fileResults.map(result => {
         if (result.error) {
             return `${result.path}: Error - ${result.error}`;
-        } else if (result.isPdf) {
-            return `${result.path}: PDF file with ${result.payload?.pages?.length} pages`;
+        } else if (result.isPdf && result.payload) {
+            const pdfPayload = result.payload as { pages: Array<unknown> };
+            return `${result.path}: PDF file with ${pdfPayload.pages?.length || 0} pages`;
+        } else if (result.isDocx) {
+            const docxPayload = result.payload as { paragraphCount?: number; wordCount?: number } | undefined;
+            return `${result.path}: DOCX file with ${docxPayload?.paragraphCount || 0} paragraphs`;
         } else if (result.mimeType) {
             return `${result.path}: ${result.mimeType} ${result.isImage ? '(image)' : '(text)'}`;
         } else {
@@ -180,9 +209,10 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     // Add each file content
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
-            if (result.isPdf) {
-                result.payload?.pages.forEach((page, i) => {
-                    page.images.forEach((image, i) => {
+            if (result.isPdf && result.payload) {
+                const pdfPayload = result.payload as { pages: Array<{ text: string; images: Array<{ data: string; mimeType: string }> }> };
+                pdfPayload.pages.forEach((page) => {
+                    page.images.forEach((image) => {
                         contentItems.push({
                             type: "image",
                             data: image.data,
@@ -370,6 +400,24 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
         const targetPath = parsed.outputPath || parsed.path;
         return {
             content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+}
+
+/**
+ * Handle write_docx command
+ */
+export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = WriteDocxArgsSchema.parse(args);
+        const { writeDocx } = await import('../tools/filesystem.js');
+        await writeDocx(parsed.path, parsed.content, parsed.outputPath);
+        const targetPath = parsed.outputPath || parsed.path;
+        return {
+            content: [{ type: "text", text: `Successfully wrote DOCX to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

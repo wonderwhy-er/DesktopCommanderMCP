@@ -9,6 +9,7 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import type { DocxModification } from './docx/types.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -266,7 +267,12 @@ type PdfPayload = {
     pages: PdfPageItem[];
 }
 
-type FileResultPayloads = PdfPayload;
+type DocxPayload = {
+    paragraphCount: number;
+    wordCount: number;
+}
+
+type FileResultPayloads = PdfPayload | DocxPayload;
 
 /**
  * Read file content from a URL
@@ -533,6 +539,7 @@ export interface MultiFileResult {
     isImage?: boolean;
     error?: string;
     isPdf?: boolean;
+    isDocx?: boolean;
     payload?: FileResultPayloads;
 }
 
@@ -552,20 +559,34 @@ export async function readMultipleFiles(paths: string[]): Promise<MultiFileResul
                     content = fileResult.content.toString('utf8');
                 }
 
-                return {
-                    path: filePath,
-                    content,
-                    mimeType: fileResult.mimeType,
-                    isImage: fileResult.metadata?.isImage ?? false,
-                    isPdf: fileResult.metadata?.isPdf ?? false,
-                    payload: fileResult.metadata?.isPdf ? {
+                const isPdf = fileResult.metadata?.isPdf ?? false;
+                const isDocx = fileResult.metadata?.isDocx ?? false;
+                
+                let payload: FileResultPayloads | undefined;
+                if (isPdf && fileResult.metadata) {
+                    payload = {
                         metadata: {
                             author: fileResult.metadata.author,
                             title: fileResult.metadata.title,
                             totalPages: fileResult.metadata.totalPages ?? 0
                         },
                         pages: fileResult.metadata.pages ?? []
-                    } : undefined
+                    };
+                } else if (isDocx && fileResult.metadata) {
+                    payload = {
+                        paragraphCount: fileResult.metadata.paragraphCount ?? 0,
+                        wordCount: fileResult.metadata.wordCount ?? 0
+                    };
+                }
+
+                return {
+                    path: filePath,
+                    content,
+                    mimeType: fileResult.mimeType,
+                    isImage: fileResult.metadata?.isImage ?? false,
+                    isPdf,
+                    isDocx,
+                    payload
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -915,5 +936,63 @@ export async function writePdf(
         await fs.writeFile(targetPath, modifiedPdfBuffer);
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
+    }
+}
+
+/**
+ * Write content to a DOCX file.
+ * Can create a new DOCX from text string, or modify an existing DOCX using operations.
+ * 
+ * @param filePath Path to the output DOCX file
+ * @param content Text string (for creation) or array of operations (for modification)
+ * @param outputPath Optional output path (if different from filePath)
+ */
+export async function writeDocx(
+    filePath: string,
+    content: string | DocxModification[],
+    outputPath?: string
+): Promise<void> {
+    const validPath = await validatePath(filePath);
+    const { writeDocx: writeDocxImpl, modifyDocxContent, replaceBodyXml } = await import('./docx/index.js');
+
+    if (typeof content === 'string') {
+        // Check if content is body XML (starts with <w:body)
+        const trimmedContent = content.trim();
+        if (trimmedContent.startsWith('<w:body')) {
+            // --- BODY XML REPLACEMENT MODE ---
+            // Replace body XML in existing DOCX (preserves all styles and other files)
+            const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+            
+            // Check if source file exists
+            try {
+                await fs.access(validPath);
+            } catch {
+                throw new Error(`Source DOCX file does not exist: ${validPath}. Cannot replace body XML in non-existent file.`);
+            }
+
+            // Replace body XML (preserves all styles and formatting)
+            await replaceBodyXml(validPath, targetPath, trimmedContent);
+        } else {
+            // --- DOCX CREATION MODE ---
+            // Create new DOCX from text (minimal structure, no styles)
+            const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+            await writeDocxImpl(targetPath, content);
+        }
+    } else if (Array.isArray(content)) {
+        // --- DOCX MODIFICATION MODE ---
+        // Modify existing DOCX with operations (preserves all styles)
+        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+        
+        // Check if source file exists
+        try {
+            await fs.access(validPath);
+        } catch {
+            throw new Error(`Source DOCX file does not exist: ${validPath}. Cannot apply modifications to non-existent file.`);
+        }
+
+        // Apply modifications (preserves all styles and formatting)
+        await modifyDocxContent(validPath, targetPath, content);
+    } else {
+        throw new Error('Invalid content type for writeDocx. Expected string (text or body XML) or array of operations.');
     }
 }

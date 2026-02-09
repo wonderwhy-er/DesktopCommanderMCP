@@ -49,6 +49,7 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    WriteDocxArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -301,6 +302,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
+                        - DOCX (.docx): Extracts text content with paragraph structure
+                          * offset/length work as paragraph pagination (0-based)
+                          * Preserves document metadata (title, author, word count)
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -336,7 +340,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Write or append to file contents.
 
-                        IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
+                        IMPORTANT: DO NOT use this tool to create PDF or DOCX files. 
+                        - Use 'write_pdf' for all PDF creation and modification tasks.
+                        - Use 'write_docx' for all DOCX creation and modification tasks.
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -434,6 +440,81 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: zodToJsonSchema(WritePdfArgsSchema),
                 annotations: {
                     title: "Write/Modify PDF",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "write_docx",
+                description: `
+                        Create a new DOCX file or modify an existing one.
+
+                        THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING DOCX FILES.
+
+                        RULES ABOUT FILENAMES:
+                        - When creating a new DOCX, 'outputPath' MUST be provided and MUST use a new unique filename (e.g., "result_01.docx", "report_2025_01.docx", etc.).
+                        - When modifying an existing DOCX, 'outputPath' should be provided to avoid overwriting the original.
+
+                        MODES:
+                        1. REPLACE BODY XML (RECOMMENDED - preserves all styles):
+                           - Pass body XML string (from read_file) as 'content'.
+                           - LLM modifies the body XML based on user query.
+                           - All styles and formatting are preserved.
+                           - Source file must exist (use same path as read_file).
+                           
+                           Example workflow:
+                           1. read_file(path="document.docx") → returns body XML
+                           2. Modify the body XML based on user request
+                           3. write_docx(path="document.docx", content="<w:body>...</w:body>", outputPath="updated_document.docx")
+                           
+                           write_docx(path="doc.docx", content="<w:body><w:p>...</w:p></w:body>", outputPath="new_doc.docx")
+
+                        2. CREATE NEW DOCX FROM TEXT:
+                           - Pass plain text string as 'content' (not starting with <w:body).
+                           - Creates minimal DOCX structure (no styles).
+                           write_docx(path="doc.docx", content="First paragraph\\n\\nSecond paragraph", outputPath="new_doc.docx")
+
+                        3. MODIFY EXISTING DOCX WITH OPERATIONS:
+                           - Pass array of operations as 'content'.
+                           - Preserves ALL existing styles and formatting.
+                           - Only modifies specified content while keeping everything else intact.
+                           - ALWAYS provide 'outputPath' to avoid overwriting original.
+
+                           write_docx(path="doc.docx", content=[
+                               { type: "replace", findText: "Old text", replaceText: "New text", style: { color: "FF0000" } },
+                               { type: "insert", paragraphIndex: 2, insertText: "New paragraph" },
+                               { type: "delete", paragraphIndex: 5 },
+                               { type: "style", paragraphIndex: 0, style: { bold: true, color: "0000FF" } }
+                           ], outputPath="modified_doc.docx")
+
+                        OPERATIONS (for mode 3):
+                        - replace: Find and replace text in a paragraph (preserves all other styles)
+                          { type: "replace", findText: "Exact paragraph text", replaceText: "New text", style: { color: "FF0000", bold: true } }
+                          
+                        - insert: Add new paragraph at specific index (0-based, negative = from end)
+                          { type: "insert", paragraphIndex: 2, insertText: "New paragraph text" }
+                          
+                        - delete: Remove paragraph at specific index (0-based, negative = from end)
+                          { type: "delete", paragraphIndex: 1 }
+                          
+                        - style: Apply styles to existing paragraph (preserves all other formatting)
+                          { type: "style", paragraphIndex: 0, style: { color: "FF0000", bold: true, italic: false } }
+
+                        STYLE PRESERVATION:
+                        - All modes preserve existing document styles and formatting
+                        - Body XML mode preserves everything (styles, images, relationships, etc.)
+                        - Only specified style properties are modified in operations mode
+                        - Font sizes, font names, underlines, spacing, and all other formatting remain unchanged
+                        - Works by modifying only the necessary XML nodes while preserving document structure
+
+                        Only works within allowed directories.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(WriteDocxArgsSchema),
+                annotations: {
+                    title: "Write/Modify DOCX",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
@@ -1320,6 +1401,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "write_pdf":
                 result = await handlers.handleWritePdf(args);
+                break;
+
+            case "write_docx":
+                result = await handlers.handleWriteDocx(args);
                 break;
 
             case "create_directory":

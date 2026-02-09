@@ -130,6 +130,15 @@ export interface FileMetadata {
     totalPages?: number;
     pages?: PdfPageItem[];
 
+    /** For DOCX files */
+    isDocx?: boolean;
+    subject?: string;
+    creator?: string;
+    paragraphCount?: number;
+    wordCount?: number;
+    paragraphs?: DocxParagraphItem[];
+    extractedText?: string;
+
     /** Error information if operation failed */
     error?: boolean;
     errorMessage?: string;
@@ -145,6 +154,15 @@ export interface PdfPageItem {
         data: string;
         mimeType: string;
     }>;
+}
+
+/**
+ * DOCX paragraph content item
+ */
+export interface DocxParagraphItem {
+    index: number;
+    text: string;
+    hasText: boolean;
 }
 
 /**
@@ -212,7 +230,7 @@ export interface FileInfo {
     permissions: string;
 
     /** File type classification */
-    fileType: 'text' | 'excel' | 'image' | 'binary';
+    fileType: 'text' | 'excel' | 'image' | 'binary' | 'docx';
 
     /** Type-specific metadata */
     metadata?: FileMetadata;

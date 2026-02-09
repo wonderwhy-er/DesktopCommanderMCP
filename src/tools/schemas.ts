@@ -103,6 +103,68 @@ export const WritePdfArgsSchema = z.object({
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
+// DOCX modification schemas - exported for reuse
+export const DocxReplaceOperationSchema = z.object({
+  type: z.literal('replace'),
+  findText: z.string(),
+  replaceText: z.string().optional(),
+  style: z.object({
+    color: z.string().optional(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+  }).optional(),
+});
+
+export const DocxInsertOperationSchema = z.object({
+  type: z.literal('insert'),
+  paragraphIndex: z.number(),
+  insertText: z.string(),
+});
+
+export const DocxDeleteOperationSchema = z.object({
+  type: z.literal('delete'),
+  paragraphIndex: z.number(),
+});
+
+export const DocxStyleOperationSchema = z.object({
+  type: z.literal('style'),
+  paragraphIndex: z.number(),
+  style: z.object({
+    color: z.string().optional(),
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+  }),
+});
+
+export const DocxOperationSchema = z.union([
+  DocxReplaceOperationSchema,
+  DocxInsertOperationSchema,
+  DocxDeleteOperationSchema,
+  DocxStyleOperationSchema,
+]);
+
+export const WriteDocxArgsSchema = z.object({
+  path: z.string(),
+  // Preprocess content to handle JSON strings that should be parsed as arrays
+  content: z.preprocess(
+    (val) => {
+      // If it's a string that looks like JSON array, parse it
+      if (typeof val === 'string' && val.trim().startsWith('[')) {
+        try {
+          return JSON.parse(val);
+        } catch {
+          // If parsing fails, return as-is (might be text content)
+          return val;
+        }
+      }
+      // Otherwise return as-is
+      return val;
+    },
+    z.union([z.string(), z.array(DocxOperationSchema)])
+  ),
+  outputPath: z.string().optional(),
+});
+
 export const CreateDirectoryArgsSchema = z.object({
   path: z.string(),
 });
