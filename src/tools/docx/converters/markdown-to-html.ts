@@ -7,7 +7,7 @@
  * @module docx/converters/markdown-to-html
  */
 
-import { escapeHtml } from '../utils.js';
+import { escapeHtml } from '../utils/escaping.js';
 
 // ─── Markdown → HTML ─────────────────────────────────────────────────────────
 

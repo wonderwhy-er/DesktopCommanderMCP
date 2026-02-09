@@ -10,7 +10,7 @@ import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.j
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { createDocxFromHtml, editDocxWithOperations, DocxOperation } from './docx/index.js';
-import { convertToHtmlIfNeeded, generateOutputPath } from './docx/utils.js';
+import { convertToHtmlIfNeeded, generateOutputPath, isDocxPath } from './docx/utils/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -503,8 +503,27 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     return selectedLines.join('');
 }
 
-export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
+export async function writeFile(
+    filePath: string, 
+    content: string | DocxOperation[], 
+    mode: 'rewrite' | 'append' = 'rewrite',
+    outputPath?: string,
+    options?: any
+): Promise<string> {
     const validPath = await validatePath(filePath);
+    const isDocx = isDocxPath(validPath);
+    const isDocxOperations = Array.isArray(content);
+
+    // Special handling for DOCX files with operations array
+    if (isDocx && isDocxOperations) {
+        // Use the DOCX-specific write logic for operations
+        return await writeDocx(validPath, content, outputPath, options);
+    }
+
+    // For string content (all file types including DOCX creation)
+    if (typeof content !== 'string') {
+        throw new Error('Non-DOCX files only support string content. For DOCX operations, use a .docx file path.');
+    }
 
     // Get file extension for telemetry
     const fileExtension = getFileExtension(validPath);
@@ -526,6 +545,8 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
 
     // Use handler to write the file
     await handler.write(validPath, content, mode);
+    
+    return validPath; // Return path for consistency with writeDocx
 }
 
 export interface MultiFileResult {

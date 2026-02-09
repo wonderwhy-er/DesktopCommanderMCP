@@ -14,7 +14,7 @@ import {
     type DocxOperation,
     DocxError
 } from '../../tools/docx/index.js';
-import { convertToHtmlIfNeeded, generateOutputPath } from '../../tools/docx/utils.js';
+import { convertToHtmlIfNeeded, generateOutputPath } from '../../tools/docx/utils/index.js';
 
 /**
  * File handler for DOCX documents

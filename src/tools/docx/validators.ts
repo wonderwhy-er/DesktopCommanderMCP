@@ -7,7 +7,7 @@
  */
 
 import { DocxError, DocxErrorCode } from './errors.js';
-import { isDocxPath } from './utils.js';
+import { isDocxPath } from './utils/paths.js';
 
 /** Validate that a DOCX file path is a non-empty string ending in `.docx`. */
 export function validateDocxPath(path: string): void {

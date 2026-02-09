@@ -58,12 +58,6 @@ export const ReadMultipleFilesArgsSchema = z.object({
   paths: z.array(z.string()),
 });
 
-export const WriteFileArgsSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-  mode: z.enum(['rewrite', 'append']).default('rewrite'),
-});
-
 // PDF modification schemas - exported for reuse
 export const PdfInsertOperationSchema = z.object({
   type: z.literal('insert'),
@@ -174,6 +168,37 @@ export const DocxOperationSchema = z.union([
   DocxReplaceHtmlOperationSchema,
   DocxUpdateHtmlOperationSchema,
 ]);
+
+// WriteFileArgsSchema - supports both string content and DOCX operations array
+export const WriteFileArgsSchema = z.object({
+  path: z.string(),
+  // Accept both string and array content (array is for DOCX operations)
+  // Preprocess to handle JSON strings that should be parsed as arrays
+  content: z.preprocess(
+    (val) => {
+      // If it's a string that looks like JSON array, parse it
+      if (typeof val === 'string' && val.trim().startsWith('[')) {
+        try {
+          return JSON.parse(val);
+        } catch {
+          // If parsing fails, return as-is (might be markdown/HTML content)
+          return val;
+        }
+      }
+      // Otherwise return as-is
+      return val;
+    },
+    z.union([z.string(), z.array(DocxOperationSchema)])
+  ),
+  mode: z.enum(['rewrite', 'append']).default('rewrite'),
+  // Optional parameters for DOCX files
+  outputPath: z.string().optional(),
+  options: z.object({
+    baseDir: z.string().optional(),
+    includeImages: z.boolean().optional(),
+    preserveFormatting: z.boolean().optional(),
+  }).optional(),
+});
 
 export const WriteDocxArgsSchema = z.object({
   path: z.string(),

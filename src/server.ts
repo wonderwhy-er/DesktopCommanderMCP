@@ -49,7 +49,6 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
-    WriteDocxArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -368,6 +367,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Text files: String content
                         - Excel (.xlsx, .xls, .xlsm): JSON 2D array or {"SheetName": [[...]]}
                           Example: '[["Name","Age"],["Alice",30]]'
+                        - DOCX (.docx): 
+                          * String content: Create new DOCX from HTML/markdown
+                            Example: write_file("doc.docx", "<h1>Title</h1><p>Content</p>")
+                          * Array content: Modify existing DOCX with operations
+                            Example: write_file("doc.docx", [{type: "replaceText", search: "old", replace: "new"}])
+                            Operations: replaceText, appendMarkdown, insertTable, insertImage, appendHtml, insertHtml, replaceHtml, updateHtml
+                            Use 'outputPath' to specify custom output location (default: creates _v1.docx versions)
 
                         Files over 50 lines will generate performance notes but are still written successfully.
                         Only works within allowed directories.
@@ -439,96 +445,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: zodToJsonSchema(WritePdfArgsSchema),
                 annotations: {
                     title: "Write/Modify PDF",
-                    readOnlyHint: false,
-                    destructiveHint: true,
-                    openWorldHint: false,
-                },
-            },
-            {
-                name: "write_docx",
-                description: `
-                        Create a new DOCX (Word) file or modify an existing one.
-
-                        THIS IS THE TOOL FOR CREATING AND MODIFYING WORD DOCUMENTS (.docx).
-
-                        MODES:
-                        1. CREATE NEW DOCX:
-                           - Pass an HTML or markdown string as 'content'.
-                           - HTML/markdown will be converted to a formatted Word document.
-                           write_docx(path="new_doc.docx", content="<h1>Title</h1><p>Body text...</p>")
-                           or
-                           write_docx(path="new_doc.docx", content="# Title\\n\\nBody text...")
-
-                        2. UPDATE/MODIFY EXISTING DOCX:
-                           - Pass array of operations as 'content'.
-                           - The original file is PRESERVED. The result is written to {name}_v1.docx.
-                           - Each subsequent edit creates the next version: _v2, _v3, etc.
-                           - Optionally provide 'outputPath' to write to a custom location instead.
-                           
-                           // Reads document.docx, writes result to document_v1.docx:
-                           write_docx(path="document.docx", content=[
-                               { type: "replaceText", search: "old", replace: "new" }
-                           ])
-                           
-                           // Custom output path:
-                           write_docx(path="document.docx", content=[
-                               { type: "appendMarkdown", markdown: "# New Section" }
-                           ], outputPath="document_final.docx")
-
-                        OPERATIONS:
-                        - replaceText: Search and replace text in the document.
-                          { type: "replaceText", search: "old text", replace: "new text", matchCase: true, global: true }
-                        
-                        - appendMarkdown: Add HTML or markdown content at the end of the document.
-                          { type: "appendMarkdown", markdown: "<h1>New Section</h1><p>Content here...</p>" }
-                          or
-                          { type: "appendMarkdown", markdown: "# New Section\\n\\nContent here..." }
-                        
-                        - insertTable: Add a table to the document. Use 'selector' and 'position' to place at a specific location.
-                          { type: "insertTable", rows: [["Header1", "Header2"], ["Row1Col1", "Row1Col2"]] }
-                          or
-                          { type: "insertTable", markdownTable: "| Header1 | Header2 |\\n| --- | --- |\\n| Data1 | Data2 |" }
-                          With positioning (optional):
-                          { type: "insertTable", rows: [...], selector: "h2:contains(Results)", position: "after" }
-                          position: "before" | "after" | "inside" (default: "after"). Without selector, appends to end.
-                        
-                        - insertImage: Add an image to the document. Use 'selector' and 'position' to place at a specific location.
-                          { type: "insertImage", imagePath: "/path/to/image.png", altText: "Description", width: 400, height: 300 }
-                          With positioning (optional):
-                          { type: "insertImage", imagePath: "...", selector: "h2:contains(Overview)", position: "before" }
-                          position: "before" | "after" | "inside" (default: "after").
-                          Without selector, appends to end. Supports: local file paths, data URLs (data:image/png;base64,...)
-
-                        SELECTOR SYNTAX (for insertTable, insertImage, insertHtml, replaceHtml, updateHtml):
-                          Use selectors to target a SPECIFIC element in the document:
-                          - "h2:contains(Introduction)"  — the h2 heading whose text includes "Introduction" (case-insensitive)
-                          - "p:contains(some text)"       — the paragraph containing "some text"
-                          - ":contains(any text)"         — any element containing "any text"
-                          - "h2:nth-of-type(3)"           — the 3rd h2 heading in the document (1-based)
-                          - "h2:first-of-type"            — the first h2 heading
-                          - "h2:last-of-type"             — the last h2 heading
-                          - "h1", "p", "table"            — first element of that tag (for insert) / all (for replace/update)
-                          - "#myId", ".myClass"           — by ID or class name
-                          IMPORTANT: Always use :contains(text) to target a SPECIFIC heading or paragraph by its content.
-                          Plain tag selectors like "h2" only match the first element for insert operations.
-
-                        SUPPORTED HTML/MARKDOWN FEATURES:
-                        - HTML: Full HTML support (headings, paragraphs, tables, images, formatting)
-                        - Markdown: Headings (# through ######), paragraphs, tables, images, basic formatting
-                        - Both formats are automatically converted to DOCX
-
-                        OPTIONS:
-                        - baseDir: Base directory for resolving relative image paths
-                        - includeImages: Extract/include images (default: true)
-                        - preserveFormatting: Preserve text formatting (default: true)
-
-                        Only works within allowed directories.
-
-                        ${PATH_GUIDANCE}
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(WriteDocxArgsSchema),
-                annotations: {
-                    title: "Write/Modify DOCX",
                     readOnlyHint: false,
                     destructiveHint: true,
                     openWorldHint: false,
@@ -1415,10 +1331,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "write_pdf":
                 result = await handlers.handleWritePdf(args);
-                break;
-
-            case "write_docx":
-                result = await handlers.handleWriteDocx(args);
                 break;
 
             case "create_directory":

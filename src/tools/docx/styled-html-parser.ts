@@ -13,7 +13,7 @@
 import { createRequire } from 'module';
 import type { DocxImage, DocxDocumentDefaults } from './types.js';
 import { IMAGE_MIME_TYPES } from './constants.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml } from './utils/escaping.js';
 
 const require = createRequire(import.meta.url);
 const { DOMParser } = require('@xmldom/xmldom');

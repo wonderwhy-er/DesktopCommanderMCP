@@ -8,9 +8,8 @@
  * @module docx/operations
  */
 
-import fs from 'fs/promises';
 import path from 'path';
-import type { DocxEditOptions, DocxOperation, DocxInsertImageOperation } from '../types.js';
+import type { DocxEditOptions, DocxOperation } from '../types.js';
 import { DocxError, DocxErrorCode, withErrorContext } from '../errors.js';
 import { parseDocxToHtml } from '../html.js';
 import { createDocxFromHtml } from '../builders/html-builder.js';
@@ -18,47 +17,7 @@ import { DEFAULT_CONVERSION_OPTIONS } from '../constants.js';
 import { DocxOperationSchema } from '../../schemas.js';
 import { validateDocxPath, validateOperations } from '../validators.js';
 import { applyOperation } from './handlers/index.js';
-import { isDataUrl, isUrl, resolveImagePath, getMimeType } from '../utils.js';
-
-// ─── Image Preprocessing ─────────────────────────────────────────────────────
-
-/**
- * Resolve local image paths to base64 data URLs before operations are applied.
- * html-to-docx cannot handle `file://` URLs — only base64 data URLs and HTTP URLs work.
- */
-async function preprocessOperations(operations: DocxOperation[], baseDir: string): Promise<DocxOperation[]> {
-  const processed: DocxOperation[] = [];
-
-  for (const op of operations) {
-    if (op.type !== 'insertImage') {
-      processed.push(op);
-      continue;
-    }
-
-    const imgOp = op as DocxInsertImageOperation;
-    const trimmedPath = imgOp.imagePath?.trim();
-
-    if (!trimmedPath || isDataUrl(trimmedPath) || isUrl(trimmedPath)) {
-      processed.push(op);
-      continue;
-    }
-
-    const resolvedPath = resolveImagePath(trimmedPath, baseDir);
-    try {
-      const imageBuffer = await fs.readFile(resolvedPath);
-      const mimeType = getMimeType(resolvedPath) || 'image/png';
-      processed.push({ ...imgOp, imagePath: `data:${mimeType};base64,${imageBuffer.toString('base64')}` });
-    } catch (err) {
-      throw new DocxError(
-        `Failed to read image file: ${trimmedPath} (resolved: ${resolvedPath}). ${err instanceof Error ? err.message : String(err)}`,
-        DocxErrorCode.INVALID_IMAGE_FILE,
-        { imagePath: trimmedPath, resolvedPath, baseDir }
-      );
-    }
-  }
-
-  return processed;
-}
+import { preprocessOperations } from './preprocessor.js';
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -89,7 +48,7 @@ export async function editDocxWithOperations(
       let html = docxResult.html;
       const { documentDefaults } = docxResult;
 
-      // Resolve local image paths to base64
+      // Preprocess operations (e.g., convert local image paths to base64)
       const preprocessedOps = await preprocessOperations(operations, baseDir);
 
       // Apply each operation sequentially

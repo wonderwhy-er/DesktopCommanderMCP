@@ -15,7 +15,8 @@ import {
   buildMarkdownTableFromRows,
 } from '../../converters/markdown-to-html.js';
 import { appendHtml, insertHtml, replaceHtml, updateHtml } from '../html-manipulator.js';
-import { escapeHtmlAttribute, escapeRegExp, isUrl, isDataUrl, resolveImagePath } from '../../utils.js';
+import { escapeHtmlAttribute, escapeRegExp } from '../../utils/escaping.js';
+import { isUrl, isDataUrl, resolveImagePath } from '../../utils/paths.js';
 import { validateImageDimensions } from '../../validators.js';
 
 // ─── Text Operations ─────────────────────────────────────────────────────────

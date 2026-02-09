@@ -12,20 +12,20 @@ import fs from 'fs/promises';
 import { createRequire } from 'module';
 import type {
   DocxParseResult,
-  DocxMetadata,
   DocxImage,
-  DocxSection,
   DocxParseOptions,
   DocxDocumentDefaults,
 } from './types.js';
 import { DocxError, DocxErrorCode, withErrorContext } from './errors.js';
-import { DEFAULT_CONVERSION_OPTIONS, CORE_PROPERTIES_PATH, DOCX_NAMESPACES } from './constants.js';
-import { isUrl } from './utils.js';
+import { DEFAULT_CONVERSION_OPTIONS } from './constants.js';
+import { isUrl } from './utils/paths.js';
 import { convertDocxToStyledHtml } from './styled-html-parser.js';
+import { extractDocxMetadata } from './extractors/metadata.js';
+import { parseHtmlIntoSections } from './extractors/sections.js';
+import { extractImagesFromHtml } from './extractors/images.js';
 
 const require = createRequire(import.meta.url);
 const mammoth = require('mammoth');
-const { DOMParser } = require('@xmldom/xmldom');
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -58,9 +58,9 @@ export async function parseDocxToHtml(
         buffer, includeImages, preserveFormatting, styleMap
       );
 
-      const metadata = await extractMetadata(source, buffer, fileSize);
+      const metadata = await extractDocxMetadata(buffer, fileSize);
       const html = postProcessHtml(rawHtml);
-      const sections = parseIntoSections(html);
+      const sections = parseHtmlIntoSections(html);
 
       return { html, metadata, images, sections, documentDefaults };
     },
@@ -157,59 +157,6 @@ async function convertWithMammoth(
   return { html, images };
 }
 
-// ─── Metadata Extraction ─────────────────────────────────────────────────────
-
-async function extractMetadata(source: string, buffer: Buffer, fileSize?: number): Promise<DocxMetadata> {
-  const metadata: DocxMetadata = { fileSize };
-
-  try {
-    const JSZip = require('jszip');
-    const zip = await JSZip.loadAsync(buffer);
-    const corePropsFile = zip.file(CORE_PROPERTIES_PATH);
-    if (!corePropsFile) return metadata;
-
-    const corePropsXml = await corePropsFile.async('string');
-    const doc = new DOMParser().parseFromString(corePropsXml, 'application/xml');
-
-    /** Extract text content from a namespaced tag. */
-    const getText = (tag: string, nsList: readonly string[] = [DOCX_NAMESPACES.DUBLIN_CORE, DOCX_NAMESPACES.CUSTOM_PROPERTIES]): string | undefined => {
-      for (const ns of nsList) {
-        const els = doc.getElementsByTagName(`${ns}:${tag}`);
-        if (els.length > 0 && els[0].textContent) {
-          const text = els[0].textContent.trim();
-          return text || undefined;
-        }
-      }
-      return undefined;
-    };
-
-    /** Extract date from a DCTERMS namespaced tag. */
-    const getDate = (tag: string): Date | undefined => {
-      const els = doc.getElementsByTagName(`${DOCX_NAMESPACES.DCTERMS}:${tag}`);
-      if (els.length > 0 && els[0].textContent) {
-        const dateStr = els[0].textContent.trim();
-        if (dateStr) {
-          const d = new Date(dateStr);
-          if (!isNaN(d.getTime())) return d;
-        }
-      }
-      return undefined;
-    };
-
-    metadata.title = getText('title');
-    metadata.author = getText('creator');
-    metadata.subject = getText('subject');
-    metadata.description = getText('description');
-    metadata.lastModifiedBy = getText('lastModifiedBy', [DOCX_NAMESPACES.CUSTOM_PROPERTIES]);
-    metadata.revision = getText('revision', [DOCX_NAMESPACES.CUSTOM_PROPERTIES]);
-    metadata.creationDate = getDate('created');
-    metadata.modificationDate = getDate('modified');
-  } catch {
-    // Non-critical — return metadata with fileSize only
-  }
-
-  return metadata;
-}
 
 // ─── Post-Processing ─────────────────────────────────────────────────────────
 
@@ -218,84 +165,4 @@ function postProcessHtml(html: string): string {
   return html.replace(/>\s{2,}</g, '>\n<').trim();
 }
 
-// ─── Image Extraction (mammoth fallback) ─────────────────────────────────────
 
-function extractImagesFromHtml(html: string): DocxImage[] {
-  const images: DocxImage[] = [];
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const imgElements = doc.getElementsByTagName('img');
-
-    for (let i = 0; i < imgElements.length; i++) {
-      const src = imgElements[i].getAttribute('src') || '';
-      const alt = imgElements[i].getAttribute('alt') || '';
-      const match = src.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        images.push({
-          id: `img_${i}`,
-          data: match[2],
-          mimeType: match[1],
-          altText: alt || undefined,
-          originalSize: Buffer.from(match[2], 'base64').length,
-        });
-      }
-    }
-  } catch {
-    // Non-critical
-  }
-  return images;
-}
-
-// ─── Section Parsing ─────────────────────────────────────────────────────────
-
-function parseIntoSections(html: string): DocxSection[] {
-  const sections: DocxSection[] = [];
-
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const body = doc.getElementsByTagName('body')[0];
-
-    if (!body) {
-      sections.push({ type: 'paragraph', content: html });
-      return sections;
-    }
-
-    for (let i = 0; i < body.childNodes.length; i++) {
-      const child = body.childNodes[i];
-      if (child.nodeType !== 1) continue;
-
-      const element = child as Element;
-      const tag = element.tagName.toLowerCase();
-      const content = element.outerHTML || element.innerHTML;
-
-      // Heading detection
-      const headingMatch = tag.match(/^h([1-6])$/);
-      if (headingMatch) {
-        sections.push({ type: 'heading', level: parseInt(headingMatch[1], 10), content });
-        continue;
-      }
-
-      // Other element types
-      switch (tag) {
-        case 'img':
-          sections.push({ type: 'image', content });
-          break;
-        case 'table':
-          sections.push({ type: 'table', content });
-          break;
-        case 'ul':
-        case 'ol':
-          sections.push({ type: 'list', content });
-          break;
-        case 'p':
-        case 'div':
-          sections.push({ type: 'paragraph', content });
-          break;
-      }
-    }
-  } catch {
-    sections.push({ type: 'paragraph', content: html });
-  }
-
-  return sections;
-}

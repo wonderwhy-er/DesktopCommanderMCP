@@ -7,7 +7,6 @@ import {
     moveFile,
     getFileInfo,
     writePdf,
-    writeDocx,
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
@@ -27,7 +26,6 @@ import {
     MoveFileArgsSchema,
     GetFileInfoArgsSchema,
     WritePdfArgsSchema,
-    WriteDocxArgsSchema
 } from '../tools/schemas.js';
 
 /**
@@ -264,21 +262,74 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
 
 /**
  * Handle write_file command
+ * Now supports both string content and DOCX operations array
  */
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteFileArgsSchema.parse(args);
+        const isDocxOperations = Array.isArray(parsed.content);
+        const isDocx = parsed.path.toLowerCase().endsWith('.docx');
+
+        // For DOCX operations, provide detailed feedback
+        if (isDocx && isDocxOperations) {
+            const actualOutputPath = await writeFile(
+                parsed.path, 
+                parsed.content, 
+                parsed.mode, 
+                parsed.outputPath, 
+                parsed.options
+            );
+            
+            let message = `Successfully wrote modified DOCX to: ${actualOutputPath}\nOriginal preserved: ${parsed.path}`;
+            
+            // Add operation summary
+            const opCounts: Record<string, number> = {
+                replaceText: 0,
+                appendMarkdown: 0,
+                insertTable: 0,
+                insertImage: 0,
+                appendHtml: 0,
+                insertHtml: 0,
+                replaceHtml: 0,
+                updateHtml: 0,
+            };
+            
+            for (const op of parsed.content) {
+                if (typeof op === 'object' && op !== null && 'type' in op && op.type in opCounts) {
+                    opCounts[op.type as keyof typeof opCounts]++;
+                }
+            }
+            
+            const details = Object.entries(opCounts)
+                .filter(([_, count]) => count > 0)
+                .map(([type, count]) => `${count} ${type}`)
+                .join(', ');
+            
+            if (details) {
+                message += `\nOperations applied: ${details}`;
+            }
+            
+            return {
+                content: [{ type: "text", text: message }],
+            };
+        }
+
+        // For string content (all file types)
+        if (typeof parsed.content !== 'string') {
+            return createErrorResponse('Non-DOCX files only support string content. For DOCX operations, use a .docx file path.');
+        }
 
         // Get the line limit from configuration
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
 
-        // Strictly enforce line count limit
+        // Calculate line count for performance feedback
         const lines = parsed.content.split('\n');
         const lineCount = lines.length;
-        let errorMessage = "";
+        let message = "File written successfully.";
+        
         if (lineCount > MAX_LINES) {
-            errorMessage = `✅ File written successfully! (${lineCount} lines)
+            message = `✅ File written successfully! (${lineCount} lines)
             
 💡 Performance tip: For optimal speed, consider chunking files into ≤30 line pieces in future operations.`;
         }
@@ -292,7 +343,7 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         return {
             content: [{
                 type: "text",
-                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
+                text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${message.includes('✅') ? '\n' + message.split('\n').slice(1).join('\n') : ''}`
             }],
         };
     } catch (error) {
@@ -425,54 +476,3 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     }
 }
 
-/**
- * Handle write_docx command
- */
-export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
-    try {
-        const parsed = WriteDocxArgsSchema.parse(args);
-        const actualOutputPath = await writeDocx(parsed.path, parsed.content, parsed.outputPath, parsed.options);
-        
-        // Build success message with operation details
-        let message: string;
-        const isModification = Array.isArray(parsed.content);
-        
-        if (isModification) {
-            message = `Successfully wrote modified DOCX to: ${actualOutputPath}\nOriginal preserved: ${parsed.path}`;
-        } else {
-            message = `Successfully created DOCX file: ${actualOutputPath}`;
-        }
-        
-        // Add operation summary if using operations mode
-        if (isModification && Array.isArray(parsed.content)) {
-            const opCounts = {
-                replaceText: 0,
-                appendMarkdown: 0,
-                insertTable: 0,
-                insertImage: 0,
-            };
-            
-            for (const op of parsed.content) {
-                if (typeof op === 'object' && op !== null && 'type' in op && op.type in opCounts) {
-                    opCounts[op.type as keyof typeof opCounts]++;
-                }
-            }
-            
-            const details = Object.entries(opCounts)
-                .filter(([_, count]) => count > 0)
-                .map(([type, count]) => `${count} ${type}`)
-                .join(', ');
-            
-            if (details) {
-                message += `\nOperations applied: ${details}`;
-            }
-        }
-        
-        return {
-            content: [{ type: "text", text: message }],
-        };
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        return createErrorResponse(errorMessage);
-    }
-}
