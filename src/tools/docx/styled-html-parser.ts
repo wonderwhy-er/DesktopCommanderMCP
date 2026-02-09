@@ -81,6 +81,14 @@ interface ParagraphStyle {
   tag: string;
   marginLeft?: string;   // from w:ind left/start
   marginRight?: string;  // from w:ind right/end
+  marginTop?: string;    // from w:spacing before
+  marginBottom?: string; // from w:spacing after
+  textIndent?: string;   // from w:ind firstLine / hanging
+  backgroundColor?: string; // from w:shd
+  borderTop?: string;    // from w:pBdr w:top
+  borderBottom?: string; // from w:pBdr w:bottom
+  borderLeft?: string;   // from w:pBdr w:left
+  borderRight?: string;  // from w:pBdr w:right
   tabLeader?: string;    // from w:tabs (e.g. 'dot', 'hyphen', 'underscore')
 }
 
@@ -88,6 +96,9 @@ interface StyleDef {
   tag?: string;
   runStyle?: RunStyle;
   basedOn?: string; // w:basedOn styleId — used to resolve inheritance chains
+  paragraph?: {
+    textAlign?: string;
+  };
 }
 
 interface ThemeFonts {
@@ -295,6 +306,31 @@ function twipsToPt(twips: number): string {
   return `${(twips / 20).toFixed(1)}pt`;
 }
 
+/** Convert a paragraph border element (w:top/w:bottom/…) to a CSS border string. */
+function extractBorder(borderEl: Element | null): string | undefined {
+  if (!borderEl) return undefined;
+  const val = borderEl.getAttribute('w:val');
+  if (!val || val === 'nil' || val === 'none') return undefined;
+
+  // sz is in eighths of a point; convert to pt
+  const szAttr = borderEl.getAttribute('w:sz') || '0';
+  const sz = parseInt(szAttr, 10);
+  const widthPt = sz > 0 ? (sz / 8).toFixed(1) : '0';
+
+  // Fallback to solid if unknown
+  const style = val === 'single' ? 'solid' : 'solid';
+
+  let color = borderEl.getAttribute('w:color') || '';
+  if (color && color !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(color)) {
+    color = `#${color.toUpperCase()}`;
+  } else {
+    color = '#000000';
+  }
+
+  if (widthPt === '0') return undefined;
+  return `${widthPt}pt ${style} ${color}`;
+}
+
 function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, StyleDef>): ParagraphStyle {
   const result: ParagraphStyle = { tag: 'p' };
   if (!pPr) return result;
@@ -311,6 +347,10 @@ function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, Style
     if (result.tag === 'p' && stylesMap.has(styleId)) {
       const mapped = stylesMap.get(styleId)!;
       if (mapped.tag) result.tag = mapped.tag;
+      // Apply style-level paragraph alignment as a default (can be overridden by explicit pPr/jc below)
+      if (mapped.paragraph?.textAlign) {
+        result.textAlign = mapped.paragraph.textAlign;
+      }
     }
   }
 
@@ -318,9 +358,25 @@ function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, Style
   const jcEl = getDirectChild(pPr, NS.W, 'jc');
   if (jcEl) {
     const val = jcEl.getAttribute('w:val');
-    if (val === 'center') result.textAlign = 'center';
-    else if (val === 'right' || val === 'end') result.textAlign = 'right';
-    else if (val === 'both' || val === 'distribute') result.textAlign = 'justify';
+    // Map all common Word alignment values to CSS text-align
+    if (val === 'center') {
+      result.textAlign = 'center';
+    } else if (val === 'right' || val === 'end') {
+      result.textAlign = 'right';
+    } else if (
+      val === 'both' ||
+      val === 'distribute' ||
+      val === 'thaiDistribute' ||
+      val === 'justify' ||
+      val === 'mediumKashida' ||
+      val === 'lowKashida' ||
+      val === 'highKashida'
+    ) {
+      result.textAlign = 'justify';
+    } else if (val === 'left' || val === 'start') {
+      // Make left/start explicit so it survives through conversions
+      result.textAlign = 'left';
+    }
   }
 
   // ── Indentation (w:ind) ──
@@ -332,6 +388,56 @@ function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, Style
 
     const rightTwips = parseInt(indEl.getAttribute('w:end') || indEl.getAttribute('w:right') || '0', 10);
     if (rightTwips > 0) result.marginRight = twipsToPt(rightTwips);
+
+    // First-line indent / hanging indent
+    const firstLineTwips = parseInt(indEl.getAttribute('w:firstLine') || '0', 10);
+    const hangingTwips = parseInt(indEl.getAttribute('w:hanging') || '0', 10);
+    if (firstLineTwips > 0) {
+      result.textIndent = twipsToPt(firstLineTwips);
+    } else if (hangingTwips > 0) {
+      // Hanging indent: negative text-indent is a common approximation
+      const indent = twipsToPt(hangingTwips);
+      result.textIndent = `-${indent}`;
+    }
+  }
+
+  // ── Spacing before/after (w:spacing) ──
+  const spacingEl = getDirectChild(pPr, NS.W, 'spacing');
+  if (spacingEl) {
+    const beforeTwips = parseInt(spacingEl.getAttribute('w:before') || '0', 10);
+    if (beforeTwips > 0) result.marginTop = twipsToPt(beforeTwips);
+
+    const afterTwips = parseInt(spacingEl.getAttribute('w:after') || '0', 10);
+    if (afterTwips > 0) result.marginBottom = twipsToPt(afterTwips);
+    // We deliberately ignore line/lineRule for now to avoid over-constraining line-height.
+  }
+
+  // ── Shading (background colour) ──
+  const shdEl = getDirectChild(pPr, NS.W, 'shd');
+  if (shdEl) {
+    const fill = shdEl.getAttribute('w:fill');
+    if (fill && fill !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(fill)) {
+      result.backgroundColor = `#${fill.toUpperCase()}`;
+    }
+  }
+
+  // ── Paragraph borders (w:pBdr) ──
+  const pBdrEl = getDirectChild(pPr, NS.W, 'pBdr');
+  if (pBdrEl) {
+    const topEl = getDirectChild(pBdrEl, NS.W, 'top');
+    const bottomEl = getDirectChild(pBdrEl, NS.W, 'bottom');
+    const leftEl = getDirectChild(pBdrEl, NS.W, 'left');
+    const rightEl = getDirectChild(pBdrEl, NS.W, 'right');
+
+    const top = extractBorder(topEl);
+    const bottom = extractBorder(bottomEl);
+    const left = extractBorder(leftEl);
+    const right = extractBorder(rightEl);
+
+    if (top) result.borderTop = top;
+    if (bottom) result.borderBottom = bottom;
+    if (left) result.borderLeft = left;
+    if (right) result.borderRight = right;
   }
 
   // ── Tab leader (w:tabs → w:tab[@w:leader]) ──
@@ -396,6 +502,32 @@ function parseStylesXml(xml: string, themeFonts: ThemeFonts): Map<string, StyleD
         }
       }
 
+      // Paragraph-level properties (e.g. alignment) that apply to all paragraphs using this style
+      const pPrEl = getDirectChild(styleEl, NS.W, 'pPr');
+      if (pPrEl) {
+        const jcEl = getDirectChild(pPrEl, NS.W, 'jc');
+        if (jcEl) {
+          const val = jcEl.getAttribute('w:val');
+          if (val === 'center') {
+            entry.paragraph = { ...(entry.paragraph || {}), textAlign: 'center' };
+          } else if (val === 'right' || val === 'end') {
+            entry.paragraph = { ...(entry.paragraph || {}), textAlign: 'right' };
+          } else if (
+            val === 'both' ||
+            val === 'distribute' ||
+            val === 'thaiDistribute' ||
+            val === 'justify' ||
+            val === 'mediumKashida' ||
+            val === 'lowKashida' ||
+            val === 'highKashida'
+          ) {
+            entry.paragraph = { ...(entry.paragraph || {}), textAlign: 'justify' };
+          } else if (val === 'left' || val === 'start') {
+            entry.paragraph = { ...(entry.paragraph || {}), textAlign: 'left' };
+          }
+        }
+      }
+
       // Capture basedOn reference for inheritance resolution
       const basedOnEl = getDirectChild(styleEl, NS.W, 'basedOn');
       if (basedOnEl) {
@@ -439,6 +571,12 @@ function resolveStyleInheritance(map: Map<string, StyleDef>): void {
       if (parent.runStyle) {
         // Merge: parent's resolved style is the base, this style's own rPr overrides
         entry.runStyle = mergeRunStyles(parent.runStyle, entry.runStyle || {});
+      }
+      // Inherit paragraph properties (e.g. textAlign) if not explicitly set
+      if (parent.paragraph) {
+        entry.paragraph = {
+          textAlign: entry.paragraph?.textAlign || parent.paragraph.textAlign,
+        };
       }
       // Inherit tag from parent if not set
       if (!entry.tag && parent.tag) entry.tag = parent.tag;
@@ -819,6 +957,14 @@ function convertParagraphToHtml(paraEl: Element, ctx: ConversionContext): string
   if (paraStyle.textAlign) cssParts.push(`text-align:${paraStyle.textAlign}`);
   if (paraStyle.marginLeft) cssParts.push(`margin-left:${paraStyle.marginLeft}`);
   if (paraStyle.marginRight) cssParts.push(`margin-right:${paraStyle.marginRight}`);
+   if (paraStyle.marginTop) cssParts.push(`margin-top:${paraStyle.marginTop}`);
+   if (paraStyle.marginBottom) cssParts.push(`margin-bottom:${paraStyle.marginBottom}`);
+   if (paraStyle.textIndent) cssParts.push(`text-indent:${paraStyle.textIndent}`);
+   if (paraStyle.backgroundColor) cssParts.push(`background-color:${paraStyle.backgroundColor}`);
+   if (paraStyle.borderTop) cssParts.push(`border-top:${paraStyle.borderTop}`);
+   if (paraStyle.borderBottom) cssParts.push(`border-bottom:${paraStyle.borderBottom}`);
+   if (paraStyle.borderLeft) cssParts.push(`border-left:${paraStyle.borderLeft}`);
+   if (paraStyle.borderRight) cssParts.push(`border-right:${paraStyle.borderRight}`);
   const styleAttr = buildStyleAttr(cssParts);
   const { tag } = paraStyle;
 

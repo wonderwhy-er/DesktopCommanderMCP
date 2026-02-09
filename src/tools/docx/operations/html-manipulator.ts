@@ -3,12 +3,12 @@
  *
  * DOM-based insert / append / replace / update for HTML content.
  * Uses @xmldom/xmldom as the parser (not a browser DOMParser).
- *
+ * 
  * IMPORTANT: All public functions use `Base64Guard` to protect base64 data URLs
  * from corruption during xmldom parse/serialize cycles. Without this, images
  * (which are embedded as long `data:image/...;base64,...` strings in `src` attributes)
  * can be lost or mangled by the XML serializer.
- *
+ * 
  * @module docx/operations/html-manipulator
  */
 
@@ -95,7 +95,7 @@ function parseHtml(html: string): Document {
     if (parserErrors.length > 0) {
       throw new DocxError('Failed to parse HTML: invalid structure', DocxErrorCode.OPERATION_FAILED, { htmlSnippet: html.substring(0, 100) });
     }
-
+    
     return doc;
   } catch (error) {
     rethrowAsDocxError(error, 'Failed to parse HTML', { htmlSnippet: html.substring(0, 100) });
@@ -111,12 +111,12 @@ function serializeHtml(doc: Document): string {
   try {
     const serializer = new XMLSerializer();
     const body = doc.getElementsByTagName('body')[0];
-
+    
     if (body) {
       let content = '';
       for (let i = 0; i < body.childNodes.length; i++) {
         content += serializer.serializeToString(body.childNodes[i]);
-      }
+    }
       return content;
     }
 
@@ -247,7 +247,7 @@ function insertAtPosition(
       if (target.nextSibling) target.parentNode?.insertBefore(node, target.nextSibling);
       else target.parentNode?.appendChild(node);
       break;
-  }
+}
 }
 
 // ─── Public Operations ───────────────────────────────────────────────────────
@@ -315,7 +315,7 @@ export function insertHtml(
 
     // Insert at FIRST match only to prevent duplication
     const target = targets[0];
-    for (const node of nodesToInsert) {
+      for (const node of nodesToInsert) {
       insertAtPosition(node.cloneNode(true), target, position);
     }
 

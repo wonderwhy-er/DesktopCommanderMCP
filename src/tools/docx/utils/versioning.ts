@@ -6,16 +6,20 @@
  * @module docx/utils/versioning
  */
 
+import fs from 'fs/promises';
 import path from 'path';
 
 /**
  * Generate the versioned output path for a DOCX modification.
  *
  * Strategy:
- * - If input is original file (no _vN): Always create _v1 (overwrite if exists)
- * - If input is already versioned (_vN): Increment to _v(N+1) (overwrite if exists)
+ * - Look at existing sibling files `{base}_vN.ext` and pick the next N.
+ * - If no versions exist yet, start at `_v1`.
+ * - If some versions exist, always return the highest existing + 1.
  *
- * This ensures ONE final versioned file per update request, not multiple versions.
+ * This gives you `version_i` per update over time **even if** every request
+ * always uses the original file as `filePath`, while still producing only
+ * ONE output file per request (callers invoke this once per edit).
  *
  * Examples:
  *   demo.docx     → demo_v1.docx  (always _v1, overwrites if exists)
@@ -26,19 +30,33 @@ export async function generateOutputPath(filePath: string): Promise<string> {
   const dir = path.dirname(filePath);
   const ext = path.extname(filePath);
   const baseName = path.basename(filePath, ext);
-  
-  // Check if input file already has a version suffix (_vN)
-  const versionMatch = baseName.match(/_v(\d+)$/);
-  
-  if (versionMatch) {
-    // Input is already versioned — increment version number
-    const currentVersion = parseInt(versionMatch[1], 10);
-    const nextVersion = currentVersion + 1;
-    const cleanBaseName = baseName.replace(/_v\d+$/, '');
-    return path.join(dir, `${cleanBaseName}_v${nextVersion}${ext}`);
-  } else {
-    // Input is original file — always use _v1 (will overwrite if exists)
-    return path.join(dir, `${baseName}_v1${ext}`);
+
+  // Normalise base to strip any existing _vN suffix so that
+  // passing in either "demo.docx" or "demo_v3.docx" still
+  // continues the same version sequence.
+  const cleanBase = baseName.replace(/_v\d+$/, '');
+
+  try {
+    const entries = await fs.readdir(dir);
+
+    let maxVersion = 0;
+    const versionRegex = new RegExp(`^${cleanBase}_v(\\d+)${ext.replace('.', '\\.')}$`, 'i');
+
+    for (const entry of entries) {
+      const match = entry.match(versionRegex);
+      if (match) {
+        const v = parseInt(match[1], 10);
+        if (!Number.isNaN(v) && v > maxVersion) {
+          maxVersion = v;
+        }
+      }
+    }
+
+    const nextVersion = maxVersion + 1 || 1;
+    return path.join(dir, `${cleanBase}_v${nextVersion}${ext}`);
+  } catch {
+    // If we can't list the directory for any reason, fall back to _v1.
+    return path.join(dir, `${cleanBase}_v1${ext}`);
   }
 }
 
