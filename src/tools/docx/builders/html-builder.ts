@@ -36,9 +36,8 @@ function ensureHtmlStructure(html: string, defaults?: DocxDocumentDefaults): str
   const styleTag = buildDefaultStyleTag(defaults);
 
   if (!trimmed) {
-    let wrapped = HTML_WRAPPER_TEMPLATE.replace('{content}', '');
-    if (styleTag) wrapped = wrapped.replace('</head>', `${styleTag}\n</head>`);
-    return wrapped;
+    const wrapped = HTML_WRAPPER_TEMPLATE.split('{content}').join('');
+    return styleTag ? wrapped.replace('</head>', `${styleTag}\n</head>`) : wrapped;
   }
 
   const lower = trimmed.toLowerCase();
@@ -48,22 +47,24 @@ function ensureHtmlStructure(html: string, defaults?: DocxDocumentDefaults): str
 
   // Already complete — inject styles only
   if (hasDoctype && hasHtml && hasBody) {
-    if (styleTag && trimmed.includes('</head>')) return trimmed.replace('</head>', `${styleTag}\n</head>`);
+    if (styleTag && trimmed.includes('</head>')) {
+      return trimmed.replace('</head>', `${styleTag}\n</head>`);
+    }
     return trimmed;
   }
 
   // Partial structure — add DOCTYPE, inject styles
   if (hasHtml || hasBody) {
-    let result = `<!DOCTYPE html>\n${trimmed}`;
-    if (styleTag && result.includes('</head>')) result = result.replace('</head>', `${styleTag}\n</head>`);
-    return result;
+    const result = `<!DOCTYPE html>\n${trimmed}`;
+    return styleTag && result.includes('</head>')
+      ? result.replace('</head>', `${styleTag}\n</head>`)
+      : result;
   }
 
   // Plain fragment — wrap fully
   // Use split/join instead of replace to avoid $-pattern interpretation in base64 data URLs
-  let wrapped = HTML_WRAPPER_TEMPLATE.split('{content}').join(trimmed);
-  if (styleTag) wrapped = wrapped.replace('</head>', `${styleTag}\n</head>`);
-  return wrapped;
+  const wrapped = HTML_WRAPPER_TEMPLATE.split('{content}').join(trimmed);
+  return styleTag ? wrapped.replace('</head>', `${styleTag}\n</head>`) : wrapped;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────

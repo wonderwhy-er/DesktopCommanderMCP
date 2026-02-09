@@ -39,21 +39,24 @@ const RE_LAST_OF_TYPE = /^([a-zA-Z][a-zA-Z0-9]*):last-of-type$/i;
  * This keeps the DOM tree lightweight and avoids serializer issues.
  */
 class Base64Guard {
-  private store: string[] = [];
+  private readonly store: string[] = [];
 
   /** Replace all data: URLs in src attributes with short placeholders. */
   protect(html: string): string {
+    if (!html.includes('data:')) return html; // Fast path: no data URLs
     return html.replace(/\bsrc="(data:[^"]+)"/g, (_, dataUrl) => {
+      const index = this.store.length;
       this.store.push(dataUrl);
-      return `src="urn:b64:${this.store.length - 1}"`;
+      return `src="urn:b64:${index}"`;
     });
   }
 
   /** Restore original data: URLs from placeholders. */
   restore(html: string): string {
+    if (this.store.length === 0) return html; // Fast path: nothing to restore
     let result = html;
+    // Use split/join to avoid $-pattern issues in String.replace
     for (let i = 0; i < this.store.length; i++) {
-      // Use split/join to avoid $-pattern issues in String.replace
       result = result.split(`urn:b64:${i}`).join(this.store[i]);
     }
     return result;

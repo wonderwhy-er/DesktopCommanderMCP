@@ -92,13 +92,16 @@ export async function editDocxWithOperations(
       // Resolve local image paths to base64
       const preprocessedOps = await preprocessOperations(operations, baseDir);
 
-      // Apply each operation
+      // Apply each operation sequentially
       for (let i = 0; i < preprocessedOps.length; i++) {
         const op = preprocessedOps[i];
         try {
-          html = applyOperation(html, DocxOperationSchema.parse(op), baseDir);
+          const validatedOp = DocxOperationSchema.parse(op);
+          html = applyOperation(html, validatedOp, baseDir);
         } catch (error) {
           if (error instanceof DocxError) throw error;
+          
+          // Zod validation errors
           if (error instanceof Error && 'issues' in error) {
             throw new DocxError(
               `Invalid operation at index ${i}: ${error.message}`,
@@ -106,6 +109,8 @@ export async function editDocxWithOperations(
               { path: normalizedPath, operationIndex: i, operation: op, validationError: error }
             );
           }
+          
+          // Other errors
           throw new DocxError(
             `Failed to apply operation at index ${i}: ${error instanceof Error ? error.message : String(error)}`,
             DocxErrorCode.OPERATION_FAILED,

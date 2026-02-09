@@ -1,10 +1,10 @@
 /**
  * DOCX → HTML Conversion
- * 
+ *
  * Primary:  Direct DOCX XML parsing (`styled-html-parser`) — preserves inline styles
  *           (font colours, sizes, families, alignment, highlights, etc.)
  * Fallback: mammoth.js — semantic-only conversion, strips visual styles.
- * 
+ *
  * @module docx/html
  */
 
@@ -108,10 +108,11 @@ async function convertToHtml(
     try {
       return await convertDocxToStyledHtml(buffer, includeImages);
     } catch {
-      // Fall through to mammoth
+      // Fall through to mammoth.js fallback
     }
   }
-  return { ...await convertWithMammoth(buffer, includeImages, styleMap, preserveFormatting), documentDefaults: undefined };
+  const mammothResult = await convertWithMammoth(buffer, includeImages, styleMap, preserveFormatting);
+  return { ...mammothResult, documentDefaults: undefined };
 }
 
 /** Fallback: mammoth.js (semantic-only — strips visual styles). */
@@ -170,19 +171,27 @@ async function extractMetadata(source: string, buffer: Buffer, fileSize?: number
     const corePropsXml = await corePropsFile.async('string');
     const doc = new DOMParser().parseFromString(corePropsXml, 'application/xml');
 
-    const getText = (tag: string, nsList: string[] = [DOCX_NAMESPACES.DUBLIN_CORE, DOCX_NAMESPACES.CUSTOM_PROPERTIES]): string | undefined => {
+    /** Extract text content from a namespaced tag. */
+    const getText = (tag: string, nsList: readonly string[] = [DOCX_NAMESPACES.DUBLIN_CORE, DOCX_NAMESPACES.CUSTOM_PROPERTIES]): string | undefined => {
       for (const ns of nsList) {
         const els = doc.getElementsByTagName(`${ns}:${tag}`);
-        if (els.length > 0 && els[0].textContent) return els[0].textContent.trim();
+        if (els.length > 0 && els[0].textContent) {
+          const text = els[0].textContent.trim();
+          return text || undefined;
+        }
       }
       return undefined;
     };
 
+    /** Extract date from a DCTERMS namespaced tag. */
     const getDate = (tag: string): Date | undefined => {
       const els = doc.getElementsByTagName(`${DOCX_NAMESPACES.DCTERMS}:${tag}`);
       if (els.length > 0 && els[0].textContent) {
-        const d = new Date(els[0].textContent.trim());
-        if (!isNaN(d.getTime())) return d;
+        const dateStr = els[0].textContent.trim();
+        if (dateStr) {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) return d;
+        }
       }
       return undefined;
     };
@@ -196,7 +205,7 @@ async function extractMetadata(source: string, buffer: Buffer, fileSize?: number
     metadata.creationDate = getDate('created');
     metadata.modificationDate = getDate('modified');
   } catch {
-    // Non-critical
+    // Non-critical — return metadata with fileSize only
   }
 
   return metadata;
@@ -255,19 +264,34 @@ function parseIntoSections(html: string): DocxSection[] {
       const child = body.childNodes[i];
       if (child.nodeType !== 1) continue;
 
-        const element = child as Element;
+      const element = child as Element;
       const tag = element.tagName.toLowerCase();
+      const content = element.outerHTML || element.innerHTML;
 
+      // Heading detection
       const headingMatch = tag.match(/^h([1-6])$/);
-        if (headingMatch) {
-        sections.push({ type: 'heading', level: parseInt(headingMatch[1], 10), content: element.outerHTML || element.innerHTML });
-          continue;
-        }
+      if (headingMatch) {
+        sections.push({ type: 'heading', level: parseInt(headingMatch[1], 10), content });
+        continue;
+      }
 
-      if (tag === 'img') { sections.push({ type: 'image', content: element.outerHTML }); continue; }
-      if (tag === 'table') { sections.push({ type: 'table', content: element.outerHTML }); continue; }
-      if (tag === 'ul' || tag === 'ol') { sections.push({ type: 'list', content: element.outerHTML }); continue; }
-      if (tag === 'p' || tag === 'div') { sections.push({ type: 'paragraph', content: element.outerHTML }); continue; }
+      // Other element types
+      switch (tag) {
+        case 'img':
+          sections.push({ type: 'image', content });
+          break;
+        case 'table':
+          sections.push({ type: 'table', content });
+          break;
+        case 'ul':
+        case 'ol':
+          sections.push({ type: 'list', content });
+          break;
+        case 'p':
+        case 'div':
+          sections.push({ type: 'paragraph', content });
+          break;
+      }
     }
   } catch {
     sections.push({ type: 'paragraph', content: html });

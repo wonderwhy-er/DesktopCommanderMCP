@@ -159,16 +159,20 @@ export function handleInsertImage(
     imageSrc = resolved.startsWith('/') ? `file://${resolved}` : `file:///${resolved}`;
   }
 
-  // Build style attribute
-  const styles: string[] = [];
-  if (width && width > 0) styles.push(`width:${width}px`);
-  if (height && height > 0) styles.push(`height:${height}px`);
-
   // Build img attributes
   const attrs: string[] = [`src="${escapeHtmlAttribute(imageSrc)}"`];
   if (altText?.trim()) attrs.push(`alt="${escapeHtmlAttribute(altText.trim())}"`);
-  if (width && width > 0) attrs.push(`width="${width}"`);
-  if (height && height > 0) attrs.push(`height="${height}"`);
+  
+  // Add dimensions as both attributes and inline style (for compatibility)
+  const styles: string[] = [];
+  if (width && width > 0) {
+    attrs.push(`width="${width}"`);
+    styles.push(`width:${width}px`);
+  }
+  if (height && height > 0) {
+    attrs.push(`height="${height}"`);
+    styles.push(`height:${height}px`);
+  }
   if (styles.length > 0) attrs.push(`style="${styles.join('; ')}"`);
 
   const imgTag = `<p><img ${attrs.join(' ')} /></p>`;

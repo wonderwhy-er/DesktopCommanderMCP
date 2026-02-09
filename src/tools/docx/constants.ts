@@ -11,7 +11,7 @@
 export const DEFAULT_CONVERSION_OPTIONS = {
   includeImages: true,
   preserveFormatting: true,
-  styleMap: [] as string[],
+  styleMap: [] as readonly string[],
 } as const;
 
 // ─── Build (html-to-docx) Defaults ──────────────────────────────────────────
@@ -54,7 +54,7 @@ export const IMAGE_MIME_TYPES: Readonly<Record<string, string>> = {
   bmp: 'image/bmp',
   webp: 'image/webp',
   png: 'image/png',
-};
+} as const;
 
 // ─── HTML Wrapper Template ───────────────────────────────────────────────────
 
