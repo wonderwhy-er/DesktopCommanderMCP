@@ -42,6 +42,15 @@ const HIGHLIGHT_COLORS: Readonly<Record<string, string>> = {
 
 // ─── Heading Detection ───────────────────────────────────────────────────────
 
+/** Map OOXML tab leader values to the character used for dot/dash leaders in TOC entries. */
+const TAB_LEADER_CHARS: Record<string, string> = {
+  dot: '.',
+  hyphen: '-',
+  underscore: '_',
+  middleDot: '·',
+  heavy: '━',
+};
+
 const HEADING_PATTERNS: ReadonlyArray<{ pattern: RegExp; tag: string }> = [
   { pattern: /^Heading\s*1$/i, tag: 'h1' },
   { pattern: /^Heading\s*2$/i, tag: 'h2' },
@@ -70,6 +79,9 @@ interface RunStyle {
 interface ParagraphStyle {
   textAlign?: string;
   tag: string;
+  marginLeft?: string;   // from w:ind left/start
+  marginRight?: string;  // from w:ind right/end
+  tabLeader?: string;    // from w:tabs (e.g. 'dot', 'hyphen', 'underscore')
 }
 
 interface StyleDef {
@@ -278,10 +290,16 @@ function mergeRunStyles(inherited: RunStyle | undefined, explicit: RunStyle): Ru
 
 // ─── Paragraph Style Extraction ──────────────────────────────────────────────
 
+/** Convert OOXML twips (1/20 pt) to a CSS pt string. */
+function twipsToPt(twips: number): string {
+  return `${(twips / 20).toFixed(1)}pt`;
+}
+
 function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, StyleDef>): ParagraphStyle {
   const result: ParagraphStyle = { tag: 'p' };
   if (!pPr) return result;
 
+  // ── Style → tag mapping ──
   const pStyleEl = getDirectChild(pPr, NS.W, 'pStyle');
   if (pStyleEl) {
     const styleId = pStyleEl.getAttribute('w:val') || '';
@@ -296,12 +314,37 @@ function extractParagraphStyle(pPr: Element | null, stylesMap: Map<string, Style
     }
   }
 
+  // ── Alignment ──
   const jcEl = getDirectChild(pPr, NS.W, 'jc');
   if (jcEl) {
     const val = jcEl.getAttribute('w:val');
     if (val === 'center') result.textAlign = 'center';
     else if (val === 'right' || val === 'end') result.textAlign = 'right';
     else if (val === 'both' || val === 'distribute') result.textAlign = 'justify';
+  }
+
+  // ── Indentation (w:ind) ──
+  const indEl = getDirectChild(pPr, NS.W, 'ind');
+  if (indEl) {
+    // w:left or w:start (start is newer, fallback to left)
+    const leftTwips = parseInt(indEl.getAttribute('w:start') || indEl.getAttribute('w:left') || '0', 10);
+    if (leftTwips > 0) result.marginLeft = twipsToPt(leftTwips);
+
+    const rightTwips = parseInt(indEl.getAttribute('w:end') || indEl.getAttribute('w:right') || '0', 10);
+    if (rightTwips > 0) result.marginRight = twipsToPt(rightTwips);
+  }
+
+  // ── Tab leader (w:tabs → w:tab[@w:leader]) ──
+  const tabsEl = getDirectChild(pPr, NS.W, 'tabs');
+  if (tabsEl) {
+    const tabEls = getDirectChildren(tabsEl, NS.W, 'tab');
+    for (const tab of tabEls) {
+      const leader = tab.getAttribute('w:leader');
+      if (leader && leader !== 'none') {
+        result.tabLeader = leader; // 'dot', 'hyphen', 'underscore', 'middleDot', 'heavy'
+        break;
+      }
+    }
   }
 
   return result;
@@ -659,52 +702,123 @@ function convertHyperlinkToHtml(
   else if (anchor) href = `#${anchor}`;
 
   let innerHtml = '';
-  for (let i = 0; i < hyperlinkEl.childNodes.length; i++) {
-    const child = hyperlinkEl.childNodes[i];
-    if (child.nodeType !== 1) continue;
-    const el = child as Element;
-    if (el.localName === 'r') innerHtml += convertRunToHtml(el, ctx, defaultRunStyle);
+
+  /** Recursively gather inline content from the hyperlink. */
+  function gather(container: Element): void {
+    for (let i = 0; i < container.childNodes.length; i++) {
+      const child = container.childNodes[i];
+      if (child.nodeType !== 1) continue;
+      const el = child as Element;
+      if (el.localName === 'r') innerHtml += convertRunToHtml(el, ctx, defaultRunStyle);
+      else if (el.localName === 'fldSimple') gather(el);
+      else if (el.localName === 'sdt') {
+        const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
+        if (sdtContent) gather(sdtContent);
+      }
+    }
   }
+  gather(hyperlinkEl);
 
   return href ? `<a href="${escapeHtml(href)}">${innerHtml}</a>` : innerHtml;
 }
 
+/**
+ * Convert paragraph-level inline elements to HTML.
+ *
+ * Handles: w:r, w:hyperlink, w:sdt, w:fldSimple, w:ins, w:del, w:smartTag,
+ * and w:bookmarkStart / w:bookmarkEnd (for anchor links).
+ *
+ * `w:fldSimple` is CRITICAL for TOC entries — it wraps hyperlinks and runs
+ * inside a field code (e.g. `TOC`, `PAGEREF`). Without this, the entire
+ * TOC content would be silently dropped.
+ */
 function convertParagraphInner(paraEl: Element, ctx: ConversionContext): string {
   const pPr = getDirectChild(paraEl, NS.W, 'pPr');
   const defaultRunStyle = getDefaultRunStyle(pPr, ctx);
 
   let innerHtml = '';
-  for (let i = 0; i < paraEl.childNodes.length; i++) {
-    const child = paraEl.childNodes[i];
-    if (child.nodeType !== 1) continue;
-    const el = child as Element;
 
-    if (el.localName === 'r') innerHtml += convertRunToHtml(el, ctx, defaultRunStyle);
-    else if (el.localName === 'hyperlink') innerHtml += convertHyperlinkToHtml(el, ctx, defaultRunStyle);
-    else if (el.localName === 'sdt') {
-      // Inline structured document tags within a paragraph
-      const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
-      if (sdtContent) {
-        for (let j = 0; j < sdtContent.childNodes.length; j++) {
-          const sc = sdtContent.childNodes[j];
-          if (sc.nodeType !== 1) continue;
-          const sEl = sc as Element;
-          if (sEl.localName === 'r') innerHtml += convertRunToHtml(sEl, ctx, defaultRunStyle);
-          else if (sEl.localName === 'hyperlink') innerHtml += convertHyperlinkToHtml(sEl, ctx, defaultRunStyle);
+  /** Recursively process inline child elements within a container (paragraph, fldSimple, sdt, etc.). */
+  function processInlineChildren(container: Element): void {
+    for (let i = 0; i < container.childNodes.length; i++) {
+      const child = container.childNodes[i];
+      if (child.nodeType !== 1) continue;
+      const el = child as Element;
+
+      switch (el.localName) {
+        case 'r':
+          innerHtml += convertRunToHtml(el, ctx, defaultRunStyle);
+          break;
+
+        case 'hyperlink':
+          innerHtml += convertHyperlinkToHtml(el, ctx, defaultRunStyle);
+          break;
+
+        case 'fldSimple':
+          // Field-simple wraps content like TOC entries, PAGEREF, etc.
+          // Process its children as if they were direct paragraph children.
+          processInlineChildren(el);
+          break;
+
+        case 'sdt': {
+          // Inline structured document tags within a paragraph
+          const sdtContent = getDirectChild(el, NS.W, 'sdtContent');
+          if (sdtContent) processInlineChildren(sdtContent);
+          break;
         }
+
+        case 'smartTag':
+          // Smart tags wrap runs — process inner content
+          processInlineChildren(el);
+          break;
+
+        case 'ins':
+        case 'moveTo':
+          // Revision tracking — accept insertions by processing inner runs
+          processInlineChildren(el);
+          break;
+
+        case 'del':
+        case 'moveFrom':
+          // Revision tracking — skip deleted content
+          break;
+
+        case 'bookmarkStart': {
+          // Create an anchor for internal links (used by TOC hyperlinks)
+          const name = el.getAttribute('w:name');
+          if (name && name !== '_GoBack') {
+            innerHtml += `<a id="${escapeHtml(name)}"></a>`;
+          }
+          break;
+        }
+
+        // bookmarkEnd, proofErr, permStart, permEnd → skip silently
+        default:
+          break;
       }
     }
   }
+
+  processInlineChildren(paraEl);
   return innerHtml;
 }
 
 function convertParagraphToHtml(paraEl: Element, ctx: ConversionContext): string {
   const pPr = getDirectChild(paraEl, NS.W, 'pPr');
   const paraStyle = extractParagraphStyle(pPr, ctx.stylesMap);
-  const innerHtml = convertParagraphInner(paraEl, ctx);
+  let innerHtml = convertParagraphInner(paraEl, ctx);
+
+  // Replace tab characters with dot-leader spans when the paragraph has a tab leader
+  if (paraStyle.tabLeader) {
+    const leaderChar = TAB_LEADER_CHARS[paraStyle.tabLeader] || ' ';
+    const leaderSpan = `<span style="letter-spacing:2px">${leaderChar.repeat(40)}</span>`;
+    innerHtml = innerHtml.replace(/&#9;/g, leaderSpan);
+  }
 
   const cssParts: string[] = [];
   if (paraStyle.textAlign) cssParts.push(`text-align:${paraStyle.textAlign}`);
+  if (paraStyle.marginLeft) cssParts.push(`margin-left:${paraStyle.marginLeft}`);
+  if (paraStyle.marginRight) cssParts.push(`margin-right:${paraStyle.marginRight}`);
   const styleAttr = buildStyleAttr(cssParts);
   const { tag } = paraStyle;
 
