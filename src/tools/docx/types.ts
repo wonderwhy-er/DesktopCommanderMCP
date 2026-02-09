@@ -8,12 +8,24 @@
 
 // ─── Document Defaults ───────────────────────────────────────────────────────
 
-/** Default font and size extracted from the original DOCX, used to preserve styles on re-creation. */
+/** Default document-level settings extracted from the original DOCX, used to preserve styles on re-creation. */
 export interface DocxDocumentDefaults {
   /** Default font family (e.g. 'Calibri', 'Times New Roman') */
   font: string;
   /** Default font size in points (e.g. 11, 12) */
   fontSize: number;
+  /** Page margins in twips (1/20 pt), as used by Word section properties. */
+  margins?: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+    header?: number;
+    footer?: number;
+    gutter?: number;
+  };
+  /** Page orientation, if specified (portrait by default). */
+  orientation?: 'portrait' | 'landscape';
 }
 
 // ─── Metadata & Structure ────────────────────────────────────────────────────

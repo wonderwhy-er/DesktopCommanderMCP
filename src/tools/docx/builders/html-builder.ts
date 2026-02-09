@@ -92,8 +92,8 @@ export async function createDocxFromHtml(html: string, options: DocxBuildOptions
         pageNumber: DEFAULT_BUILD_OPTIONS.pageNumber,
         font: defaults?.font || DEFAULT_BUILD_OPTIONS.font,
         fontSize: defaults?.fontSize || DEFAULT_BUILD_OPTIONS.fontSize,
-        orientation: DEFAULT_BUILD_OPTIONS.orientation,
-        margins: { ...DEFAULT_BUILD_OPTIONS.margins },
+        orientation: defaults?.orientation || DEFAULT_BUILD_OPTIONS.orientation,
+        margins: defaults?.margins ? { ...defaults.margins } : { ...DEFAULT_BUILD_OPTIONS.margins },
       };
 
       const docxBuffer = await HTMLtoDOCX(processedHtml, null, docxOptions);

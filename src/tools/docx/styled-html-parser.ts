@@ -1175,6 +1175,56 @@ function parseDocDefaults(stylesXml: string, themeFonts: ThemeFonts): RunStyle {
   }
 }
 
+/**
+ * Extract section-level defaults (page margins, orientation) from `w:sectPr`.
+ * We only read the first section's settings and treat them as document defaults.
+ */
+function parseSectionDefaults(doc: Document): Pick<DocxDocumentDefaults, 'margins' | 'orientation'> {
+  try {
+    const sectPrEls = doc.getElementsByTagNameNS(NS.W, 'sectPr');
+    if (sectPrEls.length === 0) return {};
+
+    const sectPr = sectPrEls[0] as Element;
+    const result: Pick<DocxDocumentDefaults, 'margins' | 'orientation'> = {};
+
+    const pgMar = getDirectChild(sectPr, NS.W, 'pgMar');
+    if (pgMar) {
+      const toNum = (attr: string | null): number | undefined => {
+        if (!attr) return undefined;
+        const n = parseInt(attr, 10);
+        return Number.isNaN(n) ? undefined : n;
+      };
+
+      const top = toNum(pgMar.getAttribute('w:top'));
+      const right = toNum(pgMar.getAttribute('w:right'));
+      const bottom = toNum(pgMar.getAttribute('w:bottom'));
+      const left = toNum(pgMar.getAttribute('w:left'));
+      const header = toNum(pgMar.getAttribute('w:header'));
+      const footer = toNum(pgMar.getAttribute('w:footer'));
+      const gutter = toNum(pgMar.getAttribute('w:gutter'));
+
+      if (top != null && right != null && bottom != null && left != null) {
+        result.margins = { top, right, bottom, left };
+        if (header != null) result.margins.header = header;
+        if (footer != null) result.margins.footer = footer;
+        if (gutter != null) result.margins.gutter = gutter;
+      }
+    }
+
+    const pgSz = getDirectChild(sectPr, NS.W, 'pgSz');
+    if (pgSz) {
+      const orient = pgSz.getAttribute('w:orient');
+      if (orient === 'landscape' || orient === 'portrait') {
+        result.orientation = orient;
+      }
+    }
+
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 // ─── Context Building ────────────────────────────────────────────────────────
 
 async function buildConversionContext(
@@ -1340,8 +1390,21 @@ function convertListParagraph(
   const liContent = convertParagraphInner(paraEl, ctx);
   const paraStyle = extractParagraphStyle(pPr, ctx.stylesMap);
   const liCss: string[] = [];
+
+  // Preserve paragraph-level styling on list items
   if (paraStyle.textAlign) liCss.push(`text-align:${paraStyle.textAlign}`);
-  if (level > 0) liCss.push(`margin-left:${level * 36}pt`);
+  if (paraStyle.marginLeft) liCss.push(`margin-left:${paraStyle.marginLeft}`);
+  else if (level > 0) liCss.push(`margin-left:${level * 36}pt`);
+  if (paraStyle.marginRight) liCss.push(`margin-right:${paraStyle.marginRight}`);
+  if (paraStyle.marginTop) liCss.push(`margin-top:${paraStyle.marginTop}`);
+  if (paraStyle.marginBottom) liCss.push(`margin-bottom:${paraStyle.marginBottom}`);
+  if (paraStyle.textIndent) liCss.push(`text-indent:${paraStyle.textIndent}`);
+  if (paraStyle.backgroundColor) liCss.push(`background-color:${paraStyle.backgroundColor}`);
+  if (paraStyle.borderTop) liCss.push(`border-top:${paraStyle.borderTop}`);
+  if (paraStyle.borderBottom) liCss.push(`border-bottom:${paraStyle.borderBottom}`);
+  if (paraStyle.borderLeft) liCss.push(`border-left:${paraStyle.borderLeft}`);
+  if (paraStyle.borderRight) liCss.push(`border-right:${paraStyle.borderRight}`);
+
   out += `<li${buildStyleAttr(liCss)}>${liContent || '&nbsp;'}</li>\n`;
 
   return out;
@@ -1393,5 +1456,12 @@ export async function convertDocxToStyledHtml(
   const html = convertBodyChildrenToHtml(bodyEl, ctx);
   const images = buildImageArray(ctx.imageMap);
 
-  return { html, images, documentDefaults };
+  // Enrich document defaults with section-level settings (margins, orientation)
+  const sectionDefaults = parseSectionDefaults(doc);
+  const mergedDefaults: DocxDocumentDefaults = {
+    ...documentDefaults,
+    ...sectionDefaults,
+  };
+
+  return { html, images, documentDefaults: mergedDefaults };
 }
