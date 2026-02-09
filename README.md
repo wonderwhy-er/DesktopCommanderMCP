@@ -16,6 +16,8 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />
 </a>
 
+## 👋 We’re hiring — come build with us: https://desktopcommander.app/careers/
+
 ## Table of Contents
 - [Features](#features)
 - [How to install](#how-to-install)
