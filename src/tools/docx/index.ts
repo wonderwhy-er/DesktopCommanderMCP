@@ -1,10 +1,26 @@
 /**
- * DOCX file manipulation tools
- * Provides utilities for reading, writing, and modifying DOCX files
- * while preserving formatting and styles
+ * DOCX file manipulation tools — barrel exports.
  */
 
-export { readDocx, extractTextFromDocx, getDocxMetadata, extractBodyXml } from './read.js';
-export { writeDocx, modifyDocxContent, replaceBodyXml } from './write.js';
-export type { DocxMetadata, DocxParagraph, DocxRun, DocxModification } from './types.js';
+// Patch-based tools (read_docx / write_docx)
+export { readDocxOutline } from './read.js';
+export { writeDocxPatched } from './write.js';
 
+// Legacy functions (used by read_file, write_file, edit_block handlers)
+export { readDocx, extractTextFromDocx, getDocxMetadata, extractBodyXml } from './read.js';
+export { writeDocx, modifyDocxContent, replaceBodyXml } from './modify.js';
+
+// Types
+export type {
+    DocxMetadata,
+    DocxParagraph,
+    DocxRun,
+    DocxModification,
+    ParagraphOutline,
+    ReadDocxResult,
+    WriteDocxStats,
+    WriteDocxResult,
+    BodySnapshot,
+    DocxOp,
+    OpResult,
+} from './types.js';

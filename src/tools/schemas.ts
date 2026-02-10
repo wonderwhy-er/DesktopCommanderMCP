@@ -103,66 +103,47 @@ export const WritePdfArgsSchema = z.object({
   options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
 });
 
-// DOCX modification schemas - exported for reuse
-export const DocxReplaceOperationSchema = z.object({
-  type: z.literal('replace'),
-  findText: z.string(),
-  replaceText: z.string().optional(),
-  style: z.object({
-    color: z.string().optional(),
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-  }).optional(),
+// ─── DOCX patch-based schemas (read_docx + write_docx tools) ─────────
+
+export const ReadDocxArgsSchema = z.object({
+  path: z.string(),
 });
 
-export const DocxInsertOperationSchema = z.object({
-  type: z.literal('insert'),
-  paragraphIndex: z.number(),
-  insertText: z.string(),
+const ReplaceParagraphTextExactOpSchema = z.object({
+  type: z.literal('replace_paragraph_text_exact'),
+  from: z.string(),
+  to: z.string(),
 });
 
-export const DocxDeleteOperationSchema = z.object({
-  type: z.literal('delete'),
-  paragraphIndex: z.number(),
+const ReplaceParagraphAtBodyIndexOpSchema = z.object({
+  type: z.literal('replace_paragraph_at_body_index'),
+  bodyChildIndex: z.number(),
+  to: z.string(),
 });
 
-export const DocxStyleOperationSchema = z.object({
-  type: z.literal('style'),
-  paragraphIndex: z.number(),
-  style: z.object({
-    color: z.string().optional(),
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-  }),
+const SetColorForStyleOpSchema = z.object({
+  type: z.literal('set_color_for_style'),
+  style: z.string(),
+  color: z.string(),
 });
 
-export const DocxOperationSchema = z.union([
-  DocxReplaceOperationSchema,
-  DocxInsertOperationSchema,
-  DocxDeleteOperationSchema,
-  DocxStyleOperationSchema,
+const SetColorForParagraphExactOpSchema = z.object({
+  type: z.literal('set_color_for_paragraph_exact'),
+  text: z.string(),
+  color: z.string(),
+});
+
+const DocxOpSchema = z.discriminatedUnion('type', [
+  ReplaceParagraphTextExactOpSchema,
+  ReplaceParagraphAtBodyIndexOpSchema,
+  SetColorForStyleOpSchema,
+  SetColorForParagraphExactOpSchema,
 ]);
 
 export const WriteDocxArgsSchema = z.object({
-  path: z.string(),
-  // Preprocess content to handle JSON strings that should be parsed as arrays
-  content: z.preprocess(
-    (val) => {
-      // If it's a string that looks like JSON array, parse it
-      if (typeof val === 'string' && val.trim().startsWith('[')) {
-        try {
-          return JSON.parse(val);
-        } catch {
-          // If parsing fails, return as-is (might be text content)
-          return val;
-        }
-      }
-      // Otherwise return as-is
-      return val;
-    },
-    z.union([z.string(), z.array(DocxOperationSchema)])
-  ),
-  outputPath: z.string().optional(),
+  inputPath: z.string(),
+  outputPath: z.string(),
+  ops: z.array(DocxOpSchema),
 });
 
 export const CreateDirectoryArgsSchema = z.object({

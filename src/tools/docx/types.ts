@@ -1,77 +1,142 @@
 /**
- * Type definitions for DOCX operations
+ * Type definitions for DOCX operations.
+ * Single source of truth for every type used across the DOCX module.
  */
 
-/**
- * DOCX metadata extracted from document
- */
+// ═══════════════════════════════════════════════════════════════════════
+// Core document metadata (legacy read path)
+// ═══════════════════════════════════════════════════════════════════════
+
 export interface DocxMetadata {
-    /** Document title (from core properties) */
     title?: string;
-    /** Document author (from core properties) */
     author?: string;
-    /** Document subject (from core properties) */
     subject?: string;
-    /** Document creator (from core properties) */
     creator?: string;
-    /** Total number of paragraphs in document */
     paragraphCount: number;
-    /** Total word count (approximate) */
     wordCount: number;
 }
 
-/**
- * Represents a paragraph in a DOCX document
- */
 export interface DocxParagraph {
-    /** Paragraph index (0-based) */
     index: number;
-    /** Plain text content of paragraph */
     text: string;
-    /** Whether paragraph contains text */
     hasText: boolean;
 }
 
-/**
- * Represents a text run (formatted text segment) in a DOCX document
- */
 export interface DocxRun {
-    /** Text content of the run */
     text: string;
-    /** Whether run has bold formatting */
     bold?: boolean;
-    /** Whether run has italic formatting */
     italic?: boolean;
-    /** Font color (hex format, e.g., "FF0000") */
     color?: string;
-    /** Font size (in half-points) */
     fontSize?: number;
-    /** Font name */
     fontName?: string;
 }
 
-/**
- * Modification operation for DOCX content
- */
+// ═══════════════════════════════════════════════════════════════════════
+// Legacy modification operations (write_file / edit_block)
+// ═══════════════════════════════════════════════════════════════════════
+
 export interface DocxModification {
-    /** Type of modification */
     type: 'replace' | 'insert' | 'delete' | 'style';
-    /** Target paragraph index (0-based) */
     paragraphIndex?: number;
-    /** Text to find (for replace operations) */
     findText?: string;
-    /** Text to replace with */
     replaceText?: string;
-    /** Text to insert */
     insertText?: string;
-    /** Style options for text */
     style?: {
-        /** Font color (hex format) */
         color?: string;
-        /** Bold formatting */
         bold?: boolean;
-        /** Italic formatting */
         italic?: boolean;
     };
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Read outline (used by read_docx tool)
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface ParagraphOutline {
+    bodyChildIndex: number;
+    paragraphIndex: number;
+    style: string | null;
+    text: string;
+}
+
+export interface ReadDocxResult {
+    path: string;
+    paragraphs: ParagraphOutline[];
+    stylesSeen: string[];
+    counts: {
+        tables: number;
+        images: number;
+        bodyChildren: number;
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Write / patch result (used by write_docx tool)
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface WriteDocxStats {
+    tablesBefore: number;
+    tablesAfter: number;
+    bodyChildrenBefore: number;
+    bodyChildrenAfter: number;
+    bodySignatureBefore: string;
+    bodySignatureAfter: string;
+}
+
+export interface WriteDocxResult {
+    outputPath: string;
+    results: OpResult[];
+    stats: WriteDocxStats;
+    warnings: string[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Validation snapshot
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface BodySnapshot {
+    bodyChildCount: number;
+    tableCount: number;
+    signature: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Patch operations
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface ReplaceParagraphTextExactOp {
+    type: 'replace_paragraph_text_exact';
+    from: string;
+    to: string;
+}
+
+export interface ReplaceParagraphAtBodyIndexOp {
+    type: 'replace_paragraph_at_body_index';
+    bodyChildIndex: number;
+    to: string;
+}
+
+export interface SetColorForStyleOp {
+    type: 'set_color_for_style';
+    style: string;
+    color: string;
+}
+
+export interface SetColorForParagraphExactOp {
+    type: 'set_color_for_paragraph_exact';
+    text: string;
+    color: string;
+}
+
+export type DocxOp =
+    | ReplaceParagraphTextExactOp
+    | ReplaceParagraphAtBodyIndexOp
+    | SetColorForStyleOp
+    | SetColorForParagraphExactOp;
+
+export interface OpResult {
+    op: DocxOp;
+    status: 'applied' | 'skipped';
+    matched: number;
+    reason?: string;
+}

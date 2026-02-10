@@ -49,6 +49,7 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    ReadDocxArgsSchema,
     WriteDocxArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
@@ -305,6 +306,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - DOCX (.docx): Extracts text content with paragraph structure
                           * offset/length work as paragraph pagination (0-based)
                           * Preserves document metadata (title, author, word count)
+                          * ⚠️ For DOCX editing workflows, use read_docx instead — it returns a compact outline (minimal tokens) with bodyChildIndex for precise write_docx targeting. Only use read_file for DOCX when you need full paragraph text for display.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -446,67 +448,70 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
             },
             {
+                name: "read_docx",
+                description: `
+                        Read a DOCX file and return a compact JSON outline for precise targeting.
+                        
+                        ⚠️ ALWAYS use this ONCE before write_docx — do NOT call read_file on .docx files for editing workflows.
+                        This returns a token-efficient outline; read_file returns full text and wastes context.
+
+                        Returns a structured outline with:
+                        - paragraphs[]: each has bodyChildIndex (position among ALL w:body children), paragraphIndex, style id, and text
+                        - stylesSeen[]: list of paragraph style ids found in the document
+                        - counts: { tables, images, bodyChildren }
+
+                        WORKFLOW (always follow this — only 2 tool calls needed):
+                        1. read_docx(path="doc.docx") → get compact outline (call ONCE, do NOT repeat)
+                        2. Plan your ops from the outline
+                        3. write_docx(inputPath="doc.docx", outputPath="doc_v2.docx", ops=[...])
+
+                        Only works within allowed directories.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ReadDocxArgsSchema),
+                annotations: {
+                    title: "Read DOCX Outline",
+                    readOnlyHint: true,
+                    destructiveHint: false,
+                    openWorldHint: false,
+                },
+            },
+            {
                 name: "write_docx",
                 description: `
-                        Create a new DOCX file or modify an existing one.
+                        Apply patch-based updates to an existing DOCX file.
 
-                        THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING DOCX FILES.
+                        THIS IS THE ONLY TOOL FOR MODIFYING DOCX FILES.
+                        Never overwrites the input — always writes to outputPath.
+                        Preserves tables, images, numbering, headers/footers, styles, section breaks, and paragraph/table order.
 
-                        RULES ABOUT FILENAMES:
-                        - When creating a new DOCX, 'outputPath' MUST be provided and MUST use a new unique filename (e.g., "result_01.docx", "report_2025_01.docx", etc.).
-                        - When modifying an existing DOCX, 'outputPath' should be provided to avoid overwriting the original.
+                        ⚠️ MANDATORY WORKFLOW (exactly 2 tool calls — no more):
+                        1. read_docx(path) → get outline ONCE (do NOT call read_file or read_docx again)
+                        2. write_docx(inputPath, outputPath, ops) → apply all changes in ONE call
 
-                        MODES:
-                        1. REPLACE BODY XML (RECOMMENDED - preserves all styles):
-                           - Pass body XML string (from read_file) as 'content'.
-                           - LLM modifies the body XML based on user query.
-                           - All styles and formatting are preserved.
-                           - Source file must exist (use same path as read_file).
-                           
-                           Example workflow:
-                           1. read_file(path="document.docx") → returns body XML
-                           2. Modify the body XML based on user request
-                           3. write_docx(path="document.docx", content="<w:body>...</w:body>", outputPath="updated_document.docx")
-                           
-                           write_docx(path="doc.docx", content="<w:body><w:p>...</w:p></w:body>", outputPath="new_doc.docx")
+                        DO NOT read the file multiple times. The outline from step 1 has everything you need.
+                        To replicate/copy a DOCX, use write_docx with no ops (ops=[]).
 
-                        2. CREATE NEW DOCX FROM TEXT:
-                           - Pass plain text string as 'content' (not starting with <w:body).
-                           - Creates minimal DOCX structure (no styles).
-                           write_docx(path="doc.docx", content="First paragraph\\n\\nSecond paragraph", outputPath="new_doc.docx")
+                        OPERATIONS (combine multiple ops in a single call):
+                        1. replace_paragraph_text_exact — Find paragraph by exact trimmed text, replace its text.
+                           { "type": "replace_paragraph_text_exact", "from": "Old Title", "to": "New Title" }
 
-                        3. MODIFY EXISTING DOCX WITH OPERATIONS:
-                           - Pass array of operations as 'content'.
-                           - Preserves ALL existing styles and formatting.
-                           - Only modifies specified content while keeping everything else intact.
-                           - ALWAYS provide 'outputPath' to avoid overwriting original.
+                        2. replace_paragraph_at_body_index — Target paragraph by bodyChildIndex from read_docx. Skips if not a w:p.
+                           { "type": "replace_paragraph_at_body_index", "bodyChildIndex": 12, "to": "New text" }
 
-                           write_docx(path="doc.docx", content=[
-                               { type: "replace", findText: "Old text", replaceText: "New text", style: { color: "FF0000" } },
-                               { type: "insert", paragraphIndex: 2, insertText: "New paragraph" },
-                               { type: "delete", paragraphIndex: 5 },
-                               { type: "style", paragraphIndex: 0, style: { bold: true, color: "0000FF" } }
-                           ], outputPath="modified_doc.docx")
+                        3. set_color_for_style — Apply run-level text colour to ALL paragraphs with the given style id.
+                           { "type": "set_color_for_style", "style": "Heading2", "color": "FF0000" }
 
-                        OPERATIONS (for mode 3):
-                        - replace: Find and replace text in a paragraph (preserves all other styles)
-                          { type: "replace", findText: "Exact paragraph text", replaceText: "New text", style: { color: "FF0000", bold: true } }
-                          
-                        - insert: Add new paragraph at specific index (0-based, negative = from end)
-                          { type: "insert", paragraphIndex: 2, insertText: "New paragraph text" }
-                          
-                        - delete: Remove paragraph at specific index (0-based, negative = from end)
-                          { type: "delete", paragraphIndex: 1 }
-                          
-                        - style: Apply styles to existing paragraph (preserves all other formatting)
-                          { type: "style", paragraphIndex: 0, style: { color: "FF0000", bold: true, italic: false } }
+                        4. set_color_for_paragraph_exact — Apply run-level text colour to the first paragraph matching exact trimmed text.
+                           { "type": "set_color_for_paragraph_exact", "text": "Some Title", "color": "FF0000" }
 
-                        STYLE PRESERVATION:
-                        - All modes preserve existing document styles and formatting
-                        - Body XML mode preserves everything (styles, images, relationships, etc.)
-                        - Only specified style properties are modified in operations mode
-                        - Font sizes, font names, underlines, spacing, and all other formatting remain unchanged
-                        - Works by modifying only the necessary XML nodes while preserving document structure
+                        VALIDATION:
+                        After applying ops the tool validates that:
+                        - w:body child count is unchanged
+                        - w:tbl count is unchanged
+                        - body child sequence signature is unchanged (e.g. "p,tbl,p,p,sectPr")
+                        If validation fails the output is NOT written and an error is returned.
 
                         Only works within allowed directories.
 
@@ -1401,6 +1406,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "write_pdf":
                 result = await handlers.handleWritePdf(args);
+                break;
+
+            case "read_docx":
+                result = await handlers.handleReadDocx(args);
                 break;
 
             case "write_docx":

@@ -26,6 +26,7 @@ import {
     MoveFileArgsSchema,
     GetFileInfoArgsSchema,
     WritePdfArgsSchema,
+    ReadDocxArgsSchema,
     WriteDocxArgsSchema
 } from '../tools/schemas.js';
 
@@ -408,16 +409,36 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
 }
 
 /**
- * Handle write_docx command
+ * Handle read_docx command — returns compact JSON outline
+ */
+export async function handleReadDocx(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = ReadDocxArgsSchema.parse(args);
+        const { readDocxOutline } = await import('../tools/docx/index.js');
+        const outline = await readDocxOutline(parsed.path);
+        return {
+            content: [{ type: "text", text: JSON.stringify(outline, null, 2) }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+}
+
+/**
+ * Handle write_docx command — patch-based update
  */
 export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteDocxArgsSchema.parse(args);
-        const { writeDocx } = await import('../tools/filesystem.js');
-        await writeDocx(parsed.path, parsed.content, parsed.outputPath);
-        const targetPath = parsed.outputPath || parsed.path;
+        const { writeDocxPatched } = await import('../tools/docx/index.js');
+        const result = await writeDocxPatched(
+            parsed.inputPath,
+            parsed.outputPath,
+            parsed.ops as any
+        );
         return {
-            content: [{ type: "text", text: `Successfully wrote DOCX to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
