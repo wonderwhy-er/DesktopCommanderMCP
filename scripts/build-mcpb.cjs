@@ -31,20 +31,29 @@ try {
     process.exit(1);
 }
 
-// Step 1: Build the TypeScript project
-console.log('📦 Building TypeScript project...');
-try {
-    execSync('npm run build', { cwd: PROJECT_ROOT, stdio: 'inherit' });
-    console.log('✅ TypeScript build completed');
-} catch (error) {
-    console.error('❌ TypeScript build failed:', error.message);
-    process.exit(1);
-}
-
-// Step 2: Clean and create bundle directory
+// Step 1: Clean and create bundle directory
+console.log('🧹 Cleaning bundle directory...');
 if (fs.existsSync(BUNDLE_DIR)) {
     fs.rmSync(BUNDLE_DIR, { recursive: true });
-}fs.mkdirSync(BUNDLE_DIR, { recursive: true });
+}
+fs.mkdirSync(BUNDLE_DIR, { recursive: true });
+
+// Step 2: Bundle with esbuild
+console.log('📦 Bundling with esbuild...');
+try {
+    // Ensure dist directory exists
+    const distDir = path.join(BUNDLE_DIR, 'dist');
+    if (!fs.existsSync(distDir)) {
+        fs.mkdirSync(distDir, { recursive: true });
+    }
+
+    execSync('npx esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=mcpb-bundle/dist/index.js --external:sharp --external:@vscode/ripgrep --external:vscode', { cwd: PROJECT_ROOT, stdio: 'inherit' });
+
+    console.log('✅ esbuild bundling completed');
+} catch (error) {
+    console.error('❌ esbuild failed:', error.message);
+    process.exit(1);
+}
 
 // Step 3: Read package.json for version and metadata
 const packageJson = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
@@ -80,7 +89,8 @@ fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
 console.log('✅ Created manifest.json');
 // Step 5: Copy necessary files
 const filesToCopy = [
-    'dist',
+    // 'dist', // Skipped because we generate dist via esbuild directly into bundle
+
     'package.json',
     'README.md',
     'LICENSE',
@@ -91,7 +101,7 @@ const filesToCopy = [
 filesToCopy.forEach(file => {
     const srcPath = path.join(PROJECT_ROOT, file);
     const destPath = path.join(BUNDLE_DIR, file);
-    
+
     if (fs.existsSync(srcPath)) {
         if (fs.statSync(srcPath).isDirectory()) {
             // Copy directory recursively
@@ -106,22 +116,25 @@ filesToCopy.forEach(file => {
     }
 });
 
-// Step 6: Create package.json in bundle with production dependencies from main package.json
-// This ensures MCPB bundle always has the same dependencies as the npm package
+// Step 6: Create package.json in bundle with ONLY native dependencies
+// We bundle everything else with esbuild
 const bundlePackageJson = {
     name: manifest.name,
     version: manifest.version,
     description: manifest.description,
-    type: "module", // Required for ESM - without this, Node.js defaults to CommonJS and shows warnings
+    type: "module",
     main: "dist/index.js",
     author: manifest.author,
     license: manifest.license,
     repository: manifest.repository,
-    dependencies: packageJson.dependencies // Use dependencies directly from package.json
+    dependencies: {
+        "sharp": packageJson.dependencies.sharp,
+        "@vscode/ripgrep": packageJson.dependencies["@vscode/ripgrep"]
+    }
 };
 
 fs.writeFileSync(
-    path.join(BUNDLE_DIR, 'package.json'), 
+    path.join(BUNDLE_DIR, 'package.json'),
     JSON.stringify(bundlePackageJson, null, 2)
 );
 
@@ -142,12 +155,12 @@ try {
     const ripgrepBinDest = path.join(BUNDLE_DIR, 'node_modules/@vscode/ripgrep/bin');
     const ripgrepWrapperSrc = path.join(PROJECT_ROOT, 'scripts/ripgrep-wrapper.js');
     const ripgrepIndexDest = path.join(BUNDLE_DIR, 'node_modules/@vscode/ripgrep/lib/index.js');
-    
+
     // Ensure bin directory exists
     if (!fs.existsSync(ripgrepBinDest)) {
         fs.mkdirSync(ripgrepBinDest, { recursive: true });
     }
-    
+
     // Copy all platform-specific ripgrep binaries
     const binaries = fs.readdirSync(ripgrepBinSrc).filter(f => f.startsWith('rg-'));
     binaries.forEach(binary => {
@@ -162,7 +175,7 @@ try {
         }
     });
     console.log(`✅ Copied ${binaries.length} ripgrep binaries`);
-    
+
     // Replace index.js with our wrapper
     fs.copyFileSync(ripgrepWrapperSrc, ripgrepIndexDest);
     console.log('✅ Installed ripgrep runtime wrapper');
