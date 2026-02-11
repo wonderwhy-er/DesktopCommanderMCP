@@ -27,6 +27,9 @@ import {
     GetFileInfoArgsSchema,
     WritePdfArgsSchema
 } from '../tools/schemas.js';
+import path from 'path';
+import { buildUiToolMeta, FILE_PREVIEW_RESOURCE_URI } from '../ui/contracts.js';
+import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 
 /**
  * Helper function to check if path contains an error
@@ -102,7 +105,14 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
                     },
                     ...pdfContent
-                ]
+                ],
+                structuredContent: {
+                    fileName: path.basename(parsed.path),
+                    filePath: parsed.path,
+                    fileType: 'unsupported',
+                    content: ''
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
             };
         }
 
@@ -113,11 +123,12 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
+            const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n`
+                        text: imageSummary
                     },
                     {
                         type: "image",
@@ -125,14 +136,29 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         mimeType: fileResult.mimeType
                     }
                 ],
+                structuredContent: {
+                    fileName: path.basename(parsed.path),
+                    filePath: parsed.path,
+                    fileType: 'unsupported',
+                    content: imageSummary
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
             };
         } else {
             // For all other files, return as text
             const textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
+            const previewFileType = resolvePreviewFileType(parsed.path);
             return {
                 content: [{ type: "text", text: textContent }],
+                structuredContent: {
+                    fileName: path.basename(parsed.path),
+                    filePath: parsed.path,
+                    fileType: previewFileType,
+                    content: textContent
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
             };
         }
     };

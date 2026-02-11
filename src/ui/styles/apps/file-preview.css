@@ -1,0 +1,289 @@
+/*
+ * App-specific styling for File Preview layouts and render containers. It tunes typography, code blocks, and content panes for readable previews.
+ */
+:root {
+  --code-bg: var(--panel);
+  --code-text: var(--color-text-primary, var(--text));
+  --hljs-keyword: var(--color-text-accent, #8b5cf6);
+  --hljs-string: var(--color-text-success, #059669);
+  --hljs-comment: var(--color-text-tertiary, #94a3b8);
+  --hljs-type: var(--color-text-info, #0f766e);
+  --hljs-number: var(--color-text-warning, #b45309);
+  --hljs-attr: var(--color-text-info, #2563eb);
+  --hljs-built-in: var(--color-text-accent, #6366f1);
+  --hljs-tag: var(--color-text-info, #0ea5a8);
+  --content-height: min(82vh, 920px);
+  --markdown-bg: var(--panel);
+  --markdown-border: var(--border);
+  --markdown-text: var(--text);
+  --markdown-muted: var(--text-secondary);
+  --inline-code-bg: var(--panel-subtle);
+  --inline-code-border: var(--border);
+  --inline-code-text: var(--text);
+  --notice-bg: var(--warning-bg);
+  --notice-border: var(--warning-border);
+  --notice-text: var(--warning-text);
+}
+
+.panel {
+  margin-top: 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.panel-content {
+  height: var(--content-height);
+  overflow: hidden;
+  padding-right: 0;
+}
+
+.source-content .code-viewer {
+  height: 100%;
+  overflow: auto;
+}
+
+.html-content .html-rendered-frame {
+  height: 100%;
+}
+
+.markdown-content {
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.notice {
+  background: var(--notice-bg);
+  color: var(--notice-text);
+  border: 1px solid var(--notice-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.preview-status {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px 14px;
+  color: var(--text-secondary);
+}
+
+.preview-status p {
+  margin: 0;
+}
+
+.preview-status--loading {
+  color: var(--text);
+}
+
+.loading-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  animation: pulse-dot 1s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: .5em 0;
+  letter-spacing: -.01em;
+}
+
+.markdown p {
+  margin: .7em 0;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: .7em 0;
+  padding-left: 1.4rem;
+}
+
+.markdown-doc {
+  max-width: 860px;
+  margin: 0 auto;
+  background: var(--markdown-bg);
+  border: 1px solid var(--markdown-border);
+  border-radius: 10px;
+  padding: 18px 22px;
+  line-height: 1.62;
+  color: var(--markdown-text);
+  font-size: 15px;
+}
+
+.markdown-doc h1 {
+  margin: 0 0 14px;
+  font-size: 34px;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.markdown-doc h2 {
+  margin: 20px 0 10px;
+  font-size: 28px;
+  line-height: 1.14;
+}
+
+.markdown-doc h3 {
+  margin: 16px 0 8px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.markdown-doc p,
+.markdown-doc li {
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--markdown-muted);
+}
+
+.markdown-doc ul,
+.markdown-doc ol {
+  margin: 8px 0 14px;
+  padding-left: 1.2em;
+}
+
+.markdown-doc code:not(.hljs) {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: .92em;
+  background: var(--inline-code-bg);
+  color: var(--inline-code-text);
+  border: 1px solid var(--inline-code-border);
+  border-radius: 6px;
+  padding: 1px 5px;
+}
+
+.markdown-doc .code-viewer {
+  margin: 12px 0;
+}
+
+.code-viewer {
+  background: var(--code-bg);
+  color: var(--code-text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+  padding: 10px 12px;
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 1.45;
+  font-size: 13px;
+  white-space: pre;
+}
+
+.code-viewer .hljs {
+  display: block;
+  background: transparent;
+  color: inherit;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--hljs-comment);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-name,
+.hljs-section,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-doctag,
+.hljs-regexp {
+  color: var(--hljs-keyword);
+}
+
+.hljs-string,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-variable {
+  color: var(--hljs-string);
+}
+
+.hljs-type,
+.hljs-params,
+.hljs-variable.language_ {
+  color: var(--hljs-type);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet {
+  color: var(--hljs-number);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property {
+  color: var(--hljs-attr);
+}
+
+.hljs-built_in,
+.hljs-built-in {
+  color: var(--hljs-built-in);
+}
+
+.hljs-tag,
+.hljs-selector-pseudo,
+.hljs-selector-attr {
+  color: var(--hljs-tag);
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-subst,
+.hljs-punctuation,
+.hljs-operator {
+  color: inherit;
+}
+
+.html-rendered-frame {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  display: block;
+  overflow: hidden;
+}
+
+@media (max-width: 720px) {
+  .markdown-doc {
+    padding: 14px;
+  }
+
+  .markdown-doc h1 {
+    font-size: 27px;
+  }
+
+  .markdown-doc h2 {
+    font-size: 22px;
+  }
+
+  .markdown-doc h3 {
+    font-size: 18px;
+  }
+
+  .markdown-doc p,
+  .markdown-doc li {
+    font-size: 16px;
+  }
+}

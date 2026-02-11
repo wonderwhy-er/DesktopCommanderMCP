@@ -1,0 +1,204 @@
+/*
+ * Reusable styles for the shared tool header component. It provides consistent spacing, alignment, and action presentation across apps.
+ */
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  margin-bottom: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+.meta-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.file-pill {
+  width: 52px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.file-pill--md {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.file-pill--html {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.file-pill--json {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.file-pill--text {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+.meta-text {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  min-width: 0;
+  gap: 8px;
+}
+
+.filename {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 460px;
+  font-size: 12px;
+}
+
+.filepath {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 360px;
+}
+
+.meta-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.badge {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 2px 7px;
+  font-size: 10px;
+  background: var(--panel-subtle);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.icon-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 9px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.icon-button svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.icon-button:hover {
+  background: var(--panel-muted);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.icon-button:active {
+  transform: translateY(1px);
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--border);
+  outline-offset: 2px;
+}
+
+.icon-button--secondary {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+  color: var(--text-secondary);
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 12px;
+  }
+
+  .toolbar {
+    gap: 8px;
+  }
+
+  .meta {
+    gap: 8px;
+  }
+
+  .actions {
+    padding-left: 6px;
+  }
+
+  .meta-badges {
+    display: none;
+  }
+
+  .meta-text {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+
+  .filename,
+  .filepath {
+    max-width: 100%;
+  }
+}

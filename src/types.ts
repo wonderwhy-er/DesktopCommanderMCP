@@ -1,5 +1,6 @@
 import { ChildProcess } from 'child_process';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
+import type { PreviewFileType } from './ui/file-preview/shared/preview-file-types.js';
 
 declare global {
   var mcpTransport: FilteredStdioServerTransport | undefined;
@@ -71,8 +72,16 @@ export interface ServerResponseContent {
   mimeType?: string;
 }
 
+export interface FilePreviewStructuredContent {
+  fileName: string;
+  filePath: string;
+  fileType: PreviewFileType;
+  content: string;
+}
+
 export interface ServerResult {
   content: ServerResponseContent[];
+  structuredContent?: FilePreviewStructuredContent | Record<string, unknown>;
   isError?: boolean;
   _meta?: Record<string, unknown>;
 }

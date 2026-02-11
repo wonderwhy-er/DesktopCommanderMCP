@@ -1,0 +1,57 @@
+/*
+ * Global UI design tokens and base element styling shared by all MCP tool apps. It establishes color, spacing, typography, and accessibility-friendly defaults.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: transparent;
+  --panel: var(--color-background-primary, Canvas);
+  --panel-subtle: var(--color-background-tertiary, ButtonFace);
+  --panel-muted: var(--color-background-muted, ButtonFace);
+  --text: var(--color-text-primary, CanvasText);
+  --text-secondary: var(--color-text-secondary, CanvasText);
+  --muted: var(--color-text-tertiary, GrayText);
+  --border: var(--color-border-default, GrayText);
+  --accent: var(--color-accent-primary, LinkText);
+  --accent-hover: var(--color-accent-primary-hover, var(--accent));
+  --accent-soft: var(--color-accent-subtle, var(--panel-subtle));
+  --focus-ring: var(--color-border-focused, var(--accent));
+  --shadow-sm: var(--shadow-sm, none);
+  --success-bg: var(--color-background-success, var(--panel-subtle));
+  --success-border: var(--color-border-success, var(--border));
+  --success-text: var(--color-text-success, var(--text));
+  --error-bg: var(--color-background-danger, var(--panel-subtle));
+  --error-border: var(--color-border-danger, var(--border));
+  --error-text: var(--color-text-danger, var(--text));
+  --warning-bg: var(--color-background-warning, var(--panel-subtle));
+  --warning-border: var(--color-border-warning, var(--border));
+  --warning-text: var(--color-text-warning, var(--text));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+#app {
+  min-height: 0;
+}
+
+.shell {
+  max-width: none;
+  margin: 0;
+  padding: 6px;
+}
+
+.tool-shell.collapsed .panel {
+  display: none;
+}
+
+.hidden {
+  display: none !important;
+}
