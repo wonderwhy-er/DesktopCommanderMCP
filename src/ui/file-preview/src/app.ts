@@ -165,7 +165,14 @@ function renderRawFallback(source: string): string {
     return `<pre class="code-viewer"><code class="hljs language-text">${escapeHtml(source)}</code></pre>`;
 }
 
+function stripReadStatusLine(content: string): string {
+    // Remove the synthetic read status header shown by read_file pagination.
+    return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
+}
+
 function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
+    const cleanedContent = stripReadStatusLine(payload.content);
+
     if (payload.fileType === 'unsupported') {
         return {
             notice: 'Preview is not available for this file type.',
@@ -174,12 +181,12 @@ function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode
     }
 
     if (payload.fileType === 'html') {
-        return renderHtmlPreview(payload.content, htmlMode);
+        return renderHtmlPreview(cleanedContent, htmlMode);
     }
 
     if (payload.fileType !== 'markdown') {
         const detectedLanguage = inferLanguageFromPath(payload.filePath);
-        const formatted = formatJsonIfPossible(payload.content, payload.filePath);
+        const formatted = formatJsonIfPossible(cleanedContent, payload.filePath);
         return {
             notice: formatted.notice,
             html: `<div class="panel-content source-content">${renderCodeViewer(formatted.content, detectedLanguage)}</div>`
@@ -188,12 +195,12 @@ function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode
 
     try {
         return {
-            html: `<div class="panel-content markdown-content"><article class="markdown markdown-doc">${renderMarkdown(payload.content)}</article></div>`
+            html: `<div class="panel-content markdown-content"><article class="markdown markdown-doc">${renderMarkdown(cleanedContent)}</article></div>`
         };
     } catch {
         return {
             notice: 'Markdown renderer failed. Showing raw source instead.',
-            html: `<div class="panel-content source-content">${renderRawFallback(payload.content)}</div>`
+            html: `<div class="panel-content source-content">${renderRawFallback(cleanedContent)}</div>`
         };
     }
 }
@@ -223,6 +230,7 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
     };
 
     copyButton.addEventListener('click', async () => {
+        const cleanedContent = stripReadStatusLine(payload.content);
         trackUiEvent?.('copy_clicked', {
             file_type: payload.fileType,
             file_extension: getFileExtensionForAnalytics(payload.filePath)
@@ -230,7 +238,7 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
 
         try {
             if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(payload.content);
+                await navigator.clipboard.writeText(cleanedContent);
                 setButtonState('Copied');
                 return;
             }
@@ -238,7 +246,7 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
             // fallback below
         }
 
-        const copied = fallbackCopy(payload.content);
+        const copied = fallbackCopy(cleanedContent);
         setButtonState(copied ? 'Copied' : 'Copy failed');
     });
 }
