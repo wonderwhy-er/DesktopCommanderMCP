@@ -17,6 +17,12 @@ export interface ValidationOptions {
      * Default 0 (no structural changes expected).
      */
     expectedChildDelta?: number;
+
+    /**
+     * Expected change in w:tbl count.
+     * Default 0 (no table additions/removals expected).
+     */
+    expectedTableDelta?: number;
 }
 
 // ─── Capture ─────────────────────────────────────────────────────────
@@ -49,7 +55,9 @@ export function validateInvariants(
     options?: ValidationOptions,
 ): void {
     const delta = options?.expectedChildDelta ?? 0;
+    const tableDelta = options?.expectedTableDelta ?? 0;
     const expectedChildCount = before.bodyChildCount + delta;
+    const expectedTableCount = before.tableCount + tableDelta;
     const errors: string[] = [];
 
     if (expectedChildCount !== after.bodyChildCount) {
@@ -58,9 +66,9 @@ export function validateInvariants(
         );
     }
 
-    if (before.tableCount !== after.tableCount) {
+    if (expectedTableCount !== after.tableCount) {
         errors.push(
-            `Table count changed: ${before.tableCount} → ${after.tableCount}`,
+            `Table count mismatch: expected ${expectedTableCount} (before ${before.tableCount} + delta ${tableDelta}), got ${after.tableCount}`,
         );
     }
 

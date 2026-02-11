@@ -171,6 +171,26 @@ const HeaderReplaceTextExactOpSchema = z.object({
   to: z.string(),
 });
 
+const InsertTableOpSchema = z.object({
+  type: z.literal('insert_table'),
+  after: z.string().optional(),
+  before: z.string().optional(),
+  headers: z.array(z.string()).optional(),
+  rows: z.array(z.array(z.string())),
+  colWidths: z.array(z.number()).optional(),
+  style: z.string().optional(),
+});
+
+const InsertImageOpSchema = z.object({
+  type: z.literal('insert_image'),
+  after: z.string().optional(),
+  before: z.string().optional(),
+  imagePath: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  altText: z.string().optional(),
+});
+
 const DocxOpSchema = z.discriminatedUnion('type', [
   ReplaceParagraphTextExactOpSchema,
   ReplaceParagraphAtBodyIndexOpSchema,
@@ -182,6 +202,8 @@ const DocxOpSchema = z.discriminatedUnion('type', [
   TableSetCellTextOpSchema,
   ReplaceHyperlinkUrlOpSchema,
   HeaderReplaceTextExactOpSchema,
+  InsertTableOpSchema,
+  InsertImageOpSchema,
 ]);
 
 export const WriteDocxArgsSchema = z.object({

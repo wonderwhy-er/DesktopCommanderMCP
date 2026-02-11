@@ -21,7 +21,11 @@ import { applyOp } from './ops/index.js';
 import type { DocxOp, OpResult, WriteDocxStats, WriteDocxResult } from './types.js';
 
 /** Structural op types that add/remove body children. */
-const STRUCTURAL_INSERT_OPS = new Set(['insert_paragraph_after_text']);
+const STRUCTURAL_INSERT_OPS = new Set([
+    'insert_paragraph_after_text',
+    'insert_table',
+    'insert_image',
+]);
 const STRUCTURAL_DELETE_OPS = new Set(['delete_paragraph_at_body_index']);
 
 export async function writeDocxPatched(
@@ -66,17 +70,19 @@ export async function writeDocxPatched(
 
     // 5. Compute expected structural delta from applied ops
     let expectedChildDelta = 0;
+    let expectedTableDelta = 0;
     for (const r of results) {
         if (r.status !== 'applied') continue;
         if (STRUCTURAL_INSERT_OPS.has(r.op.type)) expectedChildDelta += 1;
         if (STRUCTURAL_DELETE_OPS.has(r.op.type)) expectedChildDelta -= 1;
+        if (r.op.type === 'insert_table') expectedTableDelta += 1;
     }
 
     // 6. After-snapshot
     const after = captureSnapshot(body);
 
     // 7. Validate — throws if structural invariants are broken
-    validateInvariants(before, after, { expectedChildDelta });
+    validateInvariants(before, after, { expectedChildDelta, expectedTableDelta });
 
     // 8. Serialize and save (document.xml + any zip-level changes)
     const newXml = serializeXml(doc);

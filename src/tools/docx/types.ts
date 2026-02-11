@@ -170,6 +170,38 @@ export interface HeaderReplaceTextExactOp {
     to: string;
 }
 
+export interface InsertTableOp {
+    type: 'insert_table';
+    /** Exact trimmed text of the paragraph to insert AFTER. Mutually exclusive with `before`. */
+    after?: string;
+    /** Exact trimmed text of the paragraph to insert BEFORE. Mutually exclusive with `after`. */
+    before?: string;
+    /** Optional header row (bold cells) */
+    headers?: string[];
+    /** Data rows — each row is an array of cell strings */
+    rows: string[][];
+    /** Optional column widths in twips (1/20 pt). Defaults to auto. */
+    colWidths?: number[];
+    /** Optional table style id (e.g. 'TableGrid') */
+    style?: string;
+}
+
+export interface InsertImageOp {
+    type: 'insert_image';
+    /** Exact trimmed text of the paragraph to insert AFTER. Mutually exclusive with `before`. */
+    after?: string;
+    /** Exact trimmed text of the paragraph to insert BEFORE. Mutually exclusive with `after`. */
+    before?: string;
+    /** Absolute or relative path to the image file */
+    imagePath: string;
+    /** Image width in pixels (default 300) */
+    width?: number;
+    /** Image height in pixels (default 200) */
+    height?: number;
+    /** Alt text for accessibility */
+    altText?: string;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Discriminated union + result
 // ═══════════════════════════════════════════════════════════════════════
@@ -184,7 +216,9 @@ export type DocxOp =
     | DeleteParagraphAtBodyIndexOp
     | TableSetCellTextOp
     | ReplaceHyperlinkUrlOp
-    | HeaderReplaceTextExactOp;
+    | HeaderReplaceTextExactOp
+    | InsertTableOp
+    | InsertImageOp;
 
 export interface OpResult {
     op: DocxOp;

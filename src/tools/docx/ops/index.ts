@@ -16,6 +16,8 @@ import { applyDeleteParagraphAtBodyIndex } from './delete-paragraph-at-body-inde
 import { applyTableSetCellText } from './table-set-cell-text.js';
 import { applyReplaceHyperlinkUrl } from './replace-hyperlink-url.js';
 import { applyHeaderReplaceTextExact } from './header-replace-text-exact.js';
+import { applyInsertTable } from './insert-table-after-text.js';
+import { applyInsertImage } from './insert-image-after-text.js';
 import type { DocxOp, OpResult } from '../types.js';
 
 /**
@@ -50,6 +52,11 @@ export function applyOp(body: Element, op: DocxOp, zip?: PizZip): OpResult {
         case 'header_replace_text_exact':
             if (!zip) return { op, status: 'skipped', matched: 0, reason: 'zip_required_for_header_op' };
             return applyHeaderReplaceTextExact(body, op, zip);
+        case 'insert_table':
+            return applyInsertTable(body, op);
+        case 'insert_image':
+            if (!zip) return { op, status: 'skipped', matched: 0, reason: 'zip_required_for_image_op' };
+            return applyInsertImage(body, op, zip);
         default:
             return {
                 op,

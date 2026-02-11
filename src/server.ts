@@ -524,10 +524,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         10. header_replace_text_exact — Find and replace text in all document header XML files (header1.xml, header2.xml, …).
                             { "type": "header_replace_text_exact", "from": "Draft", "to": "Final" }
 
+                        11. insert_table — Insert a new table before or after the first paragraph matching exact text.
+                            Provide exactly ONE of "after" or "before" to set position.
+                            Accepts optional headers (bold row), rows (array of string arrays), colWidths (twips), and style.
+                            After:  { "type": "insert_table", "after": "Sales Data", "headers": ["Product", "Q1", "Q2"], "rows": [["Widget", "100", "150"]] }
+                            Before: { "type": "insert_table", "before": "Summary", "headers": ["Metric", "Value"], "rows": [["Revenue", "$1M"]] }
+
+                        12. insert_image — Insert an image from disk before or after the first paragraph matching exact text.
+                            Provide exactly ONE of "after" or "before" to set position.
+                            Reads the image file, embeds it in the DOCX, and creates a proper drawing reference.
+                            After:  { "type": "insert_image", "after": "Company Logo", "imagePath": "/path/to/logo.png", "width": 400, "height": 200, "altText": "Logo" }
+                            Before: { "type": "insert_image", "before": "Appendix", "imagePath": "/path/to/chart.png", "width": 600, "height": 400 }
+
                         VALIDATION:
                         After applying ops the tool validates that:
                         - w:body child count matches expected (accounting for inserts/deletes)
-                        - w:tbl count is unchanged
+                        - w:tbl count matches expected (accounting for table inserts)
                         - body child sequence signature is unchanged for non-structural ops
                         If validation fails the output is NOT written and an error is returned.
 
