@@ -506,11 +506,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         4. set_color_for_paragraph_exact — Apply run-level text colour to the first paragraph matching exact trimmed text.
                            { "type": "set_color_for_paragraph_exact", "text": "Some Title", "color": "FF0000" }
 
+                        5. set_paragraph_style_at_body_index — Set/change paragraph style at a bodyChildIndex. Skips if not a w:p.
+                           { "type": "set_paragraph_style_at_body_index", "bodyChildIndex": 5, "style": "Heading1" }
+
+                        6. insert_paragraph_after_text — Insert a new paragraph after the first paragraph matching exact text. Optional style.
+                           { "type": "insert_paragraph_after_text", "after": "Introduction", "text": "New paragraph text", "style": "Normal" }
+
+                        7. delete_paragraph_at_body_index — Remove the paragraph at a bodyChildIndex. Skips if not a w:p.
+                           { "type": "delete_paragraph_at_body_index", "bodyChildIndex": 14 }
+
+                        8. table_set_cell_text — Set text in a specific table cell by tableIndex (0-based among tables), row, col.
+                           { "type": "table_set_cell_text", "tableIndex": 0, "row": 1, "col": 2, "text": "Updated" }
+
+                        9. replace_hyperlink_url — Replace a hyperlink URL in the document relationships (.rels).
+                           { "type": "replace_hyperlink_url", "oldUrl": "https://old.example.com", "newUrl": "https://new.example.com" }
+
+                        10. header_replace_text_exact — Find and replace text in all document header XML files (header1.xml, header2.xml, …).
+                            { "type": "header_replace_text_exact", "from": "Draft", "to": "Final" }
+
                         VALIDATION:
                         After applying ops the tool validates that:
-                        - w:body child count is unchanged
+                        - w:body child count matches expected (accounting for inserts/deletes)
                         - w:tbl count is unchanged
-                        - body child sequence signature is unchanged (e.g. "p,tbl,p,p,sectPr")
+                        - body child sequence signature is unchanged for non-structural ops
                         If validation fails the output is NOT written and an error is returned.
 
                         Only works within allowed directories.

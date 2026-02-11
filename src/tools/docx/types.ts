@@ -101,7 +101,7 @@ export interface BodySnapshot {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Patch operations
+// Patch operations — original 4
 // ═══════════════════════════════════════════════════════════════════════
 
 export interface ReplaceParagraphTextExactOp {
@@ -128,11 +128,63 @@ export interface SetColorForParagraphExactOp {
     color: string;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Patch operations — new 6
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SetParagraphStyleAtBodyIndexOp {
+    type: 'set_paragraph_style_at_body_index';
+    bodyChildIndex: number;
+    style: string;
+}
+
+export interface InsertParagraphAfterTextOp {
+    type: 'insert_paragraph_after_text';
+    after: string;
+    text: string;
+    style?: string;
+}
+
+export interface DeleteParagraphAtBodyIndexOp {
+    type: 'delete_paragraph_at_body_index';
+    bodyChildIndex: number;
+}
+
+export interface TableSetCellTextOp {
+    type: 'table_set_cell_text';
+    tableIndex: number;
+    row: number;
+    col: number;
+    text: string;
+}
+
+export interface ReplaceHyperlinkUrlOp {
+    type: 'replace_hyperlink_url';
+    oldUrl: string;
+    newUrl: string;
+}
+
+export interface HeaderReplaceTextExactOp {
+    type: 'header_replace_text_exact';
+    from: string;
+    to: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Discriminated union + result
+// ═══════════════════════════════════════════════════════════════════════
+
 export type DocxOp =
     | ReplaceParagraphTextExactOp
     | ReplaceParagraphAtBodyIndexOp
     | SetColorForStyleOp
-    | SetColorForParagraphExactOp;
+    | SetColorForParagraphExactOp
+    | SetParagraphStyleAtBodyIndexOp
+    | InsertParagraphAfterTextOp
+    | DeleteParagraphAtBodyIndexOp
+    | TableSetCellTextOp
+    | ReplaceHyperlinkUrlOp
+    | HeaderReplaceTextExactOp;
 
 export interface OpResult {
     op: DocxOp;

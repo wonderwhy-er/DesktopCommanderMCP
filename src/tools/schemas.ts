@@ -133,11 +133,55 @@ const SetColorForParagraphExactOpSchema = z.object({
   color: z.string(),
 });
 
+const SetParagraphStyleAtBodyIndexOpSchema = z.object({
+  type: z.literal('set_paragraph_style_at_body_index'),
+  bodyChildIndex: z.number(),
+  style: z.string(),
+});
+
+const InsertParagraphAfterTextOpSchema = z.object({
+  type: z.literal('insert_paragraph_after_text'),
+  after: z.string(),
+  text: z.string(),
+  style: z.string().optional(),
+});
+
+const DeleteParagraphAtBodyIndexOpSchema = z.object({
+  type: z.literal('delete_paragraph_at_body_index'),
+  bodyChildIndex: z.number(),
+});
+
+const TableSetCellTextOpSchema = z.object({
+  type: z.literal('table_set_cell_text'),
+  tableIndex: z.number(),
+  row: z.number(),
+  col: z.number(),
+  text: z.string(),
+});
+
+const ReplaceHyperlinkUrlOpSchema = z.object({
+  type: z.literal('replace_hyperlink_url'),
+  oldUrl: z.string(),
+  newUrl: z.string(),
+});
+
+const HeaderReplaceTextExactOpSchema = z.object({
+  type: z.literal('header_replace_text_exact'),
+  from: z.string(),
+  to: z.string(),
+});
+
 const DocxOpSchema = z.discriminatedUnion('type', [
   ReplaceParagraphTextExactOpSchema,
   ReplaceParagraphAtBodyIndexOpSchema,
   SetColorForStyleOpSchema,
   SetColorForParagraphExactOpSchema,
+  SetParagraphStyleAtBodyIndexOpSchema,
+  InsertParagraphAfterTextOpSchema,
+  DeleteParagraphAtBodyIndexOpSchema,
+  TableSetCellTextOpSchema,
+  ReplaceHyperlinkUrlOpSchema,
+  HeaderReplaceTextExactOpSchema,
 ]);
 
 export const WriteDocxArgsSchema = z.object({
