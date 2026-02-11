@@ -206,11 +206,55 @@ const DocxOpSchema = z.discriminatedUnion('type', [
   InsertImageOpSchema,
 ]);
 
-export const WriteDocxArgsSchema = z.object({
-  inputPath: z.string(),
-  outputPath: z.string(),
-  ops: z.array(DocxOpSchema),
+const DocxContentParagraphSchema = z.object({
+  type: z.literal('paragraph'),
+  text: z.string(),
+  style: z.string().nullable().optional(),
 });
+
+const DocxContentTableSchema = z.object({
+  type: z.literal('table'),
+  headers: z.array(z.string()).optional(),
+  rows: z.array(z.array(z.string())),
+  colWidths: z.array(z.number()).optional(),
+  style: z.string().optional(),
+});
+
+const DocxContentImageSchema = z.object({
+  type: z.literal('image'),
+  imagePath: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  altText: z.string().optional(),
+});
+
+const DocxContentItemSchema = z.discriminatedUnion('type', [
+  DocxContentParagraphSchema,
+  DocxContentTableSchema,
+  DocxContentImageSchema,
+]);
+
+const DocxContentStructureSchema = z.object({
+  items: z.array(DocxContentItemSchema),
+});
+
+export const WriteDocxArgsSchema = z.object({
+  inputPath: z.string().optional(),
+  outputPath: z.string(),
+  ops: z.array(DocxOpSchema).optional(),
+  content: DocxContentStructureSchema.optional(),
+}).refine(
+  (data) => {
+    // For new files (no inputPath): require content, ops optional
+    // For updates (has inputPath): require ops, content not allowed
+    if (!data.inputPath) {
+      return !!data.content; // New file must have content
+    } else {
+      return !!data.ops; // Update must have ops
+    }
+  },
+  { message: 'For new files (no inputPath): provide "content". For updates (has inputPath): provide "ops".' }
+);
 
 export const CreateDirectoryArgsSchema = z.object({
   path: z.string(),

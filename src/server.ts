@@ -480,20 +480,47 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "write_docx",
                 description: `
-                        Apply patch-based updates to an existing DOCX file.
+                        Create new DOCX files or apply patch-based updates to existing DOCX files.
 
-                        THIS IS THE ONLY TOOL FOR MODIFYING DOCX FILES.
-                        Never overwrites the input — always writes to outputPath.
+                        THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING DOCX FILES.
+                        Supports two modes:
+                        1. CREATE NEW FILE: Omit inputPath (or set to null) → creates professional DOCX from scratch with styles
+                        2. UPDATE EXISTING FILE: Provide inputPath → updates existing DOCX, preserves all styles/structure
+
+                        For NEW files: Creates a professional DOCX structure with:
+                        - Complete styles.xml (Normal, Heading1-9, ListParagraph, TableGrid)
+                        - Document defaults (Calibri font, proper spacing, professional colors)
+                        - Complete ZIP structure (relationships, content types, settings)
+                        - No file reading required — everything built from scratch
+
+                        For UPDATES: Never overwrites the input — always writes to outputPath.
                         Preserves tables, images, numbering, headers/footers, styles, section breaks, and paragraph/table order.
 
-                        ⚠️ MANDATORY WORKFLOW (exactly 2 tool calls — no more):
+                        ⚠️ WORKFLOW FOR UPDATING EXISTING FILES (exactly 2 tool calls — no more):
                         1. read_docx(path) → get outline ONCE (do NOT call read_file or read_docx again)
                         2. write_docx(inputPath, outputPath, ops) → apply all changes in ONE call
 
-                        DO NOT read the file multiple times. The outline from step 1 has everything you need.
-                        To replicate/copy a DOCX, use write_docx with no ops (ops=[]).
+                        ⚠️ WORKFLOW FOR CREATING NEW FILES (1 tool call):
+                        1. write_docx(outputPath, content) → omit inputPath, provide "content" structure (similar to readDocx output)
+                        
+                        The "content" parameter is a styled DOM structure with items array:
+                        {
+                          "content": {
+                            "items": [
+                              { "type": "paragraph", "text": "My Title", "style": "Heading1" },
+                              { "type": "paragraph", "text": "Body text here", "style": "Normal" },
+                              { "type": "table", "headers": ["Col1", "Col2"], "rows": [["A", "B"], ["C", "D"]] },
+                              { "type": "image", "imagePath": "/path/to/img.png", "width": 400, "height": 300 }
+                            ]
+                          }
+                        }
 
-                        OPERATIONS (combine multiple ops in a single call):
+                        DO NOT read the file multiple times when updating. The outline from step 1 has everything you need.
+                        To replicate/copy a DOCX, use write_docx with inputPath and no ops (ops=[]).
+
+                        OPERATIONS (for UPDATES only — use "ops" parameter):
+                        All operations work for updating existing files. For new files, use "content" structure instead.
+
                         1. replace_paragraph_text_exact — Find paragraph by exact trimmed text, replace its text.
                            { "type": "replace_paragraph_text_exact", "from": "Old Title", "to": "New Title" }
 
@@ -510,7 +537,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                            { "type": "set_paragraph_style_at_body_index", "bodyChildIndex": 5, "style": "Heading1" }
 
                         6. insert_paragraph_after_text — Insert a new paragraph after the first paragraph matching exact text. Optional style.
+                           Works in empty documents (appends if no match found). For new files, use empty string or any text as "after" to append.
                            { "type": "insert_paragraph_after_text", "after": "Introduction", "text": "New paragraph text", "style": "Normal" }
+                           { "type": "insert_paragraph_after_text", "after": "", "text": "First paragraph", "style": "Heading1" } // Works in empty doc
 
                         7. delete_paragraph_at_body_index — Remove the paragraph at a bodyChildIndex. Skips if not a w:p.
                            { "type": "delete_paragraph_at_body_index", "bodyChildIndex": 14 }

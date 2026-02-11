@@ -19,6 +19,30 @@ export function applyInsertParagraphAfterText(
     const children = getBodyChildren(body);
     const target = op.after.trim();
 
+    // Special case: if document is empty, append the paragraph
+    if (children.length === 0) {
+        const doc = body.ownerDocument;
+        if (!doc) return { op, status: 'skipped', matched: 0, reason: 'no_owner_document' };
+
+        const newP = doc.createElement('w:p');
+        if (op.style) {
+            const pPr = doc.createElement('w:pPr');
+            const pStyle = doc.createElement('w:pStyle');
+            pStyle.setAttribute('w:val', op.style);
+            pPr.appendChild(pStyle);
+            newP.appendChild(pPr);
+        }
+        const newR = doc.createElement('w:r');
+        const newT = doc.createElement('w:t');
+        newT.setAttribute('xml:space', 'preserve');
+        newT.textContent = op.text;
+        newR.appendChild(newT);
+        newP.appendChild(newR);
+        body.appendChild(newP);
+        return { op, status: 'applied', matched: 0, reason: 'empty_document_append' };
+    }
+
+    // Normal case: find matching paragraph
     for (let i = 0; i < children.length; i++) {
         const child = children[i];
         if (child.nodeName !== 'w:p') continue;

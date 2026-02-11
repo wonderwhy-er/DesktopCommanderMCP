@@ -426,17 +426,35 @@ export async function handleReadDocx(args: unknown): Promise<ServerResult> {
 }
 
 /**
- * Handle write_docx command — patch-based update
+ * Handle write_docx command — supports both new file creation and updates
  */
 export async function handleWriteDocx(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WriteDocxArgsSchema.parse(args);
-        const { writeDocxPatched } = await import('../tools/docx/index.js');
-        const result = await writeDocxPatched(
-            parsed.inputPath,
-            parsed.outputPath,
-            parsed.ops as any
-        );
+        const { writeDocxPatched, createDocxNew } = await import('../tools/docx/index.js');
+        
+        let result;
+        if (parsed.inputPath) {
+            // Update existing DOCX file (requires ops)
+            if (!parsed.ops) {
+                throw new Error('For updates (with inputPath), "ops" parameter is required');
+            }
+            result = await writeDocxPatched(
+                parsed.inputPath,
+                parsed.outputPath,
+                parsed.ops as any
+            );
+        } else {
+            // Create new DOCX file from scratch (requires content structure)
+            if (!parsed.content) {
+                throw new Error('For new files (no inputPath), "content" parameter is required');
+            }
+            result = await createDocxNew(
+                parsed.outputPath,
+                parsed.content as any
+            );
+        }
+        
         return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };

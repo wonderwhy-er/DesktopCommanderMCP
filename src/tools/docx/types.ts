@@ -226,3 +226,35 @@ export interface OpResult {
     matched: number;
     reason?: string;
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Content structure for new DOCX creation (styled DOM-like)
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface DocxContentParagraph {
+    type: 'paragraph';
+    text: string;
+    style?: string | null;
+}
+
+export interface DocxContentTable {
+    type: 'table';
+    headers?: string[];
+    rows: string[][];
+    colWidths?: number[];
+    style?: string;
+}
+
+export interface DocxContentImage {
+    type: 'image';
+    imagePath: string;
+    width?: number;
+    height?: number;
+    altText?: string;
+}
+
+export type DocxContentItem = DocxContentParagraph | DocxContentTable | DocxContentImage;
+
+export interface DocxContentStructure {
+    items: DocxContentItem[];
+}
