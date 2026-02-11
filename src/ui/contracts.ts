@@ -2,6 +2,7 @@
  * Central constants and shape contracts for UI resource identifiers. It gives one source of truth for URIs/tool metadata shared between server handlers and UI loaders.
  */
 export const FILE_PREVIEW_RESOURCE_URI = 'ui://desktop-commander/file-preview';
+export const CONFIG_EDITOR_RESOURCE_URI = 'ui://desktop-commander/config-editor';
 
 export interface UiToolMeta extends Record<string, unknown> {
   'ui/resourceUri': string;
