@@ -159,6 +159,12 @@ const TableSetCellTextOpSchema = z.object({
   text: z.string(),
 });
 
+const ReplaceTableCellTextOpSchema = z.object({
+  type: z.literal('replace_table_cell_text'),
+  from: z.string(),
+  to: z.string(),
+});
+
 const ReplaceHyperlinkUrlOpSchema = z.object({
   type: z.literal('replace_hyperlink_url'),
   oldUrl: z.string(),
@@ -200,6 +206,7 @@ const DocxOpSchema = z.discriminatedUnion('type', [
   InsertParagraphAfterTextOpSchema,
   DeleteParagraphAtBodyIndexOpSchema,
   TableSetCellTextOpSchema,
+  ReplaceTableCellTextOpSchema,
   ReplaceHyperlinkUrlOpSchema,
   HeaderReplaceTextExactOpSchema,
   InsertTableOpSchema,

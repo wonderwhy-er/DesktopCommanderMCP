@@ -27,6 +27,8 @@ export type {
     DocxRun,
     DocxModification,
     ParagraphOutline,
+    TableOutline,
+    ImageOutline,
     ReadDocxResult,
     WriteDocxStats,
     WriteDocxResult,

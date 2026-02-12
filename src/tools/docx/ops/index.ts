@@ -14,6 +14,7 @@ import { applySetParagraphStyleAtBodyIndex } from './set-paragraph-style-at-body
 import { applyInsertParagraphAfterText } from './insert-paragraph-after-text.js';
 import { applyDeleteParagraphAtBodyIndex } from './delete-paragraph-at-body-index.js';
 import { applyTableSetCellText } from './table-set-cell-text.js';
+import { applyReplaceTableCellText } from './replace-table-cell-text.js';
 import { applyReplaceHyperlinkUrl } from './replace-hyperlink-url.js';
 import { applyHeaderReplaceTextExact } from './header-replace-text-exact.js';
 import { applyInsertTable } from './insert-table-after-text.js';
@@ -46,6 +47,8 @@ export function applyOp(body: Element, op: DocxOp, zip?: PizZip): OpResult {
             return applyDeleteParagraphAtBodyIndex(body, op);
         case 'table_set_cell_text':
             return applyTableSetCellText(body, op);
+        case 'replace_table_cell_text':
+            return applyReplaceTableCellText(body, op);
         case 'replace_hyperlink_url':
             if (!zip) return { op, status: 'skipped', matched: 0, reason: 'zip_required_for_hyperlink_op' };
             return applyReplaceHyperlinkUrl(body, op, zip);

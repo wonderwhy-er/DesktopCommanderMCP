@@ -547,19 +547,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         8. table_set_cell_text — Set text in a specific table cell by tableIndex (0-based among tables), row, col.
                            { "type": "table_set_cell_text", "tableIndex": 0, "row": 1, "col": 2, "text": "Updated" }
 
-                        9. replace_hyperlink_url — Replace a hyperlink URL in the document relationships (.rels).
+                        9. replace_table_cell_text — Find a table cell by its full text content (all paragraphs joined) and replace it.
+                           Useful when you've read table content using readDocxOutline and want to replace specific cell values by their text.
+                           { "type": "replace_table_cell_text", "from": "Old cell text", "to": "New cell text" }
+
+                        10. replace_hyperlink_url — Replace a hyperlink URL in the document relationships (.rels).
                            { "type": "replace_hyperlink_url", "oldUrl": "https://old.example.com", "newUrl": "https://new.example.com" }
 
-                        10. header_replace_text_exact — Find and replace text in all document header XML files (header1.xml, header2.xml, …).
+                        11. header_replace_text_exact — Find and replace text in all document header XML files (header1.xml, header2.xml, …).
                             { "type": "header_replace_text_exact", "from": "Draft", "to": "Final" }
 
-                        11. insert_table — Insert a new table before or after the first paragraph matching exact text.
+                        12. insert_table — Insert a new table before or after the first paragraph matching exact text.
                             Provide exactly ONE of "after" or "before" to set position.
                             Accepts optional headers (bold row), rows (array of string arrays), colWidths (twips), and style.
                             After:  { "type": "insert_table", "after": "Sales Data", "headers": ["Product", "Q1", "Q2"], "rows": [["Widget", "100", "150"]] }
                             Before: { "type": "insert_table", "before": "Summary", "headers": ["Metric", "Value"], "rows": [["Revenue", "$1M"]] }
 
-                        12. insert_image — Insert an image from disk before or after the first paragraph matching exact text.
+                        13. insert_image — Insert an image from disk before or after the first paragraph matching exact text.
                             Provide exactly ONE of "after" or "before" to set position.
                             Reads the image file, embeds it in the DOCX, and creates a proper drawing reference.
                             After:  { "type": "insert_image", "after": "Company Logo", "imagePath": "/path/to/logo.png", "width": 400, "height": 200, "altText": "Logo" }

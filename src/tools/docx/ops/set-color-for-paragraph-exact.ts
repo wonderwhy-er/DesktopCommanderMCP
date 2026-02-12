@@ -1,25 +1,28 @@
 /**
  * Op: set_color_for_paragraph_exact
  *
- * Find FIRST paragraph whose trimmed text === `text`.
+ * Find FIRST paragraph whose trimmed text === `text` **anywhere in the body**,
+ * including paragraphs inside tables and other containers.
  * Apply run-level colour to every w:r in that paragraph.
  */
 
-import { getBodyChildren, getParagraphText, ensureRunColor } from '../dom.js';
+import { getParagraphText, ensureRunColor } from '../dom.js';
 import type { SetColorForParagraphExactOp, OpResult } from '../types.js';
 
 export function applySetColorForParagraphExact(
     body: Element,
     op: SetColorForParagraphExactOp,
 ): OpResult {
-    const children = getBodyChildren(body);
     const target = op.text.trim();
 
-    for (const child of children) {
-        if (child.nodeName !== 'w:p') continue;
-        if (getParagraphText(child).trim() !== target) continue;
+    // Traverse **all** paragraphs in the body, not just direct children.
+    const paragraphs = body.getElementsByTagName('w:p');
 
-        const runs = child.getElementsByTagName('w:r');
+    for (let i = 0; i < paragraphs.length; i++) {
+        const p = paragraphs.item(i) as Element;
+        if (getParagraphText(p).trim() !== target) continue;
+
+        const runs = p.getElementsByTagName('w:r');
         for (let i = 0; i < runs.length; i++) {
             ensureRunColor(runs.item(i) as Element, op.color);
         }

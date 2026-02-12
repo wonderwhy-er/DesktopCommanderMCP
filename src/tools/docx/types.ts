@@ -59,9 +59,27 @@ export interface ParagraphOutline {
     text: string;
 }
 
+export interface TableOutline {
+    bodyChildIndex: number;
+    tableIndex: number;
+    style: string | null;
+    headers?: string[];
+    rows: string[][];
+}
+
+export interface ImageOutline {
+    bodyChildIndex: number;
+    imageIndex: number;
+    mediaPath: string; // e.g., "word/media/image1.png"
+    rId: string; // Relationship ID, e.g., "rId1"
+    altText?: string;
+}
+
 export interface ReadDocxResult {
     path: string;
     paragraphs: ParagraphOutline[];
+    tables: TableOutline[];
+    images: ImageOutline[];
     stylesSeen: string[];
     counts: {
         tables: number;
@@ -158,6 +176,12 @@ export interface TableSetCellTextOp {
     text: string;
 }
 
+export interface ReplaceTableCellTextOp {
+    type: 'replace_table_cell_text';
+    from: string;
+    to: string;
+}
+
 export interface ReplaceHyperlinkUrlOp {
     type: 'replace_hyperlink_url';
     oldUrl: string;
@@ -215,6 +239,7 @@ export type DocxOp =
     | InsertParagraphAfterTextOp
     | DeleteParagraphAtBodyIndexOp
     | TableSetCellTextOp
+    | ReplaceTableCellTextOp
     | ReplaceHyperlinkUrlOp
     | HeaderReplaceTextExactOp
     | InsertTableOp

@@ -6,7 +6,14 @@
 import fs from 'fs/promises';
 import PizZip from 'pizzip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
-import type { DocxMetadata, DocxParagraph, ParagraphOutline, ReadDocxResult } from './types.js';
+import type {
+    DocxMetadata,
+    DocxParagraph,
+    ParagraphOutline,
+    TableOutline,
+    ImageOutline,
+    ReadDocxResult,
+} from './types.js';
 import {
     nodeListToArray,
     getParagraphText,
@@ -15,6 +22,9 @@ import {
     getBodyChildren,
     countTables,
     countImages,
+    getTableContent,
+    getTableStyle,
+    getImageReference,
 } from './dom.js';
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -31,9 +41,65 @@ async function loadDocx(path: string): Promise<PizZip> {
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
+ * Extract image relationship mappings from word/_rels/document.xml.rels.
+ * Returns a map of rId -> mediaPath (e.g., "rId1" -> "word/media/image1.png").
+ */
+function extractImageRelationships(zip: PizZip): Map<string, string> {
+    const relsPath = 'word/_rels/document.xml.rels';
+    const relsFile = zip.file(relsPath);
+    if (!relsFile) return new Map();
+
+    const relsXml = relsFile.asText();
+    const relsDom = new DOMParser().parseFromString(relsXml, 'application/xml');
+    const relationships = relsDom.getElementsByTagName('Relationship');
+
+    const imageMap = new Map<string, string>();
+    for (const rel of nodeListToArray(relationships)) {
+        const relEl = rel as Element;
+        const type = relEl.getAttribute('Type');
+        const id = relEl.getAttribute('Id');
+        const target = relEl.getAttribute('Target');
+
+        // Check if it's an image relationship
+        if (
+            type &&
+            type.includes('/image') &&
+            id &&
+            target &&
+            target.startsWith('media/')
+        ) {
+            imageMap.set(id, `word/${target}`);
+        }
+    }
+
+    return imageMap;
+}
+
+/**
+ * Extract alt text from wp:docPr/@descr or pic:cNvPr/@descr in a drawing element.
+ */
+function getImageAltText(drawing: Element): string | undefined {
+    // Try wp:docPr/@descr first
+    const docPr = drawing.getElementsByTagName('wp:docPr').item(0);
+    if (docPr) {
+        const descr = docPr.getAttribute('descr');
+        if (descr) return descr;
+    }
+
+    // Fall back to pic:cNvPr/@descr
+    const cNvPr = drawing.getElementsByTagName('pic:cNvPr').item(0);
+    if (cNvPr) {
+        const descr = cNvPr.getAttribute('descr');
+        if (descr) return descr;
+    }
+
+    return undefined;
+}
+
+/**
  * Return a token-efficient outline of a DOCX file.
- * Every paragraph gets a bodyChildIndex (among ALL w:body children)
- * plus a paragraphIndex (counting only w:p), style id, and text.
+ * Extracts paragraphs, tables (with full cell content), and images (references only, not binary).
+ * Every element gets a bodyChildIndex (among ALL w:body children).
  */
 export async function readDocxOutline(filePath: string): Promise<ReadDocxResult> {
     const zip = await loadDocx(filePath);
@@ -45,31 +111,80 @@ export async function readDocxOutline(filePath: string): Promise<ReadDocxResult>
     const body = getBody(dom);
     const children = getBodyChildren(body);
 
+    // Extract image relationships (rId -> mediaPath)
+    const imageRelationships = extractImageRelationships(zip);
+
     const paragraphs: ParagraphOutline[] = [];
+    const tables: TableOutline[] = [];
+    const images: ImageOutline[] = [];
     const stylesSet = new Set<string>();
+
     let paragraphIndex = 0;
+    let tableIndex = 0;
+    let imageIndex = 0;
 
     for (let i = 0; i < children.length; i++) {
         const child = children[i];
-        if (child.nodeName !== 'w:p') continue;
 
-        const text = getParagraphText(child).trim();
-        const style = getParagraphStyle(child);
+        if (child.nodeName === 'w:p') {
+            // Extract paragraph
+            const text = getParagraphText(child).trim();
+            const style = getParagraphStyle(child);
 
-        if (style) stylesSet.add(style);
+            if (style) stylesSet.add(style);
 
-        paragraphs.push({
-            bodyChildIndex: i,
-            paragraphIndex,
-            style,
-            text,
-        });
-        paragraphIndex++;
+            paragraphs.push({
+                bodyChildIndex: i,
+                paragraphIndex,
+                style,
+                text,
+            });
+            paragraphIndex++;
+
+            // Check if paragraph contains an image (w:drawing)
+            const drawings = child.getElementsByTagName('w:drawing');
+            for (let d = 0; d < drawings.length; d++) {
+                const drawing = drawings.item(d) as Element;
+                const imgRef = getImageReference(drawing);
+
+                if (imgRef.rId) {
+                    const mediaPath = imageRelationships.get(imgRef.rId);
+                    if (mediaPath) {
+                        const altText = getImageAltText(drawing);
+                        images.push({
+                            bodyChildIndex: i,
+                            imageIndex,
+                            mediaPath,
+                            rId: imgRef.rId,
+                            altText,
+                        });
+                        imageIndex++;
+                    }
+                }
+            }
+        } else if (child.nodeName === 'w:tbl') {
+            // Extract table content
+            const tableContent = getTableContent(child);
+            const style = getTableStyle(child);
+
+            if (style) stylesSet.add(style);
+
+            tables.push({
+                bodyChildIndex: i,
+                tableIndex,
+                style,
+                headers: tableContent.headers,
+                rows: tableContent.rows,
+            });
+            tableIndex++;
+        }
     }
 
     return {
         path: filePath,
         paragraphs,
+        tables,
+        images,
         stylesSeen: [...stylesSet].sort(),
         counts: {
             tables: countTables(children),
