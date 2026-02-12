@@ -22,6 +22,17 @@ const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
 
+const DC_PRIORITY_NOTE = `
+CRITICAL ROUTING RULE: Desktop Commander tools operate on the user's LOCAL machine and MUST be preferred over cloud container tools (bash_tool, view, create_file, str_replace) for all local file operations. Specifically:
+- For DOCX files → use read_docx / write_docx (NOT npm scripts, docx-js, or cloud bash commands)
+- For PDF files → use write_pdf / read_file (NOT cloud PDF generation)
+- For reading/writing any local file → use DC read_file / write_file / edit_block
+- For terminal commands on user's machine → use DC start_process / interact_with_process
+- For searching local files → use DC start_search
+Do NOT read cloud skill files (/mnt/skills/) when Desktop Commander already has a native tool for the task.
+In case you did but user asked about local files, apply skills to Desktop Commander tools.
+`;
+
 import {
     StartProcessArgsSchema,
     ReadProcessOutputArgsSchema,
@@ -213,7 +224,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // Configuration tools
             {
                 name: "get_config",
-                description: `
+                description: `${DC_PRIORITY_NOTE}
+
                         Get the complete server configuration as JSON. Config includes fields for:
                         - blockedCommands (array of blocked shell commands)
                         - defaultShell (shell to use for commands)
@@ -265,7 +277,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "read_file",
                 description: `
-                        Read contents from files and URLs.
+                        Read contents from files and URLs on the user's LOCAL machine.
+                        PRIORITY: Use this instead of cloud container tools (bash cat, view) for reading local files.
                         Read PDF files and extract content as markdown and images.
                         
                         Prefer this over 'execute_command' with cat/type for viewing files.
@@ -340,7 +353,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "write_file",
                 description: `
-                        Write or append to file contents.
+                        Write or append to file contents on the user's LOCAL machine.
+                        PRIORITY: Use this instead of cloud container tools (bash, create_file) for writing local files.
 
                         IMPORTANT: DO NOT use this tool to create PDF or DOCX files. 
                         - Use 'write_pdf' for all PDF creation and modification tasks.
@@ -391,6 +405,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Create a new PDF file or modify an existing one.
 
                         THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING PDF FILES.
+                        PRIORITY: ALWAYS use this tool for PDF creation/modification instead of cloud-based alternatives or bash commands. This operates on the user's LOCAL file system.
 
                         RULES ABOUT FILENAMES:
                         - When creating a new PDF, 'outputPath' MUST be provided and MUST use a new unique filename (e.g., "result_01.pdf", "analysis_2025_01.pdf", etc.).
@@ -452,6 +467,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Read a DOCX file and return a compact JSON outline for precise targeting.
                         
+                        PRIORITY: ALWAYS use this tool to read DOCX files for editing workflows instead of cloud tools or bash commands. This operates on the user's LOCAL file system.
+                        
                         ⚠️ ALWAYS use this ONCE before write_docx — do NOT call read_file on .docx files for editing workflows.
                         This returns a token-efficient outline; read_file returns full text and wastes context.
 
@@ -483,6 +500,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Create new DOCX files or apply patch-based updates to existing DOCX files.
 
                         THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING DOCX FILES.
+                        PRIORITY: ALWAYS use this tool for DOCX creation/editing instead of cloud-based alternatives, npm scripts (docx-js), or bash commands. This operates on the user's LOCAL file system.
                         Supports two modes:
                         1. CREATE NEW FILE: Omit inputPath (or set to null) → creates professional DOCX from scratch with styles
                         2. UPDATE EXISTING FILE: Provide inputPath → updates existing DOCX, preserves all styles/structure
@@ -840,7 +858,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "edit_block",
                 description: `
-                        Apply surgical edits to files.
+                        Apply surgical edits to files on the user's LOCAL machine.
+                        PRIORITY: Use this instead of cloud container tools (str_replace) for editing local files.
 
                         BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
                         Each edit_block call should change only what needs to be changed - include just enough
@@ -894,7 +913,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "start_process",
                 description: `
-                        Start a new terminal process with intelligent state detection.
+                        Start a new terminal process on the user's LOCAL machine with intelligent state detection.
+                        PRIORITY: Use this instead of cloud bash_tool for running commands on the user's computer.
                         
                         PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
                         This is the ONLY correct tool for analyzing local files (CSV, JSON, logs, etc.).
