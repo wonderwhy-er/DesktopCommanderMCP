@@ -4,7 +4,6 @@
 import { formatJsonIfPossible, inferLanguageFromPath, renderCodeViewer } from './components/code-viewer.js';
 import { renderHtmlPreview } from './components/html-renderer.js';
 import { renderMarkdown } from './components/markdown-renderer.js';
-import { renderToolbar } from './components/toolbar.js';
 import { escapeHtml } from './components/highlighting.js';
 import type { HtmlPreviewMode, PreviewStructuredContent } from './types.js';
 import { createWindowRpcClient, isTrustedParentMessageSource } from '../../shared/rpc-client.js';
@@ -13,6 +12,7 @@ import { createUiHostLifecycle } from '../../shared/host-lifecycle.js';
 import { createUiThemeAdapter } from '../../shared/theme-adaptation.js';
 
 let isExpanded = false;
+let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let rpcCallTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
@@ -130,6 +130,14 @@ function isLikelyUrl(filePath: string): boolean {
     return /^https?:\/\//i.test(filePath);
 }
 
+function buildBreadcrumb(filePath: string): string {
+    const normalized = filePath.replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    // Show last 3-4 meaningful segments as breadcrumb
+    const tail = parts.slice(-4);
+    return tail.map(p => escapeHtml(p)).join(' <span class="breadcrumb-sep">›</span> ');
+}
+
 function getParentDirectory(filePath: string): string {
     const normalized = filePath.replace(/\\/g, '/');
     const lastSlash = normalized.lastIndexOf('/');
@@ -168,6 +176,29 @@ function renderRawFallback(source: string): string {
 function stripReadStatusLine(content: string): string {
     // Remove the synthetic read status header shown by read_file pagination.
     return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
+}
+
+interface ReadRange {
+    fromLine: number;
+    toLine: number;
+    totalLines: number;
+    isPartial: boolean;
+}
+
+function parseReadRange(content: string): ReadRange | undefined {
+    // Parse "[Reading N lines from line M (total: T lines, R remaining)]"
+    // or    "[Reading N lines from start (total: T lines, R remaining)]"
+    const match = content.match(/^\[Reading (\d+) lines from (?:line )?(\d+|start) \(total: (\d+) lines/);
+    if (!match) return undefined;
+    const count = parseInt(match[1], 10);
+    const from = match[2] === 'start' ? 1 : parseInt(match[2], 10);
+    const total = parseInt(match[3], 10);
+    return {
+        fromLine: from,
+        toLine: from + count - 1,
+        totalLines: total,
+        isPartial: count < total
+    };
 }
 
 function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
@@ -224,9 +255,17 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
         return success;
     };
 
-    const setButtonState = (label: string): void => {
+    const setButtonState = (label: string, revertMs?: number): void => {
         copyButton.setAttribute('title', label);
         copyButton.setAttribute('aria-label', label);
+        copyButton.textContent = label;
+        if (revertMs) {
+            setTimeout(() => {
+                copyButton.textContent = 'Copy';
+                copyButton.setAttribute('title', 'Copy source');
+                copyButton.setAttribute('aria-label', 'Copy source');
+            }, revertMs);
+        }
     };
 
     copyButton.addEventListener('click', async () => {
@@ -239,7 +278,7 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
         try {
             if (navigator.clipboard?.writeText) {
                 await navigator.clipboard.writeText(cleanedContent);
-                setButtonState('Copied');
+                setButtonState('Copied!', 1500);
                 return;
             }
         } catch {
@@ -247,7 +286,7 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
         }
 
         const copied = fallbackCopy(cleanedContent);
-        setButtonState(copied ? 'Copied' : 'Copy failed');
+        setButtonState(copied ? 'Copied!' : 'Copy failed', 1500);
     });
 }
 
@@ -298,26 +337,23 @@ function attachOpenInFolderHandler(payload: PreviewStructuredContent): void {
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
       <main class="shell">
-        <section class="panel">
-          <div class="preview-status">
-            <p>${escapeHtml(message)}</p>
-          </div>
-        </section>
+        <div class="compact-row compact-row--status">
+          <span class="compact-label">${escapeHtml(message)}</span>
+        </div>
       </main>
     `;
+    document.body.classList.add('dc-ready');
 }
 
 function renderLoadingState(container: HTMLElement): void {
     container.innerHTML = `
       <main class="shell">
-        <section class="panel">
-          <div class="preview-status preview-status--loading">
-            <span class="loading-dot" aria-hidden="true"></span>
-            <p>Loading preview...</p>
-          </div>
-        </section>
+        <div class="compact-row compact-row--loading">
+          <span class="compact-label">Preparing preview…</span>
+        </div>
       </main>
     `;
+    document.body.classList.add('dc-ready');
 }
 
 export function renderApp(
@@ -339,27 +375,82 @@ export function renderApp(
     const canCopy = payload.fileType !== 'unsupported';
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
+    const supportsPreview = payload.fileType !== 'unsupported';
     const body = renderBody(payload, htmlMode);
     const notice = body.notice ? `<div class="notice">${body.notice}</div>` : '';
 
+    const breadcrumb = buildBreadcrumb(payload.filePath);
+    const range = parseReadRange(payload.content);
+    const lineCount = range ? range.toLine - range.fromLine + 1 : payload.content.split('\n').length;
+    const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
+        : payload.fileType === 'html' ? 'HTML'
+        : fileExtension !== 'none' ? fileExtension.toUpperCase()
+        : 'TEXT';
+
+    const compactLabel = range?.isPartial
+        ? `View lines ${range.fromLine}–${range.toLine}`
+        : 'View file';
+    const footerLabel = range?.isPartial
+        ? `${escapeHtml(fileTypeLabel)} • LINES ${range.fromLine}–${range.toLine} OF ${range.totalLines}`
+        : `${escapeHtml(fileTypeLabel)} • ${lineCount} LINE${lineCount !== 1 ? 'S' : ''}`;
+
+    const htmlToggle = payload.fileType === 'html'
+        ? `<button class="panel-action" id="toggle-html-mode">${htmlMode === 'rendered' ? 'Source' : 'Rendered'}</button>`
+        : '';
+
+    const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}">
-        ${renderToolbar(payload, canCopy, htmlMode, isExpanded, canOpenInFolder)}
+        <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
+          <svg class="compact-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6z"/></svg>
+          <span class="compact-label">${compactLabel}</span>
+          <span class="compact-filename">${escapeHtml(payload.fileName)}</span>
+        </div>
         <section class="panel">
+          <div class="panel-topbar">
+            <span class="panel-breadcrumb" title="${escapeHtml(payload.filePath)}">${breadcrumb}</span>
+            <span class="panel-topbar-actions">
+              ${htmlToggle}
+              ${canOpenInFolder ? `<button class="panel-action" id="open-in-folder">${folderIcon} Open in folder</button>` : ''}
+              ${canCopy && supportsPreview ? `<button class="panel-action" id="copy-source">${copyIcon} Copy</button>` : ''}
+            </span>
+          </div>
           ${notice}
           ${body.html}
+          <div class="panel-footer">
+            <span>${footerLabel}</span>
+          </div>
         </section>
       </main>
     `;
+    document.body.classList.add('dc-ready');
     attachCopyHandler(payload);
     attachHtmlToggleHandler(container, payload, htmlMode);
     attachOpenInFolderHandler(payload);
+
+    // Compact row click toggles expand/collapse
+    const compactRow = document.getElementById('compact-toggle');
+    const handleCompactClick = (): void => {
+        shellController?.toggle();
+    };
+    const handleCompactKeydown = (e: KeyboardEvent): void => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            shellController?.toggle();
+        }
+    };
+    compactRow?.addEventListener('click', handleCompactClick);
+    compactRow?.addEventListener('keydown', handleCompactKeydown);
+
     shellController = createToolShellController({
         shell: document.getElementById('tool-shell'),
-        toggleButton: payload.fileType === 'unsupported' ? null : (document.getElementById('toggle-expand') as HTMLButtonElement | null),
+        toggleButton: null, // No separate toggle button; compact row handles it
         initialExpanded: isExpanded,
         onToggle: (expanded) => {
             isExpanded = expanded;
+            compactRow?.setAttribute('aria-expanded', String(expanded));
             trackUiEvent?.(expanded ? 'expand' : 'collapse', {
                 file_type: payload.fileType,
                 file_extension: fileExtension
@@ -374,6 +465,13 @@ export function renderApp(
         onRender
     });
     onRender?.();
+    if (!previewShownFired) {
+        previewShownFired = true;
+        trackUiEvent?.('preview_shown', {
+            file_type: payload.fileType,
+            file_extension: fileExtension
+        });
+    }
 }
 
 export function bootstrapApp(): void {

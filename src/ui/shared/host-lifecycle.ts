@@ -21,7 +21,7 @@ export function createUiHostLifecycle(rpcClient: RpcClient, options: UiHostLifec
 
   const notifySizeChanged = (): void => {
     const node = resolveRootElement();
-    const height = Math.max(48, Math.ceil(node?.getBoundingClientRect().height ?? 0));
+    const height = Math.max(28, Math.ceil(node?.getBoundingClientRect().height ?? 0));
     rpcClient.notify('ui/notifications/size-changed', { height });
   };
 

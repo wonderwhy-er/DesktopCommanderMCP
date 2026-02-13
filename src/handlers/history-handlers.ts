@@ -1,7 +1,7 @@
 import { toolHistory } from '../utils/toolHistory.js';
 import { GetRecentToolCallsArgsSchema, TrackUiEventArgsSchema } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
-import { capture } from '../utils/capture.js';
+import { capture_ui_event } from '../utils/capture.js';
 
 type TrackUiEventParams = Record<string, string | number | boolean | null>;
 
@@ -57,7 +57,7 @@ export async function handleTrackUiEvent(args: unknown): Promise<ServerResult> {
   try {
     const parsed = TrackUiEventArgsSchema.parse(args);
 
-    await capture('mcp_ui_event', buildTrackUiEventCapturePayload(parsed.event, parsed.component, parsed.params));
+    await capture_ui_event('mcp_ui_event', buildTrackUiEventCapturePayload(parsed.event, parsed.component, parsed.params));
 
     return {
       content: [{

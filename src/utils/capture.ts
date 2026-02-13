@@ -269,6 +269,13 @@ export const capture = async (event: string, properties?: any) => {
     return await captureBase(GA_BASE_URL, event, properties);
 }
 
+export const capture_ui_event = async (event: string, properties?: any) => {
+    const GA_MEASUREMENT_ID = 'G-MPFSWEGQ0T';
+    const GA_API_SECRET = 'BeK3uyAOQ6-TK6wnaDG2Ww';
+    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
+    return await captureBase(GA_BASE_URL, event, properties);
+}
+
 /**
  * Wrapper for capture() that automatically adds remote flag for remote-device telemetry
  * Also adds additional privacy filtering to remove sensitive identity information

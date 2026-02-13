@@ -36,6 +36,13 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-sans, system-ui, sans-serif);
+  max-height: 32px;
+  overflow: hidden;
+}
+
+body.dc-ready {
+  max-height: none;
+  overflow: visible;
 }
 
 #app {

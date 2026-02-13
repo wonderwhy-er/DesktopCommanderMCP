@@ -1,5 +1,5 @@
 /*
- * App-specific styling for File Preview layouts and render containers. It tunes typography, code blocks, and content panes for readable previews.
+ * App-specific styling for File Preview layouts and render containers.
  */
 :root {
   --code-bg: var(--panel);
@@ -14,7 +14,6 @@
   --hljs-tag: var(--color-text-info, #0ea5a8);
   --content-height: min(82vh, 920px);
   --markdown-bg: var(--panel);
-  --markdown-border: var(--border);
   --markdown-text: var(--text);
   --markdown-muted: var(--text-secondary);
   --inline-code-bg: var(--panel-subtle);
@@ -25,138 +24,219 @@
   --notice-text: var(--warning-text);
 }
 
-.panel {
-  margin-top: 6px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
+/* ── Compact row (loading, ready, status) ── */
+
+.compact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1;
+  user-select: none;
 }
+
+.compact-row--ready {
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color 120ms ease;
+}
+
+.compact-row--ready:hover { color: var(--text); }
+.compact-row--ready:hover .compact-chevron { color: var(--text); }
+
+.compact-chevron {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 200ms ease, color 120ms ease;
+}
+
+.tool-shell.expanded .compact-chevron { transform: rotate(90deg); }
+
+.compact-label { color: inherit; }
+.compact-filename { color: var(--text-secondary); font-weight: 500; }
+.compact-row--ready .compact-label::after { content: ' · '; }
+
+.compact-row--loading {
+  animation: fade-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fade-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* ── Panel ── */
+
+.panel {
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.tool-shell.collapsed .panel { display: none; }
+
+/* ── Top bar (breadcrumb + copy) ── */
+
+.panel-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-breadcrumb {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.breadcrumb-sep {
+  color: var(--border);
+  margin: 0 1px;
+}
+
+.panel-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.panel-action {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 100ms ease, background 100ms ease;
+  line-height: 1.4;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-action:hover {
+  color: var(--text);
+  background: var(--panel-muted);
+}
+
+.panel-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.panel-action svg {
+  flex-shrink: 0;
+}
+
+/* ── Footer ── */
+
+.panel-footer {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+/* ── Content areas ── */
 
 .panel-content {
   height: var(--content-height);
   overflow: hidden;
-  padding-right: 0;
 }
 
-.source-content .code-viewer {
-  height: 100%;
-  overflow: auto;
-}
-
-.html-content .html-rendered-frame {
-  height: 100%;
-}
-
-.markdown-content {
-  overflow: auto;
-  padding-right: 2px;
-}
+.source-content .code-viewer { height: 100%; overflow: auto; }
+.html-content .html-rendered-frame { height: 100%; }
+.markdown-content { overflow: auto; padding-right: 2px; }
 
 .notice {
   background: var(--notice-bg);
   color: var(--notice-text);
-  border: 1px solid var(--notice-border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
-  font-size: 13px;
+  border-bottom: 1px solid var(--notice-border);
+  padding: 8px 14px;
+  font-size: 12px;
 }
 
-.preview-status {
-  min-height: 84px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
+/* ── Code viewer ── */
+
+.code-viewer {
+  background: transparent;
+  color: var(--code-text);
+  overflow-x: auto;
   padding: 12px 14px;
-  color: var(--text-secondary);
-}
-
-.preview-status p {
   margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 1.45;
+  font-size: 13px;
+  white-space: pre;
+  border: 0;
+  border-radius: 0;
 }
 
-.preview-status--loading {
-  color: var(--text);
+.code-viewer .hljs {
+  display: block;
+  background: transparent;
+  color: inherit;
 }
 
-.loading-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--text-secondary);
-  animation: pulse-dot 1s ease-in-out infinite;
-}
+/* ── Syntax tokens ── */
 
-@keyframes pulse-dot {
-  0%, 100% { opacity: 0.35; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1); }
-}
+.hljs-comment, .hljs-quote { color: var(--hljs-comment); }
+.hljs-keyword, .hljs-selector-tag, .hljs-name, .hljs-section,
+.hljs-selector-id, .hljs-selector-class, .hljs-doctag, .hljs-regexp { color: var(--hljs-keyword); }
+.hljs-string, .hljs-template-tag, .hljs-template-variable, .hljs-variable { color: var(--hljs-string); }
+.hljs-type, .hljs-params, .hljs-variable.language_ { color: var(--hljs-type); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--hljs-number); }
+.hljs-attr, .hljs-attribute, .hljs-property { color: var(--hljs-attr); }
+.hljs-built_in, .hljs-built-in { color: var(--hljs-built-in); }
+.hljs-tag, .hljs-selector-pseudo, .hljs-selector-attr { color: var(--hljs-tag); }
+.hljs-title, .hljs-title.class_, .hljs-title.function_,
+.hljs-meta, .hljs-meta .hljs-keyword, .hljs-subst,
+.hljs-punctuation, .hljs-operator { color: inherit; }
 
-.markdown h1,
-.markdown h2,
-.markdown h3 {
-  margin: .5em 0;
-  letter-spacing: -.01em;
-}
+/* ── Markdown ── */
 
-.markdown p {
-  margin: .7em 0;
-}
-
-.markdown ul,
-.markdown ol {
-  margin: .7em 0;
-  padding-left: 1.4rem;
-}
+.markdown h1, .markdown h2, .markdown h3 { margin: .5em 0; letter-spacing: -.01em; }
+.markdown p { margin: .7em 0; }
+.markdown ul, .markdown ol { margin: .7em 0; padding-left: 1.4rem; }
 
 .markdown-doc {
   max-width: 860px;
   margin: 0 auto;
-  background: var(--markdown-bg);
-  border: 1px solid var(--markdown-border);
-  border-radius: 10px;
   padding: 18px 22px;
   line-height: 1.62;
   color: var(--markdown-text);
   font-size: 15px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
-.markdown-doc h1 {
-  margin: 0 0 14px;
-  font-size: 34px;
-  line-height: 1.08;
-  letter-spacing: -0.03em;
-}
-
-.markdown-doc h2 {
-  margin: 20px 0 10px;
-  font-size: 28px;
-  line-height: 1.14;
-}
-
-.markdown-doc h3 {
-  margin: 16px 0 8px;
-  font-size: 22px;
-  line-height: 1.2;
-}
-
-.markdown-doc p,
-.markdown-doc li {
-  font-size: 17px;
-  line-height: 1.5;
-  color: var(--markdown-muted);
-}
-
-.markdown-doc ul,
-.markdown-doc ol {
-  margin: 8px 0 14px;
-  padding-left: 1.2em;
-}
+.markdown-doc h1 { margin: 0 0 14px; font-size: 34px; line-height: 1.08; letter-spacing: -0.03em; }
+.markdown-doc h2 { margin: 20px 0 10px; font-size: 28px; line-height: 1.14; }
+.markdown-doc h3 { margin: 16px 0 8px; font-size: 22px; line-height: 1.2; }
+.markdown-doc p, .markdown-doc li { font-size: 17px; line-height: 1.5; color: var(--markdown-muted); }
+.markdown-doc ul, .markdown-doc ol { margin: 8px 0 14px; padding-left: 1.2em; }
 
 .markdown-doc code:not(.hljs) {
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -170,120 +250,33 @@
 
 .markdown-doc .code-viewer {
   margin: 12px 0;
-}
-
-.code-viewer {
-  background: var(--code-bg);
-  color: var(--code-text);
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow-x: auto;
-  padding: 10px 12px;
-  margin: 0;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  line-height: 1.45;
-  font-size: 13px;
-  white-space: pre;
 }
 
-.code-viewer .hljs {
-  display: block;
-  background: transparent;
-  color: inherit;
-}
-
-.hljs-comment,
-.hljs-quote {
-  color: var(--hljs-comment);
-}
-
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-name,
-.hljs-section,
-.hljs-selector-id,
-.hljs-selector-class,
-.hljs-doctag,
-.hljs-regexp {
-  color: var(--hljs-keyword);
-}
-
-.hljs-string,
-.hljs-template-tag,
-.hljs-template-variable,
-.hljs-variable {
-  color: var(--hljs-string);
-}
-
-.hljs-type,
-.hljs-params,
-.hljs-variable.language_ {
-  color: var(--hljs-type);
-}
-
-.hljs-number,
-.hljs-literal,
-.hljs-symbol,
-.hljs-bullet {
-  color: var(--hljs-number);
-}
-
-.hljs-attr,
-.hljs-attribute,
-.hljs-property {
-  color: var(--hljs-attr);
-}
-
-.hljs-built_in,
-.hljs-built-in {
-  color: var(--hljs-built-in);
-}
-
-.hljs-tag,
-.hljs-selector-pseudo,
-.hljs-selector-attr {
-  color: var(--hljs-tag);
-}
-
-.hljs-title,
-.hljs-title.class_,
-.hljs-title.function_,
-.hljs-meta,
-.hljs-meta .hljs-keyword,
-.hljs-subst,
-.hljs-punctuation,
-.hljs-operator {
-  color: inherit;
-}
+/* ── HTML frame ── */
 
 .html-rendered-frame {
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   background: var(--panel);
   display: block;
   overflow: hidden;
 }
 
+/* ── Responsive ── */
+
 @media (max-width: 720px) {
-  .markdown-doc {
-    padding: 14px;
+  .panel-actions-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 
-  .markdown-doc h1 {
-    font-size: 27px;
-  }
-
-  .markdown-doc h2 {
-    font-size: 22px;
-  }
-
-  .markdown-doc h3 {
-    font-size: 18px;
-  }
-
-  .markdown-doc p,
-  .markdown-doc li {
-    font-size: 16px;
-  }
+  .markdown-doc { padding: 14px; }
+  .markdown-doc h1 { font-size: 27px; }
+  .markdown-doc h2 { font-size: 22px; }
+  .markdown-doc h3 { font-size: 18px; }
+  .markdown-doc p, .markdown-doc li { font-size: 16px; }
 }
