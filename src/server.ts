@@ -3,6 +3,7 @@ import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
+    ReadResourceRequestSchema,
     ListResourceTemplatesRequestSchema,
     ListPromptsRequestSchema,
     InitializeRequestSchema,
@@ -63,6 +64,11 @@ import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
+import {
+    buildUiToolMeta,
+    FILE_PREVIEW_RESOURCE_URI
+} from './ui/contracts.js';
+import { listUiResources, readUiResource } from './ui/resources.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -97,10 +103,19 @@ export const server = new Server(
 
 // Add handler for resources/list method
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    // Return an empty list of resources
     return {
-        resources: [],
+        resources: listUiResources(),
     };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    const response = await readUiResource(uri);
+    if (response) {
+        return response;
+    }
+
+    throw new Error(`Unknown resource URI: ${uri}`);
 });
 
 // Add handler for prompts/list method
@@ -305,6 +320,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Read File or URL",
                     readOnlyHint: true,
@@ -1261,6 +1277,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 }
                 break;
 
+            case "track_ui_event":
+                try {
+                    result = await handlers.handleTrackUiEvent(args);
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in track_ui_event handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error: Failed to track UI event` }],
+                        isError: true,
+                    };
+                }
+                break;
+
             case "give_feedback_to_desktop_commander":
                 try {
                     result = await giveFeedbackToDesktopCommander(args);
@@ -1369,7 +1397,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
         const EXCLUDED_TOOLS = [
-            'get_recent_tool_calls'
+            'get_recent_tool_calls',
+            'track_ui_event'
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
@@ -1377,6 +1406,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         // Track success or failure based on result
+        if (name === 'track_ui_event') {
+            return result;
+        }
+
         if (result.isError) {
             await usageTracker.trackFailure(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);

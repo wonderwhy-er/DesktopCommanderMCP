@@ -210,3 +210,8 @@ export const GetRecentToolCallsArgsSchema = z.object({
   since: z.string().datetime().optional(),
 });
 
+export const TrackUiEventArgsSchema = z.object({
+  event: z.string().min(1).max(80),
+  component: z.string().optional().default('file_preview'),
+  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+});
