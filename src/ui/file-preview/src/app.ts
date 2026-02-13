@@ -10,6 +10,7 @@ import { createWindowRpcClient, isTrustedParentMessageSource } from '../../share
 import { createToolShellController, type ToolShellController } from '../../shared/tool-shell.js';
 import { createUiHostLifecycle } from '../../shared/host-lifecycle.js';
 import { createUiThemeAdapter } from '../../shared/theme-adaptation.js';
+import { createWidgetStateStorage } from '../../shared/widget-state.js';
 
 let isExpanded = false;
 let previewShownFired = false;
@@ -516,9 +517,15 @@ export function bootstrapApp(): void {
         hostLifecycle.notifyRender();
     };
 
+    // ChatGPT widget state persistence (other hosts use standard ui/notifications/tool-result)
+    const widgetState = createWidgetStateStorage<PreviewStructuredContent>(isPreviewStructuredContent);
+
     onRender?.();
     themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
     const renderAndSync = (payload?: PreviewStructuredContent): void => {
+        if (payload) {
+            widgetState.write(payload); // Persist for refresh recovery (cross-host)
+        }
         renderApp(container, payload, 'rendered', false);
     };
     let initialStateResolved = false;
@@ -535,12 +542,28 @@ export function bootstrapApp(): void {
         onRender?.();
     };
 
+    // Try to restore from widget state first (ChatGPT only - survives refresh)
+    const cachedPayload = widgetState.read();
+    if (cachedPayload) {
+        window.setTimeout(() => {
+            resolveInitialState(cachedPayload);
+        }, 50);
+    }
+
+    // Then check window globals
     const initialPayload = readStructuredContentFromWindow();
     if (initialPayload) {
         window.setTimeout(() => {
             resolveInitialState(initialPayload);
         }, 140);
     }
+
+    // Timeout fallback: if no data arrives after retry, show helpful message
+    window.setTimeout(() => {
+        if (!initialStateResolved) {
+            resolveInitialState(undefined, 'Preview unavailable after page refresh (known issue, fix in progress). Switch threads or re-run the tool.');
+        }
+    }, 8000);
 
     window.addEventListener('message', (event) => {
         try {

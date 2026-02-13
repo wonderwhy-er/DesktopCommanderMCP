@@ -305,6 +305,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(markdownResult.structuredContent.filePath, MD_FILE, 'Markdown file path should be present');
   assert.strictEqual(markdownResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'Markdown should include ui/resourceUri');
   assert.strictEqual(markdownResult._meta.ui.resourceUri, FILE_PREVIEW_RESOURCE_URI, 'Markdown should include preview resource URI');
+  assert.strictEqual(markdownResult._meta['openai/widgetAccessible'], true, 'Markdown should enable widget accessibility');
 
   const textResult = await handleReadFile({ path: TEXT_FILE });
   assert.ok(Array.isArray(textResult.content), 'Result should include content array');
@@ -313,6 +314,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(textResult.structuredContent.fileType, 'text', 'Text fileType should be text');
   assert.strictEqual(textResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'Text should include ui/resourceUri');
   assert.strictEqual(textResult._meta.ui.resourceUri, FILE_PREVIEW_RESOURCE_URI, 'Text should include preview resource URI');
+  assert.strictEqual(textResult._meta['openai/widgetAccessible'], true, 'Text should enable widget accessibility');
 
   const htmlResult = await handleReadFile({ path: HTML_FILE });
   assert.ok(Array.isArray(htmlResult.content), 'Result should include content array');
@@ -321,6 +323,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(htmlResult.structuredContent.fileType, 'html', 'HTML fileType should be html');
   assert.strictEqual(htmlResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'HTML should include ui/resourceUri');
   assert.strictEqual(htmlResult._meta.ui.resourceUri, FILE_PREVIEW_RESOURCE_URI, 'HTML should include preview resource URI');
+  assert.strictEqual(htmlResult._meta['openai/widgetAccessible'], true, 'HTML should enable widget accessibility');
 
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
   assert.ok(Array.isArray(imageResult.content), 'Image result should include content array');
@@ -330,6 +333,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
   assert.strictEqual(imageResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'Image should include ui/resourceUri');
   assert.strictEqual(imageResult._meta.ui.resourceUri, FILE_PREVIEW_RESOURCE_URI, 'Image should include preview resource URI');
+  assert.strictEqual(imageResult._meta['openai/widgetAccessible'], true, 'Image should enable widget accessibility');
 
   const nullArgsResult = await handleReadFile(null);
   assert.ok(Array.isArray(nullArgsResult.content), 'Null-args result should include content array');

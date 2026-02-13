@@ -18,6 +18,7 @@ export const FILE_PREVIEW_RESOURCE = {
 interface ReadableUiResource {
     mimeType: string;
     getText: () => Promise<string>;
+    getMeta?: () => Record<string, unknown>;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -92,12 +93,14 @@ export async function readUiResource(uri: string) {
     }
 
     const resourceText = await resource.getText();
+    const resourceMeta = resource.getMeta?.();
     return {
         contents: [
             {
                 uri,
                 mimeType: resource.mimeType,
-                text: resourceText
+                text: resourceText,
+                ...(resourceMeta ? { _meta: resourceMeta } : {})
             }
         ]
     };

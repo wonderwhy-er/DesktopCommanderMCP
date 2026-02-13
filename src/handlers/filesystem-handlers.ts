@@ -112,7 +112,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileType: 'unsupported',
                     content: ''
                 },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
 
@@ -142,7 +142,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileType: 'unsupported',
                     content: imageSummary
                 },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         } else {
             // For all other files, return as text
@@ -158,7 +158,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileType: previewFileType,
                     content: textContent
                 },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI)
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
     };
