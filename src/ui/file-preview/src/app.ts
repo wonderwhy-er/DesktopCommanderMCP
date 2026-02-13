@@ -152,6 +152,21 @@ function shellQuote(value: string): string {
     return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function encodePowerShellCommand(script: string): string {
+    // PowerShell -EncodedCommand expects UTF-16LE bytes.
+    const utf16leBytes: number[] = [];
+    for (let index = 0; index < script.length; index += 1) {
+        const codeUnit = script.charCodeAt(index);
+        utf16leBytes.push(codeUnit & 0xff, codeUnit >> 8);
+    }
+
+    let binary = '';
+    for (const byte of utf16leBytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}
+
 function buildOpenInFolderCommand(filePath: string): string | undefined {
     const trimmedPath = filePath.trim();
     if (!trimmedPath || isLikelyUrl(trimmedPath)) {
@@ -160,8 +175,9 @@ function buildOpenInFolderCommand(filePath: string): string | undefined {
 
     const userAgent = navigator.userAgent.toLowerCase();
     if (userAgent.includes('win')) {
-        const escaped = trimmedPath.replace(/"/g, '""');
-        return `explorer /select,"${escaped}"`;
+        const escapedForPowerShell = trimmedPath.replace(/'/g, "''");
+        const script = `Start-Process -FilePath explorer.exe -ArgumentList @('/select,','${escapedForPowerShell}')`;
+        return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${encodePowerShellCommand(script)}`;
     }
     if (userAgent.includes('mac')) {
         return `open -R ${shellQuote(trimmedPath)}`;
