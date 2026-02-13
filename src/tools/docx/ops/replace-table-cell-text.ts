@@ -1,33 +1,38 @@
 /**
  * Op: replace_table_cell_text
  *
- * Find a table cell whose full text content (all paragraphs joined) matches `from`,
- * and replace it with `to`.
+ * Goal: Replace the "logical value" of a cell while preserving layout and styles.
  *
- * This operation searches through all tables in the document and finds the first
- * cell whose text matches. It replaces the text in the first paragraph of that cell.
+ * Matching strategy (tried in order):
+ * 1. Match by full cell text (all paragraphs joined with spaces)
+ * 2. Match by first paragraph text only
  *
- * This is useful when you've read table content using readDocxOutline and want to
- * replace specific cell values by their text content.
+ * When the caller passes FULL cell text in `from` / `to` (common for LLMs), we
+ * interpret the change like this:
+ *
+ *   from: "<OLD_TITLE> <SUBTITLE ...>"
+ *   to:   "<NEW_TITLE> <SUBTITLE ...>"
+ *
+ * i.e. only the *title* (first paragraph) changed, the rest of the cell content
+ * stayed the same. We detect the unchanged suffix and compute NEW_TITLE by
+ * stripping that suffix from `to`. Then we only change the first paragraph text,
+ * keeping all other paragraphs (subtitle, etc.) exactly as they were.
+ *
+ * If we cannot safely detect that pattern, we fall back to treating `from`/`to`
+ * as simple first‑paragraph values.
  */
 
-import { getBodyChildren, nodeListToArray, getCellText, setParagraphTextMinimal } from '../dom.js';
+import { getAllBodyTables, nodeListToArray, getCellText, getParagraphText, setCellTextPreservingStyles } from '../dom.js';
 import type { ReplaceTableCellTextOp, OpResult } from '../types.js';
 
 export function applyReplaceTableCellText(
     body: Element,
     op: ReplaceTableCellTextOp,
 ): OpResult {
-    const children = getBodyChildren(body);
     const target = op.from.trim();
 
-    // Find all tables
-    const tables: Element[] = [];
-    for (const child of children) {
-        if (child.nodeName === 'w:tbl') {
-            tables.push(child);
-        }
-    }
+    // Find all logical tables in the body, including those inside SDTs.
+    const tables = getAllBodyTables(body);
 
     // Search through all tables
     for (const table of tables) {
@@ -49,40 +54,43 @@ export function applyReplaceTableCellText(
             }
 
             for (const cell of cells) {
-                // Get full cell text (all paragraphs joined)
                 const cellText = getCellText(cell).trim();
 
+                // Strategy 1: full cell text match — try to detect a "title-only" change
                 if (cellText === target) {
-                    // Find first paragraph in cell and replace its text
                     const paragraphs = cell.getElementsByTagName('w:p');
                     if (paragraphs.length > 0) {
                         const firstP = paragraphs.item(0) as Element;
-                        setParagraphTextMinimal(firstP, op.to);
+                        const firstPText = getParagraphText(firstP).trim();
 
-                        // Clear other paragraphs in the cell (optional - keeps cell structure)
-                        for (let i = 1; i < paragraphs.length; i++) {
-                            const p = paragraphs.item(i) as Element;
-                            const tNodes = p.getElementsByTagName('w:t');
-                            for (let j = 0; j < tNodes.length; j++) {
-                                tNodes.item(j)!.textContent = '';
-                            }
+                        // Cell's "suffix" is everything after the first paragraph text
+                        const suffixFrom = cellText.slice(firstPText.length).trimStart();
+
+                        const toTrimmed = op.to.trim();
+                        let newFirstText = toTrimmed;
+
+                        if (suffixFrom.length > 0 && toTrimmed.endsWith(suffixFrom)) {
+                            // Common LLM pattern:
+                            //   from: "<OLD_TITLE> <SUFFIX>"
+                            //   to:   "<NEW_TITLE> <SUFFIX>"
+                            // Extract "<NEW_TITLE>" by removing the unchanged suffix.
+                            newFirstText = toTrimmed
+                                .slice(0, toTrimmed.length - suffixFrom.length)
+                                .trimEnd();
                         }
 
+                        setCellTextPreservingStyles(cell, newFirstText);
                         return { op, status: 'applied', matched: 1 };
-                    } else {
-                        // Cell has no paragraphs - create one
-                        const doc = cell.ownerDocument;
-                        if (!doc) continue;
+                    }
+                }
 
-                        const p = doc.createElement('w:p');
-                        const r = doc.createElement('w:r');
-                        const t = doc.createElement('w:t');
-                        t.setAttribute('xml:space', 'preserve');
-                        t.textContent = op.to;
-                        r.appendChild(t);
-                        p.appendChild(r);
-                        cell.appendChild(p);
-
+                // Strategy 2: match by first paragraph text only
+                const paragraphs = cell.getElementsByTagName('w:p');
+                if (paragraphs.length > 0) {
+                    const firstP = paragraphs.item(0) as Element;
+                    const firstParagraphText = getParagraphText(firstP).trim();
+                    if (firstParagraphText === target) {
+                        setCellTextPreservingStyles(cell, op.to);
                         return { op, status: 'applied', matched: 1 };
                     }
                 }

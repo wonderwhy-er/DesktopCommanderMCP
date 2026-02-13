@@ -262,10 +262,19 @@ export interface DocxContentParagraph {
     style?: string | null;
 }
 
+/**
+ * Cell content can be:
+ * - A string (simple case, creates one paragraph)
+ * - An array of paragraphs (allows multiple paragraphs with different styles per cell)
+ */
+export type DocxTableCellContent = string | DocxContentParagraph[];
+
 export interface DocxContentTable {
     type: 'table';
-    headers?: string[];
-    rows: string[][];
+    /** Header cells - can be strings or arrays of paragraphs */
+    headers?: DocxTableCellContent[];
+    /** Data rows - each cell can be a string or array of paragraphs */
+    rows: DocxTableCellContent[][];
     colWidths?: number[];
     style?: string;
 }

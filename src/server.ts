@@ -527,11 +527,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             "items": [
                               { "type": "paragraph", "text": "My Title", "style": "Heading1" },
                               { "type": "paragraph", "text": "Body text here", "style": "Normal" },
-                              { "type": "table", "headers": ["Col1", "Col2"], "rows": [["A", "B"], ["C", "D"]] },
+                              { 
+                                "type": "table", 
+                                "headers": ["Col1", "Col2"], 
+                                "rows": [
+                                  ["A", "B"], 
+                                  ["C", "D"],
+                                  // Cells can have multiple paragraphs with different styles:
+                                  [
+                                    "Simple cell text",
+                                    [
+                                      { "type": "paragraph", "text": "First para", "style": "Heading2" },
+                                      { "type": "paragraph", "text": "Second para", "style": "Normal" }
+                                    ]
+                                  ]
+                                ]
+                              },
                               { "type": "image", "imagePath": "/path/to/img.png", "width": 400, "height": 300 }
                             ]
                           }
                         }
+                        
+                        TABLE CELLS: Each cell can be either:
+                        - A string: creates one paragraph with that text
+                        - An array of paragraph objects: creates multiple paragraphs, each with its own style
+                        This allows cells with multiple paragraphs having different font sizes, colors, styles, etc.
 
                         DO NOT read the file multiple times when updating. The outline from step 1 has everything you need.
                         To replicate/copy a DOCX, use write_docx with inputPath and no ops (ops=[]).

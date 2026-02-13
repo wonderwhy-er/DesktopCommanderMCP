@@ -4,14 +4,21 @@
  * Find FIRST paragraph whose trimmed text === `from` **anywhere in the body**,
  * including paragraphs inside table cells, content controls, etc.
  *
- * Replace only the first w:t with `to`; clear other w:t nodes.
- * Does NOT remove/recreate runs or paragraph properties.
+ * Replacement behavior:
+ * - Replaces the matched paragraph's text while preserving all its run styles
+ * - Preserves all other paragraphs in the same cell (if the paragraph is in a table cell)
+ * - Preserves paragraph properties (w:pPr) and run properties (w:rPr)
  *
- * Note: For table cells with multiple paragraphs, use `replace_table_cell_text`
- * instead, which matches the full cell text (all paragraphs joined).
+ * This is useful when you want to replace a specific paragraph by its exact text,
+ * especially in table cells where you want to replace one paragraph while keeping
+ * others intact. For example, replacing "LAWN AND LANDSCAPE" with "EARTH AND MOUNTAIN"
+ * in a cell that also contains a subtitle paragraph will preserve the subtitle.
+ *
+ * Note: For replacing entire cell content (matching by full cell text), use
+ * `replace_table_cell_text` instead.
  */
 
-import { getParagraphText, setParagraphTextMinimal, nodeListToArray } from '../dom.js';
+import { getParagraphText, setParagraphTextPreservingStyles, nodeListToArray } from '../dom.js';
 import type { ReplaceParagraphTextExactOp, OpResult } from '../types.js';
 
 export function applyReplaceParagraphTextExact(
@@ -29,7 +36,8 @@ export function applyReplaceParagraphTextExact(
         const paragraphText = getParagraphText(p).trim();
 
         if (paragraphText === target) {
-            setParagraphTextMinimal(p, op.to);
+            // Preserve all run styles (colors, bold, italic, etc.) when replacing
+            setParagraphTextPreservingStyles(p, op.to);
             return { op, status: 'applied', matched: 1 };
         }
     }

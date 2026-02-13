@@ -14,6 +14,7 @@ export type {
     DocxContentParagraph,
     DocxContentTable,
     DocxContentImage,
+    DocxTableCellContent,
 } from './types.js';
 
 // Legacy functions (used by read_file, write_file, edit_block handlers)

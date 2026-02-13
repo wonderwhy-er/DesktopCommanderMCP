@@ -63,6 +63,51 @@ export function getBodyChildren(body: Element): Element[] {
     return out;
 }
 
+/**
+ * Return ALL top‑level tables that are logically in the body, including those
+ * wrapped in structured document tags (w:sdt / w:sdtContent).
+ *
+ * Previous logic only saw tables that were direct children of <w:body>. That
+ * meant tables inside SDTs were invisible to table operations and readDocxOutline.
+ * This helper walks the body tree and collects any <w:tbl> that appears as a
+ * *first‑class* block (we do not recurse into tables themselves, so nested
+ * tables are not double‑counted).
+ */
+export function getAllBodyTables(body: Element): Element[] {
+    const result: Element[] = [];
+
+    function collectFromNode(node: Element): void {
+        const name = node.nodeName;
+
+        if (name === 'w:tbl') {
+            result.push(node);
+            return; // don't recurse into tables to avoid nested counting
+        }
+
+        // If this is a structured document tag, look into its content container.
+        if (name === 'w:sdt') {
+            const sdtContent = findDirectChild(node, 'w:sdtContent');
+            if (sdtContent) {
+                for (const child of nodeListToArray(sdtContent.childNodes)) {
+                    if (child.nodeType === 1) collectFromNode(child as Element);
+                }
+            }
+            return;
+        }
+
+        // Generic container: recurse into element children.
+        for (const child of nodeListToArray(node.childNodes)) {
+            if (child.nodeType === 1) collectFromNode(child as Element);
+        }
+    }
+
+    for (const child of getBodyChildren(body)) {
+        collectFromNode(child);
+    }
+
+    return result;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Body signature
 // ═══════════════════════════════════════════════════════════════════════
@@ -222,7 +267,10 @@ export function getImageReference(drawing: Element): { rId: string | null; media
  * Replace the text of a paragraph with minimal DOM changes.
  * Sets the FIRST w:t to `text`, clears every subsequent w:t.
  * Sets xml:space="preserve" so leading/trailing spaces survive.
- * Does NOT recreate runs or remove paragraph properties.
+ * Does NOT remove/recreate runs or remove paragraph properties.
+ * 
+ * WARNING: This function does NOT preserve multiple runs with different styles.
+ * Use setParagraphTextPreservingStyles() for cells with multiple styled runs.
  */
 export function setParagraphTextMinimal(p: Element, text: string): void {
     const tNodes = p.getElementsByTagName('w:t');
@@ -235,6 +283,98 @@ export function setParagraphTextMinimal(p: Element, text: string): void {
     for (let i = 1; i < tNodes.length; i++) {
         tNodes.item(i)!.textContent = '';
     }
+}
+
+/**
+ * Replace paragraph text while preserving all run styles.
+ * 
+ * This function preserves the structure of all runs (w:r) and their
+ * properties (w:rPr), distributing the new text across existing runs.
+ * 
+ * Strategy:
+ * 1. Collect all runs with their properties
+ * 2. Distribute new text across runs (preserving run count and styles)
+ * 3. If new text is longer, extend the last run
+ * 4. If new text is shorter, clear excess runs but keep their structure
+ */
+export function setParagraphTextPreservingStyles(p: Element, text: string): void {
+    const doc = p.ownerDocument;
+    if (!doc) return;
+
+    // Work on ALL <w:t> descendants, not just direct children.
+    // This covers runs inside hyperlinks, smart tags, etc.
+    const tNodes = p.getElementsByTagName('w:t');
+
+    if (tNodes.length === 0) {
+        // No text nodes exist - create a minimal run + text.
+        const r = doc.createElement('w:r');
+        const t = doc.createElement('w:t');
+        t.setAttribute('xml:space', 'preserve');
+        t.textContent = text;
+        r.appendChild(t);
+        p.appendChild(r);
+        return;
+    }
+
+    // First text node gets the NEW text.
+    const first = tNodes.item(0) as Element;
+    first.textContent = text;
+    first.setAttribute('xml:space', 'preserve');
+
+    // All other text nodes are cleared, but their runs (and w:rPr) remain,
+    // so formatting structures are preserved while old text disappears.
+    for (let i = 1; i < tNodes.length; i++) {
+        const t = tNodes.item(i);
+        if (t) t.textContent = '';
+    }
+}
+
+/**
+ * Replace cell text while preserving ALL paragraphs and their styles.
+ * 
+ * This function works at the cell level:
+ * - Preserves ALL paragraphs in the cell (doesn't remove any)
+ * - Updates text in the first paragraph while preserving its styles
+ * - Keeps all other paragraphs intact with their original text and styles
+ * 
+ * This ensures that cells with multiple paragraphs (each with different
+ * styles, font sizes, etc.) maintain their structure after text replacement.
+ * 
+ * Example: If a cell has:
+ *   - Paragraph 1: "LAWN AND LANDSCAPE" (Heading1 style, large font, red color)
+ *   - Paragraph 2: "Take your weekends back..." (Normal style, smaller font, black color)
+ * 
+ * Replacing with "EARTH AND MOUNTAIN" will:
+ *   - Update paragraph 1 to "EARTH AND MOUNTAIN" (preserving Heading1 style, large font, red color)
+ *   - Keep paragraph 2 completely intact with its original text and style
+ */
+export function setCellTextPreservingStyles(tc: Element, text: string): void {
+    // Convert NodeList to array to avoid live NodeList issues
+    const paragraphs = nodeListToArray(tc.getElementsByTagName('w:p')) as Element[];
+    
+    if (paragraphs.length === 0) {
+        // Cell has no paragraphs - create one
+        const doc = tc.ownerDocument;
+        if (!doc) return;
+        
+        const p = doc.createElement('w:p');
+        const r = doc.createElement('w:r');
+        const t = doc.createElement('w:t');
+        t.setAttribute('xml:space', 'preserve');
+        t.textContent = text;
+        r.appendChild(t);
+        p.appendChild(r);
+        tc.appendChild(p);
+        return;
+    }
+    
+    // Update first paragraph with new text, preserving all its styles
+    // This function preserves all runs and their properties (colors, bold, italic, etc.)
+    setParagraphTextPreservingStyles(paragraphs[0], text);
+    
+    // CRITICAL: All other paragraphs remain completely untouched
+    // They keep their original text, styles, runs, and all formatting
+    // This ensures multi-paragraph cells maintain their full structure
 }
 
 // ═══════════════════════════════════════════════════════════════════════

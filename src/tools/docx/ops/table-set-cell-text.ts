@@ -6,31 +6,21 @@
  * Applies minimal text replacement inside the cell's first paragraph.
  */
 
-import { getBodyChildren, nodeListToArray, setParagraphTextMinimal } from '../dom.js';
+import { getAllBodyTables, nodeListToArray, setCellTextPreservingStyles } from '../dom.js';
 import type { TableSetCellTextOp, OpResult } from '../types.js';
 
 export function applyTableSetCellText(
     body: Element,
     op: TableSetCellTextOp,
 ): OpResult {
-    const children = getBodyChildren(body);
+    // Find the n‑th logical table in the body, including tables inside SDTs.
+    const tables = getAllBodyTables(body);
 
-    // Find the n-th w:tbl
-    let tableCount = 0;
-    let table: Element | null = null;
-    for (const child of children) {
-        if (child.nodeName === 'w:tbl') {
-            if (tableCount === op.tableIndex) {
-                table = child;
-                break;
-            }
-            tableCount++;
-        }
-    }
-
-    if (!table) {
+    if (op.tableIndex < 0 || op.tableIndex >= tables.length) {
         return { op, status: 'skipped', matched: 0, reason: 'table_not_found' };
     }
+
+    const table = tables[op.tableIndex];
 
     // Find the n-th w:tr
     const rows: Element[] = [];
@@ -58,32 +48,8 @@ export function applyTableSetCellText(
 
     const cell = cells[op.col];
 
-    // Find first w:p inside the cell and apply minimal text replacement
-    for (const child of nodeListToArray(cell.childNodes)) {
-        if (child.nodeType === 1 && (child as Element).nodeName === 'w:p') {
-            const p = child as Element;
-            const tNodes = p.getElementsByTagName('w:t');
-
-            if (tNodes.length > 0) {
-                // Existing runs — use minimal replacement
-                setParagraphTextMinimal(p, op.text);
-            } else {
-                // Empty cell — create a run
-                const doc = cell.ownerDocument;
-                if (!doc) return { op, status: 'skipped', matched: 0, reason: 'no_owner_document' };
-
-                const r = doc.createElement('w:r');
-                const t = doc.createElement('w:t');
-                t.setAttribute('xml:space', 'preserve');
-                t.textContent = op.text;
-                r.appendChild(t);
-                p.appendChild(r);
-            }
-
-            return { op, status: 'applied', matched: 1 };
-        }
-    }
-
-    return { op, status: 'skipped', matched: 0, reason: 'no_paragraph_in_cell' };
+    // Replace cell text while preserving ALL styles (colors, bold, italic, etc.)
+    setCellTextPreservingStyles(cell, op.text);
+    return { op, status: 'applied', matched: 1 };
 }
 

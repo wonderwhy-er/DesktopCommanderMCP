@@ -219,10 +219,16 @@ const DocxContentParagraphSchema = z.object({
   style: z.string().nullable().optional(),
 });
 
+// Cell content: string (simple) or array of paragraphs (multiple styles)
+const DocxTableCellContentSchema = z.union([
+  z.string(),
+  z.array(DocxContentParagraphSchema),
+]);
+
 const DocxContentTableSchema = z.object({
   type: z.literal('table'),
-  headers: z.array(z.string()).optional(),
-  rows: z.array(z.array(z.string())),
+  headers: z.array(DocxTableCellContentSchema).optional(),
+  rows: z.array(z.array(DocxTableCellContentSchema)),
   colWidths: z.array(z.number()).optional(),
   style: z.string().optional(),
 });

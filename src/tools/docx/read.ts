@@ -20,6 +20,7 @@ import {
     getParagraphStyle,
     getBody,
     getBodyChildren,
+    getAllBodyTables,
     countTables,
     countImages,
     getTableContent,
@@ -163,7 +164,7 @@ export async function readDocxOutline(filePath: string): Promise<ReadDocxResult>
                 }
             }
         } else if (child.nodeName === 'w:tbl') {
-            // Extract table content
+            // Extract table content (direct table in body)
             const tableContent = getTableContent(child);
             const style = getTableStyle(child);
 
@@ -177,6 +178,33 @@ export async function readDocxOutline(filePath: string): Promise<ReadDocxResult>
                 rows: tableContent.rows,
             });
             tableIndex++;
+        } else if (child.nodeName === 'w:sdt') {
+            // Structured document tag: look inside w:sdtContent for tables that
+            // are logically at this body position.
+            const sdtContent = child.getElementsByTagName('w:sdtContent').item(0);
+            if (sdtContent) {
+                for (const sdtChild of nodeListToArray(sdtContent.childNodes)) {
+                    if (
+                        sdtChild.nodeType === 1 &&
+                        (sdtChild as Element).nodeName === 'w:tbl'
+                    ) {
+                        const tbl = sdtChild as Element;
+                        const tableContent = getTableContent(tbl);
+                        const style = getTableStyle(tbl);
+
+                        if (style) stylesSet.add(style);
+
+                        tables.push({
+                            bodyChildIndex: i,
+                            tableIndex,
+                            style,
+                            headers: tableContent.headers,
+                            rows: tableContent.rows,
+                        });
+                        tableIndex++;
+                    }
+                }
+            }
         }
     }
 
@@ -187,7 +215,9 @@ export async function readDocxOutline(filePath: string): Promise<ReadDocxResult>
         images,
         stylesSeen: [...stylesSet].sort(),
         counts: {
-            tables: countTables(children),
+            // Table count should reflect all logical tables, including those
+            // wrapped in SDTs, so we reuse the same helper used by ops.
+            tables: getAllBodyTables(body).length,
             images: countImages(body),
             bodyChildren: children.length,
         },
