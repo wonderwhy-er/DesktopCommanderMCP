@@ -17,6 +17,7 @@ let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let rpcCallTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
+let rpcUpdateContext: ((text: string) => void) | undefined;
 let shellController: ToolShellController | undefined;
 
 function getFileExtensionForAnalytics(filePath: string): string {
@@ -225,7 +226,7 @@ function parseReadRange(content: string): ReadRange | undefined {
     };
 }
 
-function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
+function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode, startLine = 1): { html: string; notice?: string } {
     const cleanedContent = stripReadStatusLine(payload.content);
 
     if (payload.fileType === 'unsupported') {
@@ -244,7 +245,7 @@ function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode
         const formatted = formatJsonIfPossible(cleanedContent, payload.filePath);
         return {
             notice: formatted.notice,
-            html: `<div class="panel-content source-content">${renderCodeViewer(formatted.content, detectedLanguage)}</div>`
+            html: `<div class="panel-content source-content">${renderCodeViewer(formatted.content, detectedLanguage, startLine)}</div>`
         };
     }
 
@@ -431,6 +432,119 @@ function attachLoadAllHandler(
     afterBtn?.addEventListener('click', () => void loadLines(afterBtn, 'after'));
 }
 
+/**
+ * Tracks native text selection and pushes it to the host via ui/update-model-context.
+ *
+ * How it works:
+ * 1. User drags to select text anywhere in the preview (markdown, code, HTML).
+ * 2. The selectionchange event fires; we extract the selected string.
+ * 3. We call rpcUpdateContext() which sends a ui/update-model-context JSON-RPC
+ *    request to the host with the selected text + file path (+ line numbers for code).
+ * 4. The host stores this as widget context.
+ * 5. The LLM can access it by calling read_widget_context(tool_name="desktop-commander:read_file").
+ *
+ * Note: as of Feb 2025, Claude does NOT auto-inject ui/update-model-context into
+ * the LLM's context window. The LLM must actively call read_widget_context to see
+ * the selection. A floating tooltip near the selection tells the user this is working.
+ */
+function attachTextSelectionHandler(payload: PreviewStructuredContent): void {
+    const contentWrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
+    if (!contentWrapper) return;
+
+    let hintEl: HTMLElement | null = null;
+    let lastSelectedText = '';
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function positionHint(selection: Selection): void {
+        if (!hintEl) return;
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const wrapperRect = contentWrapper!.getBoundingClientRect();
+
+        // Position above the selection, centered horizontally
+        let left = rect.left + rect.width / 2 - wrapperRect.left;
+        let top = rect.top - wrapperRect.top + contentWrapper!.scrollTop - 32;
+
+        // Clamp within wrapper bounds
+        const hintWidth = hintEl.offsetWidth || 200;
+        left = Math.max(8, Math.min(left - hintWidth / 2, contentWrapper!.clientWidth - hintWidth - 8));
+        top = Math.max(4, top);
+
+        hintEl.style.left = `${left}px`;
+        hintEl.style.top = `${top}px`;
+    }
+
+    function showHint(selection: Selection): void {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+
+        if (!hintEl) {
+            hintEl = document.createElement('div');
+            hintEl.className = 'selection-hint';
+            hintEl.textContent = 'AI can see your selection';
+            contentWrapper!.appendChild(hintEl);
+        }
+        hintEl.classList.add('visible');
+        positionHint(selection);
+    }
+
+    function hideHint(): void {
+        if (!hintEl) return;
+        hintEl.classList.remove('visible');
+        hideTimer = setTimeout(() => { hintEl?.remove(); hintEl = null; }, 200);
+    }
+
+    function getLineInfo(selection: Selection): string {
+        const anchorRow = selection.anchorNode?.parentElement?.closest('.code-line') as HTMLElement | null;
+        const focusRow = selection.focusNode?.parentElement?.closest('.code-line') as HTMLElement | null;
+        if (anchorRow && focusRow) {
+            const a = parseInt(anchorRow.dataset.line ?? '', 10);
+            const f = parseInt(focusRow.dataset.line ?? '', 10);
+            if (!isNaN(a) && !isNaN(f)) {
+                const low = Math.min(a, f);
+                const high = Math.max(a, f);
+                return low === high ? `line ${low}` : `lines ${low}–${high}`;
+            }
+        }
+        return '';
+    }
+
+    document.addEventListener('selectionchange', () => {
+        const selection = document.getSelection();
+        if (!selection || selection.isCollapsed) {
+            if (lastSelectedText) {
+                lastSelectedText = '';
+                rpcUpdateContext?.('');
+                hideHint();
+            }
+            return;
+        }
+
+        const text = selection.toString().trim();
+        if (!text || text === lastSelectedText) return;
+
+        // Only act on selections within our content area
+        const anchorInContent = contentWrapper!.contains(selection.anchorNode);
+        const focusInContent = contentWrapper!.contains(selection.focusNode);
+        if (!anchorInContent && !focusInContent) return;
+
+        lastSelectedText = text;
+
+        const lineInfo = getLineInfo(selection);
+        const locationPart = lineInfo ? ` (${lineInfo})` : '';
+        const context = `User selected text from file ${payload.filePath}${locationPart}:\n\`\`\`\n${text}\n\`\`\``;
+
+        rpcUpdateContext?.(context);
+        showHint(selection);
+
+        trackUiEvent?.('text_selected', {
+            file_type: payload.fileType,
+            file_extension: getFileExtensionForAnalytics(payload.filePath),
+            char_count: text.length
+        });
+    });
+}
+
+
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
       <main class="shell">
@@ -473,11 +587,11 @@ export function renderApp(
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
     const supportsPreview = payload.fileType !== 'unsupported';
-    const body = renderBody(payload, htmlMode);
+    const range = parseReadRange(payload.content);
+    const body = renderBody(payload, htmlMode, range?.fromLine ?? 1);
     const notice = body.notice ? `<div class="notice">${body.notice}</div>` : '';
 
     const breadcrumb = buildBreadcrumb(payload.filePath);
-    const range = parseReadRange(payload.content);
     const lineCount = range ? range.toLine - range.fromLine + 1 : countContentLines(payload.content);
     const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
         : payload.fileType === 'html' ? 'HTML'
@@ -543,6 +657,7 @@ export function renderApp(
     attachHtmlToggleHandler(container, payload, htmlMode);
     attachOpenInFolderHandler(payload);
     attachLoadAllHandler(container, payload, htmlMode);
+    attachTextSelectionHandler(payload);
 
     // Compact row click toggles expand/collapse
     const compactRow = document.getElementById('compact-toggle');
@@ -612,6 +727,15 @@ export function bootstrapApp(): void {
             arguments: args
         })
     );
+
+    rpcUpdateContext = (text: string): void => {
+        const params = text
+            ? { content: [{ type: 'text', text }] }
+            : { content: [] };
+        rpcClient.request('ui/update-model-context', params).catch(() => {
+            // Host may not support ui/update-model-context yet
+        });
+    };
 
     trackUiEvent = (event: string, params: Record<string, unknown> = {}): void => {
         void rpcCallTool?.('track_ui_event', {

@@ -171,11 +171,38 @@
   letter-spacing: 0.01em;
 }
 
+.footer-comment-btn {
+  margin-left: auto;
+}
+
+/* ── Selection hint (floating tooltip near selection) ── */
+
+.selection-hint {
+  position: absolute;
+  z-index: 10;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.selection-hint.visible {
+  opacity: 1;
+}
+
 /* ── Content areas ── */
 
 .panel-content-wrapper {
   height: var(--content-height);
   overflow: auto;
+  position: relative;
 }
 
 .panel-content {
@@ -198,26 +225,22 @@
 .load-lines-banner {
   display: block;
   width: 100%;
-  padding: 10px 16px;
-  font-size: 13px;
+  padding: 8px 16px;
+  font-size: 12px;
   font-family: inherit;
-  color: var(--muted);
-  background: var(--panel-subtle);
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--panel-muted) 40%, transparent);
   border: none;
   cursor: pointer;
   text-align: center;
   transition: color 150ms ease, background 150ms ease;
-  position: sticky;
-  z-index: 1;
 }
 
 #load-before {
-  top: 0;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
 }
 
 #load-after {
-  bottom: 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 30%, transparent);
 }
 
@@ -237,7 +260,7 @@
   background: transparent;
   color: var(--code-text);
   overflow-x: auto;
-  padding: 16px 18px;
+  padding: 12px 0;
   margin: 0;
   font-family: var(--font-mono, ui-monospace, monospace);
   line-height: 1.5;
@@ -245,6 +268,57 @@
   white-space: pre;
   border: 0;
   border-radius: 0;
+}
+
+.code-table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  width: 100%;
+}
+
+.code-line {
+  transition: background 80ms ease;
+}
+
+.code-line:hover {
+  background: color-mix(in srgb, var(--panel-muted) 50%, transparent);
+}
+
+.code-line.selected {
+  background: color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.code-line.selected:hover {
+  background: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.line-num {
+  padding: 0 12px 0 18px;
+  text-align: right;
+  color: var(--muted);
+  opacity: 0.5;
+  user-select: none;
+  cursor: pointer;
+  vertical-align: top;
+  white-space: nowrap;
+  font-size: 12px;
+  min-width: 2.5em;
+  transition: opacity 120ms ease;
+}
+
+.line-num:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+}
+
+.code-line.selected .line-num {
+  opacity: 0.8;
+}
+
+.line-content {
+  padding: 0 18px 0 8px;
+  white-space: pre;
+  width: 100%;
 }
 
 .code-viewer .hljs {
