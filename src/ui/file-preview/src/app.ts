@@ -195,6 +195,13 @@ function stripReadStatusLine(content: string): string {
     return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
 }
 
+function countContentLines(content: string): number {
+    const cleaned = stripReadStatusLine(content);
+    if (cleaned === '') return 0;
+    const lines = cleaned.split('\n');
+    return lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+}
+
 interface ReadRange {
     fromLine: number;
     toLine: number;
@@ -351,6 +358,79 @@ function attachOpenInFolderHandler(payload: PreviewStructuredContent): void {
     });
 }
 
+function attachLoadAllHandler(
+    container: HTMLElement,
+    payload: PreviewStructuredContent,
+    htmlMode: HtmlPreviewMode
+): void {
+    const beforeBtn = document.getElementById('load-before') as HTMLButtonElement | null;
+    const afterBtn = document.getElementById('load-after') as HTMLButtonElement | null;
+    if (!beforeBtn && !afterBtn) {
+        return;
+    }
+
+    const range = parseReadRange(payload.content);
+    if (!range?.isPartial) return;
+
+    const currentContent = stripReadStatusLine(payload.content);
+
+    const loadLines = async (btn: HTMLButtonElement, direction: 'before' | 'after'): Promise<void> => {
+        const originalText = btn.textContent;
+        btn.textContent = 'Loading…';
+        btn.disabled = true;
+
+        trackUiEvent?.(direction === 'before' ? 'load_lines_before' : 'load_lines_after', {
+            file_type: payload.fileType,
+            file_extension: getFileExtensionForAnalytics(payload.filePath)
+        });
+
+        try {
+            // Load only the missing portion
+            const readArgs = direction === 'before'
+                ? { path: payload.filePath, offset: 0, length: range.fromLine - 1 }
+                : { path: payload.filePath, offset: range.toLine };
+
+            const result = await rpcCallTool?.('read_file', readArgs);
+            const resultObj = result as { content?: Array<{ text?: string }> } | undefined;
+            const newText = resultObj?.content?.[0]?.text;
+
+            if (newText && typeof newText === 'string') {
+                const cleanNew = stripReadStatusLine(newText);
+
+                // Merge: prepend or append the new lines
+                const merged = direction === 'before'
+                    ? cleanNew + (cleanNew.endsWith('\n') ? '' : '\n') + currentContent
+                    : currentContent + (currentContent.endsWith('\n') ? '' : '\n') + cleanNew;
+
+                // Build updated status line reflecting the new range
+                const newFrom = direction === 'before' ? 1 : range.fromLine;
+                const newTo = direction === 'after' ? range.totalLines : range.toLine;
+                const lineCount = newTo - newFrom + 1;
+                const remaining = range.totalLines - newTo;
+                const isStillPartial = newFrom > 1 || newTo < range.totalLines;
+                const statusLine = isStillPartial
+                    ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom - 1}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
+                    : '';
+
+                const mergedPayload: PreviewStructuredContent = {
+                    ...payload,
+                    content: statusLine + merged
+                };
+                renderApp(container, mergedPayload, htmlMode, isExpanded);
+            } else {
+                btn.textContent = 'Failed to load';
+                setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+            }
+        } catch {
+            btn.textContent = 'Failed to load';
+            setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+        }
+    };
+
+    beforeBtn?.addEventListener('click', () => void loadLines(beforeBtn, 'before'));
+    afterBtn?.addEventListener('click', () => void loadLines(afterBtn, 'after'));
+}
+
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
       <main class="shell">
@@ -398,7 +478,7 @@ export function renderApp(
 
     const breadcrumb = buildBreadcrumb(payload.filePath);
     const range = parseReadRange(payload.content);
-    const lineCount = range ? range.toLine - range.fromLine + 1 : payload.content.split('\n').length;
+    const lineCount = range ? range.toLine - range.fromLine + 1 : countContentLines(payload.content);
     const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
         : payload.fileType === 'html' ? 'HTML'
         : fileExtension !== 'none' ? fileExtension.toUpperCase()
@@ -418,6 +498,18 @@ export function renderApp(
     const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
 
+    const loadAllButton = '';
+
+    // Content-area banners for missing lines
+    const hasMissingBefore = range?.isPartial && range.fromLine > 1;
+    const hasMissingAfter = range?.isPartial && range.toLine < range.totalLines;
+    const loadBeforeBanner = hasMissingBefore
+        ? `<button class="load-lines-banner" id="load-before">↑ Load lines 1–${range!.fromLine - 1}</button>`
+        : '';
+    const loadAfterBanner = hasMissingAfter
+        ? `<button class="load-lines-banner" id="load-after">↓ Load lines ${range!.toLine + 1}–${range!.totalLines}</button>`
+        : '';
+
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}">
         <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
@@ -435,7 +527,11 @@ export function renderApp(
             </span>
           </div>
           ${notice}
-          ${body.html}
+          <div class="panel-content-wrapper">
+            ${loadBeforeBanner}
+            ${body.html}
+            ${loadAfterBanner}
+          </div>
           <div class="panel-footer">
             <span>${footerLabel}</span>
           </div>
@@ -446,6 +542,7 @@ export function renderApp(
     attachCopyHandler(payload);
     attachHtmlToggleHandler(container, payload, htmlMode);
     attachOpenInFolderHandler(payload);
+    attachLoadAllHandler(container, payload, htmlMode);
 
     // Compact row click toggles expand/collapse
     const compactRow = document.getElementById('compact-toggle');
@@ -538,33 +635,6 @@ export function bootstrapApp(): void {
 
     onRender?.();
     themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
-
-    // DEBUG: dump all CSS variables the host injected
-    const rootStyles = getComputedStyle(document.documentElement);
-    const allProps: Record<string, string> = {};
-    for (const sheet of document.styleSheets) {
-        try {
-            for (const rule of (sheet as CSSStyleSheet).cssRules) {
-                if (rule instanceof CSSStyleRule && rule.selectorText === ':root') {
-                    for (let i = 0; i < rule.style.length; i++) {
-                        const prop = rule.style[i];
-                        if (prop.startsWith('--')) {
-                            allProps[prop] = rootStyles.getPropertyValue(prop).trim();
-                        }
-                    }
-                }
-            }
-        } catch { /* cross-origin */ }
-    }
-    // Also get inline style vars set by theme adapter
-    const inlineStyle = document.documentElement.style;
-    for (let i = 0; i < inlineStyle.length; i++) {
-        const prop = inlineStyle[i];
-        if (prop.startsWith('--')) {
-            allProps[prop] = rootStyles.getPropertyValue(prop).trim();
-        }
-    }
-    console.log('[DC Theme Debug] CSS variables:', JSON.stringify(allProps, null, 2));
 
     const renderAndSync = (payload?: PreviewStructuredContent): void => {
         if (payload) {
