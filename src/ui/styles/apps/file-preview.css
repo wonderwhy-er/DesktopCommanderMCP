@@ -1,5 +1,5 @@
 /*
- * App-specific styling for File Preview layouts and render containers.
+ * App-specific styling for File Preview — tuned to blend with Claude's UI.
  */
 :root {
   --code-bg: var(--panel);
@@ -13,7 +13,6 @@
   --hljs-built-in: var(--color-text-accent, #6366f1);
   --hljs-tag: var(--color-text-info, #0ea5a8);
   --content-height: min(82vh, 920px);
-  --markdown-bg: var(--panel);
   --markdown-text: var(--text);
   --markdown-muted: var(--text-secondary);
   --inline-code-bg: var(--panel-subtle);
@@ -24,7 +23,7 @@
   --notice-text: var(--warning-text);
 }
 
-/* ── Compact row (loading, ready, status) ── */
+/* ── Compact row ── */
 
 .compact-row {
   display: flex;
@@ -39,12 +38,12 @@
 
 .compact-row--ready {
   cursor: pointer;
-  border-radius: 6px;
-  transition: color 120ms ease;
+  border-radius: 8px;
+  transition: color 150ms ease;
 }
 
-.compact-row--ready:hover { color: var(--text); }
-.compact-row--ready:hover .compact-chevron { color: var(--text); }
+.compact-row--ready:hover { color: var(--text-secondary); }
+.compact-row--ready:hover .compact-chevron { color: var(--text-secondary); }
 
 .compact-chevron {
   width: 14px;
@@ -52,7 +51,7 @@
   fill: currentColor;
   color: var(--muted);
   flex-shrink: 0;
-  transition: transform 200ms ease, color 120ms ease;
+  transition: transform 200ms ease, color 150ms ease;
 }
 
 .tool-shell.expanded .compact-chevron { transform: rotate(90deg); }
@@ -70,92 +69,105 @@
   50% { opacity: 1; }
 }
 
-/* ── Panel ── */
+/* ── Panel (Claude-style card) ── */
 
 .panel {
-  margin-top: 4px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  margin-top: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: 16px;
   background: var(--panel);
   overflow: hidden;
 }
 
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: color-mix(in srgb, var(--panel), white 6%);
+  }
+}
+
+[data-theme="dark"] .panel {
+  background: color-mix(in srgb, var(--panel), white 6%);
+}
+
 .tool-shell.collapsed .panel { display: none; }
 
-/* ── Top bar (breadcrumb + copy) ── */
+/* ── Top bar ── */
 
 .panel-topbar {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
 
 .panel-breadcrumb {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: 13px;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1 1 0;
+  width: 0;
   min-width: 0;
 }
 
 .breadcrumb-sep {
-  color: var(--border);
-  margin: 0 1px;
+  color: color-mix(in srgb, var(--muted) 50%, transparent);
+  margin: 0 2px;
 }
 
 .panel-topbar-actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .panel-action {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--muted);
   background: none;
   border: none;
-  border-radius: 6px;
-  padding: 4px 10px;
+  border-radius: 8px;
+  padding: 5px 12px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 100ms ease, background 100ms ease;
+  transition: color 150ms ease, background 150ms ease;
   line-height: 1.4;
   font-family: inherit;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .panel-action:hover {
   color: var(--text);
-  background: var(--panel-muted);
+  background: var(--panel-subtle);
 }
 
 .panel-action:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
-.panel-action svg {
-  flex-shrink: 0;
-}
+.panel-action svg { flex-shrink: 0; opacity: 0.7; }
+.panel-action:hover svg { opacity: 1; }
 
 /* ── Footer ── */
 
 .panel-footer {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
-  border-top: 1px solid var(--border);
-  font-size: 11px;
+  padding: 8px 16px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  font-size: 12px;
   color: var(--muted);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
 }
 
 /* ── Content areas ── */
@@ -167,14 +179,13 @@
 
 .source-content .code-viewer { height: 100%; overflow: auto; }
 .html-content .html-rendered-frame { height: 100%; }
-.markdown-content { overflow: auto; padding-right: 2px; }
+.markdown-content { overflow: auto; padding: 0 4px 0 0; }
 
 .notice {
   background: var(--notice-bg);
   color: var(--notice-text);
-  border-bottom: 1px solid var(--notice-border);
-  padding: 8px 14px;
-  font-size: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
 }
 
 /* ── Code viewer ── */
@@ -183,10 +194,10 @@
   background: transparent;
   color: var(--code-text);
   overflow-x: auto;
-  padding: 12px 14px;
+  padding: 16px 18px;
   margin: 0;
   font-family: var(--font-mono, ui-monospace, monospace);
-  line-height: 1.45;
+  line-height: 1.5;
   font-size: 13px;
   white-space: pre;
   border: 0;
@@ -206,6 +217,7 @@
 .hljs-selector-id, .hljs-selector-class, .hljs-doctag, .hljs-regexp { color: var(--hljs-keyword); }
 .hljs-string, .hljs-template-tag, .hljs-template-variable, .hljs-variable { color: var(--hljs-string); }
 .hljs-type, .hljs-params, .hljs-variable.language_ { color: var(--hljs-type); }
+
 .hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: var(--hljs-number); }
 .hljs-attr, .hljs-attribute, .hljs-property { color: var(--hljs-attr); }
 .hljs-built_in, .hljs-built-in { color: var(--hljs-built-in); }
@@ -223,8 +235,8 @@
 .markdown-doc {
   max-width: 860px;
   margin: 0 auto;
-  padding: 18px 22px;
-  line-height: 1.62;
+  padding: 20px 24px;
+  line-height: 1.65;
   color: var(--markdown-text);
   font-size: 15px;
   background: transparent;
@@ -232,26 +244,27 @@
   border-radius: 0;
 }
 
-.markdown-doc h1 { margin: 0 0 14px; font-size: 34px; line-height: 1.08; letter-spacing: -0.03em; }
-.markdown-doc h2 { margin: 20px 0 10px; font-size: 28px; line-height: 1.14; }
-.markdown-doc h3 { margin: 16px 0 8px; font-size: 22px; line-height: 1.2; }
-.markdown-doc p, .markdown-doc li { font-size: 17px; line-height: 1.5; color: var(--markdown-muted); }
-.markdown-doc ul, .markdown-doc ol { margin: 8px 0 14px; padding-left: 1.2em; }
+.markdown-doc h1 { margin: 0 0 16px; font-size: 32px; line-height: 1.1; letter-spacing: -0.02em; }
+.markdown-doc h2 { margin: 24px 0 12px; font-size: 26px; line-height: 1.15; }
+.markdown-doc h3 { margin: 20px 0 8px; font-size: 20px; line-height: 1.25; }
+
+.markdown-doc p, .markdown-doc li { font-size: 16px; line-height: 1.55; color: var(--markdown-muted); }
+.markdown-doc ul, .markdown-doc ol { margin: 8px 0 16px; padding-left: 1.2em; }
 
 .markdown-doc code:not(.hljs) {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: .92em;
+  font-size: .9em;
   background: var(--inline-code-bg);
   color: var(--inline-code-text);
   border: 1px solid var(--inline-code-border);
   border-radius: 6px;
-  padding: 1px 5px;
+  padding: 2px 6px;
 }
 
 .markdown-doc .code-viewer {
-  margin: 12px 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  margin: 14px 0;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: 10px;
 }
 
 /* ── HTML frame ── */
@@ -268,15 +281,9 @@
 /* ── Responsive ── */
 
 @media (max-width: 720px) {
-  .panel-actions-bar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
-  .markdown-doc { padding: 14px; }
+  .markdown-doc { padding: 16px; }
   .markdown-doc h1 { font-size: 27px; }
   .markdown-doc h2 { font-size: 22px; }
   .markdown-doc h3 { font-size: 18px; }
-  .markdown-doc p, .markdown-doc li { font-size: 16px; }
+  .markdown-doc p, .markdown-doc li { font-size: 15px; }
 }

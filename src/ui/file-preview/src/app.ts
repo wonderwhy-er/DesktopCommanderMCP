@@ -538,6 +538,34 @@ export function bootstrapApp(): void {
 
     onRender?.();
     themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
+
+    // DEBUG: dump all CSS variables the host injected
+    const rootStyles = getComputedStyle(document.documentElement);
+    const allProps: Record<string, string> = {};
+    for (const sheet of document.styleSheets) {
+        try {
+            for (const rule of (sheet as CSSStyleSheet).cssRules) {
+                if (rule instanceof CSSStyleRule && rule.selectorText === ':root') {
+                    for (let i = 0; i < rule.style.length; i++) {
+                        const prop = rule.style[i];
+                        if (prop.startsWith('--')) {
+                            allProps[prop] = rootStyles.getPropertyValue(prop).trim();
+                        }
+                    }
+                }
+            }
+        } catch { /* cross-origin */ }
+    }
+    // Also get inline style vars set by theme adapter
+    const inlineStyle = document.documentElement.style;
+    for (let i = 0; i < inlineStyle.length; i++) {
+        const prop = inlineStyle[i];
+        if (prop.startsWith('--')) {
+            allProps[prop] = rootStyles.getPropertyValue(prop).trim();
+        }
+    }
+    console.log('[DC Theme Debug] CSS variables:', JSON.stringify(allProps, null, 2));
+
     const renderAndSync = (payload?: PreviewStructuredContent): void => {
         if (payload) {
             widgetState.write(payload); // Persist for refresh recovery (cross-host)
