@@ -410,7 +410,7 @@ function attachLoadAllHandler(
                 const remaining = range.totalLines - newTo;
                 const isStillPartial = newFrom > 1 || newTo < range.totalLines;
                 const statusLine = isStillPartial
-                    ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom - 1}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
+                    ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
                     : '';
 
                 const mergedPayload: PreviewStructuredContent = {
@@ -616,7 +616,7 @@ export function renderApp(
 
     // Content-area banners for missing lines
     const hasMissingBefore = range?.isPartial && range.fromLine > 1;
-    const hasMissingAfter = range?.isPartial && range.toLine < range.totalLines;
+    const hasMissingAfter = range?.isPartial && range.toLine < range.totalLines && (range.totalLines - range.toLine) > 1;
     const loadBeforeBanner = hasMissingBefore
         ? `<button class="load-lines-banner" id="load-before">↑ Load lines 1–${range!.fromLine - 1}</button>`
         : '';
