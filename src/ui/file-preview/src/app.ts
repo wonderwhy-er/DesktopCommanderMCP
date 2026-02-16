@@ -17,6 +17,7 @@ let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let rpcCallTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
+let rpcUpdateContext: ((text: string) => void) | undefined;
 let shellController: ToolShellController | undefined;
 
 function getFileExtensionForAnalytics(filePath: string): string {
@@ -195,6 +196,13 @@ function stripReadStatusLine(content: string): string {
     return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
 }
 
+function countContentLines(content: string): number {
+    const cleaned = stripReadStatusLine(content);
+    if (cleaned === '') return 0;
+    const lines = cleaned.split('\n');
+    return lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+}
+
 interface ReadRange {
     fromLine: number;
     toLine: number;
@@ -218,7 +226,7 @@ function parseReadRange(content: string): ReadRange | undefined {
     };
 }
 
-function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
+function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode, startLine = 1): { html: string; notice?: string } {
     const cleanedContent = stripReadStatusLine(payload.content);
 
     if (payload.fileType === 'unsupported') {
@@ -237,7 +245,7 @@ function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode
         const formatted = formatJsonIfPossible(cleanedContent, payload.filePath);
         return {
             notice: formatted.notice,
-            html: `<div class="panel-content source-content">${renderCodeViewer(formatted.content, detectedLanguage)}</div>`
+            html: `<div class="panel-content source-content">${renderCodeViewer(formatted.content, detectedLanguage, startLine)}</div>`
         };
     }
 
@@ -351,6 +359,208 @@ function attachOpenInFolderHandler(payload: PreviewStructuredContent): void {
     });
 }
 
+function attachLoadAllHandler(
+    container: HTMLElement,
+    payload: PreviewStructuredContent,
+    htmlMode: HtmlPreviewMode
+): void {
+    const beforeBtn = document.getElementById('load-before') as HTMLButtonElement | null;
+    const afterBtn = document.getElementById('load-after') as HTMLButtonElement | null;
+    if (!beforeBtn && !afterBtn) {
+        return;
+    }
+
+    const range = parseReadRange(payload.content);
+    if (!range?.isPartial) return;
+
+    const currentContent = stripReadStatusLine(payload.content);
+
+    const loadLines = async (btn: HTMLButtonElement, direction: 'before' | 'after'): Promise<void> => {
+        const originalText = btn.textContent;
+        btn.textContent = 'Loading…';
+        btn.disabled = true;
+
+        trackUiEvent?.(direction === 'before' ? 'load_lines_before' : 'load_lines_after', {
+            file_type: payload.fileType,
+            file_extension: getFileExtensionForAnalytics(payload.filePath)
+        });
+
+        try {
+            // Load only the missing portion
+            const readArgs = direction === 'before'
+                ? { path: payload.filePath, offset: 0, length: range.fromLine - 1 }
+                : { path: payload.filePath, offset: range.toLine };
+
+            const result = await rpcCallTool?.('read_file', readArgs);
+            const resultObj = result as { content?: Array<{ text?: string }> } | undefined;
+            const newText = resultObj?.content?.[0]?.text;
+
+            if (newText && typeof newText === 'string') {
+                const cleanNew = stripReadStatusLine(newText);
+
+                // Merge: prepend or append the new lines
+                const merged = direction === 'before'
+                    ? cleanNew + (cleanNew.endsWith('\n') ? '' : '\n') + currentContent
+                    : currentContent + (currentContent.endsWith('\n') ? '' : '\n') + cleanNew;
+
+                // Build updated status line reflecting the new range
+                const newFrom = direction === 'before' ? 1 : range.fromLine;
+                const newTo = direction === 'after' ? range.totalLines : range.toLine;
+                const lineCount = newTo - newFrom + 1;
+                const remaining = range.totalLines - newTo;
+                const isStillPartial = newFrom > 1 || newTo < range.totalLines;
+                const statusLine = isStillPartial
+                    ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
+                    : '';
+
+                const mergedPayload: PreviewStructuredContent = {
+                    ...payload,
+                    content: statusLine + merged
+                };
+                renderApp(container, mergedPayload, htmlMode, isExpanded);
+            } else {
+                btn.textContent = 'Failed to load';
+                setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+            }
+        } catch {
+            btn.textContent = 'Failed to load';
+            setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+        }
+    };
+
+    beforeBtn?.addEventListener('click', () => void loadLines(beforeBtn, 'before'));
+    afterBtn?.addEventListener('click', () => void loadLines(afterBtn, 'after'));
+}
+
+/**
+ * Tracks native text selection and pushes it to the host via ui/update-model-context.
+ *
+ * How it works:
+ * 1. User drags to select text anywhere in the preview (markdown, code, HTML).
+ * 2. The selectionchange event fires; we extract the selected string.
+ * 3. We call rpcUpdateContext() which sends a ui/update-model-context JSON-RPC
+ *    request to the host with the selected text + file path (+ line numbers for code).
+ * 4. The host stores this as widget context.
+ * 5. The LLM can access it by calling read_widget_context(tool_name="desktop-commander:read_file").
+ *
+ * Note: as of Feb 2025, Claude does NOT auto-inject ui/update-model-context into
+ * the LLM's context window. The LLM must actively call read_widget_context to see
+ * the selection. A floating tooltip near the selection tells the user this is working.
+ */
+let selectionAbortController: AbortController | null = null;
+
+function attachTextSelectionHandler(payload: PreviewStructuredContent): void {
+    const contentWrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
+    if (!contentWrapper) return;
+
+    // Abort any previous selectionchange listener to avoid leaking listeners/closures
+    if (selectionAbortController) {
+        selectionAbortController.abort();
+        selectionAbortController = null;
+    }
+    selectionAbortController = new AbortController();
+
+    let hintEl: HTMLElement | null = null;
+    let lastSelectedText = '';
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function positionHint(selection: Selection): void {
+        if (!hintEl) return;
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const wrapperRect = contentWrapper!.getBoundingClientRect();
+
+        // Position above the selection, centered horizontally
+        let left = rect.left + rect.width / 2 - wrapperRect.left;
+        let top = rect.top - wrapperRect.top + contentWrapper!.scrollTop - 32;
+
+        // Clamp within wrapper bounds
+        const hintWidth = hintEl.offsetWidth || 200;
+        left = Math.max(8, Math.min(left - hintWidth / 2, contentWrapper!.clientWidth - hintWidth - 8));
+        top = Math.max(4, top);
+
+        hintEl.style.left = `${left}px`;
+        hintEl.style.top = `${top}px`;
+    }
+
+    function showHint(selection: Selection): void {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+
+        if (!hintEl) {
+            hintEl = document.createElement('div');
+            hintEl.className = 'selection-hint';
+            hintEl.textContent = 'AI can see your selection';
+            contentWrapper!.appendChild(hintEl);
+        }
+        hintEl.classList.add('visible');
+        positionHint(selection);
+    }
+
+    function hideHint(): void {
+        if (!hintEl) return;
+        hintEl.classList.remove('visible');
+        hideTimer = setTimeout(() => { hintEl?.remove(); hintEl = null; }, 200);
+    }
+
+    function getLineInfo(selection: Selection): string {
+        const anchorRow = selection.anchorNode?.parentElement?.closest('.code-line') as HTMLElement | null;
+        const focusRow = selection.focusNode?.parentElement?.closest('.code-line') as HTMLElement | null;
+        if (anchorRow && focusRow) {
+            const a = parseInt(anchorRow.dataset.line ?? '', 10);
+            const f = parseInt(focusRow.dataset.line ?? '', 10);
+            if (!isNaN(a) && !isNaN(f)) {
+                const low = Math.min(a, f);
+                const high = Math.max(a, f);
+                return low === high ? `line ${low}` : `lines ${low}–${high}`;
+            }
+        }
+        return '';
+    }
+
+    document.addEventListener('selectionchange', () => {
+        const selection = document.getSelection();
+        if (!selection || selection.isCollapsed) {
+            if (lastSelectedText) {
+                lastSelectedText = '';
+                rpcUpdateContext?.('');
+                hideHint();
+            }
+            return;
+        }
+
+        const text = selection.toString().trim();
+        if (!text || text === lastSelectedText) return;
+
+        // Only act on selections within our content area
+        const anchorInContent = contentWrapper!.contains(selection.anchorNode);
+        const focusInContent = contentWrapper!.contains(selection.focusNode);
+        if (!anchorInContent && !focusInContent) {
+            if (lastSelectedText) {
+                lastSelectedText = '';
+                rpcUpdateContext?.('');
+                hideHint();
+            }
+            return;
+        }
+
+        lastSelectedText = text;
+
+        const lineInfo = getLineInfo(selection);
+        const locationPart = lineInfo ? ` (${lineInfo})` : '';
+        const context = `User selected text from file ${payload.filePath}${locationPart}:\n\`\`\`\n${text}\n\`\`\``;
+
+        rpcUpdateContext?.(context);
+        showHint(selection);
+
+        trackUiEvent?.('text_selected', {
+            file_type: payload.fileType,
+            file_extension: getFileExtensionForAnalytics(payload.filePath),
+            char_count: text.length
+        });
+    }, { signal: selectionAbortController!.signal });
+}
+
+
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
       <main class="shell">
@@ -393,12 +603,12 @@ export function renderApp(
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
     const supportsPreview = payload.fileType !== 'unsupported';
-    const body = renderBody(payload, htmlMode);
+    const range = parseReadRange(payload.content);
+    const body = renderBody(payload, htmlMode, range?.fromLine ?? 1);
     const notice = body.notice ? `<div class="notice">${body.notice}</div>` : '';
 
     const breadcrumb = buildBreadcrumb(payload.filePath);
-    const range = parseReadRange(payload.content);
-    const lineCount = range ? range.toLine - range.fromLine + 1 : payload.content.split('\n').length;
+    const lineCount = range ? range.toLine - range.fromLine + 1 : countContentLines(payload.content);
     const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
         : payload.fileType === 'html' ? 'HTML'
         : fileExtension !== 'none' ? fileExtension.toUpperCase()
@@ -418,6 +628,18 @@ export function renderApp(
     const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
 
+    const loadAllButton = '';
+
+    // Content-area banners for missing lines
+    const hasMissingBefore = range?.isPartial && range.fromLine > 1;
+    const hasMissingAfter = range?.isPartial && range.toLine < range.totalLines && (range.totalLines - range.toLine) > 1;
+    const loadBeforeBanner = hasMissingBefore
+        ? `<button class="load-lines-banner" id="load-before">↑ Load lines 1–${range!.fromLine - 1}</button>`
+        : '';
+    const loadAfterBanner = hasMissingAfter
+        ? `<button class="load-lines-banner" id="load-after">↓ Load lines ${range!.toLine + 1}–${range!.totalLines}</button>`
+        : '';
+
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}">
         <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
@@ -435,7 +657,11 @@ export function renderApp(
             </span>
           </div>
           ${notice}
-          ${body.html}
+          <div class="panel-content-wrapper">
+            ${loadBeforeBanner}
+            ${body.html}
+            ${loadAfterBanner}
+          </div>
           <div class="panel-footer">
             <span>${footerLabel}</span>
           </div>
@@ -446,6 +672,8 @@ export function renderApp(
     attachCopyHandler(payload);
     attachHtmlToggleHandler(container, payload, htmlMode);
     attachOpenInFolderHandler(payload);
+    attachLoadAllHandler(container, payload, htmlMode);
+    attachTextSelectionHandler(payload);
 
     // Compact row click toggles expand/collapse
     const compactRow = document.getElementById('compact-toggle');
@@ -516,6 +744,15 @@ export function bootstrapApp(): void {
         })
     );
 
+    rpcUpdateContext = (text: string): void => {
+        const params = text
+            ? { content: [{ type: 'text', text }] }
+            : { content: [] };
+        rpcClient.request('ui/update-model-context', params).catch(() => {
+            // Host may not support ui/update-model-context yet
+        });
+    };
+
     trackUiEvent = (event: string, params: Record<string, unknown> = {}): void => {
         void rpcCallTool?.('track_ui_event', {
             event,
@@ -538,6 +775,7 @@ export function bootstrapApp(): void {
 
     onRender?.();
     themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
+
     const renderAndSync = (payload?: PreviewStructuredContent): void => {
         if (payload) {
             widgetState.write(payload); // Persist for refresh recovery (cross-host)

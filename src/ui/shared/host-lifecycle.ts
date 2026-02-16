@@ -39,12 +39,16 @@ export function createUiHostLifecycle(rpcClient: RpcClient, options: UiHostLifec
     },
     initialize: () => {
       void rpcClient.request('ui/initialize', {
-        app: { name: appName, version: appVersion },
-        capabilities: {},
+        appInfo: { name: appName, version: appVersion },
+        appCapabilities: {},
+        protocolVersion: '2026-01-26',
+      }).then(() => {
+        rpcClient.notify('ui/notifications/initialized', {});
       }).catch(() => {
         // Initialization handshake failure should not break rendering.
+        // Still send initialized in case host is lenient.
+        rpcClient.notify('ui/notifications/initialized', {});
       });
-      rpcClient.notify('ui/notifications/initialized', {});
     },
   };
 }
