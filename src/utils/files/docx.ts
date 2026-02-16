@@ -223,9 +223,16 @@ function extractOutline(xml: string): string {
     }
 
     // Summary header
+    const allText = extractAllText(xml);
+    const textPreview = allText.length > 500
+        ? allText.substring(0, 500) + '...'
+        : allText;
+
     const header = `DOCX Outline: ${children.length} body children, ${paragraphCount} paragraphs, ${tableCount} tables, ${imageCount} images\n` +
         `Use read_file with offset/length to see raw XML of specific sections.\n` +
         `Use edit_block with old_string/new_string to edit the XML directly.\n` +
+        '─'.repeat(70) + '\n' +
+        `Full text preview:\n"${textPreview}"\n` +
         '─'.repeat(70);
 
     return header + '\n' + lines.join('\n');
@@ -238,7 +245,8 @@ function extractOutline(xml: string): string {
 /** Extract all <w:t>...</w:t> text content from an XML fragment */
 function extractAllText(xml: string): string {
     const texts: string[] = [];
-    const re = /<w:t[^>]*>([\s\S]*?)<\/w:t>/g;
+    // Match <w:t> or <w:t xml:space="preserve"> but NOT <w:tbl>, <w:tc>, <w:tr>, etc.
+    const re = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
     let m;
     while ((m = re.exec(xml)) !== null) {
         if (m[1]) texts.push(m[1]);
