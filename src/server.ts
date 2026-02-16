@@ -316,6 +316,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
+                        - DOCX (.docx): Two modes depending on parameters:
+                          * DEFAULT (no offset/length): Returns a text-bearing outline — shows paragraphs with text,
+                            tables with cell content, styles, image refs. Skips shapes/drawings/SVG noise.
+                            Each element shows its body index [0], [1], etc.
+                          * WITH offset/length: Returns raw pretty-printed XML with line pagination.
+                            Use this to drill into specific sections or see the actual XML for editing.
+                          * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
+                            to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
+                            using XML fragments copied from the read output.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -353,6 +362,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Write or append to file contents.
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
+                        DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -731,6 +741,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - old_string: Text to replace
                         - new_string: Replacement text
                         - expected_replacements: Optional number of replacements (default: 1)
+
+                        DOCX FILES (.docx) - XML Find/Replace mode:
+                        Takes same parameters as text files (old_string, new_string, expected_replacements).
+                        Operates on the pretty-printed XML inside the DOCX — the same XML you see from
+                        read_file with offset/length. Copy XML fragments from read output as old_string.
+                        After editing, the XML is repacked into a valid DOCX.
+                        Also searches headers/footers if not found in document body.
+                        Examples:
+                        - Replace text: old_string="<w:t>Old Text</w:t>" new_string="<w:t>New Text</w:t>"
+                        - Change style: old_string='<w:pStyle w:val="Normal"/>' new_string='<w:pStyle w:val="Heading1"/>'
+                        - Add content: include surrounding XML context in old_string, add new elements in new_string
 
                         By default, replaces only ONE occurrence of the search text.
                         To replace multiple occurrences, provide expected_replacements with

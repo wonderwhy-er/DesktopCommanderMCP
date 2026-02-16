@@ -418,6 +418,38 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
         return createErrorResponse(`Text replacement requires both old_string and new_string parameters`);
     }
 
+    // DOCX files: Route through DocxFileHandler.editRange for XML-aware editing
+    if (parsed.file_path.toLowerCase().endsWith('.docx')) {
+        try {
+            const validatedPath = await validatePath(parsed.file_path);
+            const { getFileHandler } = await import('../utils/files/factory.js');
+            const handler = await getFileHandler(validatedPath);
+
+            if ('editRange' in handler && typeof handler.editRange === 'function') {
+                const result = await handler.editRange(validatedPath, '', {
+                    old_string: parsed.old_string,
+                    new_string: parsed.new_string,
+                    expected_replacements: parsed.expected_replacements,
+                });
+
+                if (result.success) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `Successfully applied ${result.editsApplied} edit(s) to ${parsed.file_path}`
+                        }],
+                    };
+                } else {
+                    const errorMsg = result.errors?.map(e => e.error).join('; ') || 'Unknown error';
+                    return createErrorResponse(errorMsg);
+                }
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return createErrorResponse(errorMessage);
+        }
+    }
+
     const searchReplace = {
         search: parsed.old_string,
         replace: parsed.new_string
