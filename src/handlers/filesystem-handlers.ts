@@ -146,8 +146,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         // Handle image files
         if (fileResult.metadata?.isImage) {
-            // For image files, return as an image content type
-            // Content should already be base64-encoded string from handler
+            // For image files, keep content payload text-only for broad host compatibility.
+            // The preview widget reads image bytes from structuredContent.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
@@ -157,18 +157,15 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     {
                         type: "text",
                         text: imageSummary
-                    },
-                    {
-                        type: "image",
-                        data: imageData,
-                        mimeType: fileResult.mimeType
                     }
                 ],
                 structuredContent: {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
-                    fileType: 'unsupported',
-                    content: imageSummary
+                    fileType: 'image',
+                    content: imageSummary,
+                    imageData,
+                    mimeType: fileResult.mimeType
                 },
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
