@@ -534,7 +534,14 @@ function attachTextSelectionHandler(payload: PreviewStructuredContent): void {
         // Only act on selections within our content area
         const anchorInContent = contentWrapper!.contains(selection.anchorNode);
         const focusInContent = contentWrapper!.contains(selection.focusNode);
-        if (!anchorInContent && !focusInContent) return;
+        if (!anchorInContent && !focusInContent) {
+            if (lastSelectedText) {
+                lastSelectedText = '';
+                rpcUpdateContext?.('');
+                hideHint();
+            }
+            return;
+        }
 
         lastSelectedText = text;
 
