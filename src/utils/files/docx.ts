@@ -223,16 +223,9 @@ function extractOutline(xml: string): string {
     }
 
     // Summary header
-    const allText = extractAllText(xml);
-    const textPreview = allText.length > 500
-        ? allText.substring(0, 500) + '...'
-        : allText;
-
     const header = `DOCX Outline: ${children.length} body children, ${paragraphCount} paragraphs, ${tableCount} tables, ${imageCount} images\n` +
         `Use read_file with offset/length to see raw XML of specific sections.\n` +
         `Use edit_block with old_string/new_string to edit the XML directly.\n` +
-        '─'.repeat(70) + '\n' +
-        `Full text preview:\n"${textPreview}"\n` +
         '─'.repeat(70);
 
     return header + '\n' + lines.join('\n');
