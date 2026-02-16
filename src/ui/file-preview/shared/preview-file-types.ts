@@ -3,7 +3,7 @@
  */
 import path from 'path';
 
-export type PreviewFileType = 'markdown' | 'text' | 'html' | 'unsupported';
+export type PreviewFileType = 'markdown' | 'text' | 'html' | 'image' | 'unsupported';
 
 export const MARKDOWN_PREVIEW_EXTENSIONS = new Set(['.md', '.markdown', '.mdx']);
 export const HTML_PREVIEW_EXTENSIONS = new Set(['.html', '.htm']);

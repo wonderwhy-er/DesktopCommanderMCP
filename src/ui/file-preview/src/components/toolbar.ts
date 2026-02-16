@@ -1,10 +1,11 @@
 /**
  * Toolbar component for preview controls (view mode, metadata, actions). It isolates UI control rendering and event plumbing from core preview orchestration.
  */
-import type { HtmlPreviewMode, PreviewStructuredContent } from '../types.js';
+import type { FilePreviewStructuredContent } from '../../../../types.js';
+import type { HtmlPreviewMode } from '../types.js';
 import { renderToolHeader } from '../../../shared/tool-header.js';
 
-function inferFilePill(payload: PreviewStructuredContent): { label: string; className: string } {
+function inferFilePill(payload: FilePreviewStructuredContent): { label: string; className: string } {
     if (payload.fileType === 'markdown') {
         return { label: 'MD', className: 'file-pill--md' };
     }
@@ -23,7 +24,7 @@ function inferFilePill(payload: PreviewStructuredContent): { label: string; clas
 }
 
 export function renderToolbar(
-    payload: PreviewStructuredContent,
+    payload: FilePreviewStructuredContent,
     canCopy: boolean,
     htmlMode: HtmlPreviewMode,
     isExpanded: boolean,

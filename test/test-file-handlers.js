@@ -32,6 +32,7 @@ const JSON_FILE = path.join(TEST_DIR, 'test.json');
 const MD_FILE = path.join(TEST_DIR, 'test.md');
 const HTML_FILE = path.join(TEST_DIR, 'test.html');
 const IMAGE_FILE = path.join(TEST_DIR, 'test.png');
+const SVG_FILE = path.join(TEST_DIR, 'test.svg');
 
 /**
  * Helper function to clean up test directories
@@ -291,11 +292,13 @@ async function testReadFilePreviewMetadata() {
   const markdownContent = '# Title\n\n```js\nconst x = 1;\n```';
   const textContent = 'hello\nplain text';
   const tinyPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6p6xkAAAAASUVORK5CYII=';
+  const tinySvg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1"/></svg>';
 
   await fs.writeFile(MD_FILE, markdownContent);
   await fs.writeFile(TEXT_FILE, textContent);
   await fs.writeFile(HTML_FILE, '<h1>Preview</h1><script>alert(1)</script>');
   await fs.writeFile(IMAGE_FILE, Buffer.from(tinyPngBase64, 'base64'));
+  await fs.writeFile(SVG_FILE, tinySvg);
 
   const markdownResult = await handleReadFile({ path: MD_FILE });
   assert.ok(Array.isArray(markdownResult.content), 'Result should include content array');
@@ -327,13 +330,27 @@ async function testReadFilePreviewMetadata() {
 
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
   assert.ok(Array.isArray(imageResult.content), 'Image result should include content array');
-  assert.ok(imageResult.content.some((item) => item.type === 'image'), 'Image result should include image content');
+  assert.ok(!imageResult.content.some((item) => item.type === 'image'), 'Image result should avoid image content item for host compatibility');
   assert.ok(imageResult.structuredContent, 'Image should include structuredContent');
-  assert.strictEqual(imageResult.structuredContent.fileType, 'unsupported', 'Image fileType should map to unsupported preview state');
+  assert.strictEqual(imageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
+  assert.strictEqual(typeof imageResult.structuredContent.imageData, 'string', 'Image structured payload should include imageData');
+  assert.ok(imageResult.structuredContent.imageData.length > 0, 'Image structured payload should include non-empty imageData');
+  assert.strictEqual(imageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
   assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
   assert.strictEqual(imageResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'Image should include ui/resourceUri');
   assert.strictEqual(imageResult._meta.ui.resourceUri, FILE_PREVIEW_RESOURCE_URI, 'Image should include preview resource URI');
   assert.strictEqual(imageResult._meta['openai/widgetAccessible'], true, 'Image should enable widget accessibility');
+
+  const svgResult = await handleReadFile({ path: SVG_FILE });
+  assert.ok(Array.isArray(svgResult.content), 'SVG result should include content array');
+  assert.ok(!svgResult.content.some((item) => item.type === 'image'), 'SVG result should avoid image content item for host compatibility');
+  assert.ok(svgResult.structuredContent, 'SVG should include structuredContent');
+  assert.strictEqual(svgResult.structuredContent.fileType, 'image', 'SVG should map to image preview state');
+  assert.strictEqual(svgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
+  assert.strictEqual(typeof svgResult.structuredContent.imageData, 'string', 'SVG structured payload should include imageData');
+  assert.ok(svgResult.structuredContent.imageData.length > 0, 'SVG structured payload should include non-empty imageData');
+  assert.strictEqual(svgResult._meta['ui/resourceUri'], FILE_PREVIEW_RESOURCE_URI, 'SVG should include ui/resourceUri');
+  assert.strictEqual(svgResult._meta['openai/widgetAccessible'], true, 'SVG should enable widget accessibility');
 
   const nullArgsResult = await handleReadFile(null);
   assert.ok(Array.isArray(nullArgsResult.content), 'Null-args result should include content array');

@@ -77,6 +77,8 @@ export interface FilePreviewStructuredContent {
   filePath: string;
   fileType: PreviewFileType;
   content: string;
+  imageData?: string;
+  mimeType?: string;
 }
 
 export interface ServerResult {
