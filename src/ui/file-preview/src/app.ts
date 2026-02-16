@@ -5,7 +5,9 @@ import { formatJsonIfPossible, inferLanguageFromPath, renderCodeViewer } from '.
 import { renderHtmlPreview } from './components/html-renderer.js';
 import { renderMarkdown } from './components/markdown-renderer.js';
 import { escapeHtml } from './components/highlighting.js';
-import type { HtmlPreviewMode, PreviewStructuredContent } from './types.js';
+import { isAllowedImageMimeType, normalizeImageMimeType } from './image-preview.js';
+import type { FilePreviewStructuredContent } from '../../../types.js';
+import type { HtmlPreviewMode } from './types.js';
 import { createWindowRpcClient, isTrustedParentMessageSource } from '../../shared/rpc-client.js';
 import { createToolShellController, type ToolShellController } from '../../shared/tool-shell.js';
 import { createUiHostLifecycle } from '../../shared/host-lifecycle.js';
@@ -33,7 +35,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
-function isPreviewStructuredContent(value: unknown): value is PreviewStructuredContent {
+function isPreviewStructuredContent(value: unknown): value is FilePreviewStructuredContent {
     if (!isObject(value)) {
         return false;
     }
@@ -46,7 +48,7 @@ function isPreviewStructuredContent(value: unknown): value is PreviewStructuredC
     );
 }
 
-function readStructuredContentFromWindow(): PreviewStructuredContent | undefined {
+function readStructuredContentFromWindow(): FilePreviewStructuredContent | undefined {
     const candidates: unknown[] = [
         (window as any).__DC_FILE_PREVIEW__,
         (window as any).__MCP_TOOL_RESULT__,
@@ -69,7 +71,7 @@ function readStructuredContentFromWindow(): PreviewStructuredContent | undefined
     return undefined;
 }
 
-function extractStructuredContent(value: unknown): PreviewStructuredContent | undefined {
+function extractStructuredContent(value: unknown): FilePreviewStructuredContent | undefined {
     if (!isObject(value)) {
         return undefined;
     }
@@ -195,6 +197,28 @@ function stripReadStatusLine(content: string): string {
     return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
 }
 
+function renderImageBody(payload: FilePreviewStructuredContent): { html: string; notice?: string } {
+    const mimeType = normalizeImageMimeType(payload.mimeType);
+    if (!isAllowedImageMimeType(mimeType)) {
+        return {
+            notice: 'Preview is unavailable for this image format.',
+            html: '<div class="panel-content source-content"></div>'
+        };
+    }
+
+    if (!payload.imageData || payload.imageData.trim().length === 0) {
+        return {
+            notice: 'Preview is unavailable because image data is missing.',
+            html: '<div class="panel-content source-content"></div>'
+        };
+    }
+
+    const src = `data:${mimeType};base64,${payload.imageData}`;
+    return {
+        html: `<div class="panel-content image-content"><div class="image-preview"><img src="${escapeHtml(src)}" alt="${escapeHtml(payload.fileName)}" loading="eager" decoding="async"></div></div>`
+    };
+}
+
 interface ReadRange {
     fromLine: number;
     toLine: number;
@@ -218,8 +242,12 @@ function parseReadRange(content: string): ReadRange | undefined {
     };
 }
 
-function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
+function renderBody(payload: FilePreviewStructuredContent, htmlMode: HtmlPreviewMode): { html: string; notice?: string } {
     const cleanedContent = stripReadStatusLine(payload.content);
+
+    if (payload.fileType === 'image') {
+        return renderImageBody(payload);
+    }
 
     if (payload.fileType === 'unsupported') {
         return {
@@ -253,7 +281,7 @@ function renderBody(payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode
     }
 }
 
-function attachCopyHandler(payload: PreviewStructuredContent): void {
+function attachCopyHandler(payload: FilePreviewStructuredContent): void {
     const copyButton = document.getElementById('copy-source');
     if (!copyButton) {
         return;
@@ -285,29 +313,32 @@ function attachCopyHandler(payload: PreviewStructuredContent): void {
         }
     };
 
+    const copyTextData = async (text: string): Promise<boolean> => {
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+            return fallbackCopy(text);
+        } catch {
+            return fallbackCopy(text);
+        }
+    };
+
     copyButton.addEventListener('click', async () => {
-        const cleanedContent = stripReadStatusLine(payload.content);
         trackUiEvent?.('copy_clicked', {
             file_type: payload.fileType,
             file_extension: getFileExtensionForAnalytics(payload.filePath)
         });
 
-        try {
-            if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(cleanedContent);
-                setButtonState('Copied!', 1500);
-                return;
-            }
-        } catch {
-            // fallback below
-        }
+        const cleanedContent = stripReadStatusLine(payload.content);
 
-        const copied = fallbackCopy(cleanedContent);
+        const copied = await copyTextData(cleanedContent);
         setButtonState(copied ? 'Copied!' : 'Copy failed', 1500);
     });
 }
 
-function attachHtmlToggleHandler(container: HTMLElement, payload: PreviewStructuredContent, htmlMode: HtmlPreviewMode): void {
+function attachHtmlToggleHandler(container: HTMLElement, payload: FilePreviewStructuredContent, htmlMode: HtmlPreviewMode): void {
     const toggleButton = document.getElementById('toggle-html-mode');
     if (!toggleButton || payload.fileType !== 'html') {
         return;
@@ -322,7 +353,7 @@ function attachHtmlToggleHandler(container: HTMLElement, payload: PreviewStructu
     });
 }
 
-function attachOpenInFolderHandler(payload: PreviewStructuredContent): void {
+function attachOpenInFolderHandler(payload: FilePreviewStructuredContent): void {
     const openButton = document.getElementById('open-in-folder') as HTMLButtonElement | null;
     if (!openButton) {
         return;
@@ -375,7 +406,7 @@ function renderLoadingState(container: HTMLElement): void {
 
 export function renderApp(
     container: HTMLElement,
-    payload?: PreviewStructuredContent,
+    payload?: FilePreviewStructuredContent,
     htmlMode: HtmlPreviewMode = 'rendered',
     expandedState = false
 ): void {
@@ -389,7 +420,7 @@ export function renderApp(
         return;
     }
 
-    const canCopy = payload.fileType !== 'unsupported';
+    const canCopy = payload.fileType !== 'unsupported' && payload.fileType !== 'image';
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
     const supportsPreview = payload.fileType !== 'unsupported';
@@ -401,6 +432,7 @@ export function renderApp(
     const lineCount = range ? range.toLine - range.fromLine + 1 : payload.content.split('\n').length;
     const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
         : payload.fileType === 'html' ? 'HTML'
+        : payload.fileType === 'image' ? 'IMAGE'
         : fileExtension !== 'none' ? fileExtension.toUpperCase()
         : 'TEXT';
 
@@ -417,7 +449,6 @@ export function renderApp(
 
     const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
     const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
-
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}">
         <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
@@ -431,7 +462,7 @@ export function renderApp(
             <span class="panel-topbar-actions">
               ${htmlToggle}
               ${canOpenInFolder ? `<button class="panel-action" id="open-in-folder">${folderIcon} Open in folder</button>` : ''}
-              ${canCopy && supportsPreview ? `<button class="panel-action" id="copy-source">${copyIcon} Copy</button>` : ''}
+              ${canCopy && supportsPreview ? `<button class="panel-action" id="copy-source" title="Copy source" aria-label="Copy source">${copyIcon} Copy</button>` : ''}
             </span>
           </div>
           ${notice}
@@ -534,18 +565,18 @@ export function bootstrapApp(): void {
     };
 
     // ChatGPT widget state persistence (other hosts use standard ui/notifications/tool-result)
-    const widgetState = createWidgetStateStorage<PreviewStructuredContent>(isPreviewStructuredContent);
+    const widgetState = createWidgetStateStorage<FilePreviewStructuredContent>(isPreviewStructuredContent);
 
     onRender?.();
     themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
-    const renderAndSync = (payload?: PreviewStructuredContent): void => {
+    const renderAndSync = (payload?: FilePreviewStructuredContent): void => {
         if (payload) {
             widgetState.write(payload); // Persist for refresh recovery (cross-host)
         }
         renderApp(container, payload, 'rendered', false);
     };
     let initialStateResolved = false;
-    const resolveInitialState = (payload?: PreviewStructuredContent, message?: string): void => {
+    const resolveInitialState = (payload?: FilePreviewStructuredContent, message?: string): void => {
         if (initialStateResolved) {
             return;
         }
