@@ -327,6 +327,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             using XML fragments copied from the read output.
                           * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
                             offset=0 always returns the outline regardless of length.
+                          * For BULK changes (translation, mass replacements): use start_process with Python
+                            zipfile module to find/replace all <w:t> elements at once.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
