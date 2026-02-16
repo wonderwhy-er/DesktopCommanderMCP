@@ -447,9 +447,18 @@ function attachLoadAllHandler(
  * the LLM's context window. The LLM must actively call read_widget_context to see
  * the selection. A floating tooltip near the selection tells the user this is working.
  */
+let selectionAbortController: AbortController | null = null;
+
 function attachTextSelectionHandler(payload: PreviewStructuredContent): void {
     const contentWrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
     if (!contentWrapper) return;
+
+    // Abort any previous selectionchange listener to avoid leaking listeners/closures
+    if (selectionAbortController) {
+        selectionAbortController.abort();
+        selectionAbortController = null;
+    }
+    selectionAbortController = new AbortController();
 
     let hintEl: HTMLElement | null = null;
     let lastSelectedText = '';
@@ -541,7 +550,7 @@ function attachTextSelectionHandler(payload: PreviewStructuredContent): void {
             file_extension: getFileExtensionForAnalytics(payload.filePath),
             char_count: text.length
         });
-    });
+    }, { signal: selectionAbortController!.signal });
 }
 
 

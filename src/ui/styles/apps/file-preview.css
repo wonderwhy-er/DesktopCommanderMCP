@@ -200,7 +200,7 @@
 /* ── Content areas ── */
 
 .panel-content-wrapper {
-  height: var(--content-height);
+  max-height: var(--content-height);
   overflow: auto;
   position: relative;
 }
@@ -210,7 +210,7 @@
 }
 
 .source-content .code-viewer { overflow-x: auto; }
-.html-content .html-rendered-frame { height: 100%; }
+.html-content .html-rendered-frame { min-height: 300px; height: var(--content-height); }
 .markdown-content { padding: 0 4px 0 0; }
 
 .notice {
