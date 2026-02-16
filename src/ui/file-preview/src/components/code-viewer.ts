@@ -61,8 +61,21 @@ export function formatJsonIfPossible(content: string, filePath: string): { conte
     }
 }
 
-export function renderCodeViewer(code: string, language = 'text'): string {
+export function renderCodeViewer(code: string, language = 'text', startLine = 1): string {
     const normalizedLanguage = language || 'text';
     const highlighted = highlightSource(code, normalizedLanguage);
-    return `<pre class="code-viewer"><code class="hljs language-${normalizedLanguage}">${highlighted}</code></pre>`;
+
+    // Wrap each line with line number gutter
+    const lines = highlighted.split('\n');
+    // Remove trailing empty line from trailing newline
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+
+    const lineHtml = lines.map((line, i) => {
+        const lineNum = startLine + i;
+        return `<tr class="code-line" data-line="${lineNum}"><td class="line-num" data-line="${lineNum}">${lineNum}</td><td class="line-content">${line || ' '}</td></tr>`;
+    }).join('\n');
+
+    return `<pre class="code-viewer"><table class="code-table"><tbody>${lineHtml}</tbody></table></pre>`;
 }
