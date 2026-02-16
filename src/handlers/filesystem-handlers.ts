@@ -36,7 +36,7 @@ import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-t
  * Expand home directory (~) in a file path
  */
 function expandHome(filePath: string): string {
-    if (filePath.startsWith('~')) {
+    if (filePath === '~' || filePath.startsWith('~/') || filePath.startsWith(`~${path.sep}`)) {
         return path.join(os.homedir(), filePath.slice(1));
     }
     return filePath;
