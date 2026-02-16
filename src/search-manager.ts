@@ -5,6 +5,7 @@ import { validatePath } from './tools/filesystem.js';
 import { capture } from './utils/capture.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
+import PizZip from 'pizzip';
 
 export interface SearchResult {
   file: string;
@@ -168,6 +169,27 @@ export interface SearchSessionOptions {
       }).catch((err) => {
         // Log Excel search errors but don't fail the whole search
         capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
+      });
+    }
+
+    // For content searches, also search DOCX files
+    const shouldSearchDocx = options.searchType === 'content' &&
+      this.shouldIncludeDocxSearch(options.filePattern, validPath);
+
+    if (shouldSearchDocx) {
+      this.searchDocxFiles(
+        validPath,
+        options.pattern,
+        options.ignoreCase !== false,
+        options.maxResults,
+        options.filePattern
+      ).then(docxResults => {
+        for (const result of docxResults) {
+          session.results.push(result);
+          session.totalMatches++;
+        }
+      }).catch((err) => {
+        capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
       });
     }
 
@@ -467,6 +489,157 @@ export interface SearchSessionOptions {
     }
 
     return excelFiles;
+  }
+
+  /**
+   * Determine if DOCX search should be included based on context
+   */
+  private shouldIncludeDocxSearch(filePattern?: string, rootPath?: string): boolean {
+    const docxExtensions = ['.docx'];
+
+    if (rootPath) {
+      const lowerPath = rootPath.toLowerCase();
+      if (docxExtensions.some(ext => lowerPath.endsWith(ext))) {
+        return true;
+      }
+    }
+
+    if (filePattern) {
+      const lowerPattern = filePattern.toLowerCase();
+      if (docxExtensions.some(ext =>
+        lowerPattern.includes(`*${ext}`) || lowerPattern.endsWith(ext)
+      )) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Search DOCX files for content matches
+   * Extracts <w:t> text from document.xml and searches it
+   */
+  private async searchDocxFiles(
+    rootPath: string,
+    pattern: string,
+    ignoreCase: boolean,
+    maxResults?: number,
+    filePattern?: string
+  ): Promise<SearchResult[]> {
+    const results: SearchResult[] = [];
+
+    const flags = ignoreCase ? 'i' : '';
+    let regex: RegExp;
+    try {
+      regex = new RegExp(pattern, flags);
+    } catch {
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      regex = new RegExp(escaped, flags);
+    }
+
+    let docxFiles = await this.findDocxFiles(rootPath);
+
+    if (filePattern) {
+      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
+      docxFiles = docxFiles.filter(filePath => {
+        const fileName = path.basename(filePath);
+        return patterns.some(pat => {
+          if (pat.includes('*')) {
+            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
+          }
+          return fileName.toLowerCase() === pat.toLowerCase();
+        });
+      });
+    }
+
+    for (const filePath of docxFiles) {
+      if (maxResults && results.length >= maxResults) break;
+
+      try {
+        const buf = await fs.readFile(filePath);
+        const zip = new PizZip(buf);
+
+        // Search all XML parts that can contain text
+        const xmlParts = ['word/document.xml', 'word/header1.xml', 'word/header2.xml',
+          'word/header3.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
+
+        for (const xmlPath of xmlParts) {
+          if (maxResults && results.length >= maxResults) break;
+
+          const file = zip.file(xmlPath);
+          if (!file) continue;
+
+          const xml = file.asText();
+          // Extract all <w:t> text with position tracking
+          const wtRe = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+          let m;
+          let lineNum = 0;
+
+          while ((m = wtRe.exec(xml)) !== null) {
+            if (maxResults && results.length >= maxResults) break;
+            const text = m[1];
+            if (!text || !text.trim()) continue;
+            lineNum++;
+
+            if (regex.test(text)) {
+              const match = text.match(regex);
+              const matchContext = match
+                ? this.getMatchContext(text, match.index || 0, match[0].length)
+                : text.substring(0, 150);
+
+              const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
+              results.push({
+                file: `${filePath}${partName}`,
+                line: lineNum,
+                match: matchContext,
+                type: 'content'
+              });
+            }
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Find all DOCX files in a directory recursively
+   */
+  private async findDocxFiles(rootPath: string): Promise<string[]> {
+    const docxFiles: string[] = [];
+    const isDocx = (name: string) => name.toLowerCase().endsWith('.docx');
+
+    async function walk(dir: string): Promise<void> {
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+              await walk(fullPath);
+            }
+          } else if (entry.isFile() && isDocx(entry.name)) {
+            docxFiles.push(fullPath);
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    try {
+      const stats = await fs.stat(rootPath);
+      if (stats.isFile() && isDocx(rootPath)) {
+        return [rootPath];
+      } else if (stats.isDirectory()) {
+        await walk(rootPath);
+      }
+    } catch { /* skip */ }
+
+    return docxFiles;
   }
 
   /**
