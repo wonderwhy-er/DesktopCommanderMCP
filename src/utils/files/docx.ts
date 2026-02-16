@@ -456,8 +456,8 @@ export class DocxFileHandler implements FileHandler {
         const offset = options?.offset ?? 0;
         const length = options?.length;
 
-        // If user explicitly requests offset or a non-default length, give raw XML
-        const wantsRaw = offset !== 0 || (length !== undefined && length < totalLines);
+        // If user explicitly requests non-zero offset, give raw XML with pagination
+        const wantsRaw = offset !== 0;
 
         if (wantsRaw) {
             let startLine: number;
