@@ -170,8 +170,8 @@ function extractOutline(xml: string): string {
 
             if (textFragments.length > 0) {
                 const joined = textFragments.join('');
-                if (joined.length > 200) {
-                    line += `\n  ${textFragments.slice(0, 5).join('')}...`;
+                if (joined.length > 500) {
+                    line += `\n  ${textFragments.slice(0, 8).join('')}...`;
                 } else {
                     line += `\n  ${joined}`;
                 }
@@ -186,15 +186,14 @@ function extractOutline(xml: string): string {
             let line = `[${i}] w:tbl (${rows.length} rows)`;
             const style = extractTableStyle(child);
             if (style) line += ` style="${style}"`;
-            // Show first few rows as preview
-            for (let r = 0; r < Math.min(rows.length, 4); r++) {
+            // Show all rows (tables usually contain the real content)
+            for (let r = 0; r < rows.length; r++) {
                 const cells = rows[r].map(c => {
                     if (!c || c.trim() === '') return '';
-                    return c.length > 40 ? c.substring(0, 40) + '…' : c;
+                    return c.length > 60 ? c.substring(0, 60) + '…' : c;
                 });
                 line += `\n  row${r}: [${cells.join(' | ')}]`;
             }
-            if (rows.length > 4) line += `\n  ... (${rows.length - 4} more rows)`;
             lines.push(line);
             tableCount++;
         } else if (tag === 'w:sdt') {
@@ -227,8 +226,8 @@ function extractOutline(xml: string): string {
 
     // Summary header
     const header = `DOCX Outline: ${children.length} body children, ${paragraphCount} paragraphs, ${tableCount} tables, ${imageCount} images\n` +
-        `Use read_file with offset/length to see raw XML of specific sections.\n` +
-        `Use edit_block with old_string/new_string to edit the XML directly.\n` +
+        `Edit with: edit_block(file, old_string="<w:t>old text</w:t>", new_string="<w:t>new text</w:t>")\n` +
+        `Raw XML: use read_file with offset=1 to see pretty-printed XML for advanced edits.\n` +
         '─'.repeat(70);
 
     return header + '\n' + lines.join('\n');
@@ -504,7 +503,8 @@ export class DocxFileHandler implements FileHandler {
 
         return {
             content: outline + headerFooterInfo +
-                `\n\nRaw XML: ${totalLines} lines, ${rawSizeKB}KB. Use offset/length to read raw XML sections.`,
+                `\n\nRaw XML: ${totalLines} lines, ${rawSizeKB}KB.` +
+                `\nFor bulk changes (translation, mass find/replace): use start_process with a Python script using zipfile to edit <w:t> elements.`,
             mimeType: 'text/plain',
             metadata: { isDocx: true, lineCount: totalLines },
         };
