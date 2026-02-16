@@ -367,6 +367,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
                         DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
+                        To CREATE a new DOCX, use write_file with .docx extension — text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
