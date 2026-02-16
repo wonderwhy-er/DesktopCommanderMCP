@@ -148,6 +148,7 @@ function extractOutline(xml: string): string {
 
         if (tag === 'w:p') {
             const text = extractAllText(child);
+            const textFragments = extractTextFragments(child);
             const style = extractParagraphStyle(child);
             const hasDrawing = child.includes('<w:drawing') || child.includes('<mc:AlternateContent');
 
@@ -167,11 +168,12 @@ function extractOutline(xml: string): string {
                 }
             }
 
-            if (text) {
-                if (text.length > 200) {
-                    line += `\n  "${text.substring(0, 200)}..."`;
+            if (textFragments.length > 0) {
+                const joined = textFragments.join('');
+                if (joined.length > 200) {
+                    line += `\n  ${textFragments.slice(0, 5).join('')}...`;
                 } else {
-                    line += `\n  "${text}"`;
+                    line += `\n  ${joined}`;
                 }
             } else if (!hasDrawing) {
                 line += ' (empty)';
@@ -188,7 +190,7 @@ function extractOutline(xml: string): string {
             for (let r = 0; r < Math.min(rows.length, 4); r++) {
                 const cells = rows[r].map(c => {
                     if (!c || c.trim() === '') return '';
-                    return c.length > 30 ? c.substring(0, 30) + '…' : c;
+                    return c.length > 40 ? c.substring(0, 40) + '…' : c;
                 });
                 line += `\n  row${r}: [${cells.join(' | ')}]`;
             }
@@ -197,18 +199,19 @@ function extractOutline(xml: string): string {
             tableCount++;
         } else if (tag === 'w:sdt') {
             // Structured document tag — look inside for content
-            const sdtText = extractAllText(child);
+            const sdtFragments = extractTextFragments(child);
             const innerTables = (child.match(/<w:tbl[\s>]/g) || []).length;
             let line = `[${i}] w:sdt`;
             if (innerTables > 0) {
                 line += ` (contains ${innerTables} table${innerTables > 1 ? 's' : ''})`;
                 tableCount += innerTables;
             }
-            if (sdtText) {
-                if (sdtText.length > 150) {
-                    line += `\n  "${sdtText.substring(0, 150)}..."`;
+            if (sdtFragments.length > 0) {
+                const joined = sdtFragments.join('');
+                if (joined.length > 150) {
+                    line += `\n  ${sdtFragments.slice(0, 3).join('')}...`;
                 } else {
-                    line += `\n  "${sdtText}"`;
+                    line += `\n  ${joined}`;
                 }
             }
             lines.push(line);
@@ -245,6 +248,17 @@ function extractAllText(xml: string): string {
         if (m[1]) texts.push(m[1]);
     }
     return texts.join('').trim();
+}
+
+/** Extract <w:t>...</w:t> elements as XML fragments for use in edit_block */
+function extractTextFragments(xml: string): string[] {
+    const fragments: string[] = [];
+    const re = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g;
+    let m;
+    while ((m = re.exec(xml)) !== null) {
+        if (m[1] && m[1].trim()) fragments.push(m[0]);
+    }
+    return fragments;
 }
 
 /** Extract paragraph style id from w:pPr/w:pStyle */

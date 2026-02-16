@@ -325,6 +325,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
                             to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
                             using XML fragments copied from the read output.
+                          * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
+                            offset=0 always returns the outline regardless of length.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
