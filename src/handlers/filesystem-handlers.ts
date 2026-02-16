@@ -28,14 +28,36 @@ import {
     WritePdfArgsSchema
 } from '../tools/schemas.js';
 import path from 'path';
+import os from 'os';
 import { buildUiToolMeta, FILE_PREVIEW_RESOURCE_URI } from '../ui/contracts.js';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 
 /**
+ * Expand home directory (~) in a file path
+ */
+function expandHome(filePath: string): string {
+    if (filePath.startsWith('~')) {
+        return path.join(os.homedir(), filePath.slice(1));
+    }
+    return filePath;
+}
+
+/**
+ * Resolve a file path to an absolute path for use in structured content.
+ * This ensures "Open in folder" always has a valid absolute path.
+ */
+function resolveAbsolutePath(filePath: string): string {
+    const expanded = expandHome(filePath);
+    return path.isAbsolute(expanded)
+        ? path.resolve(expanded)
+        : path.resolve(process.cwd(), expanded);
+}
+
+/**
  * Helper function to check if path contains an error
  */
-function isErrorPath(path: string): boolean {
-    return path.startsWith('__ERROR__:');
+function isErrorPath(filePath: string): boolean {
+    return filePath.startsWith('__ERROR__:');
 }
 
 /**
@@ -78,6 +100,12 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             sheet: sheetParam,
             range: parsed.range
         };
+
+        // Resolve to absolute path for local files (not URLs) so "Open in folder" works
+        const resolvedFilePath = parsed.isUrl
+            ? parsed.path
+            : resolveAbsolutePath(parsed.path);
+
         const fileResult = await readFile(parsed.path, options);
 
         // Handle PDF files
@@ -107,8 +135,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     ...pdfContent
                 ],
                 structuredContent: {
-                    fileName: path.basename(parsed.path),
-                    filePath: parsed.path,
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
                     fileType: 'unsupported',
                     content: ''
                 },
@@ -137,8 +165,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     }
                 ],
                 structuredContent: {
-                    fileName: path.basename(parsed.path),
-                    filePath: parsed.path,
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
                     fileType: 'unsupported',
                     content: imageSummary
                 },
@@ -149,12 +177,12 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             const textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
-            const previewFileType = resolvePreviewFileType(parsed.path);
+            const previewFileType = resolvePreviewFileType(resolvedFilePath);
             return {
                 content: [{ type: "text", text: textContent }],
                 structuredContent: {
-                    fileName: path.basename(parsed.path),
-                    filePath: parsed.path,
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
                     fileType: previewFileType,
                     content: textContent
                 },
