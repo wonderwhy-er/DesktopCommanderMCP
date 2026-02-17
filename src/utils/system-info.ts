@@ -213,7 +213,7 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                     const device = parts[0];
                     const mountPoint = parts[1];
                     const fsType = parts[2];
-                    const options = parts[3];
+                    const options = parts[3].split(',');
 
                     // Skip system mount points
                     const isSystemMountPoint = 
