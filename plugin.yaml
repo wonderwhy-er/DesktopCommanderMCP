@@ -4,7 +4,7 @@
 
 name: desktop-commander-mcp
 display_name: DesktopCommanderMCP
-version: "0.1.0"
+manifest_version: "1.0"
 description: >
   MCP server that gives AI agents terminal control, file system search,
   and diff-based file editing capabilities. Run shell commands, search files,
@@ -39,13 +39,13 @@ capabilities:
   - file-system-operations
 
 install:
-  npx: desktop-commander-mcp
+  npx: "@wonderwhy-er/desktop-commander"
 
 runtime:
   language: typescript
   min_node: "18"
 
-discovery:
-  protocol: mcp
-  transport:
-    - stdio
+protocols:
+  - mcp
+transport:
+  - stdio
