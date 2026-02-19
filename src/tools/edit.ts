@@ -371,57 +371,90 @@ function highlightDifferences(expected: string, actual: string): string {
 export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     const parsed = EditBlockArgsSchema.parse(args);
 
-    // Structured files: Range rewrite
     // Note: Check for truthy range to handle empty strings from AI clients that send all optional params
     const hasRange = parsed.range !== undefined && parsed.range !== '';
     const hasContent = parsed.content !== undefined && parsed.content !== '';
+
+    // Validate path and resolve handler once — used by both dispatch paths below
+    let validatedPath: string;
+    let handler: Awaited<ReturnType<typeof import('../utils/files/factory.js').getFileHandler>>;
+    try {
+        validatedPath = await validatePath(parsed.file_path);
+        const { getFileHandler } = await import('../utils/files/factory.js');
+        handler = await getFileHandler(validatedPath);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+
+    const hasEditRange = 'editRange' in handler && typeof handler.editRange === 'function';
+
+    // Path 1: Range rewrite (Excel, etc.) — range + content
     if (hasRange && hasContent) {
-        try {
-            // Validate path before any filesystem operations
-            const validatedPath = await validatePath(parsed.file_path);
-
-            const { getFileHandler } = await import('../utils/files/factory.js');
-            const handler = await getFileHandler(validatedPath);
-
-            // Parse content if it's a JSON string (AI often sends arrays as JSON strings)
-            let content = parsed.content;
-            if (typeof content === 'string') {
-                try {
-                    content = JSON.parse(content);
-                } catch {
-                    // Leave as-is if not valid JSON - let handler decide
-                }
+        // Parse content if it's a JSON string (AI often sends arrays as JSON strings)
+        let content = parsed.content;
+        if (typeof content === 'string') {
+            try {
+                content = JSON.parse(content);
+            } catch {
+                // Leave as-is if not valid JSON - let handler decide
             }
+        }
 
-            // Check if handler supports range editing
-            if ('editRange' in handler && typeof handler.editRange === 'function') {
+        if (hasEditRange) {
+            try {
                 // parsed.range is guaranteed non-empty string by hasRange check above
-                await handler.editRange(validatedPath, parsed.range!, content, parsed.options);
+                await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
                 return {
                     content: [{
                         type: "text",
                         text: `Successfully updated range ${parsed.range} in ${parsed.file_path}`
                     }],
                 };
-            } else {
-                return createErrorResponse(`Range-based editing not supported for ${parsed.file_path}. For text files, use old_string and new_string parameters instead. If your client requires range/content parameters, set them to empty strings ("").`);
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                return createErrorResponse(errorMessage);
             }
+        }
+
+        return createErrorResponse(`Range-based editing not supported for ${parsed.file_path}. For text files, use old_string and new_string parameters instead. If your client requires range/content parameters, set them to empty strings ("").`);
+    }
+
+    // Path 2: Text replacement — old_string + new_string
+    if (parsed.old_string === undefined || parsed.new_string === undefined) {
+        return createErrorResponse(`Text replacement requires both old_string and new_string parameters`);
+    }
+
+    // If the handler implements editRange it owns text-replacement for its file type
+    // (e.g. DocxFileHandler does find/replace on pretty-printed XML rather than raw bytes).
+    // Plain text files fall through to performSearchReplace.
+    if (hasEditRange) {
+        try {
+            const result = await handler.editRange!(validatedPath!, '', {
+                old_string: parsed.old_string,
+                new_string: parsed.new_string,
+                expected_replacements: parsed.expected_replacements,
+            });
+
+            if (result.success) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Successfully applied ${result.editsApplied} edit(s) to ${parsed.file_path}`
+                    }],
+                };
+            }
+
+            const errorMsg = result.errors?.map(e => e.error).join('; ') || 'Unknown error';
+            return createErrorResponse(errorMsg);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return createErrorResponse(errorMessage);
         }
     }
 
-    // Text files: String replacement
-    // Validate required parameters for text replacement
-    if (parsed.old_string === undefined || parsed.new_string === undefined) {
-        return createErrorResponse(`Text replacement requires both old_string and new_string parameters`);
-    }
-
-    const searchReplace = {
+    return performSearchReplace(parsed.file_path, {
         search: parsed.old_string,
         replace: parsed.new_string
-    };
-
-    return performSearchReplace(parsed.file_path, searchReplace, parsed.expected_replacements);
+    }, parsed.expected_replacements);
 }

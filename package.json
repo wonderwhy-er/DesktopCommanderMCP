@@ -96,6 +96,7 @@
     "md-to-pdf": "^5.2.5",
     "open": "^10.2.0",
     "pdf-lib": "^1.17.1",
+    "pizzip": "^3.2.0",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
