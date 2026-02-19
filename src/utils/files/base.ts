@@ -215,7 +215,7 @@ export interface FileInfo {
     permissions: string;
 
     /** File type classification */
-    fileType: 'text' | 'excel' | 'image' | 'binary';
+    fileType: 'text' | 'excel' | 'image' | 'binary' | 'docx';
 
     /** Type-specific metadata */
     metadata?: FileMetadata;

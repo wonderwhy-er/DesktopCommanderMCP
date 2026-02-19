@@ -366,7 +366,8 @@ function splitTopLevelElements(xml: string): string[] {
                 if (depth === 0) {
                     // Find end of this closing tag
                     const closeEnd = xml.indexOf('>', i);
-                    if (closeEnd !== -1 && currentStart !== -1) {
+                    if (closeEnd === -1) break; // malformed XML — bail out
+                    if (currentStart !== -1) {
                         elements.push(xml.substring(currentStart, closeEnd + 1).trim());
                         currentStart = -1;
                     }
@@ -376,6 +377,7 @@ function splitTopLevelElements(xml: string): string[] {
             } else if (xml[i + 1] === '?' || xml[i + 1] === '!') {
                 // Processing instruction or comment — skip
                 const end = xml.indexOf('>', i);
+                if (end === -1) break; // malformed XML — bail out
                 i = end + 1;
                 continue;
             } else {
@@ -383,7 +385,8 @@ function splitTopLevelElements(xml: string): string[] {
                 if (depth === 0) currentStart = i;
                 // Check for self-closing
                 const tagEnd = xml.indexOf('>', i);
-                if (tagEnd !== -1 && xml[tagEnd - 1] === '/') {
+                if (tagEnd === -1) break; // malformed XML — bail out
+                if (xml[tagEnd - 1] === '/') {
                     // Self-closing
                     if (depth === 0) {
                         elements.push(xml.substring(currentStart, tagEnd + 1).trim());
@@ -755,7 +758,7 @@ export class DocxFileHandler implements FileHandler {
             isDirectory: false,
             isFile: true,
             permissions: (stats.mode & 0o777).toString(8),
-            fileType: 'docx' as any,
+            fileType: 'docx',
             metadata,
         };
     }
