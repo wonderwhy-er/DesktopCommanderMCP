@@ -3,6 +3,7 @@ import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
     ListResourcesRequestSchema,
+    ReadResourceRequestSchema,
     ListResourceTemplatesRequestSchema,
     ListPromptsRequestSchema,
     InitializeRequestSchema,
@@ -63,6 +64,11 @@ import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
+import {
+    buildUiToolMeta,
+    FILE_PREVIEW_RESOURCE_URI
+} from './ui/contracts.js';
+import { listUiResources, readUiResource } from './ui/resources.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -97,10 +103,19 @@ export const server = new Server(
 
 // Add handler for resources/list method
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-    // Return an empty list of resources
     return {
-        resources: [],
+        resources: listUiResources(),
     };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+    const response = await readUiResource(uri);
+    if (response) {
+        return response;
+    }
+
+    throw new Error(`Unknown resource URI: ${uri}`);
 });
 
 // Add handler for prompts/list method
@@ -301,10 +316,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
+                        - DOCX (.docx): Two modes depending on parameters:
+                          * DEFAULT (no offset/length): Returns a text-bearing outline — shows paragraphs with text,
+                            tables with cell content, styles, image refs. Skips shapes/drawings/SVG noise.
+                            Each element shows its body index [0], [1], etc.
+                          * WITH offset/length: Returns raw pretty-printed XML with line pagination.
+                            Use this to drill into specific sections or see the actual XML for editing.
+                          * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
+                            to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
+                            using XML fragments copied from the read output.
+                          * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
+                            offset=0 always returns the outline regardless of length.
+                          * For BULK changes (translation, mass replacements): use start_process with Python
+                            zipfile module to find/replace all <w:t> elements at once.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Read File or URL",
                     readOnlyHint: true,
@@ -337,6 +366,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Write or append to file contents.
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
+                        DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
+                        To CREATE a new DOCX, use write_file with .docx extension — text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -715,6 +746,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - old_string: Text to replace
                         - new_string: Replacement text
                         - expected_replacements: Optional number of replacements (default: 1)
+
+                        DOCX FILES (.docx) - XML Find/Replace mode:
+                        Takes same parameters as text files (old_string, new_string, expected_replacements).
+                        Operates on the pretty-printed XML inside the DOCX — the same XML you see from
+                        read_file with offset/length. Copy XML fragments from read output as old_string.
+                        After editing, the XML is repacked into a valid DOCX.
+                        Also searches headers/footers if not found in document body.
+                        Examples:
+                        - Replace text: old_string="<w:t>Old Text</w:t>" new_string="<w:t>New Text</w:t>"
+                        - Change style: old_string='<w:pStyle w:val="Normal"/>' new_string='<w:pStyle w:val="Heading1"/>'
+                        - Add content: include surrounding XML context in old_string, add new elements in new_string
 
                         By default, replaces only ONE occurrence of the search text.
                         To replace multiple occurrences, provide expected_replacements with
@@ -1261,6 +1303,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 }
                 break;
 
+            case "track_ui_event":
+                try {
+                    result = await handlers.handleTrackUiEvent(args);
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in track_ui_event handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error: Failed to track UI event` }],
+                        isError: true,
+                    };
+                }
+                break;
+
             case "give_feedback_to_desktop_commander":
                 try {
                     result = await giveFeedbackToDesktopCommander(args);
@@ -1369,7 +1423,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
         const EXCLUDED_TOOLS = [
-            'get_recent_tool_calls'
+            'get_recent_tool_calls',
+            'track_ui_event'
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
@@ -1377,6 +1432,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
 
         // Track success or failure based on result
+        if (name === 'track_ui_event') {
+            return result;
+        }
+
         if (result.isError) {
             await usageTracker.trackFailure(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} failed, not checking feedback`);

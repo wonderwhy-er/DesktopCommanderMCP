@@ -27,12 +27,37 @@ import {
     GetFileInfoArgsSchema,
     WritePdfArgsSchema
 } from '../tools/schemas.js';
+import path from 'path';
+import os from 'os';
+import { buildUiToolMeta, FILE_PREVIEW_RESOURCE_URI } from '../ui/contracts.js';
+import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
+
+/**
+ * Expand home directory (~) in a file path
+ */
+function expandHome(filePath: string): string {
+    if (filePath === '~' || filePath.startsWith('~/') || filePath.startsWith(`~${path.sep}`)) {
+        return path.join(os.homedir(), filePath.slice(1));
+    }
+    return filePath;
+}
+
+/**
+ * Resolve a file path to an absolute path for use in structured content.
+ * This ensures "Open in folder" always has a valid absolute path.
+ */
+function resolveAbsolutePath(filePath: string): string {
+    const expanded = expandHome(filePath);
+    return path.isAbsolute(expanded)
+        ? path.resolve(expanded)
+        : path.resolve(process.cwd(), expanded);
+}
 
 /**
  * Helper function to check if path contains an error
  */
-function isErrorPath(path: string): boolean {
-    return path.startsWith('__ERROR__:');
+function isErrorPath(filePath: string): boolean {
+    return filePath.startsWith('__ERROR__:');
 }
 
 /**
@@ -75,6 +100,12 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             sheet: sheetParam,
             range: parsed.range
         };
+
+        // Resolve to absolute path for local files (not URLs) so "Open in folder" works
+        const resolvedFilePath = parsed.isUrl
+            ? parsed.path
+            : resolveAbsolutePath(parsed.path);
+
         const fileResult = await readFile(parsed.path, options);
 
         // Handle PDF files
@@ -102,37 +133,57 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         text: `PDF file: ${parsed.path}${author}${title} (${meta?.totalPages} pages) \n`
                     },
                     ...pdfContent
-                ]
+                ],
+                structuredContent: {
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
+                    fileType: 'unsupported',
+                    content: ''
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
 
         // Handle image files
         if (fileResult.metadata?.isImage) {
-            // For image files, return as an image content type
-            // Content should already be base64-encoded string from handler
+            // For image files, keep content payload text-only for broad host compatibility.
+            // The preview widget reads image bytes from structuredContent.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
+            const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
             return {
                 content: [
                     {
                         type: "text",
-                        text: `Image file: ${parsed.path} (${fileResult.mimeType})\n`
-                    },
-                    {
-                        type: "image",
-                        data: imageData,
-                        mimeType: fileResult.mimeType
+                        text: imageSummary
                     }
                 ],
+                structuredContent: {
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
+                    fileType: 'image',
+                    content: imageSummary,
+                    imageData,
+                    mimeType: fileResult.mimeType
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         } else {
             // For all other files, return as text
             const textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
+            const previewFileType = resolvePreviewFileType(resolvedFilePath);
             return {
                 content: [{ type: "text", text: textContent }],
+                structuredContent: {
+                    fileName: path.basename(resolvedFilePath),
+                    filePath: resolvedFilePath,
+                    fileType: previewFileType,
+                    content: textContent
+                },
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
     };

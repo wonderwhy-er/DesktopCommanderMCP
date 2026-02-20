@@ -140,7 +140,7 @@ export const EditBlockArgsSchema = z.object({
   data => {
     // Helper to check if value is actually provided (not undefined, not empty string)
     const hasValue = (v: unknown) => v !== undefined && v !== '';
-    return (hasValue(data.old_string) && hasValue(data.new_string)) ||
+    return (hasValue(data.old_string) && data.new_string !== undefined) ||
            (hasValue(data.range) && hasValue(data.content));
   },
   { message: "Must provide either (old_string + new_string) or (range + content)" }
@@ -210,3 +210,8 @@ export const GetRecentToolCallsArgsSchema = z.object({
   since: z.string().datetime().optional(),
 });
 
+export const TrackUiEventArgsSchema = z.object({
+  event: z.string().min(1).max(80),
+  component: z.string().optional().default('file_preview'),
+  params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+});

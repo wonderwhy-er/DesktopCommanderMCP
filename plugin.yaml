@@ -1,0 +1,51 @@
+# plugin.yaml — DesktopCommanderMCP Plugin Manifest
+# This file makes DesktopCommanderMCP discoverable as an agent plugin.
+# Learn more: https://list.agenium.net/plugins
+
+name: desktop-commander-mcp
+display_name: DesktopCommanderMCP
+manifest_version: "1.0"
+description: >
+  MCP server that gives AI agents terminal control, file system search,
+  and diff-based file editing capabilities. Run shell commands, search files,
+  and edit code — all through the Model Context Protocol.
+
+author:
+  name: wonderwhy-er
+  url: https://github.com/wonderwhy-er
+
+repository: https://github.com/wonderwhy-er/DesktopCommanderMCP
+license: MIT
+
+categories:
+  - mcp-servers
+  - developer-tools
+  - system-utilities
+
+tags:
+  - mcp
+  - model-context-protocol
+  - terminal
+  - file-system
+  - diff-editing
+  - shell-commands
+  - code-editing
+
+capabilities:
+  - terminal-control
+  - file-search
+  - diff-editing
+  - process-management
+  - file-system-operations
+
+install:
+  npx: "@wonderwhy-er/desktop-commander"
+
+runtime:
+  language: typescript
+  min_node: "18"
+
+protocols:
+  - mcp
+transport:
+  - stdio
