@@ -164,7 +164,7 @@ export class RemoteChannel {
             // Create and subscribe to the channel
             console.debug('[DEBUG] Calling createChannel()');
 
-            // ! Ignore silently in Inialization to reconnect after
+            // ! Ignore silently in Initialization to reconnect after
             await this.createChannel().catch((error) => {
                 console.debug('[DEBUG] Failed to create channel, will retry after socket reconnect', error);
             });
