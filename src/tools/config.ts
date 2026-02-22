@@ -55,6 +55,18 @@ export async function getConfig() {
   }
 }
 
+// Keys that can be set via the set_config_value MCP tool.
+// Internal keys (clientId, usageStats, abTest_*, onboardingState, etc.)
+// are managed by the server itself and should not be settable by clients.
+const ALLOWED_CONFIG_KEYS = new Set([
+  'blockedCommands',
+  'allowedDirectories',
+  'defaultShell',
+  'telemetryEnabled',
+  'fileReadLineLimit',
+  'fileWriteLineLimit',
+]);
+
 /**
  * Set a specific config value
  */
@@ -68,6 +80,16 @@ export async function setConfigValue(args: unknown) {
         content: [{
           type: "text",
           text: `Invalid arguments: ${parsed.error}`
+        }],
+        isError: true
+      };
+    }
+
+    if (!ALLOWED_CONFIG_KEYS.has(parsed.data.key)) {
+      return {
+        content: [{
+          type: "text",
+          text: `Key "${parsed.data.key}" is not configurable via this tool. Allowed keys: ${[...ALLOWED_CONFIG_KEYS].join(', ')}`
         }],
         isError: true
       };
