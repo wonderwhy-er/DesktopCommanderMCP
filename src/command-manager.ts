@@ -252,6 +252,9 @@ class CommandManager {
             return true;
         } catch (error) {
             console.error('Error validating command:', error);
+            capture('server_validate_command_error', {
+                error: error instanceof Error ? error.message : String(error)
+            });
             // Fail closed: deny the command if validation encounters an error.
             // This prevents a config read failure from bypassing all command filtering.
             return false;
