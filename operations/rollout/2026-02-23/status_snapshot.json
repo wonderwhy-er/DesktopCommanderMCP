@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-23T11:58:50.686Z",
+  "node": {
+    "version": "v25.6.1",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "paths": {
+    "desktopCommanderConfig": "/Users/test1/.claude-server-commander/config.json",
+    "codexConfigToml": "/Users/test1/.codex/config.toml"
+  },
+  "desktopCommanderConfig": {
+    "skillsEnabled": true,
+    "skillsDirectories": [
+      "/Users/test1/.codex/skills"
+    ],
+    "skillExecutionMode": "confirm",
+    "commandValidationMode": "strict",
+    "skillExecuteEvalGateEnabled": true,
+    "skillExecuteMinPassRate": 0.95,
+    "skillExecuteMinSampleSize": 50,
+    "toolCallLoggingMode": "redacted",
+    "telemetryEnabled": true
+  },
+  "codexMcpServers": {
+    "hasOpenAiDeveloperDocs": true,
+    "hasDesktopCommander": true
+  },
+  "notes": [
+    "This script only reads local config files; it does not query live MCP server state.",
+    "For live eval-gate stats, read resource dc://skills/eval-gate from the running Desktop Commander MCP."
+  ]
+}

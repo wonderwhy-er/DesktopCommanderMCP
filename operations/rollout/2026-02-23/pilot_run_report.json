@@ -1,0 +1,1066 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-23T12:01:36.338Z",
+  "baselineConfigAdjustments": [
+    {
+      "key": "skillExecuteEvalGateEnabled",
+      "previous": true,
+      "temporary": false
+    },
+    {
+      "key": "skillExecuteEvalGateEnabled",
+      "restored": true
+    }
+  ],
+  "pilots": [
+    {
+      "pilotId": "pilot-A-ops",
+      "skillId": "desktop-commander-ops",
+      "goal": "validate eval gate readiness and rollout blockers",
+      "plan": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096382_1746",
+          "skillId": "desktop-commander-ops",
+          "goal": "validate eval gate readiness and rollout blockers",
+          "mode": "plan",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: validate eval gate readiness and rollout blockers",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.382Z",
+          "updatedAt": "2026-02-23T12:01:36.382Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "execute": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096388_2953",
+          "skillId": "desktop-commander-ops",
+          "goal": "validate eval gate readiness and rollout blockers",
+          "mode": "execute",
+          "state": "waiting_approval",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: validate eval gate readiness and rollout blockers",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.388Z",
+          "updatedAt": "2026-02-23T12:01:36.388Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": true,
+          "nextAction": "approve_skill_run",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": false,
+            "rollbackHints": []
+          }
+        }
+      },
+      "approve": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096388_2953",
+          "skillId": "desktop-commander-ops",
+          "goal": "validate eval gate readiness and rollout blockers",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: validate eval gate readiness and rollout blockers",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 3,
+          "createdAt": "2026-02-23T12:01:36.388Z",
+          "updatedAt": "2026-02-23T12:01:36.487Z",
+          "artifacts": [
+            "Executed script eval_gate_report.mjs successfully.",
+            "Safe command executed: pwd"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.389Z",
+                "finishedAt": "2026-02-23T12:01:36.392Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 44 lines from start (total: 45 lines, 1 remaining)]\n\n---\nname: \"desktop-commander-ops\"\ndescription: \"Operational checks and rollout diagnostics for Des"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.392Z",
+                "finishedAt": "2026-02-23T12:01:36.414Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_1_1771848096392\nPattern: \"validate eval gate readiness and rollout blockers\"\nPath: /Users/test1/.codex/skills/desktop-commander-ops\nStatus: RUNNING\nRuntime: 20ms"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "script",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.414Z",
+                "finishedAt": "2026-02-23T12:01:36.483Z",
+                "outputSummary": "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.475Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "script_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.475Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-4",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.483Z",
+                "finishedAt": "2026-02-23T12:01:36.487Z",
+                "outputSummary": "/Users/test1/.codex/skills/desktop-commander-ops\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "/Users/test1/.codex/skills/desktop-commander-ops\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "final": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096388_2953",
+          "skillId": "desktop-commander-ops",
+          "goal": "validate eval gate readiness and rollout blockers",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: validate eval gate readiness and rollout blockers",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 3,
+          "createdAt": "2026-02-23T12:01:36.388Z",
+          "updatedAt": "2026-02-23T12:01:36.487Z",
+          "artifacts": [
+            "Executed script eval_gate_report.mjs successfully.",
+            "Safe command executed: pwd"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.389Z",
+                "finishedAt": "2026-02-23T12:01:36.392Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 44 lines from start (total: 45 lines, 1 remaining)]\n\n---\nname: \"desktop-commander-ops\"\ndescription: \"Operational checks and rollout diagnostics for Des"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.392Z",
+                "finishedAt": "2026-02-23T12:01:36.414Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_1_1771848096392\nPattern: \"validate eval gate readiness and rollout blockers\"\nPath: /Users/test1/.codex/skills/desktop-commander-ops\nStatus: RUNNING\nRuntime: 20ms"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "script",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.414Z",
+                "finishedAt": "2026-02-23T12:01:36.483Z",
+                "outputSummary": "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.475Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "script_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.475Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-4",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.483Z",
+                "finishedAt": "2026-02-23T12:01:36.487Z",
+                "outputSummary": "/Users/test1/.codex/skills/desktop-commander-ops\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "/Users/test1/.codex/skills/desktop-commander-ops\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      }
+    },
+    {
+      "pilotId": "pilot-B-code-audit",
+      "skillId": "security-best-practices",
+      "goal": "audit codebase for security hardening gaps with safe read and search steps",
+      "plan": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096492_9199",
+          "skillId": "security-best-practices",
+          "goal": "audit codebase for security hardening gaps with safe read and search steps",
+          "mode": "plan",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"security-best-practices\" and extract required sequence for goal: audit codebase for security hardening gaps with safe read and search steps",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "rg --version"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.492Z",
+          "updatedAt": "2026-02-23T12:01:36.493Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "execute": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096498_1838",
+          "skillId": "security-best-practices",
+          "goal": "audit codebase for security hardening gaps with safe read and search steps",
+          "mode": "execute",
+          "state": "waiting_approval",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"security-best-practices\" and extract required sequence for goal: audit codebase for security hardening gaps with safe read and search steps",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "rg --version"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.498Z",
+          "updatedAt": "2026-02-23T12:01:36.498Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": true,
+          "nextAction": "approve_skill_run",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": false,
+            "rollbackHints": []
+          }
+        }
+      },
+      "approve": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096498_1838",
+          "skillId": "security-best-practices",
+          "goal": "audit codebase for security hardening gaps with safe read and search steps",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"security-best-practices\" and extract required sequence for goal: audit codebase for security hardening gaps with safe read and search steps",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "rg --version"
+              }
+            }
+          ],
+          "currentStep": 2,
+          "createdAt": "2026-02-23T12:01:36.498Z",
+          "updatedAt": "2026-02-23T12:01:36.516Z",
+          "artifacts": [
+            "Safe command executed: rg --version"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.499Z",
+                "finishedAt": "2026-02-23T12:01:36.500Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 86 lines from start (total: 87 lines, 1 remaining)]\n\n---\nname: \"security-best-practices\"\ndescription: \"Perform language and framework specific security"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.500Z",
+                "finishedAt": "2026-02-23T12:01:36.507Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_2_1771848096500\nPattern: \"audit codebase for security hardening gaps with safe read and search steps\"\nPath: /Users/test1/.codex/skills/security-best-practices\nSt"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.507Z",
+                "finishedAt": "2026-02-23T12:01:36.516Z",
+                "outputSummary": "ripgrep 15.1.0\n\nfeatures:+pcre2\nsimd(compile):+NEON\nsimd(runtime):+NEON\n\nPCRE2 10.45 is available (JIT is available)\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "ripgrep 15.1.0\n\nfeatures:+pcre2\nsimd(compile):+NEON\nsimd(runtime):+NEON\n\nPCRE2 10.45 is available (JIT is available)\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "final": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096498_1838",
+          "skillId": "security-best-practices",
+          "goal": "audit codebase for security hardening gaps with safe read and search steps",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"security-best-practices\" and extract required sequence for goal: audit codebase for security hardening gaps with safe read and search steps",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "rg --version"
+              }
+            }
+          ],
+          "currentStep": 2,
+          "createdAt": "2026-02-23T12:01:36.498Z",
+          "updatedAt": "2026-02-23T12:01:36.516Z",
+          "artifacts": [
+            "Safe command executed: rg --version"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.499Z",
+                "finishedAt": "2026-02-23T12:01:36.500Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 86 lines from start (total: 87 lines, 1 remaining)]\n\n---\nname: \"security-best-practices\"\ndescription: \"Perform language and framework specific security"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.500Z",
+                "finishedAt": "2026-02-23T12:01:36.507Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_2_1771848096500\nPattern: \"audit codebase for security hardening gaps with safe read and search steps\"\nPath: /Users/test1/.codex/skills/security-best-practices\nSt"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.507Z",
+                "finishedAt": "2026-02-23T12:01:36.516Z",
+                "outputSummary": "ripgrep 15.1.0\n\nfeatures:+pcre2\nsimd(compile):+NEON\nsimd(runtime):+NEON\n\nPCRE2 10.45 is available (JIT is available)\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "ripgrep 15.1.0\n\nfeatures:+pcre2\nsimd(compile):+NEON\nsimd(runtime):+NEON\n\nPCRE2 10.45 is available (JIT is available)\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      }
+    },
+    {
+      "pilotId": "pilot-C-refactor-helper",
+      "skillId": "desktop-commander-ops",
+      "goal": "prepare safe refactor helper plan and verification checks",
+      "plan": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096521_4943",
+          "skillId": "desktop-commander-ops",
+          "goal": "prepare safe refactor helper plan and verification checks",
+          "mode": "plan",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: prepare safe refactor helper plan and verification checks",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.521Z",
+          "updatedAt": "2026-02-23T12:01:36.521Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "execute": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096525_310",
+          "skillId": "desktop-commander-ops",
+          "goal": "prepare safe refactor helper plan and verification checks",
+          "mode": "execute",
+          "state": "waiting_approval",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: prepare safe refactor helper plan and verification checks",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 0,
+          "createdAt": "2026-02-23T12:01:36.525Z",
+          "updatedAt": "2026-02-23T12:01:36.525Z",
+          "artifacts": [],
+          "failures": [],
+          "requiresApproval": true,
+          "nextAction": "approve_skill_run",
+          "executionSummary": {
+            "stepOutcomes": [],
+            "passed": false,
+            "rollbackHints": []
+          }
+        }
+      },
+      "approve": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096525_310",
+          "skillId": "desktop-commander-ops",
+          "goal": "prepare safe refactor helper plan and verification checks",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: prepare safe refactor helper plan and verification checks",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 3,
+          "createdAt": "2026-02-23T12:01:36.525Z",
+          "updatedAt": "2026-02-23T12:01:36.602Z",
+          "artifacts": [
+            "Executed script eval_gate_report.mjs successfully.",
+            "Safe command executed: pwd"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.526Z",
+                "finishedAt": "2026-02-23T12:01:36.526Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 44 lines from start (total: 45 lines, 1 remaining)]\n\n---\nname: \"desktop-commander-ops\"\ndescription: \"Operational checks and rollout diagnostics for Des"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.526Z",
+                "finishedAt": "2026-02-23T12:01:36.532Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_3_1771848096526\nPattern: \"prepare safe refactor helper plan and verification checks\"\nPath: /Users/test1/.codex/skills/desktop-commander-ops\nStatus: RUNNING\nRunti"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "script",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.532Z",
+                "finishedAt": "2026-02-23T12:01:36.600Z",
+                "outputSummary": "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.591Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "script_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.591Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-4",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.600Z",
+                "finishedAt": "2026-02-23T12:01:36.602Z",
+                "outputSummary": "/Users/test1/.codex/skills/desktop-commander-ops\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "/Users/test1/.codex/skills/desktop-commander-ops\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      },
+      "final": {
+        "isError": false,
+        "run": {
+          "runId": "skill_run_1771848096525_310",
+          "skillId": "desktop-commander-ops",
+          "goal": "prepare safe refactor helper plan and verification checks",
+          "mode": "execute",
+          "state": "completed",
+          "steps": [
+            {
+              "id": "step-1",
+              "type": "read",
+              "title": "Inspect skill instructions",
+              "details": "Read SKILL.md for \"desktop-commander-ops\" and extract required sequence for goal: prepare safe refactor helper plan and verification checks",
+              "verify": "Skill instructions loaded successfully"
+            },
+            {
+              "id": "step-2",
+              "type": "search",
+              "title": "Discover relevant files",
+              "details": "Run code/file search in the target working tree to locate required inputs and outputs",
+              "verify": "At least one relevant file or directory located"
+            },
+            {
+              "id": "step-3",
+              "type": "script",
+              "title": "Execute deterministic script",
+              "details": "Run one skill script (eval_gate_report.mjs) with explicit parameters",
+              "verify": "Script exits with code 0"
+            },
+            {
+              "id": "step-4",
+              "type": "command_safe",
+              "title": "Run safe command checks",
+              "details": "Use allowlisted commands only: ls, pwd, cat, head, tail, wc, rg, find, echo",
+              "verify": "All command invocations are allowlisted",
+              "payload": {
+                "command": "pwd"
+              }
+            }
+          ],
+          "currentStep": 3,
+          "createdAt": "2026-02-23T12:01:36.525Z",
+          "updatedAt": "2026-02-23T12:01:36.602Z",
+          "artifacts": [
+            "Executed script eval_gate_report.mjs successfully.",
+            "Safe command executed: pwd"
+          ],
+          "failures": [],
+          "requiresApproval": false,
+          "nextAction": "none",
+          "executionSummary": {
+            "stepOutcomes": [
+              {
+                "stepId": "step-1",
+                "type": "read",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.526Z",
+                "finishedAt": "2026-02-23T12:01:36.526Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "skill_markdown_nonempty"
+                  ],
+                  "evidence": [
+                    "[Reading 44 lines from start (total: 45 lines, 1 remaining)]\n\n---\nname: \"desktop-commander-ops\"\ndescription: \"Operational checks and rollout diagnostics for Des"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-2",
+                "type": "search",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.526Z",
+                "finishedAt": "2026-02-23T12:01:36.532Z",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "search_session_started_or_no_results"
+                  ],
+                  "evidence": [
+                    "Started content search session: search_3_1771848096526\nPattern: \"prepare safe refactor helper plan and verification checks\"\nPath: /Users/test1/.codex/skills/desktop-commander-ops\nStatus: RUNNING\nRunti"
+                  ],
+                  "failureReason": "Search response did not include expected markers"
+                }
+              },
+              {
+                "stepId": "step-3",
+                "type": "script",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.532Z",
+                "finishedAt": "2026-02-23T12:01:36.600Z",
+                "outputSummary": "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.591Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "script_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-02-23T12:01:36.591Z\",\n  \"thresholds\": {\n    \"skillExecuteEvalGateEnabled\": false,\n    \"skillExecuteMinPassRate\": 0.95,\n    \"skillExecuteMinSampleSize\": 5"
+                  ]
+                }
+              },
+              {
+                "stepId": "step-4",
+                "type": "command_safe",
+                "status": "completed",
+                "startedAt": "2026-02-23T12:01:36.600Z",
+                "finishedAt": "2026-02-23T12:01:36.602Z",
+                "outputSummary": "/Users/test1/.codex/skills/desktop-commander-ops\n",
+                "verification": {
+                  "passed": true,
+                  "checks": [
+                    "command_exit_code_zero"
+                  ],
+                  "evidence": [
+                    "/Users/test1/.codex/skills/desktop-commander-ops\n"
+                  ]
+                }
+              }
+            ],
+            "passed": true,
+            "rollbackHints": []
+          }
+        }
+      }
+    }
+  ],
+  "resourceSnapshots": {
+    "catalog": {
+      "uri": "dc://skills/catalog",
+      "mimeType": "application/json",
+      "text": "{\n  \"schemaVersion\": 1,\n  \"enabled\": true,\n  \"total\": 31,\n  \"skills\": [\n    {\n      \"id\": \"cloudflare-deploy\",\n      \"name\": \"cloudflare-deploy\",\n      \"description\": \"Deploy applications and infrastructure to Cloudflare using Workers, Pages, and related platform services. Use when the user asks to deploy, host, publish, or set up a project on Cloudflare.\",\n      \"path\": \"/Users/test1/.codex/skills/cloudflare-deploy\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"cloudflare-small.svg\",\n          \"cloudflare.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"desktop-commander-ops\",\n      \"name\": \"desktop-commander-ops\",\n      \"description\": \"Operational checks and rollout diagnostics for Desktop Commander Safe Executor and skills: eval gate readiness, execute-mode rollout checks, safety/audit verification, and blocked rollout diagnosis. Use when validating skillsEnabled/skillExecutionMode/eval-gate settings or investigating reason codes like eval_gate_blocked/skills_disabled.\",\n      \"path\": \"/Users/test1/.codex/skills/desktop-commander-ops\",\n      \"tags\": [\n        \"scripts\",\n        \"references\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"eval_gate_report.mjs\",\n          \"rollout_checklist.mjs\",\n          \"status_snapshot.mjs\"\n        ],\n        \"references\": [\n          \"privacy.md\",\n          \"rollout.md\"\n        ],\n        \"assets\": []\n      }\n    },\n    {\n      \"id\": \"develop-web-game\",\n      \"name\": \"develop-web-game\",\n      \"description\": \"Use when Codex is building or iterating on a web game (HTML/JS) and needs a reliable development + testing loop: implement small changes, run a Playwright-based test script with short input bursts and intentional pauses, inspect screenshots/text, and review console errors with render_game_to_text.\",\n      \"path\": \"/Users/test1/.codex/skills/develop-web-game\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"web_game_playwright_client.js\"\n        ],\n        \"references\": [\n          \"action_payloads.json\"\n        ],\n        \"assets\": [\n          \"game-small.svg\",\n          \"game.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"doc\",\n      \"name\": \"doc\",\n      \"description\": \"Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelity matters; prefer `python-docx` plus the bundled `scripts/render_docx.py` for visual checks.\",\n      \"path\": \"/Users/test1/.codex/skills/doc\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"render_docx.py\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"doc-small.svg\",\n          \"doc.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"figma\",\n      \"name\": \"figma\",\n      \"description\": \"Use the Figma MCP server to fetch design context, screenshots, variables, and assets from Figma, and to translate Figma nodes into production code. Trigger when a task involves Figma URLs, node IDs, design-to-code implementation, or Figma MCP setup and troubleshooting.\",\n      \"path\": \"/Users/test1/.codex/skills/figma\",\n      \"tags\": [\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [\n          \"figma-mcp-config.md\",\n          \"figma-tools-and-prompts.md\"\n        ],\n        \"assets\": [\n          \"figma-small.svg\",\n          \"figma.png\",\n          \"icon.svg\"\n        ]\n      }\n    },\n    {\n      \"id\": \"figma-implement-design\",\n      \"name\": \"figma-implement-design\",\n      \"description\": \"Translate Figma nodes into production-ready code with 1:1 visual fidelity using the Figma MCP workflow (design context, screenshots, assets, and project-convention translation). Trigger when the user provides Figma URLs or node IDs, or asks to implement designs or components that must match Figma specs. Requires a working Figma MCP server connection.\",\n      \"path\": \"/Users/test1/.codex/skills/figma-implement-design\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"figma-small.svg\",\n          \"figma.png\",\n          \"icon.svg\"\n        ]\n      }\n    },\n    {\n      \"id\": \"gh-address-comments\",\n      \"name\": \"gh-address-comments\",\n      \"description\": \"Help address review/issue comments on the open GitHub PR for the current branch using gh CLI; verify gh auth first and prompt the user to authenticate if not logged in.\",\n      \"path\": \"/Users/test1/.codex/skills/gh-address-comments\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"fetch_comments.py\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"github-small.svg\",\n          \"github.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"gh-fix-ci\",\n      \"name\": \"gh-fix-ci\",\n      \"description\": \"Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions; use `gh` to inspect checks and logs, summarize failure context, draft a fix plan, and implement only after explicit approval. Treat external providers (for example Buildkite) as out of scope and report only the details URL.\",\n      \"path\": \"/Users/test1/.codex/skills/gh-fix-ci\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"inspect_pr_checks.py\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"github-small.svg\",\n          \"github.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"imagegen\",\n      \"name\": \"imagegen\",\n      \"description\": \"Use when the user asks to generate or edit images via the OpenAI Image API (for example: generate image, edit/inpaint/mask, background removal or replacement, transparent background, product shots, concept art, covers, or batch variants); run the bundled CLI (`scripts/image_gen.py`) and require `OPENAI_API_KEY` for live calls.\",\n      \"path\": \"/Users/test1/.codex/skills/imagegen\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"image_gen.py\"\n        ],\n        \"references\": [\n          \"cli.md\",\n          \"codex-network.md\",\n          \"image-api.md\",\n          \"prompting.md\",\n          \"sample-prompts.md\"\n        ],\n        \"assets\": [\n          \"imagegen-small.svg\",\n          \"imagegen.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"jupyter-notebook\",\n      \"name\": \"jupyter-notebook\",\n      \"description\": \"Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutorials; prefer the bundled templates and run the helper script `new_notebook.py` to generate a clean starting notebook.\",\n      \"path\": \"/Users/test1/.codex/skills/jupyter-notebook\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"new_notebook.py\"\n        ],\n        \"references\": [\n          \"experiment-patterns.md\",\n          \"notebook-structure.md\",\n          \"quality-checklist.md\",\n          \"tutorial-patterns.md\"\n        ],\n        \"assets\": [\n          \"experiment-template.ipynb\",\n          \"jupyter-small.svg\",\n          \"jupyter.png\",\n          \"tutorial-template.ipynb\"\n        ]\n      }\n    },\n    {\n      \"id\": \"linear\",\n      \"name\": \"linear\",\n      \"description\": \"Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear.\",\n      \"path\": \"/Users/test1/.codex/skills/linear\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"linear-small.svg\",\n          \"linear.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"netlify-deploy\",\n      \"name\": \"netlify-deploy\",\n      \"description\": \"Deploy web projects to Netlify using the Netlify CLI (`npx netlify`). Use when the user asks to deploy, host, publish, or link a site/repo on Netlify, including preview and production deploys.\",\n      \"path\": \"/Users/test1/.codex/skills/netlify-deploy\",\n      \"tags\": [\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [\n          \"cli-commands.md\",\n          \"deployment-patterns.md\",\n          \"netlify-toml.md\"\n        ],\n        \"assets\": [\n          \"netlify-small.svg\",\n          \"netlify.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"notion-knowledge-capture\",\n      \"name\": \"notion-knowledge-capture\",\n      \"description\": \"Capture conversations and decisions into structured Notion pages; use when turning chats/notes into wiki entries, how-tos, decisions, or FAQs with proper linking.\",\n      \"path\": \"/Users/test1/.codex/skills/notion-knowledge-capture\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"notion-small.svg\",\n          \"notion.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"notion-meeting-intelligence\",\n      \"name\": \"notion-meeting-intelligence\",\n      \"description\": \"Prepare meeting materials with Notion context and Codex research; use when gathering context, drafting agendas/pre-reads, and tailoring materials to attendees.\",\n      \"path\": \"/Users/test1/.codex/skills/notion-meeting-intelligence\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"notion-small.svg\",\n          \"notion.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"notion-research-documentation\",\n      \"name\": \"notion-research-documentation\",\n      \"description\": \"Research across Notion and synthesize into structured documentation; use when gathering info from multiple Notion sources to produce briefs, comparisons, or reports with citations.\",\n      \"path\": \"/Users/test1/.codex/skills/notion-research-documentation\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"notion-small.svg\",\n          \"notion.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"notion-spec-to-implementation\",\n      \"name\": \"notion-spec-to-implementation\",\n      \"description\": \"Turn Notion specs into implementation plans, tasks, and progress tracking; use when implementing PRDs/feature specs and creating Notion plans + tasks from them.\",\n      \"path\": \"/Users/test1/.codex/skills/notion-spec-to-implementation\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"notion-small.svg\",\n          \"notion.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"openai-docs\",\n      \"name\": \"openai-docs\",\n      \"description\": \"Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations (for example: Codex, Responses API, Chat Completions, Apps SDK, Agents SDK, Realtime, model capabilities or limits); prioritize OpenAI docs MCP tools and restrict any fallback browsing to official OpenAI domains.\",\n      \"path\": \"/Users/test1/.codex/skills/openai-docs\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"openai-small.svg\",\n          \"openai.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"pdf\",\n      \"name\": \"pdf\",\n      \"description\": \"Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks by rendering pages (Poppler) and use Python tools such as `reportlab`, `pdfplumber`, and `pypdf` for generation and extraction.\",\n      \"path\": \"/Users/test1/.codex/skills/pdf\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"pdf.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"playwright\",\n      \"name\": \"playwright\",\n      \"description\": \"Use when the task requires automating a real browser from the terminal (navigation, form filling, snapshots, screenshots, data extraction, UI-flow debugging) via `playwright-cli` or the bundled wrapper script.\",\n      \"path\": \"/Users/test1/.codex/skills/playwright\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"playwright_cli.sh\"\n        ],\n        \"references\": [\n          \"cli.md\",\n          \"workflows.md\"\n        ],\n        \"assets\": [\n          \"playwright-small.svg\",\n          \"playwright.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"render-deploy\",\n      \"name\": \"render-deploy\",\n      \"description\": \"Deploy applications to Render by analyzing codebases, generating render.yaml Blueprints, and providing Dashboard deeplinks. Use when the user wants to deploy, host, publish, or set up their application on Render's cloud platform.\",\n      \"path\": \"/Users/test1/.codex/skills/render-deploy\",\n      \"tags\": [\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [\n          \"blueprint-spec.md\",\n          \"codebase-analysis.md\",\n          \"configuration-guide.md\",\n          \"deployment-details.md\",\n          \"direct-creation.md\",\n          \"error-patterns.md\",\n          \"post-deploy-checks.md\",\n          \"runtimes.md\",\n          \"service-types.md\",\n          \"troubleshooting-basics.md\"\n        ],\n        \"assets\": [\n          \"docker.yaml\",\n          \"go-api.yaml\",\n          \"nextjs-postgres.yaml\",\n          \"node-express.yaml\",\n          \"python-django.yaml\",\n          \"render-small.svg\",\n          \"render.png\",\n          \"static-site.yaml\"\n        ]\n      }\n    },\n    {\n      \"id\": \"screenshot\",\n      \"name\": \"screenshot\",\n      \"description\": \"Use when the user explicitly asks for a desktop or system screenshot (full screen, specific app or window, or a pixel region), or when tool-specific capture capabilities are unavailable and an OS-level capture is needed.\",\n      \"path\": \"/Users/test1/.codex/skills/screenshot\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"ensure_macos_permissions.sh\",\n          \"macos_display_info.swift\",\n          \"macos_permissions.swift\",\n          \"macos_window_info.swift\",\n          \"take_screenshot.ps1\",\n          \"take_screenshot.py\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"screenshot-small.svg\",\n          \"screenshot.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"security-best-practices\",\n      \"name\": \"security-best-practices\",\n      \"description\": \"Perform language and framework specific security best-practice reviews and suggest improvements. Trigger only when the user explicitly requests security best practices guidance, a security review/report, or secure-by-default coding help. Trigger only for supported languages (python, javascript/typescript, go). Do not trigger for general code review, debugging, or non-security tasks.\",\n      \"path\": \"/Users/test1/.codex/skills/security-best-practices\",\n      \"tags\": [\n        \"references\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [\n          \"golang-general-backend-security.md\",\n          \"javascript-express-web-server-security.md\",\n          \"javascript-general-web-frontend-security.md\",\n          \"javascript-jquery-web-frontend-security.md\",\n          \"javascript-typescript-nextjs-web-server-security.md\",\n          \"javascript-typescript-react-web-frontend-security.md\",\n          \"javascript-typescript-vue-web-frontend-security.md\",\n          \"python-django-web-server-security.md\",\n          \"python-fastapi-web-server-security.md\",\n          \"python-flask-web-server-security.md\"\n        ],\n        \"assets\": []\n      }\n    },\n    {\n      \"id\": \"security-ownership-map\",\n      \"name\": \"security-ownership-map\",\n      \"description\": \"Analyze git repositories to build a security ownership topology (people-to-file), compute bus factor and sensitive-code ownership, and export CSV/JSON for graph databases and visualization. Trigger only when the user explicitly wants a security-oriented ownership or bus-factor analysis grounded in git history (for example: orphaned sensitive code, security maintainers, CODEOWNERS reality checks for risk, sensitive hotspots, or ownership clusters). Do not trigger for general maintainer lists or non-security ownership questions.\",\n      \"path\": \"/Users/test1/.codex/skills/security-ownership-map\",\n      \"tags\": [\n        \"scripts\",\n        \"references\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"build_ownership_map.py\",\n          \"community_maintainers.py\",\n          \"query_ownership.py\",\n          \"run_ownership_map.py\"\n        ],\n        \"references\": [\n          \"neo4j-import.md\"\n        ],\n        \"assets\": []\n      }\n    },\n    {\n      \"id\": \"security-threat-model\",\n      \"name\": \"security-threat-model\",\n      \"description\": \"Repository-grounded threat modeling that enumerates trust boundaries, assets, attacker capabilities, abuse paths, and mitigations, and writes a concise Markdown threat model. Trigger only when the user explicitly asks to threat model a codebase or path, enumerate threats/abuse paths, or perform AppSec threat modeling. Do not trigger for general architecture summaries, code review, or non-security design work.\",\n      \"path\": \"/Users/test1/.codex/skills/security-threat-model\",\n      \"tags\": [\n        \"references\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [\n          \"prompt-template.md\",\n          \"security-controls-and-assets.md\"\n        ],\n        \"assets\": []\n      }\n    },\n    {\n      \"id\": \"sentry\",\n      \"name\": \"sentry\",\n      \"description\": \"Use when the user asks to inspect Sentry issues or events, summarize recent production errors, or pull basic Sentry health data via the Sentry API; perform read-only queries with the bundled script and require `SENTRY_AUTH_TOKEN`.\",\n      \"path\": \"/Users/test1/.codex/skills/sentry\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"sentry_api.py\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"sentry-small.svg\",\n          \"sentry.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"sora\",\n      \"name\": \"sora\",\n      \"description\": \"Use when the user asks to generate, remix, poll, list, download, or delete Sora videos via OpenAI\\\\u2019s video API using the bundled CLI (`scripts/sora.py`), including requests like \\\\u201cgenerate AI video,\\\\u201d \\\\u201cSora,\\\\u201d \\\\u201cvideo remix,\\\\u201d \\\\u201cdownload video/thumbnail/spritesheet,\\\\u201d and batch video generation; requires `OPENAI_API_KEY` and Sora API access.\",\n      \"path\": \"/Users/test1/.codex/skills/sora\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"sora.py\"\n        ],\n        \"references\": [\n          \"cinematic-shots.md\",\n          \"cli.md\",\n          \"codex-network.md\",\n          \"prompting.md\",\n          \"sample-prompts.md\",\n          \"social-ads.md\",\n          \"troubleshooting.md\",\n          \"video-api.md\"\n        ],\n        \"assets\": [\n          \"sora-small.svg\",\n          \"sora.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"speech\",\n      \"name\": \"speech\",\n      \"description\": \"Use when the user asks for text-to-speech narration or voiceover, accessibility reads, audio prompts, or batch speech generation via the OpenAI Audio API; run the bundled CLI (`scripts/text_to_speech.py`) with built-in voices and require `OPENAI_API_KEY` for live calls. Custom voice creation is out of scope.\",\n      \"path\": \"/Users/test1/.codex/skills/speech\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"text_to_speech.py\"\n        ],\n        \"references\": [\n          \"accessibility.md\",\n          \"audio-api.md\",\n          \"cli.md\",\n          \"codex-network.md\",\n          \"ivr.md\",\n          \"narration.md\",\n          \"prompting.md\",\n          \"sample-prompts.md\",\n          \"voice-directions.md\",\n          \"voiceover.md\"\n        ],\n        \"assets\": [\n          \"speech-small.svg\",\n          \"speech.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"spreadsheet\",\n      \"name\": \"spreadsheet\",\n      \"description\": \"Use when tasks involve creating, editing, analyzing, or formatting spreadsheets (`.xlsx`, `.csv`, `.tsv`) using Python (`openpyxl`, `pandas`), especially when formulas, references, and formatting need to be preserved and verified.\",\n      \"path\": \"/Users/test1/.codex/skills/spreadsheet\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"spreadsheet-small.svg\",\n          \"spreadsheet.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"transcribe\",\n      \"name\": \"transcribe\",\n      \"description\": \"Transcribe audio files to text with optional diarization and known-speaker hints. Use when a user asks to transcribe speech from audio/video, extract text from recordings, or label speakers in interviews or meetings.\",\n      \"path\": \"/Users/test1/.codex/skills/transcribe\",\n      \"tags\": [\n        \"scripts\",\n        \"references\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"transcribe_diarize.py\"\n        ],\n        \"references\": [\n          \"api.md\"\n        ],\n        \"assets\": [\n          \"transcribe-small.svg\",\n          \"transcribe.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"vercel-deploy\",\n      \"name\": \"vercel-deploy\",\n      \"description\": \"Deploy applications and websites to Vercel. Use when the user requests deployment actions like \\\"deploy my app\\\", \\\"deploy and give me the link\\\", \\\"push this live\\\", or \\\"create a preview deployment\\\".\",\n      \"path\": \"/Users/test1/.codex/skills/vercel-deploy\",\n      \"tags\": [\n        \"scripts\",\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [\n          \"deploy.sh\"\n        ],\n        \"references\": [],\n        \"assets\": [\n          \"vercel-small.svg\",\n          \"vercel.png\"\n        ]\n      }\n    },\n    {\n      \"id\": \"yeet\",\n      \"name\": \"yeet\",\n      \"description\": \"Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitHub CLI (`gh`).\",\n      \"path\": \"/Users/test1/.codex/skills/yeet\",\n      \"tags\": [\n        \"assets\"\n      ],\n      \"resources\": {\n        \"scripts\": [],\n        \"references\": [],\n        \"assets\": [\n          \"yeet-small.svg\",\n          \"yeet.png\"\n        ]\n      }\n    }\n  ],\n  \"errors\": [\n    {\n      \"path\": \"/Users/test1/.codex/skills/.system\",\n      \"code\": \"unknown_skill_parse_error\",\n      \"message\": \"ENOENT: no such file or directory, open '/Users/test1/.codex/skills/.system/SKILL.md'\"\n    }\n  ]\n}"
+    },
+    "evalGate": {
+      "uri": "dc://skills/eval-gate",
+      "mimeType": "application/json",
+      "text": "{\n  \"schemaVersion\": 1,\n  \"enabled\": true,\n  \"thresholds\": {\n    \"evalGateEnabled\": true,\n    \"minPassRate\": 0.95,\n    \"minSampleSize\": 50\n  },\n  \"stats\": {\n    \"totalRuns\": 3,\n    \"passedRuns\": 3,\n    \"failedRuns\": 0,\n    \"passRate\": 1,\n    \"lastUpdatedAt\": \"2026-02-23T12:01:36.602Z\"\n  },\n  \"decision\": {\n    \"allowed\": false,\n    \"reasonCode\": \"eval_gate_blocked\",\n    \"message\": \"Execute mode blocked by eval gate: sample size 3/50.\"\n  }\n}"
+    }
+  }
+}

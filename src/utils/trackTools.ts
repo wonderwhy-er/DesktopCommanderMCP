@@ -1,6 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
+import { configManager } from '../config-manager.js';
 
 // Ensure the directory for the log file exists
 const logDir = path.dirname(TOOL_CALL_FILE);
@@ -13,11 +15,47 @@ await fs.promises.mkdir(logDir, { recursive: true });
  */
 export async function trackToolCall(toolName: string, args?: unknown): Promise<void> {
   try {
+    const config = await configManager.getConfig();
+    const mode = config.toolCallLoggingMode || 'redacted';
+    if (mode === 'off') {
+      return;
+    }
+
     // Get current timestamp
     const timestamp = new Date().toISOString();
-    
+    const serializedArgs = args === undefined ? '' : JSON.stringify(args);
+    const argsHash = createHash('sha256').update(serializedArgs).digest('hex').slice(0, 16);
+    const argKeys = args && typeof args === 'object' ? Object.keys(args as Record<string, unknown>) : [];
+
+    const metadata = {
+      arg_keys: argKeys,
+      arg_size: serializedArgs.length,
+      arg_hash: argsHash
+    };
+
+    let logPayload: Record<string, unknown> = metadata;
+
+    if (mode === 'redacted' && args && typeof args === 'object') {
+      const sensitivePattern = /(token|secret|password|api[_-]?key|auth|command|content|file|path)/i;
+      const redacted: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+        if (sensitivePattern.test(key)) {
+          redacted[key] = '[REDACTED]';
+        } else if (typeof value === 'string' && value.length > 120) {
+          redacted[key] = `[STRING:${value.length}]`;
+        } else if (Array.isArray(value)) {
+          redacted[key] = `[ARRAY:${value.length}]`;
+        } else if (value && typeof value === 'object') {
+          redacted[key] = '[OBJECT]';
+        } else {
+          redacted[key] = value;
+        }
+      }
+      logPayload = { ...metadata, redacted_args: redacted };
+    }
+
     // Format the log entry
-    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${args ? `\t| Arguments: ${JSON.stringify(args)}` : ''}\n`;
+    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}\t| ${JSON.stringify(logPayload)}\n`;
 
     // Check if file exists and get its size
     let fileSize = 0;

@@ -6,6 +6,7 @@ import {
     ReadResourceRequestSchema,
     ListResourceTemplatesRequestSchema,
     ListPromptsRequestSchema,
+    GetPromptRequestSchema,
     InitializeRequestSchema,
     LATEST_PROTOCOL_VERSION,
     SUPPORTED_PROTOCOL_VERSIONS,
@@ -50,6 +51,15 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    ListSkillsArgsSchema,
+    GetSkillArgsSchema,
+    RunSkillArgsSchema,
+    GetSkillRunArgsSchema,
+    CancelSkillRunArgsSchema,
+    ApproveSkillRunArgsSchema,
+    GetSkillsCatalogViewArgsSchema,
+    GetSkillsEvalGateViewArgsSchema,
+    GetSkillRunViewArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -64,11 +74,16 @@ import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
+import { configManager } from './config-manager.js';
+import { skillRunner } from './skills/runner.js';
+import { normalizeSkillRuntimeConfig } from './skills/runtime-config.js';
+import type { SkillReasonCode } from './skills/types.js';
 import {
     buildUiToolMeta,
     FILE_PREVIEW_RESOURCE_URI
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
+import { listSkillResources, listSkillResourceTemplates, readSkillResource } from './skills/resources.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -104,7 +119,10 @@ export const server = new Server(
 // Add handler for resources/list method
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
     return {
-        resources: listUiResources(),
+        resources: [
+            ...listUiResources(),
+            ...listSkillResources(),
+        ],
     };
 });
 
@@ -115,15 +133,120 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         return response;
     }
 
+    const skillResponse = await readSkillResource(uri);
+    if (skillResponse) {
+        return skillResponse;
+    }
+
     throw new Error(`Unknown resource URI: ${uri}`);
+});
+
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+    return {
+        resourceTemplates: [
+            ...listSkillResourceTemplates(),
+        ],
+    };
 });
 
 // Add handler for prompts/list method
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
-    // Return an empty list of prompts
+    // Minimal operator prompts for Safe Executor / skills ops.
     return {
-        prompts: [],
+        prompts: [
+            {
+                name: 'dc_rollout_checklist',
+                title: 'Desktop Commander Rollout Checklist',
+                description: 'Checklist for enabling skills and execute mode safely with eval gate.',
+                arguments: [],
+            },
+            {
+                name: 'dc_diagnose_block',
+                title: 'Diagnose Skill Execution Block',
+                description: 'Reason-code oriented diagnosis and remediation steps for blocked skill runs.',
+                arguments: [],
+            },
+            {
+                name: 'dc_eval_gate_readiness',
+                title: 'Eval Gate Readiness',
+                description: 'How to interpret dc://skills/eval-gate and what to do when eval_gate_blocked.',
+                arguments: [],
+            },
+        ],
     };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const name = request.params?.name;
+    if (!name) {
+        return { description: 'Missing prompt name.', messages: [] };
+    }
+
+    if (name === 'dc_rollout_checklist') {
+        return {
+            description: 'Checklist for enabling skills and execute mode safely with eval gate.',
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: [
+                                'Generate an execute-mode rollout checklist for Desktop Commander skills.',
+                                'Use: dc://skills/eval-gate and dc://skills/catalog resources if available.',
+                                'Include checks for: skillsEnabled, commandValidationMode=strict, skillExecutionMode=confirm, and reason-code remediation.',
+                                'Output: a numbered checklist and a short "rollback" section.',
+                            ].join('\n'),
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    if (name === 'dc_diagnose_block') {
+        return {
+            description: 'Reason-code oriented diagnosis and remediation steps for blocked skill runs.',
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: [
+                                'Diagnose why skill execution is blocked based on reason codes and current config.',
+                                'Inputs: error message, _meta.reason_code, and current get_config.',
+                                'Output: root cause, remediation steps, and validation steps.',
+                            ].join('\n'),
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    if (name === 'dc_eval_gate_readiness') {
+        return {
+            description: 'How to interpret dc://skills/eval-gate and what to do when eval_gate_blocked.',
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        {
+                            type: 'text',
+                            text: [
+                                'Interpret the eval gate snapshot and provide rollout guidance.',
+                                'If blocked: explain which threshold is failing (sample size or pass rate) and how to raise it safely in opt-in environments.',
+                                'If allowed: list the remaining safety checks before enabling wider execute mode.',
+                            ].join('\n'),
+                        },
+                    ],
+                },
+            ],
+        };
+    }
+
+    return { description: `Unknown prompt: ${name}`, messages: [] };
 });
 
 // Store current client info (simple variable)
@@ -205,9 +328,24 @@ deferLog('info', 'Setting up request handlers...');
 /**
  * Check if a tool should be included based on current client
  */
-function shouldIncludeTool(toolName: string): boolean {
+function shouldIncludeTool(toolName: string, skillsEnabled: boolean): boolean {
+    const skillTools = new Set([
+        'list_skills',
+        'get_skill',
+        'run_skill',
+        'get_skill_run',
+        'cancel_skill_run',
+        'approve_skill_run'
+    ]);
+
     // Exclude give_feedback_to_desktop_commander for desktop-commander client
     if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
+        return false;
+    }
+
+    if (skillTools.has(toolName) && !skillsEnabled) {
+        // Hide skill tools until explicitly enabled.
+        // This avoids accidental tool usage in clients that auto-select tools from list.
         return false;
     }
 
@@ -217,9 +355,122 @@ function shouldIncludeTool(toolName: string): boolean {
     return true;
 }
 
+async function preExecutionGuardrail(toolName: string, args: unknown): Promise<{ message: string; reasonCode: string } | null> {
+    type GuardrailBlock = {
+        message: string;
+        reasonCode: SkillReasonCode | string;
+    };
+
+    const block = (message: string, reasonCode: SkillReasonCode | string, extra?: Record<string, unknown>): GuardrailBlock => {
+        capture('safety_blocked', { tool: toolName, reason: reasonCode, ...(extra || {}) });
+        return { message, reasonCode };
+    };
+
+    const parsePositiveInt = (value: unknown): number | null => {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(parsed) || parsed < 1) {
+            return null;
+        }
+        return Math.floor(parsed);
+    };
+
+    const parsePassRate = (value: unknown): number | null => {
+        const parsed = typeof value === 'number' ? value : Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+            return null;
+        }
+        return parsed;
+    };
+
+    if (toolName === 'start_process') {
+        const command = args && typeof args === 'object' && 'command' in args ? String((args as any).command || '') : '';
+        const blockedPattern = /(rm\s+-rf\s+\/|shutdown|reboot|halt|poweroff)/i;
+        if (blockedPattern.test(command)) {
+            return block('Blocked by safety guardrail: command contains a high-risk destructive operation.', 'disallowed_operator');
+        }
+    }
+
+    if (toolName === 'set_config_value') {
+        const key = args && typeof args === 'object' && 'key' in args ? String((args as any).key || '') : '';
+        const value = args && typeof args === 'object' && 'value' in args ? (args as any).value : undefined;
+        const enumMap: Record<string, string[]> = {
+            toolCallLoggingMode: ['off', 'metadata', 'redacted'],
+            commandValidationMode: ['strict', 'legacy'],
+            skillExecutionMode: ['plan_only', 'confirm', 'auto_safe']
+        };
+        if (key in enumMap && !enumMap[key].includes(String(value))) {
+            return block(`Invalid value for ${key}. Allowed: ${enumMap[key].join(', ')}`, 'invalid_arguments', { key });
+        }
+        if (key === 'skillMaxConcurrentRuns' && parsePositiveInt(value) === null) {
+            return block('Invalid skillMaxConcurrentRuns. Expected integer >= 1.', 'invalid_skill_max_concurrent_runs', { key });
+        }
+        if (key === 'skillExecuteMinPassRate' && parsePassRate(value) === null) {
+            return block('Invalid skillExecuteMinPassRate. Expected number between 0 and 1.', 'invalid_eval_gate_pass_rate', { key });
+        }
+        if (key === 'skillExecuteMinSampleSize' && parsePositiveInt(value) === null) {
+            return block('Invalid skillExecuteMinSampleSize. Expected integer >= 1.', 'invalid_eval_gate_sample_size', { key });
+        }
+        if (key === 'skillExecuteEvalGateEnabled' && typeof value !== 'boolean') {
+            return block('Invalid skillExecuteEvalGateEnabled. Expected boolean.', 'invalid_arguments', { key });
+        }
+    }
+
+    if (toolName === 'run_skill') {
+        const config = normalizeSkillRuntimeConfig(await configManager.getConfig());
+        if (config.configError) {
+            return block(config.configError.message, config.configError.reasonCode);
+        }
+        const mode = args && typeof args === 'object' && 'mode' in args ? String((args as any).mode || 'plan') : 'plan';
+        if (!config.enabled) {
+            return block('Skills are disabled. Set skillsEnabled=true before using run_skill.', 'skills_disabled');
+        }
+        if (mode === 'execute' && config.commandValidationMode !== 'strict') {
+            return block('run_skill execute mode requires commandValidationMode="strict".', 'strict_validation_required');
+        }
+        if (mode === 'execute' && config.executionMode === 'plan_only') {
+            return block('Skill execute mode is disabled by config (skillExecutionMode=plan_only).', 'plan_only_mode');
+        }
+        if (mode === 'execute') {
+            const gate = skillRunner.evaluateExecuteGate({
+                enabled: config.evalGateEnabled,
+                minPassRate: config.evalMinPassRate,
+                minSampleSize: config.evalMinSampleSize
+            });
+            if (!gate.allowed) {
+                return block(gate.message || 'Execute mode blocked by eval gate.', 'eval_gate_blocked');
+            }
+        }
+    }
+
+    if (toolName === 'approve_skill_run') {
+        const config = normalizeSkillRuntimeConfig(await configManager.getConfig());
+        if (config.configError) {
+            return block(config.configError.message, config.configError.reasonCode);
+        }
+        if (!config.enabled) {
+            return block('Skills are disabled. Set skillsEnabled=true before approving skill runs.', 'skills_disabled');
+        }
+        if (config.commandValidationMode !== 'strict') {
+            return block('approve_skill_run requires commandValidationMode="strict".', 'strict_validation_required');
+        }
+        const gate = skillRunner.evaluateExecuteGate({
+            enabled: config.evalGateEnabled,
+            minPassRate: config.evalMinPassRate,
+            minSampleSize: config.evalMinSampleSize
+        });
+        if (!gate.allowed) {
+            return block(gate.message || 'Execute mode blocked by eval gate.', 'eval_gate_blocked');
+        }
+    }
+
+    return null;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
+        const config = await configManager.getConfig();
+        const skillsEnabled = config.skillsEnabled === true;
 
         // Build complete tools array
         const allTools = [
@@ -234,6 +485,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - toolCallLoggingMode ("off" | "metadata" | "redacted")
+                        - commandValidationMode ("strict" | "legacy")
+                        - skillsEnabled (boolean)
+                        - skillsDirectories (array of skill root directories)
+                        - skillExecutionMode ("plan_only" | "confirm" | "auto_safe")
+                        - skillMaxConcurrentRuns (number)
+                        - skillExecuteEvalGateEnabled (boolean)
+                        - skillExecuteMinPassRate (number between 0 and 1)
+                        - skillExecuteMinSampleSize (integer >= 1)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
@@ -260,6 +520,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
+                        - toolCallLoggingMode ("off" | "metadata" | "redacted")
+                        - commandValidationMode ("strict" | "legacy")
+                        - skillsEnabled (boolean)
+                        - skillsDirectories (array)
+                        - skillExecutionMode ("plan_only" | "confirm" | "auto_safe")
+                        - skillMaxConcurrentRuns (number)
+                        - skillExecuteEvalGateEnabled (boolean)
+                        - skillExecuteMinPassRate (number between 0 and 1)
+                        - skillExecuteMinSampleSize (integer >= 1)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -325,6 +594,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Read File or URL",
                     readOnlyHint: true,
                     openWorldHint: true,
+                },
+            },
+            {
+                name: "get_skills_catalog_view",
+                description: `
+                        Read-only view of discovered skills and parse errors.
+                        This is a tool fallback for clients that do not surface MCP resources well.
+
+                        Equivalent resource: dc://skills/catalog
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetSkillsCatalogViewArgsSchema),
+                annotations: {
+                    title: "Skills Catalog View",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "get_skills_eval_gate_view",
+                description: `
+                        Read-only view of eval gate thresholds, stats, and allow/deny decision.
+                        This is a tool fallback for clients that do not surface MCP resources well.
+
+                        Equivalent resource: dc://skills/eval-gate
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetSkillsEvalGateViewArgsSchema),
+                annotations: {
+                    title: "Skills Eval Gate View",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "get_skill_run_view",
+                description: `
+                        Read-only view of a skill run by runId with privacy-safe redactions.
+                        This is a tool fallback for clients that do not surface MCP resources well.
+
+                        Equivalent resource template: dc://skills/runs/{runId}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetSkillRunViewArgsSchema),
+                annotations: {
+                    title: "Skill Run View",
+                    readOnlyHint: true,
                 },
             },
             {
@@ -1116,11 +1427,93 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get Prompts",
                     readOnlyHint: true,
                 },
+            },
+            {
+                name: "list_skills",
+                description: `
+                        List discovered skills from configured skills directories.
+                        Requires skillsEnabled=true in configuration.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ListSkillsArgsSchema),
+                annotations: {
+                    title: "List Skills",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "get_skill",
+                description: `
+                        Get details for a specific skill by ID.
+                        Requires skillsEnabled=true in configuration.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetSkillArgsSchema),
+                annotations: {
+                    title: "Get Skill",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "run_skill",
+                description: `
+                        Run a skill in plan or execute mode.
+                        Execution behavior is controlled by skillExecutionMode config.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(RunSkillArgsSchema),
+                annotations: {
+                    title: "Run Skill",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "get_skill_run",
+                description: `
+                        Get status and results for a prior skill run.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(GetSkillRunArgsSchema),
+                annotations: {
+                    title: "Get Skill Run",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "cancel_skill_run",
+                description: `
+                        Cancel a running skill.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(CancelSkillRunArgsSchema),
+                annotations: {
+                    title: "Cancel Skill Run",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "approve_skill_run",
+                description: `
+                        Approve and execute a skill run that is waiting for approval.
+                        This is required when run_skill(mode="execute") returns waiting_approval.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ApproveSkillRunArgsSchema),
+                annotations: {
+                    title: "Approve Skill Run",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
             }
         ];
 
         // Filter tools based on current client
-        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
+        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name, skillsEnabled));
 
         // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
 
@@ -1178,6 +1571,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
         // Track tool call
         trackToolCall(name, args);
+
+        const guardrailMessage = await preExecutionGuardrail(name, args);
+        if (guardrailMessage) {
+            return {
+                content: [{ type: "text", text: guardrailMessage.message }],
+                isError: true,
+                _meta: { reason_code: guardrailMessage.reasonCode }
+            };
+        }
 
         // Using a more structured approach with dedicated handlers
         let result: ServerResult;
@@ -1276,6 +1678,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     };
                 }
                 break;
+
+            case "list_skills":
+                result = await handlers.handleListSkills(args);
+                break;
+
+            case "get_skill":
+                result = await handlers.handleGetSkill(args);
+                break;
+
+            case "run_skill":
+                result = await handlers.handleRunSkill(args);
+                break;
+
+            case "get_skill_run":
+                result = await handlers.handleGetSkillRun(args);
+                break;
+
+            case "cancel_skill_run":
+                result = await handlers.handleCancelSkillRun(args);
+                break;
+
+            case "approve_skill_run":
+                result = await handlers.handleApproveSkillRun(args);
+                break;
+
+            case "get_skills_catalog_view": {
+                const parsed = GetSkillsCatalogViewArgsSchema.safeParse(args || {});
+                if (!parsed.success) {
+                    result = {
+                        content: [{ type: "text", text: `Invalid arguments: ${parsed.error}` }],
+                        isError: true,
+                    };
+                    break;
+                }
+                const view = await readSkillResource('dc://skills/catalog');
+                result = view
+                    ? { content: [{ type: "text", text: view.contents?.[0]?.text || '{}' }] }
+                    : { content: [{ type: "text", text: '{}' }], isError: true };
+                break;
+            }
+
+            case "get_skills_eval_gate_view": {
+                const parsed = GetSkillsEvalGateViewArgsSchema.safeParse(args || {});
+                if (!parsed.success) {
+                    result = {
+                        content: [{ type: "text", text: `Invalid arguments: ${parsed.error}` }],
+                        isError: true,
+                    };
+                    break;
+                }
+                const view = await readSkillResource('dc://skills/eval-gate');
+                result = view
+                    ? { content: [{ type: "text", text: view.contents?.[0]?.text || '{}' }] }
+                    : { content: [{ type: "text", text: '{}' }], isError: true };
+                break;
+            }
+
+            case "get_skill_run_view": {
+                const parsed = GetSkillRunViewArgsSchema.safeParse(args || {});
+                if (!parsed.success) {
+                    result = {
+                        content: [{ type: "text", text: `Invalid arguments: ${parsed.error}` }],
+                        isError: true,
+                    };
+                    break;
+                }
+                const uri = `dc://skills/runs/${encodeURIComponent(parsed.data.runId)}`;
+                const view = await readSkillResource(uri);
+                result = view
+                    ? { content: [{ type: "text", text: view.contents?.[0]?.text || '{}' }] }
+                    : { content: [{ type: "text", text: '{}' }], isError: true };
+                break;
+            }
 
             case "track_ui_event":
                 try {
@@ -1515,5 +1990,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     }
 });
 
-// Add no-op handlers so Visual Studio initialization succeeds
-server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
+// Note: resources/templates/list is implemented near the top of this file.

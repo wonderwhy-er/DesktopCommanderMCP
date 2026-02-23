@@ -13,6 +13,15 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  toolCallLoggingMode?: 'off' | 'metadata' | 'redacted';
+  commandValidationMode?: 'strict' | 'legacy';
+  skillsEnabled?: boolean;
+  skillsDirectories?: string[];
+  skillExecutionMode?: 'plan_only' | 'confirm' | 'auto_safe';
+  skillMaxConcurrentRuns?: number;
+  skillExecuteEvalGateEnabled?: boolean;
+  skillExecuteMinPassRate?: number;
+  skillExecuteMinSampleSize?: number;
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)
@@ -64,6 +73,7 @@ class ConfigManager {
         this._isFirstRun = true; // This is a first run!
         await this.saveConfig();
       }
+      this.config = this.withConfigDefaults(this.config);
       this.config['version'] = VERSION;
 
       this.initialized = true;
@@ -86,6 +96,10 @@ class ConfigManager {
    * Create default configuration
    */
   private getDefaultConfig(): ServerConfig {
+    const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    const codexSkillsDir = path.join(codexHome, 'skills');
+    const skillsDirectories = existsSync(codexSkillsDir) ? [codexSkillsDir] : [];
+
     return {
       blockedCommands: [
 
@@ -148,7 +162,30 @@ class ConfigManager {
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
+      toolCallLoggingMode: 'redacted',
+      commandValidationMode: 'strict',
+      skillsEnabled: false,
+      skillsDirectories,
+      skillExecutionMode: 'confirm',
+      skillMaxConcurrentRuns: 1,
+      skillExecuteEvalGateEnabled: true,
+      skillExecuteMinPassRate: 0.95,
+      skillExecuteMinSampleSize: 50,
       pendingWelcomeOnboarding: true  // New install flag - triggers A/B test for welcome page
+    };
+  }
+
+  /**
+   * Backfill config with new defaults while preserving existing user values.
+   */
+  private withConfigDefaults(config: ServerConfig): ServerConfig {
+    const defaults = this.getDefaultConfig();
+    return {
+      ...defaults,
+      ...config,
+      blockedCommands: config.blockedCommands ?? defaults.blockedCommands,
+      allowedDirectories: config.allowedDirectories ?? defaults.allowedDirectories,
+      skillsDirectories: config.skillsDirectories ?? defaults.skillsDirectories
     };
   }
 

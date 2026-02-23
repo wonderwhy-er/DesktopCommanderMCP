@@ -12,7 +12,7 @@ export const SetConfigValueArgsSchema = z.object({
     z.array(z.string()),
     z.null(),
   ]),
-});
+}).strict();
 
 // Empty schemas
 export const ListProcessesArgsSchema = z.object({});
@@ -23,7 +23,7 @@ export const StartProcessArgsSchema = z.object({
   timeout_ms: z.number(),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
-});
+}).strict();
 
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
@@ -215,3 +215,44 @@ export const TrackUiEventArgsSchema = z.object({
   component: z.string().optional().default('file_preview'),
   params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
+
+// Skill tools schemas
+export const ListSkillsArgsSchema = z.object({
+  query: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  limit: z.number().min(1).max(200).optional().default(50),
+}).strict();
+
+export const GetSkillArgsSchema = z.object({
+  skillId: z.string().min(1),
+  includeResources: z.boolean().optional().default(false),
+}).strict();
+
+export const RunSkillArgsSchema = z.object({
+  skillId: z.string().min(1),
+  goal: z.string().min(1),
+  cwd: z.string().optional(),
+  mode: z.enum(['plan', 'execute']).optional().default('plan'),
+  maxSteps: z.number().min(1).max(100).optional().default(10),
+}).strict();
+
+export const GetSkillRunArgsSchema = z.object({
+  runId: z.string().min(1),
+}).strict();
+
+export const CancelSkillRunArgsSchema = z.object({
+  runId: z.string().min(1),
+}).strict();
+
+export const ApproveSkillRunArgsSchema = z.object({
+  runId: z.string().min(1),
+}).strict();
+
+// Read-only skill view tools (resource fallbacks)
+export const GetSkillsCatalogViewArgsSchema = z.object({}).strict();
+
+export const GetSkillsEvalGateViewArgsSchema = z.object({}).strict();
+
+export const GetSkillRunViewArgsSchema = z.object({
+  runId: z.string().min(1),
+}).strict();

@@ -3,6 +3,33 @@ import * as https from 'https';
 import { configManager } from '../config-manager.js';
 import { currentClient } from '../server.js';
 
+const CAPTURE_URLS = {
+    callTool: process.env.DESKTOP_COMMANDER_GA_CALL_TOOL_URL || '',
+    default: process.env.DESKTOP_COMMANDER_GA_URL || '',
+    ui: process.env.DESKTOP_COMMANDER_GA_UI_URL || ''
+};
+
+let telemetryConfigWarningShown = false;
+
+export async function warnIfTelemetryEnvMissing(): Promise<void> {
+    if (telemetryConfigWarningShown) {
+        return;
+    }
+    const telemetryEnabled = await configManager.getValue('telemetryEnabled');
+    if (telemetryEnabled === false) {
+        return;
+    }
+    const configured = CAPTURE_URLS.callTool || CAPTURE_URLS.default || CAPTURE_URLS.ui;
+    if (!configured) {
+        telemetryConfigWarningShown = true;
+        process.stderr.write('[desktop-commander] Telemetry enabled but no telemetry endpoints configured. Set DESKTOP_COMMANDER_GA_URL / DESKTOP_COMMANDER_GA_CALL_TOOL_URL / DESKTOP_COMMANDER_GA_UI_URL to enable telemetry.\n');
+    }
+}
+
+export function resetTelemetryWarningForTests(): void {
+    telemetryConfigWarningShown = false;
+}
+
 let VERSION = 'unknown';
 try {
     const versionModule = await import('../version.js');
@@ -253,27 +280,15 @@ export const captureBase = async (captureURL: string, event: string, properties?
 };
 
 export const capture_call_tool = async (event: string, properties?: any) => {
-    const GA_MEASUREMENT_ID = 'G-8L163XZ1CE'; // Replace with your GA4 Measurement ID
-    const GA_API_SECRET = 'hNxh4TK2TnSy4oLZn4RwTA'; // Replace with your GA4 API Secret
-    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    return await captureBase(GA_BASE_URL, event, properties);
+    return await captureBase(CAPTURE_URLS.callTool, event, properties);
 }
 
 export const capture = async (event: string, properties?: any) => {
-    const GA_MEASUREMENT_ID = 'G-F3GK01G39Y'; // Replace with your GA4 Measurement ID
-    const GA_API_SECRET = 'SqdcIAweSQS1RQErURMdEA'; // Replace with your GA4 API Secret
-    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    const GA_DEBUG_BASE_URL = `https://www.google-analytics.com/debug/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-
-    return await captureBase(GA_BASE_URL, event, properties);
+    return await captureBase(CAPTURE_URLS.default, event, properties);
 }
 
 export const capture_ui_event = async (event: string, properties?: any) => {
-    const GA_MEASUREMENT_ID = 'G-MPFSWEGQ0T';
-    const GA_API_SECRET = 'BeK3uyAOQ6-TK6wnaDG2Ww';
-    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    return await captureBase(GA_BASE_URL, event, properties);
+    return await captureBase(CAPTURE_URLS.ui, event, properties);
 }
 
 /**

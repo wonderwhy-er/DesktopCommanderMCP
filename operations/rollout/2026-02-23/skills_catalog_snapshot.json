@@ -1,0 +1,678 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "total": 31,
+  "skills": [
+    {
+      "id": "cloudflare-deploy",
+      "name": "cloudflare-deploy",
+      "description": "Deploy applications and infrastructure to Cloudflare using Workers, Pages, and related platform services. Use when the user asks to deploy, host, publish, or set up a project on Cloudflare.",
+      "path": "/Users/test1/.codex/skills/cloudflare-deploy",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "cloudflare-small.svg",
+          "cloudflare.png"
+        ]
+      }
+    },
+    {
+      "id": "desktop-commander-ops",
+      "name": "desktop-commander-ops",
+      "description": "Operational checks and rollout diagnostics for Desktop Commander Safe Executor and skills: eval gate readiness, execute-mode rollout checks, safety/audit verification, and blocked rollout diagnosis. Use when validating skillsEnabled/skillExecutionMode/eval-gate settings or investigating reason codes like eval_gate_blocked/skills_disabled.",
+      "path": "/Users/test1/.codex/skills/desktop-commander-ops",
+      "tags": [
+        "scripts",
+        "references"
+      ],
+      "resources": {
+        "scripts": [
+          "eval_gate_report.mjs",
+          "rollout_checklist.mjs",
+          "status_snapshot.mjs"
+        ],
+        "references": [
+          "privacy.md",
+          "rollout.md"
+        ],
+        "assets": []
+      }
+    },
+    {
+      "id": "develop-web-game",
+      "name": "develop-web-game",
+      "description": "Use when Codex is building or iterating on a web game (HTML/JS) and needs a reliable development + testing loop: implement small changes, run a Playwright-based test script with short input bursts and intentional pauses, inspect screenshots/text, and review console errors with render_game_to_text.",
+      "path": "/Users/test1/.codex/skills/develop-web-game",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "web_game_playwright_client.js"
+        ],
+        "references": [
+          "action_payloads.json"
+        ],
+        "assets": [
+          "game-small.svg",
+          "game.png"
+        ]
+      }
+    },
+    {
+      "id": "doc",
+      "name": "doc",
+      "description": "Use when the task involves reading, creating, or editing `.docx` documents, especially when formatting or layout fidelity matters; prefer `python-docx` plus the bundled `scripts/render_docx.py` for visual checks.",
+      "path": "/Users/test1/.codex/skills/doc",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "render_docx.py"
+        ],
+        "references": [],
+        "assets": [
+          "doc-small.svg",
+          "doc.png"
+        ]
+      }
+    },
+    {
+      "id": "figma",
+      "name": "figma",
+      "description": "Use the Figma MCP server to fetch design context, screenshots, variables, and assets from Figma, and to translate Figma nodes into production code. Trigger when a task involves Figma URLs, node IDs, design-to-code implementation, or Figma MCP setup and troubleshooting.",
+      "path": "/Users/test1/.codex/skills/figma",
+      "tags": [
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [
+          "figma-mcp-config.md",
+          "figma-tools-and-prompts.md"
+        ],
+        "assets": [
+          "figma-small.svg",
+          "figma.png",
+          "icon.svg"
+        ]
+      }
+    },
+    {
+      "id": "figma-implement-design",
+      "name": "figma-implement-design",
+      "description": "Translate Figma nodes into production-ready code with 1:1 visual fidelity using the Figma MCP workflow (design context, screenshots, assets, and project-convention translation). Trigger when the user provides Figma URLs or node IDs, or asks to implement designs or components that must match Figma specs. Requires a working Figma MCP server connection.",
+      "path": "/Users/test1/.codex/skills/figma-implement-design",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "figma-small.svg",
+          "figma.png",
+          "icon.svg"
+        ]
+      }
+    },
+    {
+      "id": "gh-address-comments",
+      "name": "gh-address-comments",
+      "description": "Help address review/issue comments on the open GitHub PR for the current branch using gh CLI; verify gh auth first and prompt the user to authenticate if not logged in.",
+      "path": "/Users/test1/.codex/skills/gh-address-comments",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "fetch_comments.py"
+        ],
+        "references": [],
+        "assets": [
+          "github-small.svg",
+          "github.png"
+        ]
+      }
+    },
+    {
+      "id": "gh-fix-ci",
+      "name": "gh-fix-ci",
+      "description": "Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions; use `gh` to inspect checks and logs, summarize failure context, draft a fix plan, and implement only after explicit approval. Treat external providers (for example Buildkite) as out of scope and report only the details URL.",
+      "path": "/Users/test1/.codex/skills/gh-fix-ci",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "inspect_pr_checks.py"
+        ],
+        "references": [],
+        "assets": [
+          "github-small.svg",
+          "github.png"
+        ]
+      }
+    },
+    {
+      "id": "imagegen",
+      "name": "imagegen",
+      "description": "Use when the user asks to generate or edit images via the OpenAI Image API (for example: generate image, edit/inpaint/mask, background removal or replacement, transparent background, product shots, concept art, covers, or batch variants); run the bundled CLI (`scripts/image_gen.py`) and require `OPENAI_API_KEY` for live calls.",
+      "path": "/Users/test1/.codex/skills/imagegen",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "image_gen.py"
+        ],
+        "references": [
+          "cli.md",
+          "codex-network.md",
+          "image-api.md",
+          "prompting.md",
+          "sample-prompts.md"
+        ],
+        "assets": [
+          "imagegen-small.svg",
+          "imagegen.png"
+        ]
+      }
+    },
+    {
+      "id": "jupyter-notebook",
+      "name": "jupyter-notebook",
+      "description": "Use when the user asks to create, scaffold, or edit Jupyter notebooks (`.ipynb`) for experiments, explorations, or tutorials; prefer the bundled templates and run the helper script `new_notebook.py` to generate a clean starting notebook.",
+      "path": "/Users/test1/.codex/skills/jupyter-notebook",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "new_notebook.py"
+        ],
+        "references": [
+          "experiment-patterns.md",
+          "notebook-structure.md",
+          "quality-checklist.md",
+          "tutorial-patterns.md"
+        ],
+        "assets": [
+          "experiment-template.ipynb",
+          "jupyter-small.svg",
+          "jupyter.png",
+          "tutorial-template.ipynb"
+        ]
+      }
+    },
+    {
+      "id": "linear",
+      "name": "linear",
+      "description": "Manage issues, projects & team workflows in Linear. Use when the user wants to read, create or updates tickets in Linear.",
+      "path": "/Users/test1/.codex/skills/linear",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "linear-small.svg",
+          "linear.png"
+        ]
+      }
+    },
+    {
+      "id": "netlify-deploy",
+      "name": "netlify-deploy",
+      "description": "Deploy web projects to Netlify using the Netlify CLI (`npx netlify`). Use when the user asks to deploy, host, publish, or link a site/repo on Netlify, including preview and production deploys.",
+      "path": "/Users/test1/.codex/skills/netlify-deploy",
+      "tags": [
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [
+          "cli-commands.md",
+          "deployment-patterns.md",
+          "netlify-toml.md"
+        ],
+        "assets": [
+          "netlify-small.svg",
+          "netlify.png"
+        ]
+      }
+    },
+    {
+      "id": "notion-knowledge-capture",
+      "name": "notion-knowledge-capture",
+      "description": "Capture conversations and decisions into structured Notion pages; use when turning chats/notes into wiki entries, how-tos, decisions, or FAQs with proper linking.",
+      "path": "/Users/test1/.codex/skills/notion-knowledge-capture",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "notion-small.svg",
+          "notion.png"
+        ]
+      }
+    },
+    {
+      "id": "notion-meeting-intelligence",
+      "name": "notion-meeting-intelligence",
+      "description": "Prepare meeting materials with Notion context and Codex research; use when gathering context, drafting agendas/pre-reads, and tailoring materials to attendees.",
+      "path": "/Users/test1/.codex/skills/notion-meeting-intelligence",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "notion-small.svg",
+          "notion.png"
+        ]
+      }
+    },
+    {
+      "id": "notion-research-documentation",
+      "name": "notion-research-documentation",
+      "description": "Research across Notion and synthesize into structured documentation; use when gathering info from multiple Notion sources to produce briefs, comparisons, or reports with citations.",
+      "path": "/Users/test1/.codex/skills/notion-research-documentation",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "notion-small.svg",
+          "notion.png"
+        ]
+      }
+    },
+    {
+      "id": "notion-spec-to-implementation",
+      "name": "notion-spec-to-implementation",
+      "description": "Turn Notion specs into implementation plans, tasks, and progress tracking; use when implementing PRDs/feature specs and creating Notion plans + tasks from them.",
+      "path": "/Users/test1/.codex/skills/notion-spec-to-implementation",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "notion-small.svg",
+          "notion.png"
+        ]
+      }
+    },
+    {
+      "id": "openai-docs",
+      "name": "openai-docs",
+      "description": "Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations (for example: Codex, Responses API, Chat Completions, Apps SDK, Agents SDK, Realtime, model capabilities or limits); prioritize OpenAI docs MCP tools and restrict any fallback browsing to official OpenAI domains.",
+      "path": "/Users/test1/.codex/skills/openai-docs",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "openai-small.svg",
+          "openai.png"
+        ]
+      }
+    },
+    {
+      "id": "pdf",
+      "name": "pdf",
+      "description": "Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks by rendering pages (Poppler) and use Python tools such as `reportlab`, `pdfplumber`, and `pypdf` for generation and extraction.",
+      "path": "/Users/test1/.codex/skills/pdf",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "pdf.png"
+        ]
+      }
+    },
+    {
+      "id": "playwright",
+      "name": "playwright",
+      "description": "Use when the task requires automating a real browser from the terminal (navigation, form filling, snapshots, screenshots, data extraction, UI-flow debugging) via `playwright-cli` or the bundled wrapper script.",
+      "path": "/Users/test1/.codex/skills/playwright",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "playwright_cli.sh"
+        ],
+        "references": [
+          "cli.md",
+          "workflows.md"
+        ],
+        "assets": [
+          "playwright-small.svg",
+          "playwright.png"
+        ]
+      }
+    },
+    {
+      "id": "render-deploy",
+      "name": "render-deploy",
+      "description": "Deploy applications to Render by analyzing codebases, generating render.yaml Blueprints, and providing Dashboard deeplinks. Use when the user wants to deploy, host, publish, or set up their application on Render's cloud platform.",
+      "path": "/Users/test1/.codex/skills/render-deploy",
+      "tags": [
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [
+          "blueprint-spec.md",
+          "codebase-analysis.md",
+          "configuration-guide.md",
+          "deployment-details.md",
+          "direct-creation.md",
+          "error-patterns.md",
+          "post-deploy-checks.md",
+          "runtimes.md",
+          "service-types.md",
+          "troubleshooting-basics.md"
+        ],
+        "assets": [
+          "docker.yaml",
+          "go-api.yaml",
+          "nextjs-postgres.yaml",
+          "node-express.yaml",
+          "python-django.yaml",
+          "render-small.svg",
+          "render.png",
+          "static-site.yaml"
+        ]
+      }
+    },
+    {
+      "id": "screenshot",
+      "name": "screenshot",
+      "description": "Use when the user explicitly asks for a desktop or system screenshot (full screen, specific app or window, or a pixel region), or when tool-specific capture capabilities are unavailable and an OS-level capture is needed.",
+      "path": "/Users/test1/.codex/skills/screenshot",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "ensure_macos_permissions.sh",
+          "macos_display_info.swift",
+          "macos_permissions.swift",
+          "macos_window_info.swift",
+          "take_screenshot.ps1",
+          "take_screenshot.py"
+        ],
+        "references": [],
+        "assets": [
+          "screenshot-small.svg",
+          "screenshot.png"
+        ]
+      }
+    },
+    {
+      "id": "security-best-practices",
+      "name": "security-best-practices",
+      "description": "Perform language and framework specific security best-practice reviews and suggest improvements. Trigger only when the user explicitly requests security best practices guidance, a security review/report, or secure-by-default coding help. Trigger only for supported languages (python, javascript/typescript, go). Do not trigger for general code review, debugging, or non-security tasks.",
+      "path": "/Users/test1/.codex/skills/security-best-practices",
+      "tags": [
+        "references"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [
+          "golang-general-backend-security.md",
+          "javascript-express-web-server-security.md",
+          "javascript-general-web-frontend-security.md",
+          "javascript-jquery-web-frontend-security.md",
+          "javascript-typescript-nextjs-web-server-security.md",
+          "javascript-typescript-react-web-frontend-security.md",
+          "javascript-typescript-vue-web-frontend-security.md",
+          "python-django-web-server-security.md",
+          "python-fastapi-web-server-security.md",
+          "python-flask-web-server-security.md"
+        ],
+        "assets": []
+      }
+    },
+    {
+      "id": "security-ownership-map",
+      "name": "security-ownership-map",
+      "description": "Analyze git repositories to build a security ownership topology (people-to-file), compute bus factor and sensitive-code ownership, and export CSV/JSON for graph databases and visualization. Trigger only when the user explicitly wants a security-oriented ownership or bus-factor analysis grounded in git history (for example: orphaned sensitive code, security maintainers, CODEOWNERS reality checks for risk, sensitive hotspots, or ownership clusters). Do not trigger for general maintainer lists or non-security ownership questions.",
+      "path": "/Users/test1/.codex/skills/security-ownership-map",
+      "tags": [
+        "scripts",
+        "references"
+      ],
+      "resources": {
+        "scripts": [
+          "build_ownership_map.py",
+          "community_maintainers.py",
+          "query_ownership.py",
+          "run_ownership_map.py"
+        ],
+        "references": [
+          "neo4j-import.md"
+        ],
+        "assets": []
+      }
+    },
+    {
+      "id": "security-threat-model",
+      "name": "security-threat-model",
+      "description": "Repository-grounded threat modeling that enumerates trust boundaries, assets, attacker capabilities, abuse paths, and mitigations, and writes a concise Markdown threat model. Trigger only when the user explicitly asks to threat model a codebase or path, enumerate threats/abuse paths, or perform AppSec threat modeling. Do not trigger for general architecture summaries, code review, or non-security design work.",
+      "path": "/Users/test1/.codex/skills/security-threat-model",
+      "tags": [
+        "references"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [
+          "prompt-template.md",
+          "security-controls-and-assets.md"
+        ],
+        "assets": []
+      }
+    },
+    {
+      "id": "sentry",
+      "name": "sentry",
+      "description": "Use when the user asks to inspect Sentry issues or events, summarize recent production errors, or pull basic Sentry health data via the Sentry API; perform read-only queries with the bundled script and require `SENTRY_AUTH_TOKEN`.",
+      "path": "/Users/test1/.codex/skills/sentry",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "sentry_api.py"
+        ],
+        "references": [],
+        "assets": [
+          "sentry-small.svg",
+          "sentry.png"
+        ]
+      }
+    },
+    {
+      "id": "sora",
+      "name": "sora",
+      "description": "Use when the user asks to generate, remix, poll, list, download, or delete Sora videos via OpenAI\\u2019s video API using the bundled CLI (`scripts/sora.py`), including requests like \\u201cgenerate AI video,\\u201d \\u201cSora,\\u201d \\u201cvideo remix,\\u201d \\u201cdownload video/thumbnail/spritesheet,\\u201d and batch video generation; requires `OPENAI_API_KEY` and Sora API access.",
+      "path": "/Users/test1/.codex/skills/sora",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "sora.py"
+        ],
+        "references": [
+          "cinematic-shots.md",
+          "cli.md",
+          "codex-network.md",
+          "prompting.md",
+          "sample-prompts.md",
+          "social-ads.md",
+          "troubleshooting.md",
+          "video-api.md"
+        ],
+        "assets": [
+          "sora-small.svg",
+          "sora.png"
+        ]
+      }
+    },
+    {
+      "id": "speech",
+      "name": "speech",
+      "description": "Use when the user asks for text-to-speech narration or voiceover, accessibility reads, audio prompts, or batch speech generation via the OpenAI Audio API; run the bundled CLI (`scripts/text_to_speech.py`) with built-in voices and require `OPENAI_API_KEY` for live calls. Custom voice creation is out of scope.",
+      "path": "/Users/test1/.codex/skills/speech",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "text_to_speech.py"
+        ],
+        "references": [
+          "accessibility.md",
+          "audio-api.md",
+          "cli.md",
+          "codex-network.md",
+          "ivr.md",
+          "narration.md",
+          "prompting.md",
+          "sample-prompts.md",
+          "voice-directions.md",
+          "voiceover.md"
+        ],
+        "assets": [
+          "speech-small.svg",
+          "speech.png"
+        ]
+      }
+    },
+    {
+      "id": "spreadsheet",
+      "name": "spreadsheet",
+      "description": "Use when tasks involve creating, editing, analyzing, or formatting spreadsheets (`.xlsx`, `.csv`, `.tsv`) using Python (`openpyxl`, `pandas`), especially when formulas, references, and formatting need to be preserved and verified.",
+      "path": "/Users/test1/.codex/skills/spreadsheet",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "spreadsheet-small.svg",
+          "spreadsheet.png"
+        ]
+      }
+    },
+    {
+      "id": "transcribe",
+      "name": "transcribe",
+      "description": "Transcribe audio files to text with optional diarization and known-speaker hints. Use when a user asks to transcribe speech from audio/video, extract text from recordings, or label speakers in interviews or meetings.",
+      "path": "/Users/test1/.codex/skills/transcribe",
+      "tags": [
+        "scripts",
+        "references",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "transcribe_diarize.py"
+        ],
+        "references": [
+          "api.md"
+        ],
+        "assets": [
+          "transcribe-small.svg",
+          "transcribe.png"
+        ]
+      }
+    },
+    {
+      "id": "vercel-deploy",
+      "name": "vercel-deploy",
+      "description": "Deploy applications and websites to Vercel. Use when the user requests deployment actions like \"deploy my app\", \"deploy and give me the link\", \"push this live\", or \"create a preview deployment\".",
+      "path": "/Users/test1/.codex/skills/vercel-deploy",
+      "tags": [
+        "scripts",
+        "assets"
+      ],
+      "resources": {
+        "scripts": [
+          "deploy.sh"
+        ],
+        "references": [],
+        "assets": [
+          "vercel-small.svg",
+          "vercel.png"
+        ]
+      }
+    },
+    {
+      "id": "yeet",
+      "name": "yeet",
+      "description": "Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitHub CLI (`gh`).",
+      "path": "/Users/test1/.codex/skills/yeet",
+      "tags": [
+        "assets"
+      ],
+      "resources": {
+        "scripts": [],
+        "references": [],
+        "assets": [
+          "yeet-small.svg",
+          "yeet.png"
+        ]
+      }
+    }
+  ],
+  "errors": [
+    {
+      "path": "/Users/test1/.codex/skills/.system",
+      "code": "unknown_skill_parse_error",
+      "message": "ENOENT: no such file or directory, open '/Users/test1/.codex/skills/.system/SKILL.md'"
+    }
+  ]
+}

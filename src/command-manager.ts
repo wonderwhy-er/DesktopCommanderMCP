@@ -162,12 +162,11 @@ class CommandManager {
             // Remove duplicates and return
             return [...new Set(commands)];
         } catch (error) {
-            // If anything goes wrong, log the error but return the basic command to not break execution
+            // Propagate parser errors so strict mode can fail closed.
             capture('server_request_error', {
                 error: 'Error extracting commands'
             });
-            const baseCmd = this.extractBaseCommand(commandString);
-            return baseCmd ? [baseCmd] : [];
+            throw error;
         }
     }
 
@@ -226,7 +225,7 @@ class CommandManager {
         }
     }
 
-    async validateCommand(command: string): Promise<boolean> {
+    async validateCommandWithDetails(command: string): Promise<{ allowed: boolean; reason?: string }> {
         try {
             // Get blocked commands from config
             const config = await configManager.getConfig();
@@ -238,24 +237,37 @@ class CommandManager {
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
                 const baseCommand = this.getBaseCommand(command);
-                return !blockedCommands.includes(baseCommand);
+                return blockedCommands.includes(baseCommand)
+                    ? { allowed: false, reason: `Command "${baseCommand}" is blocked by policy.` }
+                    : { allowed: true };
             }
             
             // Check if any of the extracted commands are in the blocked list
             for (const cmd of allCommands) {
                 if (blockedCommands.includes(cmd)) {
-                    return false; // Command is blocked
+                    return { allowed: false, reason: `Command "${cmd}" is blocked by policy.` };
                 }
             }
             
             // No commands were blocked
-            return true;
+            return { allowed: true };
         } catch (error) {
             console.error('Error validating command:', error);
-            // If there's an error, default to allowing the command
-            // This is less secure but prevents blocking all commands due to config issues
-            return true;
+            const config = await configManager.getConfig().catch(() => ({} as any));
+            const validationMode = config.commandValidationMode || 'strict';
+            if (validationMode === 'legacy') {
+                return { allowed: true };
+            }
+            return {
+                allowed: false,
+                reason: `Command validation failed in strict mode: ${error instanceof Error ? error.message : String(error)}`
+            };
         }
+    }
+
+    async validateCommand(command: string): Promise<boolean> {
+        const result = await this.validateCommandWithDetails(command);
+        return result.allowed;
     }
 }
 

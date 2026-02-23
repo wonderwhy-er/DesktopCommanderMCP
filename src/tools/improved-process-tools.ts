@@ -116,10 +116,13 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     });
   }
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command);
-  if (!isAllowed) {
+  const validation = await commandManager.validateCommandWithDetails(parsed.data.command);
+  if (!validation.allowed) {
     return {
-      content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
+      content: [{
+        type: "text",
+        text: `Error: Command not allowed: ${parsed.data.command}\n${validation.reason || 'Blocked by command policy.'}`
+      }],
       isError: true,
     };
   }

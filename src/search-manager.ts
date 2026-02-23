@@ -843,10 +843,12 @@ function startCleanupIfNeeded(): void {
     cleanupInterval = setInterval(() => {
       searchManager.cleanupSessions();
     }, 5 * 60 * 1000);
+    cleanupInterval.unref();
     
     // Also check immediately after a short delay (let search process finish)
-    setTimeout(() => {
+    const immediateCleanupTimer = setTimeout(() => {
       searchManager.cleanupSessions();
     }, 1000);
+    immediateCleanupTimer.unref();
   }
 }

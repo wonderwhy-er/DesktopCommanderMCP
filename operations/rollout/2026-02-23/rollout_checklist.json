@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-23T11:58:50.821Z",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "hostname": "Kriss-MacBook-Pro.local"
+  },
+  "checklist": [
+    "Preflight: confirm sandbox/approvals for this environment (approval_policy, sandbox_mode, network_access).",
+    "Config: set skillsEnabled=true (keep skillExecutionMode=confirm for first execute).",
+    "Config: ensure commandValidationMode=\"strict\".",
+    "Gate: read dc://skills/eval-gate and confirm thresholds and current stats.",
+    "Dry run: run_skill(mode=plan) for representative skills and confirm deterministic plan.",
+    "Confirm flow: run_skill(mode=execute) should enter waiting_approval, then approve_skill_run to execute.",
+    "Verify: check get_skill_run state transitions and executionSummary.passed.",
+    "Safety: confirm blocked commands/operators remain blocked; check reason codes on failures.",
+    "Privacy: confirm tool logs are redacted/metadata and no sensitive payloads are stored.",
+    "Rollout: run only in opt-in environment until eval gate passes sample+rate thresholds.",
+    "Rollback: set skillExecutionMode=plan_only or disable skillsEnabled to fail closed."
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "thresholds": {
+    "evalGateEnabled": true,
+    "minPassRate": 0.95,
+    "minSampleSize": 50
+  },
+  "stats": {
+    "totalRuns": 3,
+    "passedRuns": 3,
+    "failedRuns": 0,
+    "passRate": 1,
+    "lastUpdatedAt": "2026-02-23T12:01:36.602Z"
+  },
+  "decision": {
+    "allowed": false,
+    "reasonCode": "eval_gate_blocked",
+    "message": "Execute mode blocked by eval gate: sample size 3/50."
+  }
+}

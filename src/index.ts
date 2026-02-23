@@ -7,7 +7,7 @@ import { configManager } from './config-manager.js';
 import { featureFlagManager } from './utils/feature-flags.js';
 import { runSetup } from './npm-scripts/setup.js';
 import { runUninstall } from './npm-scripts/uninstall.js';
-import { capture } from './utils/capture.js';
+import { capture, warnIfTelemetryEnvMissing } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
@@ -58,6 +58,7 @@ async function runServer() {
       deferLog('info', 'Loading configuration...');
       await configManager.loadConfig();
       deferLog('info', 'Configuration loaded successfully');
+      await warnIfTelemetryEnvMissing();
 
       // Initialize feature flags (non-blocking)
       deferLog('info', 'Initializing feature flags...');

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-02-23T11:58:50.758Z",
+  "thresholds": {
+    "skillExecuteEvalGateEnabled": true,
+    "skillExecuteMinPassRate": 0.95,
+    "skillExecuteMinSampleSize": 50,
+    "skillsEnabled": true
+  },
+  "notes": [
+    "This script reads configured thresholds only.",
+    "Live eval-gate decision and in-memory stats are exposed by Desktop Commander MCP resource: dc://skills/eval-gate",
+    "If execute is blocked by eval_gate_blocked, the fix is to increase sample size and/or pass rate via successful execute runs in opt-in environments."
+  ]
+}
