@@ -4,23 +4,23 @@
 :root {
   --code-bg: var(--panel);
   --code-text: var(--color-text-primary, var(--text));
-  --hljs-keyword: var(--color-text-accent, #8b5cf6);
-  --hljs-string: var(--color-text-success, #059669);
-  --hljs-comment: var(--color-text-tertiary, #94a3b8);
-  --hljs-type: var(--color-text-info, #0f766e);
-  --hljs-number: var(--color-text-warning, #b45309);
-  --hljs-attr: var(--color-text-info, #2563eb);
-  --hljs-built-in: var(--color-text-accent, #6366f1);
-  --hljs-tag: var(--color-text-info, #0ea5a8);
+  --hljs-keyword: light-dark(#8b5cf6, #a78bfa);
+  --hljs-string: var(--color-text-success, light-dark(#059669, #34d399));
+  --hljs-comment: var(--color-text-tertiary, light-dark(#94a3b8, #64748b));
+  --hljs-type: var(--color-text-info, light-dark(#0f766e, #5eead4));
+  --hljs-number: var(--color-text-warning, light-dark(#b45309, #fbbf24));
+  --hljs-attr: var(--color-text-info, light-dark(#2563eb, #60a5fa));
+  --hljs-built-in: light-dark(#6366f1, #818cf8);
+  --hljs-tag: var(--color-text-info, light-dark(#0ea5a8, #67e8f9));
   --content-height: min(82vh, 920px);
   --markdown-text: var(--text);
   --markdown-muted: var(--text-secondary);
   --inline-code-bg: var(--panel-subtle);
   --inline-code-border: var(--border);
   --inline-code-text: var(--text);
-  --notice-bg: var(--warning-bg);
-  --notice-border: var(--warning-border);
-  --notice-text: var(--warning-text);
+  --notice-bg: var(--panel-subtle);
+  --notice-border: var(--border);
+  --notice-text: var(--text-secondary);
 }
 
 /* ── Compact row ── */
@@ -79,17 +79,24 @@
   overflow: hidden;
 }
 
-@media (prefers-color-scheme: dark) {
-  .panel {
-    background: color-mix(in srgb, var(--panel), white 6%);
-  }
-}
-
-[data-theme="dark"] .panel {
-  background: color-mix(in srgb, var(--panel), white 6%);
-}
+/* Panel background comes directly from host --color-background-primary.
+   No dark-mode adjustment — the host provides the correct color. */
 
 .tool-shell.collapsed .panel { display: none; }
+
+/* When the host hides the summary row (hideSummaryRow: true), it means the host
+   provides its own outer frame/card. Strip inner chrome so only content remains. */
+.tool-shell.host-framed .compact-row { display: none; }
+.tool-shell.host-framed .panel {
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.tool-shell.host-framed .panel-topbar { display: none; }
+.tool-shell.host-framed .panel-footer { display: none; }
+.tool-shell.host-framed .panel-content-wrapper { max-height: none; overflow: hidden; }
+.tool-shell.host-framed .image-content { background: transparent; }
 
 /* ── Top bar ── */
 
@@ -223,9 +230,7 @@
 
 .image-preview {
   width: 100%;
-  height: var(--content-height);
   max-width: 920px;
-  max-height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -233,7 +238,7 @@
 
 .image-preview img {
   max-width: 100%;
-  max-height: 100%;
+  max-height: var(--content-height);
   object-fit: contain;
   border-radius: 8px;
   border: 1px solid var(--border);

@@ -7,6 +7,7 @@ interface UiHostLifecycleOptions {
   appName: string;
   appVersion?: string;
   getRootElement?: () => Element | null;
+  onHostContext?: (hostContext: Record<string, unknown>) => void;
 }
 
 export interface UiHostLifecycle {
@@ -16,7 +17,7 @@ export interface UiHostLifecycle {
 }
 
 export function createUiHostLifecycle(rpcClient: RpcClient, options: UiHostLifecycleOptions): UiHostLifecycle {
-  const { appName, appVersion = '1.0.0', getRootElement } = options;
+  const { appName, appVersion = '1.0.0', getRootElement, onHostContext } = options;
   const resolveRootElement = (): Element | null => getRootElement?.() ?? (document.getElementById('app')?.firstElementChild ?? document.getElementById('app'));
 
   const notifySizeChanged = (): void => {
@@ -42,7 +43,13 @@ export function createUiHostLifecycle(rpcClient: RpcClient, options: UiHostLifec
         appInfo: { name: appName, version: appVersion },
         appCapabilities: {},
         protocolVersion: '2026-01-26',
-      }).then(() => {
+      }).then((response: unknown) => {
+        if (onHostContext && response !== null && typeof response === 'object') {
+          const hostContext = (response as Record<string, unknown>).hostContext;
+          if (hostContext !== null && typeof hostContext === 'object') {
+            onHostContext(hostContext as Record<string, unknown>);
+          }
+        }
         rpcClient.notify('ui/notifications/initialized', {});
       }).catch(() => {
         // Initialization handshake failure should not break rendering.
