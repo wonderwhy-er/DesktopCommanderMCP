@@ -28,7 +28,7 @@ function resolveThemeFrameStyles(): { background: string; text: string; fontFami
 function renderSandboxedHtmlFrame(content: string): string {
     const palette = resolveThemeFrameStyles();
     const frameDocument = `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:${palette.background};color:${palette.text};}body{font-family:${palette.fontFamily};padding:16px;line-height:1.5;}img{max-width:100%;height:auto;}</style></head><body>${content}</body></html>`;
-    return `<iframe class="html-rendered-frame" title="Rendered HTML preview" sandbox="allow-scripts allow-forms allow-popups allow-same-origin" referrerpolicy="no-referrer" srcdoc="${escapeHtml(frameDocument)}"></iframe>`;
+    return `<iframe class="html-rendered-frame" title="Rendered HTML preview" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" srcdoc="${escapeHtml(frameDocument)}"></iframe>`;
 }
 
 export function renderHtmlPreview(content: string, mode: HtmlPreviewMode): { html: string; notice?: string } {

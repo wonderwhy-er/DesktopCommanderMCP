@@ -57,7 +57,7 @@
 .tool-shell.expanded .compact-chevron { transform: rotate(90deg); }
 
 .compact-label { color: inherit; }
-.compact-filename { color: var(--text-secondary); font-weight: 500; }
+.compact-filename { color: var(--text); font-weight: 600; }
 .compact-row--ready .compact-label::after { content: ' · '; }
 
 .compact-row--loading {
