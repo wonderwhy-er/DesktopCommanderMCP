@@ -136,6 +136,54 @@
       "description": "Open feedback form in browser to provide feedback about Desktop Commander."
     },
     {
+      "name": "macos_ax_status",
+      "description": "Check macOS Accessibility automation status, helper readiness, and permissions."
+    },
+    {
+      "name": "macos_ax_list_apps",
+      "description": "List regular macOS apps available for Accessibility control."
+    },
+    {
+      "name": "macos_ax_find",
+      "description": "Find interactive macOS Accessibility elements in an app with text/role filtering."
+    },
+    {
+      "name": "macos_ax_click",
+      "description": "Click a macOS Accessibility element by stable id or by app+text lookup."
+    },
+    {
+      "name": "macos_ax_type",
+      "description": "Type text with macOS keyboard event injection."
+    },
+    {
+      "name": "macos_ax_key",
+      "description": "Press a key with optional modifiers using macOS keyboard events."
+    },
+    {
+      "name": "macos_ax_activate",
+      "description": "Activate a macOS app window by name or PID."
+    },
+    {
+      "name": "macos_ax_wait_for",
+      "description": "Wait for a matching macOS Accessibility element to appear."
+    },
+    {
+      "name": "macos_ax_batch",
+      "description": "Run a sequence of macOS Accessibility actions in one request."
+    },
+    {
+      "name": "electron_debug_attach",
+      "description": "Attach to an Electron/Chromium CDP endpoint and create a debug session."
+    },
+    {
+      "name": "electron_debug_eval",
+      "description": "Evaluate JavaScript through an attached Electron debug session."
+    },
+    {
+      "name": "electron_debug_disconnect",
+      "description": "Disconnect an existing Electron debug session."
+    },
+    {
       "name": "get_prompts",
       "description": "Browse and retrieve curated Desktop Commander prompts for various tasks and workflows."
     }

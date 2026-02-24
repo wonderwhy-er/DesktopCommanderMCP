@@ -25,6 +25,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Remote MCP (ChatGPT, Claude Web)](#remote-mcp-chatgpt-claude-web)
 - [Getting Started](#getting-started)
 - [Usage](#usage)
+- [macOS Accessibility + Electron Debug Control](#macos-accessibility--electron-debug-control)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#roadmap)
 - [Sponsors and Supporters](#support-desktop-commander)
@@ -452,6 +453,18 @@ The server provides a comprehensive set of tools organized into several categori
 | | `list_sessions` | List all active terminal sessions |
 | | `list_processes` | List all running processes with detailed information |
 | | `kill_process` | Terminate a running process by PID |
+| **macOS Control** | `macos_ax_status` | Check macOS Accessibility helper status, permissions, and diagnostics |
+| | `macos_ax_list_apps` | List macOS apps available for Accessibility automation |
+| | `macos_ax_find` | Find interactive Accessibility elements in an app using text/role filters |
+| | `macos_ax_click` | Click Accessibility elements by stable id or app+text lookup |
+| | `macos_ax_type` | Type text with keyboard event injection |
+| | `macos_ax_key` | Press key combinations (e.g. cmd+c, cmd+v, return) |
+| | `macos_ax_activate` | Bring an app to front by name or PID |
+| | `macos_ax_wait_for` | Wait for a matching UI element to appear |
+| | `macos_ax_batch` | Execute multi-step AX automations in one call |
+| **Electron Debugger** | `electron_debug_attach` | Attach to a CDP endpoint (Electron/Chromium debug port) |
+| | `electron_debug_eval` | Evaluate JavaScript through an attached CDP session |
+| | `electron_debug_disconnect` | Disconnect an active CDP session |
 | **Filesystem** | `read_file` | Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), and PDFs with line/page-based pagination |
 | | `read_multiple_files` | Read multiple files simultaneously |
 | | `write_file` | Write file contents with options for rewrite or append mode. Supports Excel files (JSON 2D array format). For PDFs, use `write_pdf` |
@@ -781,6 +794,46 @@ Troubleshooting:
 - If Claude times out while trying to use the debug server, your debugger might not be properly connected
 - When properly connected, the process will continue execution after hitting the first breakpoint
 - You can add additional breakpoints in your IDE once connected
+
+## macOS Accessibility + Electron Debug Control
+
+Desktop Commander now includes a macOS native Accessibility helper and a minimal Electron CDP adapter.
+
+### Setup
+
+1. Build helper binaries on macOS:
+```bash
+./build-macos-helper.sh
+```
+
+2. Grant Accessibility permission to the MCP host process:
+- System Settings → Privacy & Security → Accessibility
+
+3. Verify status:
+- Call `macos_ax_status` and confirm `hasPermission: true`
+
+### Core tool flow
+
+1. `macos_ax_list_apps`
+2. `macos_ax_find`
+3. `macos_ax_click`
+4. `macos_ax_wait_for` for async UI transitions
+5. `macos_ax_batch` for multi-step actions
+
+For Electron apps launched with `--remote-debugging-port`:
+1. `electron_debug_attach`
+2. `electron_debug_eval`
+3. `electron_debug_disconnect`
+
+### Tests
+
+```bash
+node test/test-macos-control.js
+node test/test-electron-debug.js
+```
+
+Detailed guide: `macos-control.md`  
+Known caveats: `known-limitations.md`
 
 ## Model Context Protocol Integration
 

@@ -58,3 +58,8 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+.build/
+.claude
+.build/
+bin/macos/macos-ax-helper-darwin-arm64
+bin/macos/macos-ax-helper-darwin-x64

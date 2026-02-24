@@ -52,6 +52,8 @@ This document provides answers to the most commonly asked questions about Claude
 
 - [Troubleshooting](#troubleshooting)
   - [Claude says it doesn't have permission to access my files/directories](#claude-says-it-doesnt-have-permission-to-access-my-filesdirectories)
+  - [macOS Accessibility tools return permission errors](#macos-accessibility-tools-return-permission-errors)
+  - [Electron debug tools cannot attach](#electron-debug-tools-cannot-attach)
   - [Claude keeps hitting token/output limits](#claude-keeps-hitting-tokenoutput-limits)
   - [Installation fails on my system](#installation-fails-on-my-system)
 
@@ -484,6 +486,27 @@ Recent updates have removed directory restrictions. If you're still experiencing
 2. Restart Claude Desktop completely
 3. When Claude asks for permission to use tools, approve for the entire chat
 4. Check if there are any specific permission issues with the directory in question (file permissions, etc.)
+
+### macOS Accessibility tools return permission errors
+
+If `macos_ax_*` tools fail with permission messages:
+1. Open **System Settings → Privacy & Security → Accessibility**
+2. Ensure the process running Desktop Commander MCP is enabled
+3. Restart Claude/Desktop Commander after changing permissions
+4. Run `macos_ax_status` to confirm `hasPermission: true`
+
+If helper binary issues are reported, build native binaries with:
+```bash
+./build-macos-helper.sh
+```
+
+### Electron debug tools cannot attach
+
+If `electron_debug_attach` fails:
+1. Launch the target app with a debug port enabled (for example `--remote-debugging-port=9222`)
+2. Confirm endpoint is reachable at `http://127.0.0.1:9222/json/list`
+3. Use the correct host/port in `electron_debug_attach`
+4. Disconnect stale sessions with `electron_debug_disconnect` and retry
 
 ### Claude keeps hitting token/output limits
 

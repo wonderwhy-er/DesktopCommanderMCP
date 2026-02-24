@@ -140,7 +140,7 @@ export const EditBlockArgsSchema = z.object({
   data => {
     // Helper to check if value is actually provided (not undefined, not empty string)
     const hasValue = (v: unknown) => v !== undefined && v !== '';
-    return (hasValue(data.old_string) && data.new_string !== undefined) ||
+    return (hasValue(data.old_string) && hasValue(data.new_string)) ||
            (hasValue(data.range) && hasValue(data.content));
   },
   { message: "Must provide either (old_string + new_string) or (range + content)" }
@@ -214,4 +214,137 @@ export const TrackUiEventArgsSchema = z.object({
   event: z.string().min(1).max(80),
   component: z.string().optional().default('file_preview'),
   params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
+});
+
+// macOS control schemas
+export const MacosAxStatusArgsSchema = z.object({});
+
+export const MacosAxListAppsArgsSchema = z.object({});
+
+export const MacosAxListElementsArgsSchema = z.object({
+  scope: z.enum(['top_window', 'app', 'all']).optional(),
+  app: z.string().optional(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+}).refine(
+  data => data.scope !== 'app' || !!data.app,
+  { message: 'Provide app when scope=app' }
+);
+
+export const MacosAxFindArgsSchema = z.object({
+  app: z.string(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  index: z.number().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+}).refine(
+  data => !!data.text || !!data.role,
+  { message: 'Provide text or role' }
+);
+
+export const MacosAxGetStateArgsSchema = z.object({
+  app: z.string(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  index: z.number().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+}).refine(
+  data => !!data.text || !!data.role,
+  { message: 'Provide text or role' }
+);
+
+export const MacosAxFindAndClickArgsSchema = z.object({
+  app: z.string(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  index: z.number().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+  timeout_ms: z.number().optional(),
+  if_exists: z.boolean().optional(),
+}).refine(
+  data => !!data.text || !!data.role,
+  { message: 'Provide text or role' }
+);
+
+export const MacosAxClickArgsSchema = z.object({
+  id: z.string().optional(),
+  app: z.string().optional(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  index: z.number().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+}).refine(
+  data => !!data.id || (!!data.app && !!data.text),
+  { message: 'Provide either id, or app+text' }
+);
+
+export const MacosAxTypeArgsSchema = z.object({
+  text: z.string(),
+});
+
+export const MacosAxKeyArgsSchema = z.object({
+  key: z.string(),
+  modifiers: z.array(z.string()).optional().default([]),
+});
+
+export const MacosAxActivateArgsSchema = z.object({
+  app: z.string(),
+});
+
+export const MacosAxWaitForArgsSchema = z.object({
+  app: z.string(),
+  text: z.string(),
+  role: z.string().optional(),
+  timeout_ms: z.number().optional(),
+  depth: z.number().optional(),
+});
+
+export const MacosAxBatchCommandSchema = z.object({
+  action: z.enum(['activate', 'find', 'click', 'find_and_click', 'type', 'key', 'wait', 'wait_for', 'get_state', 'scroll']),
+  app: z.string().optional(),
+  text: z.string().optional(),
+  role: z.string().optional(),
+  id: z.string().optional(),
+  timeout_ms: z.number().optional(),
+  depth: z.number().optional(),
+  limit: z.number().optional(),
+  key: z.string().optional(),
+  modifiers: z.array(z.string()).optional(),
+  index: z.number().optional(),
+  if_exists: z.boolean().optional(),
+  ms: z.number().optional(),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  direction: z.enum(['up', 'down']).optional(),
+  amount: z.number().int().optional(),
+});
+
+export const MacosAxBatchArgsSchema = z.object({
+  commands: z.array(MacosAxBatchCommandSchema),
+  stopOnError: z.boolean().optional().default(true),
+});
+
+// Electron debug schemas
+export const ElectronDebugAttachArgsSchema = z.object({
+  host: z.string().optional(),
+  port: z.number().optional(),
+  targetIndex: z.number().optional(),
+  targetId: z.string().optional(),
+});
+
+export const ElectronDebugEvalArgsSchema = z.object({
+  sessionId: z.string(),
+  expression: z.string(),
+  returnByValue: z.boolean().optional(),
+  awaitPromise: z.boolean().optional(),
+});
+
+export const ElectronDebugDisconnectArgsSchema = z.object({
+  sessionId: z.string(),
 });

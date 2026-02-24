@@ -12,7 +12,6 @@ import { ImageFileHandler } from './image.js';
 import { BinaryFileHandler } from './binary.js';
 import { ExcelFileHandler } from './excel.js';
 import { PdfFileHandler } from './pdf.js';
-import { DocxFileHandler } from './docx.js';
 
 // Singleton instances of each handler
 let excelHandler: ExcelFileHandler | null = null;
@@ -20,7 +19,6 @@ let imageHandler: ImageFileHandler | null = null;
 let textHandler: TextFileHandler | null = null;
 let binaryHandler: BinaryFileHandler | null = null;
 let pdfHandler: PdfFileHandler | null = null;
-let docxHandler: DocxFileHandler | null = null;
 
 /**
  * Initialize handlers (lazy initialization)
@@ -50,11 +48,6 @@ function getPdfHandler(): PdfFileHandler {
     return pdfHandler;
 }
 
-function getDocxHandler(): DocxFileHandler {
-    if (!docxHandler) docxHandler = new DocxFileHandler();
-    return docxHandler;
-}
-
 /**
  * Get the appropriate file handler for a given file path
  *
@@ -63,23 +56,17 @@ function getDocxHandler(): DocxFileHandler {
  * BinaryFileHandler uses async isBinaryFile for content-based detection.
  *
  * Priority order:
- * 1. DOCX files (extension based)
- * 2. PDF files (extension based)
- * 3. Excel files (xlsx, xls, xlsm) - extension based
- * 4. Image files (png, jpg, gif, webp) - extension based
- * 5. Binary files - content-based detection via isBinaryFile
- * 6. Text files (default)
+ * 1. PDF files (extension based)
+ * 2. Excel files (xlsx, xls, xlsm) - extension based
+ * 3. Image files (png, jpg, gif, webp) - extension based
+ * 4. Binary files - content-based detection via isBinaryFile
+ * 5. Text files (default)
  *
  * @param filePath File path to get handler for
  * @returns FileHandler instance that can handle this file
  */
 export async function getFileHandler(filePath: string): Promise<FileHandler> {
-    // Check DOCX first (extension-based, sync)
-    if (getDocxHandler().canHandle(filePath)) {
-        return getDocxHandler();
-    }
-
-    // Check PDF (extension-based, sync)
+    // Check PDF first (extension-based, sync)
     if (getPdfHandler().canHandle(filePath)) {
         return getPdfHandler();
     }

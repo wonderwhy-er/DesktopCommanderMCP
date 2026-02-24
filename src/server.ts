@@ -50,6 +50,21 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    MacosAxStatusArgsSchema,
+    MacosAxListAppsArgsSchema,
+    MacosAxListElementsArgsSchema,
+    MacosAxFindArgsSchema,
+    MacosAxGetStateArgsSchema,
+    MacosAxFindAndClickArgsSchema,
+    MacosAxClickArgsSchema,
+    MacosAxTypeArgsSchema,
+    MacosAxKeyArgsSchema,
+    MacosAxActivateArgsSchema,
+    MacosAxWaitForArgsSchema,
+    MacosAxBatchArgsSchema,
+    ElectronDebugAttachArgsSchema,
+    ElectronDebugEvalArgsSchema,
+    ElectronDebugDisconnectArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
@@ -316,19 +331,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - PDF: Extracts text content as markdown with page structure
                           * offset/length work as page pagination (0-based)
                           * Includes embedded images when available
-                        - DOCX (.docx): Two modes depending on parameters:
-                          * DEFAULT (no offset/length): Returns a text-bearing outline — shows paragraphs with text,
-                            tables with cell content, styles, image refs. Skips shapes/drawings/SVG noise.
-                            Each element shows its body index [0], [1], etc.
-                          * WITH offset/length: Returns raw pretty-printed XML with line pagination.
-                            Use this to drill into specific sections or see the actual XML for editing.
-                          * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
-                            to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
-                            using XML fragments copied from the read output.
-                          * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
-                            offset=0 always returns the outline regardless of length.
-                          * For BULK changes (translation, mass replacements): use start_process with Python
-                            zipfile module to find/replace all <w:t> elements at once.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -366,8 +368,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Write or append to file contents.
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
-                        DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
-                        To CREATE a new DOCX, use write_file with .docx extension — text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
 
                         CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
                         This is the normal, recommended way to write files - not an emergency measure.
@@ -747,17 +747,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - new_string: Replacement text
                         - expected_replacements: Optional number of replacements (default: 1)
 
-                        DOCX FILES (.docx) - XML Find/Replace mode:
-                        Takes same parameters as text files (old_string, new_string, expected_replacements).
-                        Operates on the pretty-printed XML inside the DOCX — the same XML you see from
-                        read_file with offset/length. Copy XML fragments from read output as old_string.
-                        After editing, the XML is repacked into a valid DOCX.
-                        Also searches headers/footers if not found in document body.
-                        Examples:
-                        - Replace text: old_string="<w:t>Old Text</w:t>" new_string="<w:t>New Text</w:t>"
-                        - Change style: old_string='<w:pStyle w:val="Normal"/>' new_string='<w:pStyle w:val="Heading1"/>'
-                        - Add content: include surrounding XML context in old_string, add new elements in new_string
-
                         By default, replaces only ONE occurrence of the search text.
                         To replace multiple occurrences, provide expected_replacements with
                         the exact number of matches expected.
@@ -1003,6 +992,287 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "List Terminal Sessions",
                     readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_status",
+                description: `
+                        Check macOS accessibility control status.
+
+                        Returns:
+                        - whether Accessibility permissions are granted
+                        - helper binary path/version details
+                        - process info for permission troubleshooting
+
+                        Use this first when AX tools fail unexpectedly (permission/helper issues).
+
+                        This tool is macOS-only and returns an unsupported-platform error elsewhere.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxStatusArgsSchema),
+                annotations: {
+                    title: "macOS AX Status",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_list_apps",
+                description: `
+                        List regular (windowed) macOS applications available for AX automation.
+                        
+                        Returns app names and PIDs for use with other macOS AX tools.
+                        Use this when the app name is unclear or to avoid partial-name mistakes.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxListAppsArgsSchema),
+                annotations: {
+                    title: "macOS AX List Apps",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_find",
+                description: `
+                        Find interactive accessibility elements in a target app using text and/or role filters.
+                        
+                        Inputs:
+                        - app: app name or PID
+                        - text: optional case-insensitive partial text
+                        - role: optional AX role or alias (toggle, button, input, etc.)
+                        - index/depth/limit: optional search controls
+
+                        Important:
+                        - At least one of text or role is required
+                        - Role-only search is supported (for unlabeled controls)
+                        - If the control is unknown/unlabeled, use macos_ax_list_elements first
+                        - Prefer macos_ax_find_and_click when you want immediate click after find
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxFindArgsSchema),
+                annotations: {
+                    title: "macOS AX Find",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_list_elements",
+                description: `
+                        Inspect interactive accessibility elements with optional scope/app/text/role filters.
+
+                        Use this when the target control is unlabeled or unknown. This is the primary UI inspection tool for macOS AX automation.
+                        Prefer this over repeated guess-based macos_ax_find calls.
+
+                        Scopes:
+                        - top_window (default)
+                        - app (requires app)
+                        - all
+
+                        Typical workflow:
+                        1. macos_ax_activate (optional)
+                        2. macos_ax_list_elements (inspect current pane)
+                        3. macos_ax_get_state or macos_ax_find_and_click
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxListElementsArgsSchema),
+                annotations: {
+                    title: "macOS AX List Elements",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_get_state",
+                description: `
+                        Find a UI element and return state fields (checked/selected/text) without clicking.
+
+                        Useful for idempotent flows like toggles in System Settings.
+                        Supports role-only lookups for unlabeled controls (for example role=toggle).
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxGetStateArgsSchema),
+                annotations: {
+                    title: "macOS AX Get State",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_find_and_click",
+                description: `
+                        Find a UI element by text and/or role, then click it immediately.
+
+                        Reduces stale-id issues and returns the matched element plus click result.
+                        Prefer this over separate find + click when you do not need to inspect the element first.
+                        Supports role-only search, index selection, and optional timeout polling.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxFindAndClickArgsSchema),
+                annotations: {
+                    title: "macOS AX Find and Click",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "macos_ax_click",
+                description: `
+                        Click a macOS UI element by stable AX id, or by app+text search.
+
+                        Preferred usage:
+                        1. macos_ax_list_elements or macos_ax_find to discover element id
+                        2. macos_ax_click with that id
+
+                        Includes stale-id refind fallback when possible.
+                        If you are locating and clicking in one step, prefer macos_ax_find_and_click.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxClickArgsSchema),
+                annotations: {
+                    title: "macOS AX Click",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "macos_ax_type",
+                description: `
+                        Type text via macOS keyboard event injection into the currently focused element.
+
+                        Use macos_ax_click or macos_ax_find_and_click first to focus the target input.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxTypeArgsSchema),
+                annotations: {
+                    title: "macOS AX Type",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "macos_ax_key",
+                description: `
+                        Press a keyboard key with optional modifiers (cmd/shift/alt/ctrl) via macOS event injection.
+
+                        Useful for navigation and shortcuts after focus is already on the target UI.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxKeyArgsSchema),
+                annotations: {
+                    title: "macOS AX Key",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "macos_ax_activate",
+                description: `
+                        Activate (bring to front) an application by name or PID.
+
+                        Use before list/find/click when automating a background app or when focus matters.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxActivateArgsSchema),
+                annotations: {
+                    title: "macOS AX Activate App",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "macos_ax_wait_for",
+                description: `
+                        Wait for a target UI element to appear in a macOS app, polling until timeout.
+                        
+                        Useful after navigation where UI state changes asynchronously.
+                        Best when you know expected text (and optionally role).
+                        If text is unknown, use macos_ax_list_elements after a short wait.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxWaitForArgsSchema),
+                annotations: {
+                    title: "macOS AX Wait For",
+                    readOnlyHint: true,
+                },
+            },
+            {
+                name: "macos_ax_batch",
+                description: `
+                        Execute a sequence of macOS AX actions in one tool call.
+
+                        This is the preferred tool for multi-step UI automation because it reduces model round trips and runs as a single native helper request.
+
+                        Supported actions:
+                        - activate, find, click, find_and_click, get_state, scroll, type, key, wait, wait_for
+
+                        Action notes:
+                        - find/click/find_and_click/get_state support text and/or role filters
+                        - click supports id lookup or app+text/role lookup
+                        - role aliases: toggle, button, input, menu, row, link, list
+                        - use if_exists=true to skip optional UI without failing the batch
+
+                        Recommended toggle pattern:
+                        1. activate / navigate
+                        2. wait or wait_for
+                        3. get_state (role=toggle)
+                        4. click only if needed
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(MacosAxBatchArgsSchema),
+                annotations: {
+                    title: "macOS AX Batch",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "electron_debug_attach",
+                description: `
+                        Attach to an Electron/Chromium app exposing a Chrome DevTools Protocol (CDP) endpoint.
+
+                        Connects to host+port, selects a target, and returns a sessionId for subsequent calls.
+                        Use this first before electron_debug_eval.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ElectronDebugAttachArgsSchema),
+                annotations: {
+                    title: "Electron Debug Attach",
+                    readOnlyHint: false,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "electron_debug_eval",
+                description: `
+                        Evaluate JavaScript via CDP Runtime.evaluate for an attached Electron debug session.
+
+                        Use for targeted inspection or automation after electron_debug_attach returns a sessionId.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ElectronDebugEvalArgsSchema),
+                annotations: {
+                    title: "Electron Debug Eval",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: true,
+                },
+            },
+            {
+                name: "electron_debug_disconnect",
+                description: `
+                        Disconnect an active Electron debug session by sessionId.
+
+                        Call this when finished to clean up the debug session.
+                        
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ElectronDebugDisconnectArgsSchema),
+                annotations: {
+                    title: "Electron Debug Disconnect",
+                    readOnlyHint: false,
+                    openWorldHint: true,
                 },
             },
             {
@@ -1346,6 +1616,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "list_sessions":
                 result = await handlers.handleListSessions();
+                break;
+
+            // macOS control tools
+            case "macos_ax_status":
+                result = await handlers.handleMacosAxStatus(args);
+                break;
+
+            case "macos_ax_list_apps":
+                result = await handlers.handleMacosAxListApps(args);
+                break;
+
+            case "macos_ax_find":
+                result = await handlers.handleMacosAxFind(args);
+                break;
+
+            case "macos_ax_list_elements":
+                result = await handlers.handleMacosAxListElements(args);
+                break;
+
+            case "macos_ax_get_state":
+                result = await handlers.handleMacosAxGetState(args);
+                break;
+
+            case "macos_ax_find_and_click":
+                result = await handlers.handleMacosAxFindAndClick(args);
+                break;
+
+            case "macos_ax_click":
+                result = await handlers.handleMacosAxClick(args);
+                break;
+
+            case "macos_ax_type":
+                result = await handlers.handleMacosAxType(args);
+                break;
+
+            case "macos_ax_key":
+                result = await handlers.handleMacosAxKey(args);
+                break;
+
+            case "macos_ax_activate":
+                result = await handlers.handleMacosAxActivate(args);
+                break;
+
+            case "macos_ax_wait_for":
+                result = await handlers.handleMacosAxWaitFor(args);
+                break;
+
+            case "macos_ax_batch":
+                result = await handlers.handleMacosAxBatch(args);
+                break;
+
+            case "electron_debug_attach":
+                result = await handlers.handleElectronDebugAttach(args);
+                break;
+
+            case "electron_debug_eval":
+                result = await handlers.handleElectronDebugEval(args);
+                break;
+
+            case "electron_debug_disconnect":
+                result = await handlers.handleElectronDebugDisconnect(args);
                 break;
 
             // Process tools

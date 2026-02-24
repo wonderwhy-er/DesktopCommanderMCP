@@ -81,8 +81,12 @@ console.log('✅ Created manifest.json');
 // Step 5: Copy necessary files
 const filesToCopy = [
     'dist',
+    'bin',
+    'native/macos-ax-helper',
     'package.json',
     'README.md',
+    'macos-control.md',
+    'known-limitations.md',
     'LICENSE',
     'PRIVACY.md',
     'icon.png'

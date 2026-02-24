@@ -424,12 +424,6 @@ class UsageTracker {
       return false;
     }
 
-    // Check local config override (user can disable via config)
-    const localOverride = await configManager.getValue('onboarding_injection');
-    if (localOverride === false) {
-      return false;
-    }
-
     // Check if onboarding is disabled via command line argument
     if ((global as any).disableOnboarding) {
       return false;

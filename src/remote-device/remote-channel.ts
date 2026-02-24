@@ -50,30 +50,14 @@ export class RemoteChannel {
             access_token: session.access_token,
             refresh_token: session.refresh_token || ''
         });
-
-        if (error) {
-            console.error('[DEBUG] Failed to set session:', error.message);
-            await captureRemote('remote_channel_set_session_error', { error });
-            return { error };
-        }
-
         // Get user info
         const { data: { user }, error: userError } = await this.client.auth.getUser();
         if (userError) {
-            console.error('[DEBUG] Failed to get user:', userError.message);
-            await captureRemote('remote_channel_get_user_error', { error: userError });
+            console.debug('[DEBUG] Failed to get user:', userError.message);
             throw userError;
         }
-
-        if (!user) {
-            const noUserError = new Error('No user returned after setSession');
-            console.error('[DEBUG] No user returned:', noUserError.message);
-            await captureRemote('remote_channel_get_user_empty', {});
-            throw noUserError;
-        }
-
         this._user = user;
-        console.debug('[DEBUG] Session set successfully, user:', user.email);
+        console.debug('[DEBUG] Session set successfully, user:', user?.email);
 
         return { error };
     }
@@ -92,46 +76,25 @@ export class RemoteChannel {
             .eq('user_id', this.user?.id)
             .maybeSingle();
 
-        if (error) {
-            console.error('[DEBUG] Failed to find device:', error.message);
-            await captureRemote('remote_channel_find_device_error', { error });
-            throw error;
-        }
+        if (error) throw error;
         return data;
     }
 
     async updateDevice(deviceId: string, updates: any) {
         if (!this.client) throw new Error('Client not initialized');
-        const { data, error } = await this.client
+        return await this.client
             .from('mcp_devices')
             .update(updates)
-            .eq('id', deviceId)
-            .select();
-
-        if (error) {
-            console.error('[DEBUG] Failed to update device:', error.message);
-            await captureRemote('remote_channel_update_device_error', { error });
-        } else {
-            console.debug('[DEBUG] Device updated successfully');
-        }
-        return { data, error };
+            .eq('id', deviceId);
     }
 
     async createDevice(deviceData: DeviceData) {
         if (!this.client) throw new Error('Client not initialized');
-        const { data, error } = await this.client
+        return await this.client
             .from('mcp_devices')
             .insert(deviceData)
             .select()
             .single();
-
-        if (error) {
-            console.error('[DEBUG] Failed to create device:', error.message);
-            await captureRemote('remote_channel_create_device_error', { error });
-            throw error;
-        }
-        console.debug('[DEBUG] Device created successfully');
-        return { data, error };
     }
 
     async registerDevice(capabilities: any, currentDeviceId: string | undefined, deviceName: string, onToolCall: (payload: any) => void): Promise<void> {
@@ -163,17 +126,26 @@ export class RemoteChannel {
 
             // Create and subscribe to the channel
             console.debug('[DEBUG] Calling createChannel()');
-
-            // ! Ignore silently in Initialization to reconnect after
-            await this.createChannel().catch((error) => {
-                console.debug('[DEBUG] Failed to create channel, will retry after socket reconnect', error);
-            });
-
+            await this.createChannel();
         } else {
             console.error(`   - ❌ Device not found: ${currentDeviceId}`);
             await captureRemote('remote_channel_register_device_error', { error: 'Device not found', deviceId: currentDeviceId });
             throw new Error(`Device not found: ${currentDeviceId}`);
         }
+    }
+
+
+    async subscribe(deviceId: string, onToolCall: (payload: any) => void): Promise<void> {
+        if (!this.client) throw new Error('Client not initialized');
+
+        // Store parameters for channel recreation
+        this.deviceId = deviceId;
+        this.onToolCall = onToolCall;
+
+        console.debug(`⏳ Subscribing to tool call channel...`);
+
+        // Create and subscribe to the channel
+        await this.createChannel();
     }
 
     /**
@@ -223,7 +195,7 @@ export class RemoteChannel {
                         captureRemote('remote_channel_subscription_error', { error: err || 'Channel error' }).catch(() => { });
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error('⏱️ Channel subscription timed out, Reconnecting...');
+                        console.error('⏱️ Channel subscription timed out');
                         this.setOnlineStatus(this.deviceId!, 'offline');
                         captureRemote('remote_channel_subscription_timeout', {}).catch(() => { });
                         reject(new Error('Tool call channel subscription timed out'));
@@ -289,17 +261,10 @@ export class RemoteChannel {
 
     async markCallExecuting(callId: string) {
         if (!this.client) throw new Error('Client not initialized');
-        const { error } = await this.client
+        await this.client
             .from('mcp_remote_calls')
             .update({ status: 'executing' })
             .eq('id', callId);
-
-        if (error) {
-            console.error('[DEBUG] Failed to mark call executing:', error.message);
-            await captureRemote('remote_channel_mark_call_executing_error', { error });
-        } else {
-            console.debug('[DEBUG] Call marked executing:', callId);
-        }
     }
 
     async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
@@ -312,32 +277,19 @@ export class RemoteChannel {
         if (result !== null) updateData.result = result;
         if (errorMessage !== null) updateData.error_message = errorMessage;
 
-        console.debug('[DEBUG] Updating call result:', updateData);
-        const { data, error } = await this.client
+        await this.client
             .from('mcp_remote_calls')
             .update(updateData)
             .eq('id', callId);
-
-        if (error) {
-            console.error('[DEBUG] Failed to update call result:', error.message);
-            await captureRemote('remote_channel_update_call_result_error', { error });
-        } else {
-            console.debug('[DEBUG] Call result updated successfully:', data);
-        }
     }
 
     async updateHeartbeat(deviceId: string) {
         if (!this.client) return;
         try {
-            const { error } = await this.client
+            await this.client
                 .from('mcp_devices')
                 .update({ last_seen: new Date().toISOString() })
                 .eq('id', deviceId);
-
-            if (error) {
-                console.error('[DEBUG] Heartbeat update failed:', error.message);
-                await captureRemote('remote_channel_heartbeat_error', { error });
-            }
             // console.log(`🔌 Heartbeat sent for device: ${deviceId}`);
         } catch (error: any) {
             console.error('Heartbeat failed:', error.message);
@@ -384,14 +336,11 @@ export class RemoteChannel {
             .eq('id', deviceId);
 
         if (error) {
-            console.error(`[DEBUG] Failed to set status ${status}:`, error.message);
             if (status == "online") {
                 console.error('Failed to update device status:', error.message);
             }
             await captureRemote('remote_channel_status_update_error', { error, status });
             return;
-        } else {
-            console.debug(`[DEBUG] Device status set to ${status}`);
         }
 
         // console.log(status === 'online' ? `🔌 Device marked as ${status}` : `❌ Device marked as ${status}`);
