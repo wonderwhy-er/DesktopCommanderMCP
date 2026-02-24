@@ -252,9 +252,12 @@ class CommandManager {
             return true;
         } catch (error) {
             console.error('Error validating command:', error);
-            // If there's an error, default to allowing the command
-            // This is less secure but prevents blocking all commands due to config issues
-            return true;
+            capture('server_validate_command_error', {
+                error: error instanceof Error ? error.message : String(error)
+            });
+            // Fail closed: deny the command if validation encounters an error.
+            // This prevents a config read failure from bypassing all command filtering.
+            return false;
         }
     }
 }
