@@ -29,7 +29,6 @@ import {
 } from '../tools/schemas.js';
 import path from 'path';
 import os from 'os';
-import { buildUiToolMeta, FILE_PREVIEW_RESOURCE_URI } from '../ui/contracts.js';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 
 /**
@@ -137,10 +136,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                 structuredContent: {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
-                    fileType: 'unsupported',
-                    content: ''
+                    fileType: 'unsupported' as const,
                 },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
 
@@ -163,27 +160,25 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType: 'image',
-                    content: imageSummary,
                     imageData,
                     mimeType: fileResult.mimeType
-                },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
+                }
             };
         } else {
-            // For all other files, return as text
+            // For all other files, return as text.
+            // structuredContent carries only file metadata (no content duplication);
+            // the widget reads text from the MCP content array.
             const textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
-            const previewFileType = resolvePreviewFileType(resolvedFilePath);
+            const fileType = resolvePreviewFileType(resolvedFilePath);
             return {
                 content: [{ type: "text", text: textContent }],
                 structuredContent: {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
-                    fileType: previewFileType,
-                    content: textContent
+                    fileType,
                 },
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true)
             };
         }
     };

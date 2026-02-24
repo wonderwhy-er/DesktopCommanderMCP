@@ -76,7 +76,6 @@ export interface FilePreviewStructuredContent {
   fileName: string;
   filePath: string;
   fileType: PreviewFileType;
-  content: string;
   imageData?: string;
   mimeType?: string;
 }

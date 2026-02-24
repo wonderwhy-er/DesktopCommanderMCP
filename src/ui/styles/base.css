@@ -3,28 +3,36 @@
  */
 :root {
   color-scheme: light dark;
+
+  /* Spec variables with light-dark() fallbacks (following customer-segmentation pattern).
+     When a host provides --color-* via applyHostStyleVariables, the var() picks it up;
+     otherwise the light-dark() fallback keeps the UI legible. */
   --bg: transparent;
-  --panel: var(--color-background-primary, Canvas);
-  --panel-subtle: var(--color-background-tertiary, ButtonFace);
-  --panel-muted: var(--color-background-muted, ButtonFace);
-  --text: var(--color-text-primary, CanvasText);
-  --text-secondary: var(--color-text-secondary, CanvasText);
-  --muted: var(--color-text-tertiary, GrayText);
-  --border: var(--color-border-default, GrayText);
-  --accent: var(--color-accent-primary, LinkText);
-  --accent-hover: var(--color-accent-primary-hover, var(--accent));
-  --accent-soft: var(--color-accent-subtle, var(--panel-subtle));
-  --focus-ring: var(--color-border-focused, var(--accent));
+  --panel: var(--color-background-primary, light-dark(#ffffff, #1e1e2e));
+  --panel-subtle: var(--color-background-tertiary, light-dark(#f5f5f5, #2a2a3c));
+  --panel-muted: var(--color-background-tertiary, light-dark(#f5f5f5, #2a2a3c));
+  --text: var(--color-text-primary, light-dark(#1a1a2e, #e4e4ef));
+  --text-secondary: var(--color-text-secondary, light-dark(#4a4a5a, #a0a0b8));
+  --muted: var(--color-text-tertiary, light-dark(#94a3b8, #64748b));
+  --border: var(--color-border-primary, light-dark(#e2e8f0, #334155));
+  --accent: var(--color-text-info, light-dark(#2563eb, #60a5fa));
+  --accent-hover: var(--color-text-info, var(--accent));
+  --accent-soft: var(--color-background-info, var(--panel-subtle));
+  --focus-ring: var(--color-border-primary, var(--accent));
   --shadow-sm: var(--shadow-sm, none);
   --success-bg: var(--color-background-success, var(--panel-subtle));
   --success-border: var(--color-border-success, var(--border));
-  --success-text: var(--color-text-success, var(--text));
+  --success-text: var(--color-text-success, light-dark(#059669, #34d399));
   --error-bg: var(--color-background-danger, var(--panel-subtle));
   --error-border: var(--color-border-danger, var(--border));
-  --error-text: var(--color-text-danger, var(--text));
+  --error-text: var(--color-text-danger, light-dark(#dc2626, #f87171));
   --warning-bg: var(--color-background-warning, var(--panel-subtle));
   --warning-border: var(--color-border-warning, var(--border));
-  --warning-text: var(--color-text-warning, var(--text));
+  --warning-text: var(--color-text-warning, light-dark(#d97706, #fbbf24));
+}
+
+html {
+  background: var(--bg);
 }
 
 * {
