@@ -8,13 +8,12 @@ import { escapeHtml } from './components/highlighting.js';
 import { isAllowedImageMimeType, normalizeImageMimeType } from './image-preview.js';
 import type { FilePreviewStructuredContent } from '../../../types.js';
 import type { HtmlPreviewMode } from './types.js';
-import { createWindowRpcClient, isTrustedParentMessageSource } from '../../shared/rpc-client.js';
 import { createToolShellController, type ToolShellController } from '../../shared/tool-shell.js';
-import { createUiHostLifecycle } from '../../shared/host-lifecycle.js';
-import { createUiThemeAdapter } from '../../shared/theme-adaptation.js';
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
+import { App, applyDocumentTheme, applyHostStyleVariables, applyHostFonts } from '@modelcontextprotocol/ext-apps';
 
 let isExpanded = false;
+let hideSummaryRow = false;
 let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
@@ -36,6 +35,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
 
+// Internal type used only for rendering — extends the public type with the
+// text content sourced from the MCP content array (not structuredContent).
+type RenderPayload = FilePreviewStructuredContent & { content: string };
+
 function isPreviewStructuredContent(value: unknown): value is FilePreviewStructuredContent {
     if (!isObject(value)) {
         return false;
@@ -44,45 +47,29 @@ function isPreviewStructuredContent(value: unknown): value is FilePreviewStructu
     return (
         typeof value.fileName === 'string' &&
         typeof value.filePath === 'string' &&
-        typeof value.fileType === 'string' &&
-        typeof value.content === 'string'
+        typeof value.fileType === 'string'
     );
 }
 
-function readStructuredContentFromWindow(): FilePreviewStructuredContent | undefined {
-    const candidates: unknown[] = [
-        (window as any).__DC_FILE_PREVIEW__,
-        (window as any).__MCP_TOOL_RESULT__,
-        (window as any).toolResult,
-        (window as any).structuredContent
-    ];
-
-    for (const candidate of candidates) {
-        if (!isObject(candidate)) {
-            continue;
-        }
-        if (isPreviewStructuredContent(candidate.structuredContent)) {
-            return candidate.structuredContent;
-        }
-        if (isPreviewStructuredContent(candidate)) {
-            return candidate;
-        }
-    }
-
-    return undefined;
+function buildRenderPayload(
+    meta: FilePreviewStructuredContent,
+    text: string
+): RenderPayload {
+    return { ...meta, content: text };
 }
 
-function extractStructuredContent(value: unknown): FilePreviewStructuredContent | undefined {
+function extractRenderPayload(value: unknown): RenderPayload | undefined {
     if (!isObject(value)) {
         return undefined;
     }
-    if (isPreviewStructuredContent(value.structuredContent)) {
-        return value.structuredContent;
-    }
-    if (isPreviewStructuredContent(value)) {
-        return value;
-    }
-    return undefined;
+    const meta = isPreviewStructuredContent(value.structuredContent)
+        ? value.structuredContent
+        : isPreviewStructuredContent(value)
+            ? value
+            : null;
+    if (!meta) return undefined;
+    const text = extractToolText(value) ?? extractToolText(value.structuredContent) ?? '';
+    return buildRenderPayload(meta, text);
 }
 
 function extractToolText(value: unknown): string | undefined {
@@ -99,32 +86,6 @@ function extractToolText(value: unknown): string | undefined {
         }
         if (item.type === 'text' && typeof item.text === 'string' && item.text.trim().length > 0) {
             return item.text;
-        }
-    }
-    return undefined;
-}
-
-function extractToolTextFromEvent(value: unknown): string | undefined {
-    if (!isObject(value)) {
-        return undefined;
-    }
-    const direct = extractToolText(value);
-    if (direct) {
-        return direct;
-    }
-    if (isObject(value.result)) {
-        const nested = extractToolText(value.result);
-        if (nested) {
-            return nested;
-        }
-    }
-    if (isObject(value.params)) {
-        const paramsText = extractToolText(value.params);
-        if (paramsText) {
-            return paramsText;
-        }
-        if (isObject(value.params.result)) {
-            return extractToolText(value.params.result);
         }
     }
     return undefined;
@@ -198,7 +159,7 @@ function stripReadStatusLine(content: string): string {
     return content.replace(/^\[Reading [^\]]+\]\r?\n?/, '');
 }
 
-function renderImageBody(payload: FilePreviewStructuredContent): { html: string; notice?: string } {
+function renderImageBody(payload: RenderPayload): { html: string; notice?: string } {
     const mimeType = normalizeImageMimeType(payload.mimeType);
     if (!isAllowedImageMimeType(mimeType)) {
         return {
@@ -250,7 +211,7 @@ function parseReadRange(content: string): ReadRange | undefined {
     };
 }
 
-function renderBody(payload: FilePreviewStructuredContent, htmlMode: HtmlPreviewMode, startLine = 1): { html: string; notice?: string } {
+function renderBody(payload: RenderPayload, htmlMode: HtmlPreviewMode, startLine = 1): { html: string; notice?: string } {
     const cleanedContent = stripReadStatusLine(payload.content);
 
     if (payload.fileType === 'image') {
@@ -289,7 +250,7 @@ function renderBody(payload: FilePreviewStructuredContent, htmlMode: HtmlPreview
     }
 }
 
-function attachCopyHandler(payload: FilePreviewStructuredContent): void {
+function attachCopyHandler(payload: RenderPayload): void {
     const copyButton = document.getElementById('copy-source');
     if (!copyButton) {
         return;
@@ -346,7 +307,7 @@ function attachCopyHandler(payload: FilePreviewStructuredContent): void {
     });
 }
 
-function attachHtmlToggleHandler(container: HTMLElement, payload: FilePreviewStructuredContent, htmlMode: HtmlPreviewMode): void {
+function attachHtmlToggleHandler(container: HTMLElement, payload: RenderPayload, htmlMode: HtmlPreviewMode): void {
     const toggleButton = document.getElementById('toggle-html-mode');
     if (!toggleButton || payload.fileType !== 'html') {
         return;
@@ -361,7 +322,7 @@ function attachHtmlToggleHandler(container: HTMLElement, payload: FilePreviewStr
     });
 }
 
-function attachOpenInFolderHandler(payload: FilePreviewStructuredContent): void {
+function attachOpenInFolderHandler(payload: RenderPayload): void {
     const openButton = document.getElementById('open-in-folder') as HTMLButtonElement | null;
     if (!openButton) {
         return;
@@ -392,7 +353,7 @@ function attachOpenInFolderHandler(payload: FilePreviewStructuredContent): void 
 
 function attachLoadAllHandler(
     container: HTMLElement,
-    payload: FilePreviewStructuredContent,
+    payload: RenderPayload,
     htmlMode: HtmlPreviewMode
 ): void {
     const beforeBtn = document.getElementById('load-before') as HTMLButtonElement | null;
@@ -444,7 +405,7 @@ function attachLoadAllHandler(
                     ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
                     : '';
 
-                const mergedPayload: FilePreviewStructuredContent = {
+                const mergedPayload: RenderPayload = {
                     ...payload,
                     content: statusLine + merged
                 };
@@ -480,7 +441,7 @@ function attachLoadAllHandler(
  */
 let selectionAbortController: AbortController | null = null;
 
-function attachTextSelectionHandler(payload: FilePreviewStructuredContent): void {
+function attachTextSelectionHandler(payload: RenderPayload): void {
     const contentWrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
     if (!contentWrapper) return;
 
@@ -616,7 +577,7 @@ function renderLoadingState(container: HTMLElement): void {
 
 export function renderApp(
     container: HTMLElement,
-    payload?: FilePreviewStructuredContent,
+    payload?: RenderPayload,
     htmlMode: HtmlPreviewMode = 'rendered',
     expandedState = false
 ): void {
@@ -634,6 +595,12 @@ export function renderApp(
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
     const supportsPreview = payload.fileType !== 'unsupported';
+
+    // In DC app (hideSummaryRow), no reason to auto-expand when there's nothing to preview —
+    // the host header already shows the file name and path.
+    if (!supportsPreview && hideSummaryRow) {
+        isExpanded = false;
+    }
     const range = parseReadRange(payload.content);
     const body = renderBody(payload, htmlMode, range?.fromLine ?? 1);
     const notice = body.notice ? `<div class="notice">${body.notice}</div>` : '';
@@ -671,7 +638,7 @@ export function renderApp(
         : '';
 
     container.innerHTML = `
-      <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}">
+      <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}${hideSummaryRow ? ' host-framed' : ''}">
         <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
           <svg class="compact-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6z"/></svg>
           <span class="compact-label">${compactLabel}</span>
@@ -749,6 +716,23 @@ export function renderApp(
     }
 }
 
+function applyHostCtx(ctx: unknown): void {
+    const c = ctx as any;
+    if (c?.theme === 'light' || c?.theme === 'dark') applyDocumentTheme(c.theme);
+    if (c?.styles?.variables) applyHostStyleVariables(c.styles.variables);
+    if (c?.styles?.css?.fonts) applyHostFonts(c.styles.css.fonts);
+
+    // Hosts may pass additional flags via hostContext (forward-compatible index signature)
+    const extra = c;
+    if (typeof extra.initiallyExpanded === 'boolean') {
+        isExpanded = extra.initiallyExpanded;
+    }
+    if (typeof extra.hideSummaryRow === 'boolean') {
+        hideSummaryRow = extra.hideSummaryRow;
+        if (hideSummaryRow) isExpanded = true;
+    }
+}
+
 export function bootstrapApp(): void {
     const container = document.getElementById('app');
     if (!container) {
@@ -756,63 +740,28 @@ export function bootstrapApp(): void {
     }
     renderLoadingState(container);
 
-    const rpcClient = createWindowRpcClient({
-        targetWindow: window.parent,
-        timeoutMs: 15000,
-        isTrustedSource: (source) => isTrustedParentMessageSource(source, window.parent)
-    });
-    const hostLifecycle = createUiHostLifecycle(rpcClient, {
-        appName: 'Desktop Commander File Preview',
-        appVersion: '1.0.0'
-    });
-    const themeAdapter = createUiThemeAdapter();
-
-    rpcCallTool = (name: string, args: Record<string, unknown>): Promise<unknown> => (
-        rpcClient.request('tools/call', {
-            name,
-            arguments: args
-        })
+    // Use the official App class – it connects to the host via PostMessageTransport
+    // (window.parent by default) and speaks standard MCP JSON-RPC 2.0 over postMessage.
+    const app = new App(
+        { name: 'Desktop Commander File Preview', version: '1.0.0' },
+        { updateModelContext: { text: {} } },
+        { autoResize: true },
     );
 
-    rpcUpdateContext = (text: string): void => {
-        const params = text
-            ? { content: [{ type: 'text', text }] }
-            : { content: [] };
-        rpcClient.request('ui/update-model-context', params).catch(() => {
-            // Host may not support ui/update-model-context yet
-        });
-    };
+    // Widget state for cross-host persistence (survives page refresh)
+    const widgetState = createWidgetStateStorage<RenderPayload>(
+        (v): v is RenderPayload => isPreviewStructuredContent(v) && typeof (v as any).content === 'string'
+    );
 
-    trackUiEvent = (event: string, params: Record<string, unknown> = {}): void => {
-        void rpcCallTool?.('track_ui_event', {
-            event,
-            component: 'file_preview',
-            params: {
-                tool_name: 'read_file',
-                ...params
-            }
-        }).catch(() => {
-            // Analytics failures should not impact UX.
-        });
-    };
-
-    onRender = () => {
-        hostLifecycle.notifyRender();
-    };
-
-    // ChatGPT widget state persistence (other hosts use standard ui/notifications/tool-result)
-    const widgetState = createWidgetStateStorage<FilePreviewStructuredContent>(isPreviewStructuredContent);
-
-    onRender?.();
-    themeAdapter.applyFromData((window as any).__MCP_HOST_CONTEXT__);
-    const renderAndSync = (payload?: FilePreviewStructuredContent): void => {
+    const renderAndSync = (payload?: RenderPayload): void => {
         if (payload) {
-            widgetState.write(payload); // Persist for refresh recovery (cross-host)
+            widgetState.write(payload);
         }
-        renderApp(container, payload, 'rendered', false);
+        renderApp(container, payload, 'rendered', isExpanded);
     };
+
     let initialStateResolved = false;
-    const resolveInitialState = (payload?: FilePreviewStructuredContent, message?: string): void => {
+    const resolveInitialState = (payload?: RenderPayload, message?: string): void => {
         if (initialStateResolved) {
             return;
         }
@@ -825,86 +774,104 @@ export function bootstrapApp(): void {
         onRender?.();
     };
 
-    // Try to restore from widget state first (ChatGPT only - survives refresh)
-    const cachedPayload = widgetState.read();
-    if (cachedPayload) {
-        window.setTimeout(() => {
-            resolveInitialState(cachedPayload);
-        }, 50);
-    }
+    // autoResize handles size reporting; onRender can be a no-op
+    onRender = () => {};
 
-    // Then check window globals
-    const initialPayload = readStructuredContentFromWindow();
-    if (initialPayload) {
-        window.setTimeout(() => {
-            resolveInitialState(initialPayload);
-        }, 140);
-    }
+    // Wire rpcCallTool through the App's callServerTool proxy
+    rpcCallTool = (name: string, args: Record<string, unknown>): Promise<unknown> => (
+        app.callServerTool({ name, arguments: args })
+    );
 
-    // Timeout fallback: if no data arrives after retry, show helpful message
-    window.setTimeout(() => {
+    // Wire rpcUpdateContext through the App's updateModelContext
+    rpcUpdateContext = (text: string): void => {
+        const params = text
+            ? { content: [{ type: 'text' as const, text }] }
+            : { content: [] as [] };
+        app.updateModelContext(params).catch(() => {
+            // Host may not support updateModelContext
+        });
+    };
+
+    trackUiEvent = (event: string, params: Record<string, unknown> = {}): void => {
+        void rpcCallTool?.('track_ui_event', {
+            event,
+            component: 'file_preview',
+            params: { tool_name: 'read_file', ...params }
+        }).catch(() => {});
+    };
+
+    // Register ALL handlers BEFORE connect
+    app.onhostcontextchanged = (ctx) => {
+        applyHostCtx(ctx);
+    };
+
+    app.onteardown = async () => {
+        shellController?.dispose();
+        return {};
+    };
+
+    app.ontoolinput = (_params) => {
+        // Tool is executing – show loading state
+        renderLoadingState(container);
+        onRender?.();
+    };
+
+    app.ontoolresult = (result) => {
+        const payload = extractRenderPayload(result);
+        const message = extractToolText(result as unknown as Record<string, unknown>);
         if (!initialStateResolved) {
-            resolveInitialState(undefined, 'Preview unavailable after page refresh (known issue, fix in progress). Switch threads or re-run the tool.');
-        }
-    }, 8000);
-
-    window.addEventListener('message', (event) => {
-        try {
-        if (rpcClient.handleMessageEvent(event)) {
-            return;
-        }
-        if (!isTrustedParentMessageSource(event.source, window.parent)) {
-            return;
-        }
-        if (!isObject(event.data)) {
-            return;
-        }
-        themeAdapter.applyFromData(event.data);
-
-        if (event.data.method === 'ui/notifications/tool-result') {
-            const params = event.data.params;
-            const candidate = isObject(params) && isObject(params.result) ? params.result : params;
-            const payload = extractStructuredContent(candidate);
-            const message = extractToolTextFromEvent(event.data) ?? extractToolText(candidate);
-            if (!initialStateResolved) {
-                if (payload) {
-                    renderLoadingState(container);
-                    onRender?.();
-                    window.setTimeout(() => resolveInitialState(payload), 120);
-                    return;
-                }
-                if (message) {
-                    resolveInitialState(undefined, message);
-                }
-                return;
-            }
             if (payload) {
-                renderAndSync(payload);
-            } else if (message) {
-                renderStatusState(container, message);
+                renderLoadingState(container);
                 onRender?.();
+                window.setTimeout(() => resolveInitialState(payload), 120);
+                return;
+            }
+            if (message) {
+                resolveInitialState(undefined, message);
             }
             return;
         }
-
-        const payload = extractStructuredContent(event.data);
         if (payload) {
-            if (!initialStateResolved) {
-                resolveInitialState(payload);
-                return;
-            }
             renderAndSync(payload);
-        }
-        } catch {
-            renderStatusState(container, 'Preview failed to render.');
+        } else if (message) {
+            renderStatusState(container, message);
             onRender?.();
         }
+    };
+
+    app.ontoolcancelled = (params) => {
+        resolveInitialState(undefined, params.reason ?? 'Tool was cancelled.');
+    };
+
+    // Connect to the host (defaults to window.parent via PostMessageTransport)
+    app.connect().then(() => {
+        // Apply initial host context received during the initialization handshake
+        const ctx = app.getHostContext();
+        if (ctx) {
+            applyHostCtx(ctx);
+        }
+
+        // Try to restore from persisted widget state (survives refresh on some hosts)
+        const cachedPayload = widgetState.read();
+        if (cachedPayload) {
+            window.setTimeout(() => resolveInitialState(cachedPayload), 50);
+        }
+
+        // Fallback: if no tool data arrives, show a helpful status message
+        window.setTimeout(() => {
+            if (!initialStateResolved) {
+                resolveInitialState(
+                    undefined,
+                    'Preview unavailable after page refresh. Switch threads or re-run the tool.'
+                );
+            }
+        }, 8000);
+    }).catch(() => {
+        renderStatusState(container, 'Failed to connect to host.');
+        onRender?.();
     });
 
-    hostLifecycle.observeResize();
     window.addEventListener('beforeunload', () => {
         shellController?.dispose();
-        rpcClient.dispose();
     }, { once: true });
-    hostLifecycle.initialize();
 }

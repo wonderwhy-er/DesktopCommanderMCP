@@ -1,32 +1,14 @@
 /**
- * HTML preview renderer with guardrails for display modes. It controls when to show rendered HTML versus source text and ensures fallback behavior is predictable.
+ * HTML preview renderer with display mode control. It handles rendered HTML versus
+ * source text display and ensures fallback behavior is predictable.
+ *
+ * The rendered preview runs inside a nested sandboxed iframe, which is itself inside
+ * the MCP app's sandboxed iframe chain. Scripts and external resources (CDNs) are
+ * allowed since the sandbox isolation prevents any escape.
  */
 import { renderCodeViewer } from './code-viewer.js';
 import { escapeHtml } from './highlighting.js';
 import type { HtmlPreviewMode } from '../types.js';
-
-interface HtmlRenderOptions {
-    allowUnsafeScripts?: boolean;
-}
-
-function sanitizeHtml(rawHtml: string): string {
-    const blockedTagPattern = /<\/?(script|iframe|object|embed|link|meta|base|form)[^>]*>/gi;
-    let safe = rawHtml.replace(blockedTagPattern, '');
-
-    safe = safe.replace(/\son[a-z]+\s*=\s*(".*?"|'.*?'|[^\s>]+)/gi, '');
-    safe = safe.replace(/\s(href|src)\s*=\s*(".*?"|'.*?'|[^\s>]+)/gi, (match, attr, value) => {
-        const strippedValue = String(value).replace(/^['"]|['"]$/g, '').trim().toLowerCase();
-        if (strippedValue.startsWith('javascript:')) {
-            return ` ${attr}="#"`;
-        }
-        if (strippedValue.startsWith('data:text/html')) {
-            return ` ${attr}="#"`;
-        }
-        return match;
-    });
-
-    return safe;
-}
 
 function resolveThemeFrameStyles(): { background: string; text: string; fontFamily: string } {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -43,18 +25,13 @@ function resolveThemeFrameStyles(): { background: string; text: string; fontFami
     return { background, text, fontFamily };
 }
 
-function renderSandboxedHtmlFrame(content: string, allowUnsafeScripts: boolean): string {
-    const htmlContent = allowUnsafeScripts ? content : sanitizeHtml(content);
-    const csp = allowUnsafeScripts
-        ? ''
-        : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline';">`;
-    const sandbox = allowUnsafeScripts ? 'allow-scripts allow-forms allow-popups' : '';
+function renderSandboxedHtmlFrame(content: string): string {
     const palette = resolveThemeFrameStyles();
-    const frameDocument = `<!doctype html><html><head><meta charset="utf-8" />${csp}<style>html,body{margin:0;padding:0;background:${palette.background};color:${palette.text};}body{font-family:${palette.fontFamily};padding:16px;line-height:1.5;}img{max-width:100%;height:auto;}</style></head><body>${htmlContent}</body></html>`;
-    return `<iframe class="html-rendered-frame" title="Rendered HTML preview" sandbox="${sandbox}" referrerpolicy="no-referrer" srcdoc="${escapeHtml(frameDocument)}"></iframe>`;
+    const frameDocument = `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:${palette.background};color:${palette.text};}body{font-family:${palette.fontFamily};padding:16px;line-height:1.5;}img{max-width:100%;height:auto;}</style></head><body>${content}</body></html>`;
+    return `<iframe class="html-rendered-frame" title="Rendered HTML preview" sandbox="allow-scripts allow-forms allow-popups" referrerpolicy="no-referrer" srcdoc="${escapeHtml(frameDocument)}"></iframe>`;
 }
 
-export function renderHtmlPreview(content: string, mode: HtmlPreviewMode, options: HtmlRenderOptions = {}): { html: string; notice?: string } {
+export function renderHtmlPreview(content: string, mode: HtmlPreviewMode): { html: string; notice?: string } {
     if (mode === 'source') {
         return {
             html: `<div class="panel-content source-content">${renderCodeViewer(content, 'html')}</div>`
@@ -63,7 +40,7 @@ export function renderHtmlPreview(content: string, mode: HtmlPreviewMode, option
 
     try {
         return {
-            html: `<div class="panel-content html-content">${renderSandboxedHtmlFrame(content, options.allowUnsafeScripts === true)}</div>`
+            html: `<div class="panel-content html-content">${renderSandboxedHtmlFrame(content)}</div>`
         };
     } catch {
         return {
