@@ -98,12 +98,20 @@ function tokenizeToolDefinition(enc, tool) {
 
 async function main() {
   const flag = process.argv[2]; // --json or --top or nothing
-  console.log(`${colors.cyan}🔢 Desktop Commander MCP — Token Counter${colors.reset}`);
-  console.log(`${colors.dim}   Using cl100k_base tokenizer (GPT-4 / Claude approximation)${colors.reset}\n`);
+  const isJson = flag === '--json';
 
-  console.log(`${colors.dim}   Starting server and querying tools/list...${colors.reset}`);
+  if (!isJson) {
+    console.log(`${colors.cyan}🔢 Desktop Commander MCP — Token Counter${colors.reset}`);
+    console.log(`${colors.dim}   Using cl100k_base tokenizer (GPT-4 / Claude approximation)${colors.reset}\n`);
+
+    console.log(`${colors.dim}   Starting server and querying tools/list...${colors.reset}`);
+  }
+
   const tools = await extractToolsFromServer();
-  console.log(`${colors.green}   ✓ Retrieved ${tools.length} tools${colors.reset}\n`);
+
+  if (!isJson) {
+    console.log(`${colors.green}   ✓ Retrieved ${tools.length} tools${colors.reset}\n`);
+  }
 
   const enc = encodingForModel('gpt-4');
 
@@ -119,55 +127,57 @@ async function main() {
   const descTotal = results.reduce((s, r) => s + r.description, 0);
   const schemaTotal = results.reduce((s, r) => s + r.schema, 0);
 
-  // --- Summary ---
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.bold}  SUMMARY${colors.reset}`);
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`  Tools count:        ${colors.bold}${tools.length}${colors.reset}`);
-  console.log(`  Total tokens:       ${colors.bold}${grandTotal.toLocaleString()}${colors.reset}`);
-  console.log(`  ├─ Descriptions:    ${descTotal.toLocaleString()} (${pct(descTotal, grandTotal)})`);
-  console.log(`  └─ Schemas:         ${schemaTotal.toLocaleString()} (${pct(schemaTotal, grandTotal)})`);
+  if (!isJson) {
+    // --- Summary ---
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+    console.log(`${colors.bold}  SUMMARY${colors.reset}`);
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+    console.log(`  Tools count:        ${colors.bold}${tools.length}${colors.reset}`);
+    console.log(`  Total tokens:       ${colors.bold}${grandTotal.toLocaleString()}${colors.reset}`);
+    console.log(`  ├─ Descriptions:    ${descTotal.toLocaleString()} (${pct(descTotal, grandTotal)})`);
+    console.log(`  └─ Schemas:         ${schemaTotal.toLocaleString()} (${pct(schemaTotal, grandTotal)})`);
 
-  console.log(`  Context window usage (200K): ${colors.yellow}${pct(grandTotal, 200000)}${colors.reset}`);
-  console.log();
+    console.log(`  Context window usage (200K): ${colors.yellow}${pct(grandTotal, 200000)}${colors.reset}`);
+    console.log();
 
-  // --- Per-tool table ---
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.bold}  PER-TOOL BREAKDOWN (sorted by total tokens)${colors.reset}`);
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(
-    `  ${'#'.padEnd(3)} ${'Tool Name'.padEnd(35)} ${'Total'.padStart(7)} ${'Desc'.padStart(7)} ${'Schema'.padStart(7)} ${'Bar'}`
-  );
-  console.log(`  ${'-'.repeat(75)}`);
-
-  const maxTokens = results[0]?.total || 1;
-  results.forEach((r, i) => {
-    const barLen = Math.round((r.total / maxTokens) * 30);
-    const bar = '█'.repeat(barLen) + '░'.repeat(30 - barLen);
-    const color = r.total > 500 ? colors.yellow : colors.dim;
+    // --- Per-tool table ---
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+    console.log(`${colors.bold}  PER-TOOL BREAKDOWN (sorted by total tokens)${colors.reset}`);
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
     console.log(
-      `  ${String(i + 1).padEnd(3)} ${color}${r.toolName.padEnd(35)}${colors.reset} ${String(r.total).padStart(7)} ${String(r.description).padStart(7)} ${String(r.schema).padStart(7)} ${colors.dim}${bar}${colors.reset}`
+      `  ${'#'.padEnd(3)} ${'Tool Name'.padEnd(35)} ${'Total'.padStart(7)} ${'Desc'.padStart(7)} ${'Schema'.padStart(7)} ${'Bar'}`
     );
-  });
+    console.log(`  ${'-'.repeat(75)}`);
 
-  console.log();
+    const maxTokens = results[0]?.total || 1;
+    results.forEach((r, i) => {
+      const barLen = Math.round((r.total / maxTokens) * 30);
+      const bar = '█'.repeat(barLen) + '░'.repeat(30 - barLen);
+      const color = r.total > 500 ? colors.yellow : colors.dim;
+      console.log(
+        `  ${String(i + 1).padEnd(3)} ${color}${r.toolName.padEnd(35)}${colors.reset} ${String(r.total).padStart(7)} ${String(r.description).padStart(7)} ${String(r.schema).padStart(7)} ${colors.dim}${bar}${colors.reset}`
+      );
+    });
 
-  // --- Category breakdown ---
-  const categories = categorize(results);
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
-  console.log(`${colors.bold}  BY CATEGORY${colors.reset}`);
-  console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+    console.log();
 
-  for (const [cat, catResults] of Object.entries(categories)) {
-    const catTotal = catResults.reduce((s, r) => s + r.total, 0);
-    console.log(
-      `  ${cat.padEnd(25)} ${String(catResults.length).padStart(3)} tools  ${String(catTotal).padStart(7)} tokens  (${pct(catTotal, grandTotal)})`
-    );
+    // --- Category breakdown ---
+    const categories = categorize(results);
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+    console.log(`${colors.bold}  BY CATEGORY${colors.reset}`);
+    console.log(`${colors.bold}═══════════════════════════════════════════════════════════════${colors.reset}`);
+
+    for (const [cat, catResults] of Object.entries(categories)) {
+      const catTotal = catResults.reduce((s, r) => s + r.total, 0);
+      console.log(
+        `  ${cat.padEnd(25)} ${String(catResults.length).padStart(3)} tools  ${String(catTotal).padStart(7)} tokens  (${pct(catTotal, grandTotal)})`
+      );
+    }
+    console.log();
   }
-  console.log();
 
   // --- JSON output ---
-  if (flag === '--json') {
+  if (isJson) {
     const output = {
       timestamp: new Date().toISOString(),
       toolCount: tools.length,
