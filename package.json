@@ -56,7 +56,9 @@
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
-    "logs:export": "npm run build && node scripts/export-fuzzy-logs.js"
+    "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
+    "count-tokens": "npm run build && node scripts/count-tokens.js",
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
   },
   "publishConfig": {
     "access": "public"
@@ -115,6 +117,7 @@
     "@types/node": "^20.17.24",
     "commander": "^13.1.0",
     "esbuild": "^0.27.2",
+    "js-tiktoken": "^1.0.21",
     "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",
