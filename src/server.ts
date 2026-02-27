@@ -66,6 +66,7 @@ import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
+    CONFIG_EDITOR_RESOURCE_URI,
     FILE_PREVIEW_RESOURCE_URI
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
@@ -240,6 +241,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
+                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true),
                 annotations: {
                     title: "Get Configuration",
                     readOnlyHint: true,
