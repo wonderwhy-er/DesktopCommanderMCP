@@ -15,8 +15,19 @@ const TARGETS = {
     staticDir: 'src/ui/file-preview',
     styleLayers: [
       'src/ui/styles/base.css',
+      'src/ui/styles/components/compact-row.css',
       'src/ui/styles/components/tool-header.css',
       'src/ui/styles/apps/file-preview.css'
+    ]
+  },
+  'config-editor': {
+    entry: 'src/ui/config-editor/src/main.ts',
+    output: 'dist/ui/config-editor/config-editor-runtime.js',
+    staticDir: 'src/ui/config-editor',
+    styleLayers: [
+      'src/ui/styles/base.css',
+      'src/ui/styles/components/compact-row.css',
+      'src/ui/styles/apps/config-editor.css'
     ]
   }
 };

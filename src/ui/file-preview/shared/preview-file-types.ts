@@ -35,7 +35,9 @@ export const TEXT_PREVIEW_EXTENSIONS = new Set([
     '.java',
     '.go',
     '.rs',
-    '.sql'
+    '.sql',
+    '.srt',
+    '.vtt'
 ]);
 
 const TEXT_PREVIEW_BASENAMES = new Set([

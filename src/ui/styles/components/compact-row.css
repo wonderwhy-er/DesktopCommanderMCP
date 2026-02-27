@@ -1,0 +1,65 @@
+.compact-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 2px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1;
+  user-select: none;
+}
+
+.compact-row--ready {
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color 150ms ease;
+}
+
+.compact-row--ready:hover {
+  color: var(--text-secondary);
+}
+
+.compact-row--ready:hover .compact-chevron {
+  color: var(--text-secondary);
+}
+
+.compact-chevron {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition: transform 200ms ease, color 150ms ease;
+}
+
+.tool-shell.expanded .compact-chevron {
+  transform: rotate(90deg);
+}
+
+.compact-label {
+  color: inherit;
+}
+
+.compact-filename {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.compact-row--ready .compact-label::after {
+  content: ' · ';
+}
+
+.compact-row--loading {
+  animation: fade-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fade-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}

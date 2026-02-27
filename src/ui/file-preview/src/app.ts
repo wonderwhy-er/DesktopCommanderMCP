@@ -8,9 +8,11 @@ import { escapeHtml } from './components/highlighting.js';
 import { isAllowedImageMimeType, normalizeImageMimeType } from './image-preview.js';
 import type { FilePreviewStructuredContent } from '../../../types.js';
 import type { HtmlPreviewMode } from './types.js';
-import { createToolShellController, type ToolShellController } from '../../shared/tool-shell.js';
+import { createCompactRowShellController, type ToolShellController } from '../../shared/tool-shell.js';
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
-import { App, applyDocumentTheme, applyHostStyleVariables, applyHostFonts } from '@modelcontextprotocol/ext-apps';
+import { renderCompactRow } from '../../shared/compact-row.js';
+import { connectWithSharedHostContext, isObjectRecord, type UiChromeState } from '../../shared/host-context.js';
+import { App } from '@modelcontextprotocol/ext-apps';
 
 let isExpanded = false;
 let hideSummaryRow = false;
@@ -31,16 +33,12 @@ function getFileExtensionForAnalytics(filePath: string): string {
     return fileName.slice(dotIndex + 1).toLowerCase();
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
-}
-
 // Internal type used only for rendering — extends the public type with the
 // text content sourced from the MCP content array (not structuredContent).
 type RenderPayload = FilePreviewStructuredContent & { content: string };
 
 function isPreviewStructuredContent(value: unknown): value is FilePreviewStructuredContent {
-    if (!isObject(value)) {
+    if (!isObjectRecord(value)) {
         return false;
     }
 
@@ -59,7 +57,7 @@ function buildRenderPayload(
 }
 
 function extractRenderPayload(value: unknown): RenderPayload | undefined {
-    if (!isObject(value)) {
+    if (!isObjectRecord(value)) {
         return undefined;
     }
     const meta = isPreviewStructuredContent(value.structuredContent)
@@ -73,7 +71,7 @@ function extractRenderPayload(value: unknown): RenderPayload | undefined {
 }
 
 function extractToolText(value: unknown): string | undefined {
-    if (!isObject(value)) {
+    if (!isObjectRecord(value)) {
         return undefined;
     }
     const content = value.content;
@@ -81,7 +79,7 @@ function extractToolText(value: unknown): string | undefined {
         return undefined;
     }
     for (const item of content) {
-        if (!isObject(item)) {
+        if (!isObjectRecord(item)) {
             continue;
         }
         if (item.type === 'text' && typeof item.text === 'string' && item.text.trim().length > 0) {
@@ -556,9 +554,7 @@ function attachTextSelectionHandler(payload: RenderPayload): void {
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
       <main class="shell">
-        <div class="compact-row compact-row--status">
-          <span class="compact-label">${escapeHtml(message)}</span>
-        </div>
+        ${renderCompactRow({ label: message, variant: 'status', interactive: false })}
       </main>
     `;
     document.body.classList.add('dc-ready');
@@ -567,9 +563,7 @@ function renderStatusState(container: HTMLElement, message: string): void {
 function renderLoadingState(container: HTMLElement): void {
     container.innerHTML = `
       <main class="shell">
-        <div class="compact-row compact-row--loading">
-          <span class="compact-label">Preparing preview…</span>
-        </div>
+        ${renderCompactRow({ label: 'Preparing preview…', variant: 'loading', interactive: false })}
       </main>
     `;
     document.body.classList.add('dc-ready');
@@ -639,11 +633,7 @@ export function renderApp(
 
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${isExpanded ? 'expanded' : 'collapsed'}${hideSummaryRow ? ' host-framed' : ''}">
-        <div class="compact-row compact-row--ready" id="compact-toggle" role="button" tabindex="0" aria-expanded="${isExpanded}">
-          <svg class="compact-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6z"/></svg>
-          <span class="compact-label">${compactLabel}</span>
-          <span class="compact-filename">${escapeHtml(payload.fileName)}</span>
-        </div>
+        ${renderCompactRow({ id: 'compact-toggle', label: compactLabel, filename: payload.fileName, variant: 'ready', expandable: true, expanded: isExpanded, interactive: true })}
         <section class="panel">
           <div class="panel-topbar">
             <span class="panel-breadcrumb" title="${escapeHtml(payload.filePath)}">${breadcrumb}</span>
@@ -672,27 +662,14 @@ export function renderApp(
     attachLoadAllHandler(container, payload, htmlMode);
     attachTextSelectionHandler(payload);
 
-    // Compact row click toggles expand/collapse
-    const compactRow = document.getElementById('compact-toggle');
-    const handleCompactClick = (): void => {
-        shellController?.toggle();
-    };
-    const handleCompactKeydown = (e: KeyboardEvent): void => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            shellController?.toggle();
-        }
-    };
-    compactRow?.addEventListener('click', handleCompactClick);
-    compactRow?.addEventListener('keydown', handleCompactKeydown);
+    const compactRow = document.getElementById('compact-toggle') as HTMLElement | null;
 
-    shellController = createToolShellController({
+    shellController = createCompactRowShellController({
         shell: document.getElementById('tool-shell'),
-        toggleButton: null, // No separate toggle button; compact row handles it
+        compactRow,
         initialExpanded: isExpanded,
         onToggle: (expanded) => {
             isExpanded = expanded;
-            compactRow?.setAttribute('aria-expanded', String(expanded));
             trackUiEvent?.(expanded ? 'expand' : 'collapse', {
                 file_type: payload.fileType,
                 file_extension: fileExtension
@@ -716,23 +693,6 @@ export function renderApp(
     }
 }
 
-function applyHostCtx(ctx: unknown): void {
-    const c = ctx as any;
-    if (c?.theme === 'light' || c?.theme === 'dark') applyDocumentTheme(c.theme);
-    if (c?.styles?.variables) applyHostStyleVariables(c.styles.variables);
-    if (c?.styles?.css?.fonts) applyHostFonts(c.styles.css.fonts);
-
-    // Hosts may pass additional flags via hostContext (forward-compatible index signature)
-    const extra = c;
-    if (typeof extra.initiallyExpanded === 'boolean') {
-        isExpanded = extra.initiallyExpanded;
-    }
-    if (typeof extra.hideSummaryRow === 'boolean') {
-        hideSummaryRow = extra.hideSummaryRow;
-        if (hideSummaryRow) isExpanded = true;
-    }
-}
-
 export function bootstrapApp(): void {
     const container = document.getElementById('app');
     if (!container) {
@@ -747,6 +707,15 @@ export function bootstrapApp(): void {
         { updateModelContext: { text: {} } },
         { autoResize: true },
     );
+
+    const chrome: UiChromeState = {
+        expanded: isExpanded,
+        hideSummaryRow,
+    };
+    const syncChromeState = (): void => {
+        isExpanded = chrome.expanded;
+        hideSummaryRow = chrome.hideSummaryRow;
+    };
 
     // Widget state for cross-host persistence (survives page refresh)
     const widgetState = createWidgetStateStorage<RenderPayload>(
@@ -801,10 +770,6 @@ export function bootstrapApp(): void {
     };
 
     // Register ALL handlers BEFORE connect
-    app.onhostcontextchanged = (ctx) => {
-        applyHostCtx(ctx);
-    };
-
     app.onteardown = async () => {
         shellController?.dispose();
         return {};
@@ -844,28 +809,27 @@ export function bootstrapApp(): void {
     };
 
     // Connect to the host (defaults to window.parent via PostMessageTransport)
-    app.connect().then(() => {
-        // Apply initial host context received during the initialization handshake
-        const ctx = app.getHostContext();
-        if (ctx) {
-            applyHostCtx(ctx);
-        }
-
-        // Try to restore from persisted widget state (survives refresh on some hosts)
-        const cachedPayload = widgetState.read();
-        if (cachedPayload) {
-            window.setTimeout(() => resolveInitialState(cachedPayload), 50);
-        }
-
-        // Fallback: if no tool data arrives, show a helpful status message
-        window.setTimeout(() => {
-            if (!initialStateResolved) {
-                resolveInitialState(
-                    undefined,
-                    'Preview unavailable after page refresh. Switch threads or re-run the tool.'
-                );
+    void connectWithSharedHostContext({
+        app,
+        chrome,
+        onContextApplied: syncChromeState,
+        onConnected: () => {
+            // Try to restore from persisted widget state (survives refresh on some hosts)
+            const cachedPayload = widgetState.read();
+            if (cachedPayload) {
+                window.setTimeout(() => resolveInitialState(cachedPayload), 50);
             }
-        }, 8000);
+
+            // Fallback: if no tool data arrives, show a helpful status message
+            window.setTimeout(() => {
+                if (!initialStateResolved) {
+                    resolveInitialState(
+                        undefined,
+                        'Preview unavailable after page refresh. Switch threads or re-run the tool.'
+                    );
+                }
+            }, 8000);
+        },
     }).catch(() => {
         renderStatusState(container, 'Failed to connect to host.');
         onRender?.();
