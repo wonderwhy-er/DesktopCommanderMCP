@@ -77,6 +77,23 @@ function extractErrorMessage(error: unknown): string {
     return String(error);
 }
 
+function isHelperUnavailableError(error: unknown): boolean {
+    if (!isObject(error)) {
+        return false;
+    }
+
+    const code = typeof error.code === 'string' ? error.code.toLowerCase() : '';
+    if (code === 'not_implemented' || code === 'not_supported' || code === 'unavailable') {
+        return true;
+    }
+
+    const message = extractErrorMessage(error).toLowerCase();
+    return message.includes('not implemented')
+        || message.includes('not supported')
+        || message.includes('unavailable')
+        || message.includes('not available');
+}
+
 export function createToolBridge(options: ToolBridgeOptions = {}) {
     const host = options.host ?? (globalThis as BridgeHost);
     const timeoutMs = options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -90,8 +107,12 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
         }
 
         const parent = host.parent;
-        const addListener = host.addEventListener;
-        const removeListener = host.removeEventListener;
+        const addListener = (type: 'message', listener: MessageListener): void => {
+            host.addEventListener?.(type, listener);
+        };
+        const removeListener = (type: 'message', listener: MessageListener): void => {
+            host.removeEventListener?.(type, listener);
+        };
 
         requestCounter += 1;
         const requestId = `${idPrefix}:${requestCounter}`;
@@ -151,23 +172,20 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
             (candidate): candidate is ToolHelper => Boolean(candidate?.callTool)
         );
 
-        let helperFailure: unknown;
         for (const helper of helperCandidates) {
             try {
                 return await helper.callTool(name, normalizedArgs);
             } catch (error) {
-                helperFailure = error;
+                if (isHelperUnavailableError(error)) {
+                    continue;
+                }
+                throw new Error(`Tool helper call failed: ${extractErrorMessage(error)}`);
             }
         }
 
         try {
             return await callViaFallback(name, normalizedArgs);
         } catch (fallbackError) {
-            if (helperFailure) {
-                throw new Error(
-                    `Helper and fallback tool calls failed. Helper: ${extractErrorMessage(helperFailure)}. Fallback: ${extractErrorMessage(fallbackError)}`
-                );
-            }
             throw fallbackError;
         }
     }

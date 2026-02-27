@@ -36,6 +36,7 @@ export function renderArrayModalMarkup(initialTitle: string): string {
             </header>
             <p class="array-modal-description" id="array-modal-description"></p>
             <p class="array-modal-hint">Type an item, then press Enter (or click away) to add it. A new empty row appears automatically.</p>
+            <p class="array-modal-error hidden" id="array-modal-error" role="status" aria-live="polite"></p>
             <div class="array-modal-list" id="array-modal-list"></div>
           </div>
         </div>
@@ -49,11 +50,28 @@ export function createArrayModalController(options: CreateArrayModalControllerOp
     const modalList = container.querySelector('#array-modal-list') as HTMLElement | null;
     const modalTitleElement = container.querySelector('#array-modal-title') as HTMLElement | null;
     const modalDescriptionElement = container.querySelector('#array-modal-description') as HTMLElement | null;
+    const modalErrorElement = container.querySelector('#array-modal-error') as HTMLElement | null;
     const modalClose = container.querySelector('#array-modal-close') as HTMLButtonElement | null;
     const modalSave = container.querySelector('#array-modal-save') as HTMLButtonElement | null;
 
     let modalEntryKey: string | null = null;
     let modalItems: string[] = [];
+
+    const clearError = (): void => {
+        if (!modalErrorElement) {
+            return;
+        }
+        modalErrorElement.textContent = '';
+        modalErrorElement.classList.add('hidden');
+    };
+
+    const showError = (message: string): void => {
+        if (!modalErrorElement) {
+            return;
+        }
+        modalErrorElement.textContent = message;
+        modalErrorElement.classList.remove('hidden');
+    };
 
     const collectModalItemsFromDom = (): string[] => {
         if (!modalList) {
@@ -153,11 +171,13 @@ export function createArrayModalController(options: CreateArrayModalControllerOp
             modal.hidden = true;
         }
         modalEntryKey = null;
+        clearError();
     };
 
     const open = (entry: ArrayModalEntry): void => {
         modalEntryKey = entry.key;
         modalItems = parseEntryItems(entry);
+        clearError();
 
         if (modalTitleElement) {
             modalTitleElement.textContent = formatEntryTitle(entry);
@@ -185,10 +205,20 @@ export function createArrayModalController(options: CreateArrayModalControllerOp
         }
         const changedKey = modalEntryKey;
         modalItems = collectModalItemsFromDom();
+        clearError();
+        if (modalSave) {
+            modalSave.disabled = true;
+        }
         try {
             await onSave(changedKey, modalItems);
-        } finally {
             close();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            showError(message.trim().length > 0 ? message : 'Failed to save list changes.');
+        } finally {
+            if (modalSave) {
+                modalSave.disabled = false;
+            }
         }
     });
 

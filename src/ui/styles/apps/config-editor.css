@@ -4,7 +4,12 @@
   --cfg-text: var(--text);
   --cfg-muted: var(--text-secondary);
   --cfg-border: var(--border);
-  --cfg-toggle-on: color-mix(in srgb, var(--success-text) 70%, var(--cfg-border));
+  --cfg-toggle-knob: var(--panel);
+  --cfg-toggle-knob-ring: color-mix(in srgb, var(--text) 72%, transparent);
+  --cfg-toggle-on: var(
+    --color-text-info,
+    var(--color-background-info, var(--color-background-success, color-mix(in srgb, var(--accent) 72%, var(--cfg-border))))
+  );
 }
 
 body {
@@ -279,10 +284,17 @@ body {
   width: 14px;
   height: 14px;
   fill: none;
-  stroke: currentColor;
+  stroke: currentcolor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.array-modal-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--error-text);
 }
 
 .array-modal-list {
@@ -329,7 +341,7 @@ body {
   width: 14px;
   height: 14px;
   fill: none;
-  stroke: currentColor;
+  stroke: currentcolor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -349,7 +361,9 @@ body {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--panel);
+  background: var(--cfg-toggle-knob);
+  border: 1px solid var(--cfg-toggle-knob-ring);
+  box-sizing: border-box;
   position: absolute;
   top: 3px;
   left: 3px;

@@ -161,6 +161,9 @@ function parseDraftValue(rawValue: string, valueType: string): { ok: true; value
     }
 
     if (valueType === 'number') {
+        if (rawValue.trim() === '') {
+            return { ok: false, message: 'Enter a valid number.' };
+        }
         const numeric = Number(rawValue);
         if (!Number.isFinite(numeric)) {
             return { ok: false, message: 'Enter a valid number.' };
@@ -729,7 +732,7 @@ export function bootstrapConfigEditorApp(): void {
     const chrome: UiChromeState = {
         hideSummaryRow: false,
         compact: false,
-        expanded: false,
+        expanded: true,
     };
 
     let quietContextSupported = true;
@@ -864,7 +867,14 @@ export function bootstrapConfigEditorApp(): void {
     void connectWithSharedHostContext({
         app,
         chrome,
-        onContextApplied: scheduleRender,
+        onContextApplied: () => {
+            // Config editor should default to expanded in all hosts unless the
+            // host forces framed mode.
+            if (!chrome.hideSummaryRow) {
+                chrome.expanded = true;
+            }
+            scheduleRender();
+        },
         onConnected: async () => {
             const cachedPayload = widgetState.read();
             if (cachedPayload) {
