@@ -236,6 +236,7 @@ async function main() {
           console.log(`[http] Session closed: ${sid}`);
           sessions.delete(sid);
         }
+        transport.close().catch(() => {});
         server.close().catch(() => {});
       };
 

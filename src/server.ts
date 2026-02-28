@@ -63,7 +63,7 @@ import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
 import * as handlers from './handlers/index.js';
-import { ServerResult } from './types.js';
+import type { ServerResult } from './types.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
@@ -89,44 +89,9 @@ export function flushDeferredMessages() {
 
 deferLog('info', 'Loading server.ts');
 
-// Store current client info (simple variable) - module-level for external access
+// Module-level currentClient kept for backward compatibility with stdio mode
+// (used by capture.ts, config.ts, usageTracker.ts)
 let currentClient = { name: 'uninitialized', version: 'uninitialized' };
-
-/**
- * Unified way to update client information
- */
-async function updateCurrentClient(clientInfo: { name?: string, version?: string }) {
-    if (clientInfo.name !== currentClient.name || clientInfo.version !== currentClient.version) {
-        const nameChanged = clientInfo.name !== currentClient.name;
-
-        currentClient = {
-            name: clientInfo.name || currentClient.name,
-            version: clientInfo.version || currentClient.version
-        };
-
-        // Configure transport for client-specific behavior only if name changed
-        if (nameChanged) {
-            const transport = (global as any).mcpTransport;
-            if (transport && typeof transport.configureForClient === 'function') {
-                transport.configureForClient(currentClient.name);
-            }
-        }
-
-        return true;
-    }
-    return false;
-}
-
-/**
- * Check if a tool should be included based on current client
- */
-function shouldIncludeTool(toolName: string): boolean {
-    // Exclude give_feedback_to_desktop_commander for desktop-commander client
-    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
-        return false;
-    }
-    return true;
-}
 
 // Export current client info for access by other modules
 export { currentClient };
@@ -136,6 +101,42 @@ export { currentClient };
  * Used by HTTP transport to create per-session server instances.
  */
 export function createServer(): Server {
+    // Per-session client state — fixes multi-session isolation for HTTP transport
+    let sessionClient = { name: 'uninitialized', version: 'uninitialized' };
+
+    async function updateCurrentClient(clientInfo: { name?: string, version?: string }) {
+        if (clientInfo.name !== sessionClient.name || clientInfo.version !== sessionClient.version) {
+            const nameChanged = clientInfo.name !== sessionClient.name;
+
+            sessionClient = {
+                name: clientInfo.name || sessionClient.name,
+                version: clientInfo.version || sessionClient.version
+            };
+
+            // Keep module-level reference in sync for stdio/backward-compat callers
+            currentClient = sessionClient;
+
+            // Configure transport for client-specific behavior only if name changed
+            if (nameChanged) {
+                const transport = (global as any).mcpTransport;
+                if (transport && typeof transport.configureForClient === 'function') {
+                    transport.configureForClient(sessionClient.name);
+                }
+            }
+
+            return true;
+        }
+        return false;
+    }
+
+    function shouldIncludeTool(toolName: string): boolean {
+        // Exclude give_feedback_to_desktop_commander for desktop-commander client
+        if (toolName === 'give_feedback_to_desktop_commander' && sessionClient?.name === 'desktop-commander') {
+            return false;
+        }
+        return true;
+    }
+
     const server = new Server(
         {
             name: "desktop-commander",
@@ -186,7 +187,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
             // Welcome page for new claude-ai users (A/B test controlled)
             // Also matches 'local-agent-mode-*' which is how Claude.ai connectors report themselves
-            if ((currentClient.name === 'claude-ai' || currentClient.name?.startsWith('local-agent-mode')) && !(global as any).disableOnboarding) {
+            if ((sessionClient.name === 'claude-ai' || sessionClient.name?.startsWith('local-agent-mode')) && !(global as any).disableOnboarding) {
                 await handleWelcomePageOnboarding();
             }
         }
