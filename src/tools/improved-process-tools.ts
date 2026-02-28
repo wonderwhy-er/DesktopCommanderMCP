@@ -128,6 +128,14 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   // Handle node:local - runs Node.js code directly on MCP server
   if (commandToRun.trim() === 'node:local') {
+    const config = await configManager.getConfig();
+    if (config.enableNodeLocal !== true) {
+      return {
+        content: [{ type: "text", text: "node:local is disabled by default. To enable, set enableNodeLocal to true via set_config_value." }],
+        isError: true,
+      };
+    }
+
     const virtualPid = virtualPidCounter--;
     virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
 
