@@ -38,6 +38,12 @@ async function runServer() {
       return;
     }
 
+    // Check if first argument is "http" — Streamable HTTP transport
+    if (process.argv[2] === 'http') {
+      await import('./http-server.js');
+      return;
+    }
+
     // Parse command line arguments for onboarding control
     const DISABLE_ONBOARDING = process.argv.includes('--no-onboarding');
     if (DISABLE_ONBOARDING) {
