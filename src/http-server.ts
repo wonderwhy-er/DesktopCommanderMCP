@@ -63,7 +63,7 @@ class PreRegisteredClientsStore implements OAuthRegisteredClientsStore {
         'https://claude.ai/api/mcp/auth_callback',
         'https://claude.com/api/mcp/auth_callback',
       ],
-      grant_types: ['authorization_code', 'refresh_token'],
+      grant_types: ['authorization_code'],
       response_types: ['code'],
       token_endpoint_auth_method: 'client_secret_post',
       client_name: 'Claude Web',
@@ -154,8 +154,15 @@ class AutoApproveOAuthProvider implements OAuthServerProvider {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    const now = Date.now();
+
+    // Purge expired tokens to prevent unbounded memory growth
+    for (const [t, data] of this.tokens) {
+      if (data.expiresAt < now) this.tokens.delete(t);
+    }
+
     const tokenData = this.tokens.get(token);
-    if (!tokenData || tokenData.expiresAt < Date.now()) {
+    if (!tokenData || tokenData.expiresAt < now) {
       throw new Error('Invalid or expired token');
     }
     return {
