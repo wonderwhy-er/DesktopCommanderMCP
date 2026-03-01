@@ -1,7 +1,20 @@
 {
-  "version": "2.0.0",
-  "description": "Desktop Commander onboarding prompts - V2 simplified (5 prompts only)",
+  "version": "2.1.0",
+  "description": "Desktop Commander prompts - onboarding and best practices",
   "prompts": [
+    {
+      "id": "bp_pdf_styling",
+      "title": "PDF Styling Best Practices",
+      "description": "Best practices for creating well-styled PDFs with write_pdf tool",
+      "prompt": "# PDF Styling Best Practices for write_pdf\n\n## PDF Options (Landscape, Page Size)\nUse `options` parameter with `pdf_options` key:\n```\noptions: {\"pdf_options\": {\"format\": \"A4\", \"landscape\": true, \"margin\": {\"top\": \"0\", \"left\": \"0\", \"right\": \"0\", \"bottom\": \"0\"}, \"printBackground\": true}}\n```\nSupported options:\n- `format`: 'A4', 'Letter', 'Legal', etc.\n- `landscape`: true/false\n- `margin`: {top, right, bottom, left} - use \"0\" for edge-to-edge\n- `printBackground`: true (required for background colors!)\n\n## Full-Page Slides (Multi-Page Decks)\nFor slide decks with full-page backgrounds, use `height: 100vh` with `box-sizing: border-box`:\n```html\n<div style=\"background: #6366f1; color: white; padding: 60px; height: 100vh; box-sizing: border-box;\">\n  <h2>Slide Title</h2>\n  <p>Content here</p>\n</div>\n<div style=\"page-break-before: always;\"></div>\n<div style=\"background: #10b981; color: white; padding: 60px; height: 100vh; box-sizing: border-box;\">\n  <h2>Next Slide</h2>\n</div>\n```\nThis fills the entire page with no white gaps at bottom.\n\n## Layout - Use Tables, Not Flexbox\nCSS flexbox often breaks in PDF rendering. Use HTML tables for multi-column layouts:\n```html\n<table style=\"width: 100%; border-collapse: separate; border-spacing: 12px 0;\">\n<tr>\n<td style=\"width: 50%; vertical-align: top;\">Column 1</td>\n<td style=\"width: 50%; vertical-align: top;\">Column 2</td>\n</tr>\n</table>\n```\n\n## Page Breaks\n- Use explicit: `<div style=\"page-break-before: always;\"></div>`\n- Place between slide divs, not inside them\n- Content splits unpredictably without explicit breaks\n\n## Rounded Corners on Headers\nNegative margins break border-radius. Use a container:\n```html\n<div style=\"padding: 10px;\">\n  <div style=\"border-radius: 20px; background: #0f172a; padding: 40px;\">\n    Header content\n  </div>\n</div>\n```\n\n## Reliable Card Pattern\n```html\n<td style=\"background: #f8fafc; border-radius: 12px; padding: 16px; border-left: 4px solid #6366f1; vertical-align: top;\">\n  <div style=\"font-size: 16px; color: #6366f1; font-weight: 700;\">Title</div>\n  <div style=\"font-size: 14px; color: #64748b;\">Description</div>\n</td>\n```\n\n## Colors That Work Well Together\n- Dark gradient: `linear-gradient(135deg, #0f172a, #1e293b)`\n- Card backgrounds: `#f8fafc` (light gray), `#fef2f2` (light red)\n- Accent colors: `#6366f1` (indigo), `#10b981` (green), `#8b5cf6` (purple), `#f59e0b` (amber), `#ef4444` (red)\n- Text: `#0f172a` (dark), `#64748b` (muted)\n\nApply these patterns for professional, well-rendered PDFs!",
+      "categories": ["best-practices"],
+      "secondaryTag": "PDF",
+      "votes": 0,
+      "gaClicks": 0,
+      "icon": "FileText",
+      "author": "DC team",
+      "verified": true
+    },
     {
       "id": "onb2_01",
       "title": "Organize my Downloads folder",
