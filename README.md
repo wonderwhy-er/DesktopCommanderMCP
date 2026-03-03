@@ -336,7 +336,7 @@ Add this to your client's MCP configuration file at the locations below:
 <details>
 <summary><b>Cursor</b></summary>
 
-[![Install MCP Server in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](cursor://anysphere.cursor-deeplink/mcp/install?name=desktop-commander&config=eyJjb21tYW5kIjoibnB4IC15IEB3b25kZXJ3aHktZXIvZGVza3RvcC1jb21tYW5kZXJAbGF0ZXN0In0%3D)
+[Install MCP Server in Cursor](https://cursor.directory/mcp/desktop-commander-mcp)
 
 Or add manually to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in your project folder (project-specific).
 
