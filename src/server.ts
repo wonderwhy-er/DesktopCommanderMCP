@@ -1189,6 +1189,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
+            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;

@@ -5,6 +5,7 @@ import { renderCompactRow } from '../../shared/compact-row.js';
 import { escapeHtml } from '../../shared/escape-html.js';
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
 import { connectWithSharedHostContext, isObjectRecord, type UiChromeState } from '../../shared/host-context.js';
+import { createUiEventTracker, type UiEventParams } from '../../shared/ui-event-tracker.js';
 import { createArrayModalController, renderArrayModalMarkup } from './array-modal.js';
 import { CONFIG_FIELD_DEFINITIONS, isConfigFieldKey } from '../../../config-field-definitions.js';
 
@@ -46,11 +47,56 @@ export interface ApplyConfigResult {
 interface RenderHooks {
     onConfigChanged?: (change: { key: string; value: unknown }) => void;
     onTooltip?: (tooltip: TooltipMessage) => void;
+    onExpandedChanged?: (expanded: boolean) => void;
 }
 
 type ToolCall = (name: string, args?: Record<string, unknown>) => Promise<unknown>;
+type TrackConfigUiEvent = (event: string, params?: Record<string, unknown>) => void;
 
 let shellController: ToolShellController | undefined;
+
+const CONFIG_EDITOR_COMPONENT = 'config_editor';
+const GET_CONFIG_TOOL_NAME = 'get_config';
+const MAX_TELEMETRY_MESSAGE_LENGTH = 180;
+
+function sanitizeTelemetryErrorMessage(message: string): string {
+    // Keep error signal useful while removing path-like data and bounding payload size.
+    const collapsed = message.replace(/\s+/g, ' ').trim();
+    const withoutPaths = collapsed
+        .replace(/(?:\/|\\)[\w\d_.\-/\\]+/g, '[PATH]')
+        .replace(/[A-Za-z]:\\[\w\d_.\-/\\]+/g, '[PATH]');
+
+    if (withoutPaths.length === 0) {
+        return 'Unknown error';
+    }
+
+    if (withoutPaths.length <= MAX_TELEMETRY_MESSAGE_LENGTH) {
+        return withoutPaths;
+    }
+
+    return `${withoutPaths.slice(0, MAX_TELEMETRY_MESSAGE_LENGTH - 3)}...`;
+}
+
+function buildConfigUpdateTelemetryParams(args: {
+    configKey: string;
+    valueType: string;
+    errorMessage?: string;
+    errorStage?: 'set_config_value' | 'transport';
+}): UiEventParams {
+    const base: UiEventParams = {
+        config_key: args.configKey,
+        value_type: args.valueType,
+    };
+
+    if (args.errorStage) {
+        base.error_stage = args.errorStage;
+    }
+    if (args.errorMessage) {
+        base.error_message = sanitizeTelemetryErrorMessage(args.errorMessage);
+    }
+
+    return base;
+}
 
 function isConfigEditorPayload(value: unknown): value is ConfigEditorPayload {
     return isObjectRecord(value) && Array.isArray((value as Record<string, unknown>).entries);
@@ -310,7 +356,7 @@ function getShellOptions(payload: ConfigEditorPayload | null, currentShell: stri
     return [...options];
 }
 
-export function createConfigEditorController(callTool: ToolCall) {
+export function createConfigEditorController(callTool: ToolCall, trackConfigUiEvent?: TrackConfigUiEvent) {
     const state: ConfigEditorState = {
         payload: null,
         selectedKey: null,
@@ -392,23 +438,45 @@ export function createConfigEditorController(callTool: ToolCall) {
             const setResult = await callTool('set_config_value', {
                 key: selected.key,
                 value: parsed.value,
+                origin: 'ui',
             });
+
             if (isToolErrorResult(setResult)) {
+                const errorMessage = extractToolText(setResult) ?? `Failed to update ${selected.key}.`;
+                trackConfigUiEvent?.('config_update_failed', {
+                    tool_name: 'set_config_value',
+                    ...buildConfigUpdateTelemetryParams({
+                        configKey: selected.key,
+                        valueType: selected.valueType,
+                        errorMessage,
+                        errorStage: 'set_config_value',
+                    }),
+                });
+
                 return {
                     ok: false,
                     tooltip: {
-                        message: extractToolText(setResult) ?? `Failed to update ${selected.key}.`,
+                        message: errorMessage,
                         tone: 'error',
                     },
                 };
             }
 
+            trackConfigUiEvent?.('config_update_success', {
+                tool_name: 'set_config_value',
+                ...buildConfigUpdateTelemetryParams({
+                    configKey: selected.key,
+                    valueType: selected.valueType,
+                }),
+            });
+
             const refreshed = await callTool('get_config', {});
             if (isToolErrorResult(refreshed)) {
+                const errorMessage = extractToolText(refreshed) ?? 'Value was updated but config refresh failed.';
                 return {
                     ok: false,
                     tooltip: {
-                        message: extractToolText(refreshed) ?? 'Value was updated but config refresh failed.',
+                        message: errorMessage,
                         tone: 'error',
                     },
                 };
@@ -425,12 +493,25 @@ export function createConfigEditorController(callTool: ToolCall) {
                 }
             }
 
-            return { ok: true };
+            return {
+                ok: true,
+            };
         } catch (error) {
+            const errorMessage = `Failed to apply value: ${error instanceof Error ? error.message : String(error)}`;
+            trackConfigUiEvent?.('config_update_failed', {
+                tool_name: 'set_config_value',
+                ...buildConfigUpdateTelemetryParams({
+                    configKey: selected.key,
+                    valueType: selected.valueType,
+                    errorMessage,
+                    errorStage: 'transport',
+                }),
+            });
+
             return {
                 ok: false,
                 tooltip: {
-                    message: `Failed to apply value: ${error instanceof Error ? error.message : String(error)}`,
+                    message: errorMessage,
                     tone: 'error',
                 },
             };
@@ -712,6 +793,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         initialExpanded: chrome.expanded,
         onToggle: (expanded) => {
             chrome.expanded = expanded;
+            hooks.onExpandedChanged?.(expanded);
         },
     });
 }
@@ -727,13 +809,25 @@ export function bootstrapConfigEditorApp(): void {
     }
 
     const bridge = createToolBridge();
-    const controller = createConfigEditorController((name, args) => bridge.callTool(name, args));
+    const trackConfigUiEvent = createUiEventTracker(
+        (name, args) => bridge.callTool(name, args),
+        {
+            component: CONFIG_EDITOR_COMPONENT,
+            baseParams: { origin: 'ui' },
+        }
+    );
+    const controller = createConfigEditorController(
+        (name, args) => bridge.callTool(name, args),
+        trackConfigUiEvent
+    );
     const widgetState = createWidgetStateStorage<ConfigEditorPayload>(isConfigEditorPayload);
     const chrome: UiChromeState = {
         hideSummaryRow: false,
         compact: false,
         expanded: true,
     };
+
+    let configEditorShownEventSent = false;
 
     let quietContextSupported = true;
     let tooltipHideTimer: number | null = null;
@@ -765,28 +859,16 @@ export function bootstrapConfigEditorApp(): void {
     };
 
     const syncModelContext = (reason: string, change?: { key: string; value: unknown }): void => {
-        const payload = controller.state.payload;
-        if (!payload || !quietContextSupported) {
+        if (!quietContextSupported || !change) {
             return;
         }
-        const values = payload.entries
-            .map((entry) => `${entry.key}=${JSON.stringify(entry.value)}`)
-            .join(', ');
-        const changeText = change
-            ? `Updated ${change.key} to ${JSON.stringify(change.value)}.`
-            : 'Configuration updated.';
+
         app.updateModelContext({
-            content: [{ type: 'text', text: `${changeText} Snapshot (${reason}): ${values}` }],
+            content: [{ type: 'text', text: `Updated ${change.key} to ${JSON.stringify(change.value)} (${reason}).` }],
             structuredContent: {
                 reason,
-                changedKey: change?.key,
-                changedValue: change?.value,
-                entries: payload.entries.map((entry) => ({
-                    key: entry.key,
-                    label: entry.label,
-                    value: entry.value,
-                    valueType: entry.valueType,
-                })),
+                changedKey: change.key,
+                changedValue: change.value,
             },
         }).catch(() => {
             // Host may not support updateModelContext; avoid repeated failed calls.
@@ -809,6 +891,12 @@ export function bootstrapConfigEditorApp(): void {
                     syncModelContext('widget-edit', change);
                 },
                 onTooltip: showTooltip,
+                onExpandedChanged: (expanded) => {
+                    trackConfigUiEvent(expanded ? 'expand' : 'collapse', {
+                        tool_name: GET_CONFIG_TOOL_NAME,
+                        expanded,
+                    });
+                },
             });
             markReady();
         });
@@ -836,6 +924,15 @@ export function bootstrapConfigEditorApp(): void {
         controller.setPayload(payload);
         widgetState.write(payload);
         scheduleRender();
+
+        if (!configEditorShownEventSent) {
+            configEditorShownEventSent = true;
+            // One-shot impression event for get_config UI card visibility.
+            trackConfigUiEvent('config_editor_shown', {
+                tool_name: GET_CONFIG_TOOL_NAME,
+                entry_count: payload.entries.length,
+            });
+        }
     };
 
     const refreshConfigFromServer = async (): Promise<void> => {

@@ -12,6 +12,7 @@ export const SetConfigValueArgsSchema = z.object({
     z.array(z.string()),
     z.null(),
   ]),
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 // Empty schemas
