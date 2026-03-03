@@ -45,7 +45,7 @@
     },
     {
       "name": "read_file",
-      "description": "Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), and PDFs with line/page-based pagination."
+      "description": "Read contents from local filesystem, URLs, Excel files (.xlsx, .xls, .xlsm), PDFs, and DOCX files with line/page-based pagination."
     },
     {
       "name": "read_multiple_files",
@@ -53,7 +53,7 @@
     },
     {
       "name": "write_file",
-      "description": "Write or append to file contents. Supports Excel files (JSON 2D array format). For PDFs, use write_pdf instead."
+      "description": "Write or append to file contents. Supports Excel files (JSON 2D array format) and DOCX creation from markdown. For PDFs, use write_pdf instead."
     },
     {
       "name": "write_pdf",
@@ -73,7 +73,7 @@
     },
     {
       "name": "start_search",
-      "description": "Start streaming search for files by name or content patterns. Searches text files and Excel content."
+      "description": "Start streaming search for files by name or content patterns. Searches text files, Excel, and DOCX content."
     },
     {
       "name": "get_more_search_results",
@@ -93,7 +93,7 @@
     },
     {
       "name": "edit_block",
-      "description": "Apply targeted text replacements for text files, or range-based cell updates for Excel files."
+      "description": "Apply targeted text replacements for text and DOCX files, or range-based cell updates for Excel files."
     },
     {
       "name": "start_process",
@@ -101,7 +101,7 @@
     },
     {
       "name": "read_process_output",
-      "description": "Read output from a running process with intelligent completion detection and REPL prompt recognition."
+      "description": "Read output from a running process with intelligent completion detection, REPL prompt recognition, and offset/length pagination."
     },
     {
       "name": "interact_with_process",
@@ -151,7 +151,10 @@
     "automation",
     "productivity",
     "end-to-end",
-    "data-analysis"
+    "data-analysis",
+    "docx",
+    "pdf",
+    "excel"
   ],
   "license": "MIT",
   "compatibility": {

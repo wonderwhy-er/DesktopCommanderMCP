@@ -19,10 +19,22 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 
 ## 👋 We’re hiring — come build with us: https://desktopcommander.app/careers/
 
+## 🖥️ Try the Desktop Commander App (Beta)
+
+**Want a better experience?** The Desktop Commander App gives you everything the MCP server does, plus:
+
+- **Use any AI model** — Claude, GPT-4.5, Gemini 2.5, or any model you prefer
+- **See file changes live** — visual file previews as AI edits your files
+- **Add custom MCPs and context** — extend with your own tools, no config files
+- **Coming soon** — skills system, dictation, background scheduled tasks, and more
+
+**👉 [Download the App](https://desktopcommander.app/#download)** (macOS & Windows)
+
+> The MCP server below still works great with Claude Desktop and other MCP clients — the app is for those who want a dedicated, polished experience.
+
 ## Table of Contents
 - [Features](#features)
 - [How to install](#how-to-install)
-- [Remote MCP (ChatGPT, Claude Web)](#remote-mcp-chatgpt-claude-web)
 - [Getting Started](#getting-started)
 - [Usage](#usage)
 - [Handling Long-Running Commands](#handling-long-running-commands)
@@ -42,23 +54,27 @@ Execute long-running terminal commands on your computer and manage processes thr
 ## Features
 
 - **Remote AI Control** - Use Desktop Commander from ChatGPT, Claude web, and other AI services via [Remote MCP](https://mcp.desktopcommander.app)
+- **File Preview UI** - Visual file previews in Claude Desktop with rendered markdown, inline images, expandable content, and quick "Open in folder" access
 - **Enhanced terminal commands with interactive process control**
 - **Execute code in memory (Python, Node.js, R) without saving files**
 - **Instant data analysis - just ask to analyze CSV/JSON/Excel files**
 - **Native Excel file support** - Read, write, edit, and search Excel files (.xlsx, .xls, .xlsm) without external tools
 - **PDF support** - Read PDFs with text extraction, create new PDFs from markdown, modify existing PDFs
+- **DOCX support** - Read, create, edit, and search Word documents (.docx) with surgical XML editing and markdown-to-DOCX conversion
 - **Interact with running processes (SSH, databases, development servers)**
 - Execute terminal commands with output streaming
 - Command timeout and background execution support
 - Process management (list and kill processes)
 - Session management for long-running commands
+- **Process output pagination** - Read terminal output with offset/length controls to prevent context overflow
 - Server configuration management:
   - Get/set configuration values
   - Update multiple settings at once
   - Dynamic configuration changes without server restart
 - Full filesystem operations:
-  - Read/write files (text, Excel, PDF)
+  - Read/write files (text, Excel, PDF, DOCX)
   - Create/list directories
+  - **Recursive directory listing** with configurable depth and context overflow protection for large folders
   - Move files/directories
   - Search files and content (including Excel content)
   - Get file metadata
@@ -73,14 +89,23 @@ Execute long-running terminal commands on your computer and manage processes thr
   - All tool calls are automatically logged
   - Log rotation with 10MB size limit
   - Detailed timestamps and arguments
+- Security hardening:
+  - Symlink traversal prevention on file operations
+  - Command blocklist with bypass protection
+  - [Docker isolation](#option-6-docker-installation--auto-updates-no-nodejs-required) for full sandboxing
+  - See [SECURITY.md](SECURITY.md) for details
 
 ## How to install
 
-Desktop Commander offers multiple installation methods to fit different user needs and technical requirements.
+### Install in Claude Desktop
 
-> **📋 Update & Uninstall Information:** Before choosing an installation option, note that **only Options 1, 2, 3, and 6 have automatic updates**. Options 4 and 5 require manual updates. See the sections below for update and uninstall instructions for each option.
+Desktop Commander offers multiple installation methods for Claude Desktop.
 
-### Option 1: Install through npx ⭐ **Auto-Updates** **Requires Node.js**
+> **📋 Update & Uninstall Information:** Options 1, 2, 3, 4, and 6 have automatic updates. Option 5 requires manual updates. See below for details.
+
+<details>
+<summary><b>Option 1: Install through npx ⭐ Auto-Updates (Requires Node.js)</b></summary>
+
 Just run this in terminal:
 ```
 npx @wonderwhy-er/desktop-commander@latest setup
@@ -101,36 +126,42 @@ Restart Claude if running.
 **🔄 Manual Update:** Run the setup command again  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 2: Using bash script installer (macOS) ⭐ **Auto-Updates** **Installs Node.js if needed**
-For macOS users, you can use our automated bash installer which will check your Node.js version, install it if needed, and automatically configure Desktop Commander:
+</details>
+
+<details>
+<summary><b>Option 2: Using bash script installer (macOS) ⭐ Auto-Updates (Installs Node.js if needed)</b></summary>
+
 ```
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install.sh | bash
 ```
-This script handles all dependencies and configuration automatically for a seamless setup experience.
+This script handles all dependencies and configuration automatically.
 
-**✅ Auto-Updates:** Yes - requires manual updates  
+**✅ Auto-Updates:** Yes  
 **🔄 Manual Update:** Re-run the bash installer command above  
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
-### Option 3: Installing via Smithery ⭐ **Auto-Updates** **Requires Node.js**
+</details>
 
-To install Desktop Commander for Claude Desktop via [Smithery](https://smithery.ai/server/@wonderwhy-er/desktop-commander):
+<details>
+<summary><b>Option 3: Installing via Smithery ⭐ Auto-Updates (Requires Node.js)</b></summary>
 
-1. **Visit the Smithery page:** https://smithery.ai/server/@wonderwhy-er/desktop-commander
+1. **Visit:** https://smithery.ai/server/@wonderwhy-er/desktop-commander
 2. **Login to Smithery** if you haven't already
 3. **Select your client** (Claude Desktop) on the right side
 4. **Install with the provided key** that appears after selecting your client
 5. **Restart Claude Desktop**
 
-The old command-line installation method is no longer supported. Please use the web interface above for the most reliable installation experience.
-
 **✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
 **🔄 Manual Update:** Visit the Smithery page and reinstall  
 
-### Option 4: Add to claude_desktop_config manually ⭐ **Auto-Updates** **Requires Node.js**
+</details>
+
+<details>
+<summary><b>Option 4: Add to claude_desktop_config manually ⭐ Auto-Updates (Requires Node.js)</b></summary>
+
 Add this entry to your claude_desktop_config.json:
 
-- On Mac: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
+- On Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - On Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 - On Linux: `~/.config/Claude/claude_desktop_config.json`
 
@@ -151,10 +182,13 @@ Restart Claude if running.
 
 **✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
 **🔄 Manual Update:** Run the setup command again  
-**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or  remove the "desktop-commander" entry from your claude_desktop_config.json file
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the entry from your claude_desktop_config.json
 
-### ### Option 5: Checkout locally ❌ **Manual Updates** **Requires Node.js** ❌ **Manual Updates** **Requires Node.js**
-1. Clone and build:
+</details>
+
+<details>
+<summary><b>Option 5: Checkout locally ❌ Manual Updates (Requires Node.js)</b></summary>
+
 ```bash
 git clone https://github.com/wonderwhy-er/DesktopCommanderMCP.git
 cd DesktopCommanderMCP
@@ -162,27 +196,20 @@ npm run setup
 ```
 Restart Claude if running.
 
-The setup command will:
-- Install dependencies
-- Build the server
-- Configure Claude's desktop app
-- Add MCP servers to Claude's config if needed
+The setup command will install dependencies, build the server, and configure Claude's desktop app.
 
 **❌ Auto-Updates:** No - requires manual git updates  
 **🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
-**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the cloned directory and remove MCP server entry from Claude config
+**🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the cloned directory and MCP server entry from Claude config
 
-### Option 6: Docker Installation 🐳 ⭐ **Auto-Updates** **No Node.js Required**
+</details>
 
-Perfect for users who want complete or partial isolation or don't have Node.js installed. Desktop Commander runs in a sandboxed Docker container with a persistent work environment.
+<details>
+<summary><b>Option 6: Docker Installation 🐳 ⭐ Auto-Updates (No Node.js Required)</b></summary>
 
-#### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed **and running**
-- Claude Desktop app installed
+Perfect for users who want isolation or don't have Node.js installed. Runs in a sandboxed Docker container with a persistent work environment.
 
-**Important:** Make sure Docker Desktop is fully started before running the installer.
-
-#### Automated Installation (Recommended)
+**Prerequisites:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed **and running**, Claude Desktop app installed.
 
 **macOS/Linux:**
 ```bash
@@ -191,29 +218,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommande
 
 **Windows PowerShell:**
 ```powershell
-# Download and run the installer (one-liner)
 iex ((New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'))
 ```
 
-The automated installer will:
-- Check Docker installation
-- Pull the latest Docker image 
-- Prompt you to select folders for mounting
-- Configure Claude Desktop automatically
-- Restart Claude if possible
+The installer will check Docker, pull the image, prompt for folder mounting, and configure Claude Desktop.
 
-#### How Docker Persistence Works
-Desktop Commander creates a persistent work environment that remembers everything between sessions:
-- **Your development tools**: Any software you install (Node.js, Python, databases, etc.) stays installed
-- **Your configurations**: Git settings, SSH keys, shell preferences, and other personal configs are preserved  
-- **Your work files**: Projects and files in the workspace area persist across restarts
-- **Package caches**: Downloaded packages and dependencies are cached for faster future installs
+**Docker persistence:** Your tools, configs, work files, and package caches all survive restarts.
 
-Think of it like having your own dedicated development computer that never loses your setup, but runs safely isolated from your main system.
-
-#### Manual Docker Configuration
-
-If you prefer manual setup, add this to your claude_desktop_config.json:
+<details>
+<summary>Manual Docker Configuration</summary>
 
 **Basic setup (no file access):**
 ```json
@@ -221,12 +234,7 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
   "mcpServers": {
     "desktop-commander-in-docker": {
       "command": "docker",
-      "args": [
-        "run",
-        "-i",
-        "--rm",
-        "mcp/desktop-commander:latest"
-      ]
+      "args": ["run", "-i", "--rm", "mcp/desktop-commander:latest"]
     }
   }
 }
@@ -239,9 +247,7 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
     "desktop-commander-in-docker": {
       "command": "docker",
       "args": [
-        "run",
-        "-i",
-        "--rm",
+        "run", "-i", "--rm",
         "-v", "/Users/username/Desktop:/mnt/desktop",
         "-v", "/Users/username/Documents:/mnt/documents",
         "mcp/desktop-commander:latest"
@@ -272,83 +278,216 @@ If you prefer manual setup, add this to your claude_desktop_config.json:
 }
 ```
 
-#### Docker Benefits
-✅ **Controlled Isolation:** Runs in sandboxed environment with persistent development state
-✅ **No Node.js Required:** Everything included in the container
-✅ **Cross-Platform:** Same experience on all operating systems
-✅ **Persistent Environment:** Your tools, files, configs, and work survives restarts
+</details>
 
-**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
-**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
-
-#### Docker Management Commands
+<details>
+<summary>Docker Management Commands</summary>
 
 **macOS/Linux:**
-
-Check installation status:
 ```bash
+# Check status
 bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --status
-```
 
-Reset all persistent data (removes all installed tools and configs):
-```bash
+# Reset all persistent data
 bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset
 ```
 
 **Windows PowerShell:**
-
-Check status:
 ```powershell
+# Check status
 $script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Status
-```
 
-Reset all data:
-```powershell
+# Reset all data
 $script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Reset
-```
 
-Show help:
-```powershell
+# Show help
 $script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -Help
 ```
 
-Verbose output:
-```powershell
-$script = (New-Object System.Net.WebClient).DownloadString('https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.ps1'); & ([ScriptBlock]::Create("$script")) -VerboseOutput
-```  
-
-#### Troubleshooting Docker Installation
-If you broke the Docker container or need a fresh start:
+**Troubleshooting:** Reset and reinstall from scratch:
 ```bash
-# Reset and reinstall from scratch
 bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh) --reset && bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/install-docker.sh)
 ```
-This will completely reset your persistent environment and reinstall everything fresh with exception of not touching mounted folders
 
-## Remote MCP (ChatGPT, Claude Web) 🌐
+</details>
 
-Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services through their MCP/Connector integrations - no Claude Desktop app required.
+**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
+**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
 
-**👉 Get started at [mcp.desktopcommander.app](https://mcp.desktopcommander.app)**
+</details>
 
-The website provides complete instructions for:
-- Installing and running the Remote Device on your computer
-- Connecting your AI service (ChatGPT, Claude, etc.)
-- Managing your devices and sessions
+### Install in Other Clients
 
-### How It Works
+Desktop Commander works with any MCP-compatible client. The standard JSON configuration is:
 
+```json
+{
+  "mcpServers": {
+    "desktop-commander": {
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander@latest"]
+    }
+  }
+}
+```
+
+Add this to your client's MCP configuration file at the locations below:
+
+<details>
+<summary><b>Cursor</b></summary>
+
+[![Install MCP Server in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](cursor://anysphere.cursor-deeplink/mcp/install?name=desktop-commander&config=eyJjb21tYW5kIjoibnB4IC15IEB3b25kZXJ3aHktZXIvZGVza3RvcC1jb21tYW5kZXJAbGF0ZXN0In0%3D)
+
+Or add manually to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in your project folder (project-specific).
+
+See [Cursor MCP docs](https://docs.cursor.com/context/model-context-protocol) for more info.
+
+</details>
+
+<details>
+<summary><b>Windsurf</b></summary>
+
+Add to `~/.codeium/windsurf/mcp_config.json`. See [Windsurf MCP docs](https://docs.windsurf.com/windsurf/cascade/mcp) for more info.
+
+</details>
+
+<details>
+<summary><b>VS Code / GitHub Copilot</b></summary>
+
+Add to `.vscode/mcp.json` in your project or VS Code User Settings (JSON). Make sure MCP is enabled under Chat > MCP. Works in Agent mode.
+
+See [VS Code MCP docs](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) for more info.
+
+</details>
+
+<details>
+<summary><b>Cline</b></summary>
+
+Configure through the Cline extension settings in VS Code. Open the Cline sidebar, click the MCP Servers icon, and add the JSON configuration above. See [Cline MCP docs](https://docs.cline.bot/mcp/configuring-mcp-servers) for more info.
+
+</details>
+
+<details>
+<summary><b>Roo Code</b></summary>
+
+Add to your Roo Code MCP configuration file. See [Roo Code MCP docs](https://docs.roocode.com/features/mcp/using-mcp-in-roo) for more info.
+
+</details>
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+```sh
+claude mcp add --scope user desktop-commander -- npx -y @wonderwhy-er/desktop-commander@latest
+```
+
+Remove `--scope user` to install for the current project only. See [Claude Code MCP docs](https://docs.anthropic.com/en/docs/claude-code/mcp) for more info.
+
+</details>
+
+<details>
+<summary><b>Trae</b></summary>
+
+Use the "Add manually" feature and paste the JSON configuration above. See [Trae MCP docs](https://docs.trae.ai/ide/model-context-protocol?_lang=en) for more info.
+
+</details>
+
+<details>
+<summary><b>Kiro</b></summary>
+
+Navigate to `Kiro` > `MCP Servers`, click `+ Add`, and paste the JSON configuration above. See [Kiro MCP docs](https://kiro.dev/docs/mcp/configuration/) for more info.
+
+</details>
+
+<details>
+<summary><b>Codex (OpenAI)</b></summary>
+
+Codex uses TOML configuration. Run this command to add Desktop Commander:
+
+```sh
+codex mcp add desktop-commander -- npx -y @wonderwhy-er/desktop-commander@latest
+```
+
+Or manually add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.desktop-commander]
+command = "npx"
+args = ["-y", "@wonderwhy-er/desktop-commander@latest"]
+```
+
+See [Codex MCP docs](https://developers.openai.com/codex/mcp/) for more info.
+
+</details>
+
+<details>
+<summary><b>JetBrains (AI Assistant)</b></summary>
+
+In JetBrains IDEs, go to **Settings → Tools → AI Assistant → Model Context Protocol (MCP)**, click `+` Add, select **As JSON**, and paste the JSON configuration above. See [JetBrains MCP docs](https://www.jetbrains.com/help/ai-assistant/configure-an-mcp-server.html) for more info.
+
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "desktop-commander": {
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander@latest"]
+    }
+  }
+}
+```
+
+See [Gemini CLI docs](https://github.com/google-gemini/gemini-cli) for more info.
+
+</details>
+
+<details>
+<summary><b>Augment Code</b></summary>
+
+Press `Cmd/Ctrl+Shift+P`, open the Augment panel, and add a new MCP server named `desktop-commander` with the JSON configuration above. See [Augment Code MCP docs](https://docs.augmentcode.com/setup-augment/mcp) for more info.
+
+</details>
+
+<details>
+<summary><b>Qwen Code</b></summary>
+
+Run this command to add Desktop Commander:
+
+```sh
+qwen mcp add desktop-commander -- npx -y @wonderwhy-er/desktop-commander@latest
+```
+
+Or add to `.qwen/settings.json` (project) or `~/.qwen/settings.json` (global). See [Qwen Code MCP docs](https://qwenlm.github.io/qwen-code-docs/en/developers/tools/mcp-server/) for more info.
+
+</details>
+
+<details>
+<summary><b>ChatGPT / Claude Web (Remote MCP)</b></summary>
+
+Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services via Remote MCP — no desktop app required.
+
+**👉 [Get started at mcp.desktopcommander.app](https://mcp.desktopcommander.app)**
+
+How it works:
 1. You run a lightweight **Remote Device** on your computer
 2. It connects securely to the cloud Remote MCP service
 3. Your AI sends commands through the cloud to your device
 4. Commands execute locally, results return to your AI
-5. **You stay in control** - stop anytime with `Ctrl+C`
+5. **You stay in control** — stop anytime with `Ctrl+C`
 
 ### Security
 
 - ✅ Device only runs when you start it
 - ✅ Commands execute under your user permissions
 - ✅ Secure OAuth authentication and encrypted communication channel
+
+</details>
 
 ## Updating & Uninstalling Desktop Commander
 
