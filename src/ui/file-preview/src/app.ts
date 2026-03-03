@@ -12,6 +12,7 @@ import { createCompactRowShellController, type ToolShellController } from '../..
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
 import { renderCompactRow } from '../../shared/compact-row.js';
 import { connectWithSharedHostContext, isObjectRecord, type UiChromeState } from '../../shared/host-context.js';
+import { createUiEventTracker } from '../../shared/ui-event-tracker.js';
 import { App } from '@modelcontextprotocol/ext-apps';
 
 let isExpanded = false;
@@ -761,13 +762,13 @@ export function bootstrapApp(): void {
         });
     };
 
-    trackUiEvent = (event: string, params: Record<string, unknown> = {}): void => {
-        void rpcCallTool?.('track_ui_event', {
-            event,
+    trackUiEvent = createUiEventTracker(
+        (name, args) => app.callServerTool({ name, arguments: args }),
+        {
             component: 'file_preview',
-            params: { tool_name: 'read_file', ...params }
-        }).catch(() => {});
-    };
+            baseParams: { tool_name: 'read_file' },
+        }
+    );
 
     // Register ALL handlers BEFORE connect
     app.onteardown = async () => {
