@@ -7,7 +7,8 @@ display_name: DesktopCommanderMCP
 manifest_version: "1.0"
 description: >
   MCP server that gives AI agents terminal control, file system search,
-  and diff-based file editing capabilities. Run shell commands, search files,
+  diff-based file editing, and document handling capabilities. Run shell commands,
+  search files, read/write Excel, PDF, and DOCX files, analyze data,
   and edit code — all through the Model Context Protocol.
 
 author:
@@ -30,6 +31,10 @@ tags:
   - diff-editing
   - shell-commands
   - code-editing
+  - excel
+  - pdf
+  - docx
+  - data-analysis
 
 capabilities:
   - terminal-control
@@ -37,6 +42,10 @@ capabilities:
   - diff-editing
   - process-management
   - file-system-operations
+  - excel-support
+  - pdf-support
+  - docx-support
+  - data-analysis
 
 install:
   npx: "@wonderwhy-er/desktop-commander"
