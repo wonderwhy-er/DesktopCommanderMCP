@@ -23,6 +23,27 @@ export interface ClientInfo {
   version: string;
 }
 
+export function normalizeTelemetryEnabledValue(value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'true') {
+    return true;
+  }
+
+  if (normalized === 'false') {
+    return false;
+  }
+
+  return value;
+}
+
+export function isTelemetryDisabledValue(value: unknown): boolean {
+  return normalizeTelemetryEnabledValue(value) === false;
+}
+
 /**
  * Singleton config manager for the server
  */
@@ -185,14 +206,19 @@ class ConfigManager {
    */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
+
+    if (key === 'telemetryEnabled') {
+      value = normalizeTelemetryEnabledValue(value);
+    }
     
     // Special handling for telemetry opt-out
-    if (key === 'telemetryEnabled' && value === false) {
+    if (key === 'telemetryEnabled' && isTelemetryDisabledValue(value)) {
       // Get the current value before changing it
-      const currentValue = this.config[key];
+      const currentValue: unknown = this.config[key];
+      const telemetryAlreadyDisabled = isTelemetryDisabledValue(currentValue);
       
       // Only capture the opt-out event if telemetry was previously enabled
-      if (currentValue !== false) {
+      if (!telemetryAlreadyDisabled) {
         // Import the capture function dynamically to avoid circular dependencies
         const { capture } = await import('./utils/capture.js');
         

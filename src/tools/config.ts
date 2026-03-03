@@ -222,6 +222,28 @@ export async function setConfigValue(args: unknown) {
         }
       }
 
+      // Harden boolean fields against stringly-typed inputs like "false".
+      if (fieldDefinition.valueType === 'boolean') {
+        if (typeof valueToStore === 'string') {
+          const normalized = valueToStore.trim().toLowerCase();
+          if (normalized === 'true') {
+            valueToStore = true;
+          } else if (normalized === 'false') {
+            valueToStore = false;
+          }
+        }
+
+        if (typeof valueToStore !== 'boolean') {
+          return {
+            content: [{
+              type: "text",
+              text: `Value for ${parsed.data.key} must be boolean true/false.`
+            }],
+            isError: true
+          };
+        }
+      }
+
       await configManager.setValue(parsed.data.key, valueToStore);
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();

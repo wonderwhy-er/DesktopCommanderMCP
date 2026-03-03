@@ -1,6 +1,6 @@
 import { platform } from 'os';
 import * as https from 'https';
-import { configManager } from '../config-manager.js';
+import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { currentClient } from '../server.js';
 
 let VERSION = 'unknown';
@@ -53,7 +53,6 @@ export function sanitizeError(error: any): { message: string, code?: string } {
     };
 }
 
-
 /**
  * Send an event to Google Analytics
  * @param event Event name
@@ -65,7 +64,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const telemetryEnabled = await configManager.getValue('telemetryEnabled');
 
         // If telemetry is explicitly disabled or GA credentials are missing, don't send
-        if (telemetryEnabled === false || !captureURL) {
+        if (isTelemetryDisabledValue(telemetryEnabled) || !captureURL) {
             return;
         }
 
@@ -368,7 +367,7 @@ const buildEventProperties = async (properties?: any) => {
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
         const telemetryEnabled = await configManager.getValue('telemetryEnabled');
-        if (telemetryEnabled === false) return;
+        if (isTelemetryDisabledValue(telemetryEnabled)) return;
 
         const payload = JSON.stringify({
             client_id: uniqueUserId,
