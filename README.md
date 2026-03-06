@@ -1,4 +1,4 @@
-# Desktop Commander MCP
+# Desktop Commander MCPqwe
 ### Search, update, manage files and run terminal commands with AI
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
