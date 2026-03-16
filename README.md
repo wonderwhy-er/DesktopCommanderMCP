@@ -764,7 +764,7 @@ For commands that may take a while:
 1. **Start the process** — Use `start_process` with a short `timeout_ms` to capture initial output. The process continues running in the background and returns a PID.
 2. **Read output** — Use `read_process_output` with the PID to get new output. Use `offset` and `length` for pagination: `offset=0` returns output since the last read, a negative offset (e.g., `-50`) returns the last N lines.
 3. **Send input** — Use `interact_with_process` to write to stdin of a running process, useful for REPLs, SSH sessions, and interactive prompts.
-4. **List sessions** — Use `list_sessions` to see all active and recently completed processes.
+4. **List sessions** — Use `list_sessions` to see all active processes.
 5. **Terminate** — Use `force_terminate` with a PID to kill a running process.
 
 ## Configuration Management
