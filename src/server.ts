@@ -41,6 +41,7 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    ReplaceLinesArgsSchema,
     GetUsageStatsArgsSchema,
     GiveFeedbackArgsSchema,
     StartSearchArgsSchema,
@@ -788,6 +789,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     openWorldHint: false,
                 },
             },
+            {
+                name: "replace_lines",
+                description: `
+                        Replace lines in a text file by line number range.
+
+                        Token-efficient alternative to edit_block when you already know line numbers
+                        from a previous read_file call. No need to send old_string - just specify
+                        which lines to replace.
+
+                        PARAMETERS:
+                        - path: File path
+                        - startLine: First line to replace (1-based, from read_file output)
+                        - endLine: Last line to replace (1-based, inclusive)
+                        - newContent: Replacement text (can be more or fewer lines than removed)
+
+                        EXAMPLES:
+                        - Replace lines 10-15: startLine=10, endLine=15, newContent="new code here"
+                        - Delete lines 5-8: startLine=5, endLine=8, newContent=""
+                        - Insert after line 3: Use edit_block or write_file instead
+
+                        IMPORTANT: Line numbers must match the read_file output exactly.
+                        If the file has been modified since the last read_file, re-read first.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ReplaceLinesArgsSchema),
+                annotations: {
+                    title: "Replace Lines",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
 
             // Terminal tools
             {
@@ -1413,6 +1447,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "edit_block":
                 result = await handlers.handleEditBlock(args);
+                break;
+
+            case "replace_lines":
+                result = await handlers.handleReplaceLines(args);
                 break;
 
             default:

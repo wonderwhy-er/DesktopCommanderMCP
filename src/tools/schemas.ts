@@ -204,6 +204,16 @@ export const GetPromptsArgsSchema = z.object({
   // anonymous_user_use_case: z.string().optional(),
 });
 
+// Replace lines tool schema - line-based editing (token-efficient alternative to edit_block)
+export const ReplaceLinesArgsSchema = z.object({
+  path: z.string(),
+  startLine: z.number().int().min(1),
+  endLine: z.number().int().min(1),
+  newContent: z.string(),
+}).refine(data => data.endLine >= data.startLine, {
+  message: "endLine must be >= startLine"
+});
+
 // Tool history schema
 export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
