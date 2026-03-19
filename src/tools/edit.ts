@@ -494,16 +494,42 @@ export async function handleReplaceLines(args: unknown): Promise<ServerResult> {
 
     const removedCount = parsed.endLine - parsed.startLine + 1;
     const insertedCount = newLines.length;
+    const lineDelta = insertedCount - removedCount;
+
     capture('server_replace_lines', {
         fileExtension: path.extname(parsed.path).toLowerCase(),
         removedLines: removedCount,
         insertedLines: insertedCount,
     });
 
+    // Build response with context around the replacement
+    const CONTEXT_LINES = 3;
+    const newTotalLines = result.length;
+    const insertStart = parsed.startLine; // 1-based start of new content
+    const insertEnd = parsed.startLine + insertedCount - 1; // 1-based end of new content
+
+    const ctxStart = Math.max(0, insertStart - 1 - CONTEXT_LINES); // 0-based
+    const ctxEnd = Math.min(newTotalLines, insertEnd + CONTEXT_LINES); // 0-based exclusive
+    const contextSlice = result.slice(ctxStart, ctxEnd);
+    const contextOutput = contextSlice.map((line, i) => {
+        const lineNum = ctxStart + i + 1; // 1-based
+        const marker = (lineNum >= insertStart && lineNum <= insertEnd) ? '+' : ' ';
+        return `${marker} ${String(lineNum).padStart(4)}  ${line}`;
+    }).join('\n');
+
+    let msg = `Replaced lines ${parsed.startLine}-${parsed.endLine} (${removedCount} lines) with ${insertedCount} lines in ${parsed.path}`;
+
+    if (lineDelta !== 0) {
+        msg += `\n\nWARNING: Line count changed by ${lineDelta > 0 ? '+' : ''}${lineDelta}. All line numbers after line ${insertEnd} have shifted. Re-read before further edits.`;
+    }
+
+    msg += `\n\nContext (lines ${ctxStart + 1}-${ctxEnd}, + = new content):\n${contextOutput}`;
+
     return {
         content: [{
             type: "text",
-            text: `Replaced lines ${parsed.startLine}-${parsed.endLine} (${removedCount} lines) with ${insertedCount} lines in ${parsed.path}`
+            text: msg
         }],
     };
 }
+

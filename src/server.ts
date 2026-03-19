@@ -809,6 +809,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Delete lines 5-8: startLine=5, endLine=8, newContent=""
                         - Insert after line 3: Use edit_block or write_file instead
 
+                        WARNING - LINE NUMBER SHIFTING:
+                        After every replace_lines call where newContent has a different number of
+                        lines than the replaced range, ALL subsequent line numbers shift.
+                        ALWAYS re-read the file before making another replace_lines call on the
+                        same file. The response includes context lines to verify correctness.
+
                         IMPORTANT: Line numbers must match the read_file output exactly.
                         If the file has been modified since the last read_file, re-read first.
 
