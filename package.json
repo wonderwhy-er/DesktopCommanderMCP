@@ -22,7 +22,7 @@
     "testemonials"
   ],
   "scripts": {
-    "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
+    "postinstall": "node -e \"const{existsSync}=require('fs');const{execSync}=require('child_process');if(existsSync('./dist/track-installation.js')){try{execSync('node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js',{stdio:'inherit',shell:true})}catch(e){}}\"",
     "open-chat": "open -n /Applications/Claude.app",
     "device:install": "cd src/remote-device && npm install",
     "device:start": "tsx src/remote-device/device.ts",
@@ -111,14 +111,17 @@
   "optionalDependencies": {
     "caffeinate": "^1.0.1"
   },
+  "overrides": {
+    "tar": "^7.5.12",
+    "tmp": "^0.2.5"
+  },
   "devDependencies": {
-    "@anthropic-ai/mcpb": "^1.2.0",
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@types/node": "^20.17.24",
     "commander": "^13.1.0",
     "esbuild": "^0.27.2",
     "js-tiktoken": "^1.0.21",
-    "nexe": "^5.0.0-beta.4",
     "nodemon": "^3.0.2",
     "shx": "^0.3.4",
     "ts-node": "^10.9.2",
