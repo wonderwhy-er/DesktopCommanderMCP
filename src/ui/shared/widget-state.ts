@@ -17,6 +17,8 @@ export interface WidgetStateStorage<T> {
     write(state: T): void;
 }
 
+const FALLBACK_WIDGET_STATE_KEY = 'desktop-commander:file-preview:widget-state';
+
 /**
  * Check if we're running in ChatGPT (has special widget state API)
  */
@@ -34,12 +36,31 @@ export function isChatGPT(): boolean {
 export function createWidgetStateStorage<T>(
     validator?: (state: unknown) => boolean
 ): WidgetStateStorage<T> {
-    
     if (!isChatGPT()) {
-        // Other hosts don't have widget state persistence - return no-op
+        const storage = typeof window !== 'undefined' ? window.sessionStorage : undefined;
         return {
-            read: () => undefined,
-            write: () => {}
+            read(): T | undefined {
+                if (!storage) return undefined;
+                try {
+                    const raw = storage.getItem(FALLBACK_WIDGET_STATE_KEY);
+                    if (!raw) return undefined;
+                    const parsed = JSON.parse(raw);
+                    const payload = parsed?.payload;
+                    if (payload === undefined) return undefined;
+                    if (validator && !validator(payload)) return undefined;
+                    return payload as T;
+                } catch {
+                    return undefined;
+                }
+            },
+            write(state: T): void {
+                if (!storage) return;
+                try {
+                    storage.setItem(FALLBACK_WIDGET_STATE_KEY, JSON.stringify({ payload: state }));
+                } catch {
+                    // Ignore storage failures
+                }
+            }
         };
     }
     
