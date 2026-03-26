@@ -41,6 +41,7 @@ import {
     SetConfigValueArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
+    ReplaceLinesArgsSchema,
     GetUsageStatsArgsSchema,
     GiveFeedbackArgsSchema,
     StartSearchArgsSchema,
@@ -57,6 +58,7 @@ import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
 import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
+import { configManager } from './config-manager.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
 import { toolHistory } from './utils/toolHistory.js';
 import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
@@ -204,16 +206,21 @@ export { currentClient };
 deferLog('info', 'Setting up request handlers...');
 
 /**
- * Check if a tool should be included based on current client
+ * Check if a tool should be included based on current client and config
  */
-function shouldIncludeTool(toolName: string): boolean {
+async function shouldIncludeTool(toolName: string): Promise<boolean> {
     // Exclude give_feedback_to_desktop_commander for desktop-commander client
     if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
         return false;
     }
 
-    // Add more conditional tool logic here as needed
-    // Example: if (toolName === 'some_tool' && currentClient?.name === 'some_client') return false;
+    // Edit mode controls which editing tools are registered
+    if (toolName === 'edit_block' || toolName === 'replace_lines') {
+        const editMode = (await configManager.getValue('editMode')) || 'string-replace';
+        if (editMode === 'string-replace' && toolName === 'replace_lines') return false;
+        if (editMode === 'line-replace' && toolName === 'edit_block') return false;
+        // 'both' keeps both tools
+    }
 
     return true;
 }
@@ -788,6 +795,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     openWorldHint: false,
                 },
             },
+            {
+                name: "replace_lines",
+                description: `
+                        Replace lines in a text file by line number range.
+
+                        Token-efficient alternative to edit_block when you already know line numbers
+                        from a previous read_file call. No need to send old_string - just specify
+                        which lines to replace.
+
+                        PARAMETERS:
+                        - path: File path
+                        - startLine: First line to replace (1-based, from read_file output)
+                        - endLine: Last line to replace (1-based, inclusive)
+                        - newContent: Replacement text (can be more or fewer lines than removed)
+
+                        EXAMPLES:
+                        - Replace lines 10-15: startLine=10, endLine=15, newContent="new code here"
+                        - Delete lines 5-8: startLine=5, endLine=8, newContent=""
+                        - Insert after line 3: Use edit_block or write_file instead
+
+                        WARNING - LINE NUMBER SHIFTING:
+                        After every replace_lines call where newContent has a different number of
+                        lines than the replaced range, ALL subsequent line numbers shift.
+                        ALWAYS re-read the file before making another replace_lines call on the
+                        same file. The response includes context lines to verify correctness.
+
+                        IMPORTANT: Line numbers must match the read_file output exactly.
+                        If the file has been modified since the last read_file, re-read first.
+
+                        NOTE: This tool is only available when editMode is set to "line-replace" or "both"
+                        in the configuration. Default editMode is "string-replace" (edit_block only).
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(ReplaceLinesArgsSchema),
+                annotations: {
+                    title: "Replace Lines",
+                    readOnlyHint: false,
+                    destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
 
             // Terminal tools
             {
@@ -1147,8 +1196,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
         ];
 
-        // Filter tools based on current client
-        const filteredTools = allTools.filter(tool => shouldIncludeTool(tool.name));
+        // Filter tools based on current client and config
+        const includeResults = await Promise.all(allTools.map(tool => shouldIncludeTool(tool.name)));
+        const filteredTools = allTools.filter((_, i) => includeResults[i]);
 
         // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
 
@@ -1413,6 +1463,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "edit_block":
                 result = await handlers.handleEditBlock(args);
+                break;
+
+            case "replace_lines":
+                result = await handlers.handleReplaceLines(args);
                 break;
 
             default:

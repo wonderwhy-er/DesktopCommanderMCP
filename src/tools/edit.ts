@@ -21,7 +21,7 @@ import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
 import { createErrorResponse } from '../error-handlers.js';
-import { EditBlockArgsSchema } from "./schemas.js";
+import { EditBlockArgsSchema, ReplaceLinesArgsSchema } from "./schemas.js";
 import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 import { configManager } from '../config-manager.js';
@@ -457,4 +457,78 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
         search: parsed.old_string,
         replace: parsed.new_string
     }, parsed.expected_replacements);
+}
+
+/**
+ * Handle replace_lines command - line-based editing
+ * Replaces lines startLine..endLine (1-based, inclusive) with newContent
+ */
+export async function handleReplaceLines(args: unknown): Promise<ServerResult> {
+    const parsed = ReplaceLinesArgsSchema.parse(args);
+    const validPath = await validatePath(parsed.path);
+    const content = await readFileInternal(validPath, 0, Number.MAX_SAFE_INTEGER);
+
+    if (typeof content !== 'string') {
+        return createErrorResponse('Cannot read file as text: ' + parsed.path);
+    }
+
+    const fileLineEnding = detectLineEnding(content);
+    const lines = content.split(/\r\n|\r|\n/);
+    const totalLines = lines.length;
+
+    if (parsed.startLine > totalLines) {
+        return createErrorResponse(`startLine ${parsed.startLine} exceeds file length (${totalLines} lines)`);
+    }
+    if (parsed.endLine > totalLines) {
+        return createErrorResponse(`endLine ${parsed.endLine} exceeds file length (${totalLines} lines)`);
+    }
+
+    const before = lines.slice(0, parsed.startLine - 1);
+    const after = lines.slice(parsed.endLine);
+    const newLines = parsed.newContent === '' ? [] : parsed.newContent.split(/\r\n|\r|\n/);
+    const result = [...before, ...newLines, ...after];
+    const sep = fileLineEnding;
+    const newContent = result.join(sep);
+
+    await writeFile(parsed.path, newContent);
+
+    const removedCount = parsed.endLine - parsed.startLine + 1;
+    const insertedCount = newLines.length;
+    const lineDelta = insertedCount - removedCount;
+
+    capture('server_replace_lines', {
+        fileExtension: path.extname(parsed.path).toLowerCase(),
+        removedLines: removedCount,
+        insertedLines: insertedCount,
+    });
+
+    // Build response with context around the replacement
+    const CONTEXT_LINES = 3;
+    const newTotalLines = result.length;
+    const insertStart = parsed.startLine;
+    const insertEnd = insertedCount > 0 ? parsed.startLine + insertedCount - 1 : parsed.startLine - 1;
+
+    const ctxStart = Math.max(0, parsed.startLine - 1 - CONTEXT_LINES);
+    const ctxEnd = Math.min(newTotalLines, (insertedCount > 0 ? insertEnd : parsed.startLine) + CONTEXT_LINES);
+    const contextSlice = result.slice(ctxStart, ctxEnd);
+    const contextOutput = contextSlice.map((line, i) => {
+        const lineNum = ctxStart + i + 1;
+        const marker = (insertedCount > 0 && lineNum >= insertStart && lineNum <= insertEnd) ? '+' : ' ';
+        return `${marker} ${String(lineNum).padStart(4)}  ${line}`;
+    }).join('\n');
+
+    let msg = `Replaced lines ${parsed.startLine}-${parsed.endLine} (${removedCount} lines) with ${insertedCount} lines in ${parsed.path}`;
+
+    if (lineDelta !== 0) {
+        msg += `\n\nWARNING: Line count changed by ${lineDelta > 0 ? '+' : ''}${lineDelta}. All line numbers after line ${insertEnd} have shifted. Re-read before further edits.`;
+    }
+
+    msg += `\n\nContext (lines ${ctxStart + 1}-${ctxEnd}, + = new content):\n${contextOutput}`;
+
+    return {
+        content: [{
+            type: "text",
+            text: msg
+        }],
+    };
 }

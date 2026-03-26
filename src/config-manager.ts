@@ -13,6 +13,7 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  editMode?: 'string-replace' | 'line-replace' | 'both'; // Controls which editing tools are registered
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)
@@ -209,6 +210,14 @@ class ConfigManager {
 
     if (key === 'telemetryEnabled') {
       value = normalizeTelemetryEnabledValue(value);
+    }
+
+    // Validate editMode values
+    if (key === 'editMode') {
+      const valid = ['string-replace', 'line-replace', 'both'];
+      if (!valid.includes(value)) {
+        throw new Error(`Invalid editMode "${value}". Must be one of: ${valid.join(', ')}`);
+      }
     }
     
     // Special handling for telemetry opt-out
