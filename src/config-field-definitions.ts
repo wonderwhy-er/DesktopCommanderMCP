@@ -38,6 +38,11 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'Maximum number of lines that can be written in one edit operation. This helps prevent accidental oversized writes and keeps file changes predictable.',
     valueType: 'number',
   },
+  editMode: {
+    label: 'Edit Mode',
+    description: 'Controls which file editing tools are registered. "string-replace" (default) uses edit_block with fuzzy matching. "line-replace" uses replace_lines with line numbers. "both" registers both tools. Fewer tools means a leaner system prompt.',
+    valueType: 'string',
+  },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 
 export type ConfigFieldKey = keyof typeof CONFIG_FIELD_DEFINITIONS;

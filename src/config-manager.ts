@@ -13,6 +13,7 @@ export interface ServerConfig {
   telemetryEnabled?: boolean; // New field for telemetry control
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
+  editMode?: 'string-replace' | 'line-replace' | 'both'; // Controls which editing tools are registered
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)
@@ -42,6 +43,14 @@ export function normalizeTelemetryEnabledValue(value: unknown): unknown {
 
 export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
+}
+
+const VALID_EDIT_MODES = ['string-replace', 'line-replace', 'both'];
+
+function validateEditMode(value: unknown): void {
+  if (value !== undefined && !VALID_EDIT_MODES.includes(value as string)) {
+    throw new Error(`Invalid editMode "${value}". Must be one of: ${VALID_EDIT_MODES.join(', ')}`);
+  }
 }
 
 /**
@@ -86,6 +95,11 @@ class ConfigManager {
         await this.saveConfig();
       }
       this.config['version'] = VERSION;
+
+      // Sanitize editMode from disk - invalid values reset to default
+      if (this.config.editMode && !VALID_EDIT_MODES.includes(this.config.editMode)) {
+        delete this.config.editMode;
+      }
 
       this.initialized = true;
     } catch (error) {
@@ -210,6 +224,11 @@ class ConfigManager {
     if (key === 'telemetryEnabled') {
       value = normalizeTelemetryEnabledValue(value);
     }
+
+    // Validate editMode values
+    if (key === 'editMode') {
+      validateEditMode(value);
+    }
     
     // Special handling for telemetry opt-out
     if (key === 'telemetryEnabled' && isTelemetryDisabledValue(value)) {
@@ -241,6 +260,7 @@ class ConfigManager {
    */
   async updateConfig(updates: Partial<ServerConfig>): Promise<ServerConfig> {
     await this.init();
+    if (updates.editMode !== undefined) validateEditMode(updates.editMode);
     this.config = { ...this.config, ...updates };
     await this.saveConfig();
     return { ...this.config };
