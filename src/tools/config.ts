@@ -9,6 +9,7 @@ import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
   isConfigFieldKey,
+  type ConfigFieldDefinition,
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
@@ -128,13 +129,14 @@ export async function getConfig() {
           availableShells,
         },
         entries: CONFIG_FIELD_KEYS.map((key) => {
-          const definition = CONFIG_FIELD_DEFINITIONS[key];
+          const definition: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[key];
           const value = (configWithSystemInfo as Record<string, unknown>)[key];
           return {
             key,
             value,
             valueType: definition.valueType,
             editable: true,
+            securityCritical: definition.securityCritical ?? false,
           };
         }),
       },
@@ -175,6 +177,22 @@ export async function setConfigValue(args: unknown) {
         content: [{
           type: "text",
           text: `Key "${parsed.data.key}" is not configurable via this tool. Allowed keys: ${[...ALLOWED_CONFIG_KEYS].join(', ')}`
+        }],
+        isError: true
+      };
+    }
+
+    // Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+    // can only be changed through the config-editor UI, not by LLM tool calls.
+    // This prevents prompt-injection attacks from disabling safety controls.
+    const fieldDef: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[parsed.data.key];
+    if (fieldDef.securityCritical && parsed.data.origin !== 'ui') {
+      return {
+        content: [{
+          type: "text",
+          text: `Security-critical key "${parsed.data.key}" cannot be modified by the AI agent. ` +
+            `This restriction prevents prompt-injection attacks from disabling safety controls. ` +
+            `To change this setting, use the Desktop Commander config editor UI (get_config tool).`
         }],
         isError: true
       };

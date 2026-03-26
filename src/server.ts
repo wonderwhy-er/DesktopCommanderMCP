@@ -253,21 +253,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "set_config_value",
                 description: `
                         Set a specific configuration value by key.
-                        
-                        WARNING: Should be used in a separate chat from file operations and 
-                        command execution to prevent security issues.
-                        
-                        Config keys include:
-                        - blockedCommands (array)
-                        - defaultShell (string)
-                        - allowedDirectories (array of paths)
+
+                        Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+                        can ONLY be changed through the config editor UI, not via this tool.
+                        This prevents prompt-injection attacks from disabling safety controls.
+
+                        Config keys settable by the AI agent:
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
-                        
-                        IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
-                        to the entire file system, regardless of the operating system.
-                        
+
+                        Config keys settable only via config editor UI:
+                        - blockedCommands (array)
+                        - defaultShell (string)
+                        - allowedDirectories (array of paths)
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 annotations: {
@@ -1029,7 +1029,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Terminate a running process by PID.
 
-                        Use with caution as this will forcefully terminate the specified process.
+                        Only processes started by Desktop Commander (via start_process) can be
+                        terminated. Arbitrary system PIDs are rejected for safety.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(KillProcessArgsSchema),
