@@ -490,7 +490,7 @@ export async function handleReplaceLines(args: unknown): Promise<ServerResult> {
     const sep = fileLineEnding;
     const newContent = result.join(sep);
 
-    await writeFile(parsed.path, newContent);
+    await writeFile(validPath, newContent);
 
     const removedCount = parsed.endLine - parsed.startLine + 1;
     const insertedCount = newLines.length;
@@ -520,7 +520,8 @@ export async function handleReplaceLines(args: unknown): Promise<ServerResult> {
     let msg = `Replaced lines ${parsed.startLine}-${parsed.endLine} (${removedCount} lines) with ${insertedCount} lines in ${parsed.path}`;
 
     if (lineDelta !== 0) {
-        msg += `\n\nWARNING: Line count changed by ${lineDelta > 0 ? '+' : ''}${lineDelta}. All line numbers after line ${insertEnd} have shifted. Re-read before further edits.`;
+        const shiftAnchor = insertEnd > 0 ? insertEnd : parsed.startLine;
+        msg += `\n\nWARNING: Line count changed by ${lineDelta > 0 ? '+' : ''}${lineDelta}. All line numbers after line ${shiftAnchor} have shifted. Re-read before further edits.`;
     }
 
     msg += `\n\nContext (lines ${ctxStart + 1}-${ctxEnd}, + = new content):\n${contextOutput}`;

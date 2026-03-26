@@ -45,6 +45,14 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
+const VALID_EDIT_MODES = ['string-replace', 'line-replace', 'both'];
+
+function validateEditMode(value: unknown): void {
+  if (value !== undefined && !VALID_EDIT_MODES.includes(value as string)) {
+    throw new Error(`Invalid editMode "${value}". Must be one of: ${VALID_EDIT_MODES.join(', ')}`);
+  }
+}
+
 /**
  * Singleton config manager for the server
  */
@@ -87,6 +95,11 @@ class ConfigManager {
         await this.saveConfig();
       }
       this.config['version'] = VERSION;
+
+      // Sanitize editMode from disk - invalid values reset to default
+      if (this.config.editMode && !VALID_EDIT_MODES.includes(this.config.editMode)) {
+        delete this.config.editMode;
+      }
 
       this.initialized = true;
     } catch (error) {
@@ -214,10 +227,7 @@ class ConfigManager {
 
     // Validate editMode values
     if (key === 'editMode') {
-      const valid = ['string-replace', 'line-replace', 'both'];
-      if (!valid.includes(value)) {
-        throw new Error(`Invalid editMode "${value}". Must be one of: ${valid.join(', ')}`);
-      }
+      validateEditMode(value);
     }
     
     // Special handling for telemetry opt-out
@@ -250,6 +260,7 @@ class ConfigManager {
    */
   async updateConfig(updates: Partial<ServerConfig>): Promise<ServerConfig> {
     await this.init();
+    if (updates.editMode !== undefined) validateEditMode(updates.editMode);
     this.config = { ...this.config, ...updates };
     await this.saveConfig();
     return { ...this.config };
