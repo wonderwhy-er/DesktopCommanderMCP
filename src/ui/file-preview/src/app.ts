@@ -36,12 +36,16 @@ let currentHtmlMode: HtmlPreviewMode = 'rendered';
 let currentHostContext: Record<string, unknown> | undefined;
 let rerenderCurrent: (() => void) | undefined;
 let syncPayload: ((payload?: RenderPayload) => void) | undefined;
+let persistPayload: ((payload: RenderPayload) => void) | undefined;
 let markdownEditorHandle: MarkdownEditorHandle | undefined;
 let markdownTocHandle: MarkdownTocHandle | undefined;
 let localPayloadOverride: RenderPayload | undefined;
+const markdownEditorAppCache = new Map<string, { appName: string; appPath?: string }>();
+const markdownEditorAppPending = new Set<string>();
 
 interface MarkdownWorkspaceState {
     filePath: string;
+    initialContent: string;
     sourceContent: string;
     fullDocumentContent: string;
     draftContent: string;
@@ -56,6 +60,7 @@ interface MarkdownWorkspaceState {
     editorView: MarkdownEditorView;
     editorScrollTop: number;
     saveIndicator: 'idle' | 'saving' | 'saved';
+    fileDeleted: boolean;
 }
 
 let markdownWorkspaceState: MarkdownWorkspaceState | undefined;
@@ -133,9 +138,7 @@ function isLikelyUrl(filePath: string): boolean {
 function buildBreadcrumb(filePath: string): string {
     const normalized = filePath.replace(/\\/g, '/');
     const parts = normalized.split('/').filter(Boolean);
-    // Show last 3-4 meaningful segments as breadcrumb
-    const tail = parts.slice(-4);
-    return tail.map(p => escapeHtml(p)).join(' <span class="breadcrumb-sep">›</span> ');
+    return parts.map(p => escapeHtml(p)).join(' <span class="breadcrumb-sep">›</span> ');
 }
 
 function getParentDirectory(filePath: string): string {
@@ -299,6 +302,11 @@ function buildOpenInEditorCommand(filePath: string): string | undefined {
         return undefined;
     }
 
+    const cachedApp = markdownEditorAppCache.get(trimmedPath);
+    if (cachedApp?.appPath && navigator.userAgent.toLowerCase().includes('mac')) {
+        return `open -a ${shellQuote(cachedApp.appPath)} ${shellQuote(trimmedPath)}`;
+    }
+
     const userAgent = navigator.userAgent.toLowerCase();
     if (userAgent.includes('win')) {
         const escapedForPowerShell = trimmedPath.replace(/'/g, "''");
@@ -310,6 +318,50 @@ function buildOpenInEditorCommand(filePath: string): string | undefined {
     }
 
     return `xdg-open ${shellQuote(trimmedPath)}`;
+}
+
+async function detectDefaultMarkdownEditor(filePath: string): Promise<void> {
+    const trimmedPath = filePath.trim();
+    if (!trimmedPath || markdownEditorAppCache.has(trimmedPath) || markdownEditorAppPending.has(trimmedPath)) {
+        return;
+    }
+
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (!userAgent.includes('mac')) {
+        return;
+    }
+
+    markdownEditorAppPending.add(trimmedPath);
+    try {
+        const detectCommand = `osascript -e ${shellQuote(`set appAlias to default application of (info for POSIX file "${trimmedPath.replace(/"/g, '\\"')}")
+return (name of (info for appAlias)) & linefeed & POSIX path of appAlias`)}`;
+        const detectResult = await rpcCallTool?.('start_process', {
+            command: detectCommand,
+            timeout_ms: 12000,
+        });
+        const text = extractToolText(detectResult) ?? '';
+        if (!text || text.toLowerCase().includes('error') || text.toLowerCase().includes('execution')) {
+            return;
+        }
+        const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+        const appName = lines[lines.length - 2]?.replace(/\.app$/i, '') ?? '';
+        const appPath = lines[lines.length - 1] ?? '';
+        if (appName && appPath.startsWith('/')) {
+            markdownEditorAppCache.set(trimmedPath, {
+                appName,
+                appPath,
+            });
+            rerenderCurrent?.();
+        }
+    } catch {
+        // Fall back to generic editor label.
+    } finally {
+        markdownEditorAppPending.delete(trimmedPath);
+    }
+}
+
+function renderMarkdownEditorAppIcon(): string {
+    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 }
 
 function renderRawFallback(source: string): string {
@@ -372,12 +424,17 @@ function getMarkdownWorkspaceState(payload: RenderPayload): MarkdownWorkspaceSta
 
     if (!markdownWorkspaceState || markdownWorkspaceState.filePath !== payload.filePath || markdownWorkspaceState.sourceContent !== cleanedContent) {
         const outline = extractMarkdownOutline(cleanedContent);
+        const isPartial = parseReadRange(payload.content)?.isPartial === true;
+        const prevInitial = markdownWorkspaceState?.filePath === payload.filePath
+            ? markdownWorkspaceState.initialContent
+            : undefined;
         markdownWorkspaceState = {
             filePath: payload.filePath,
+            initialContent: prevInitial ?? cleanedContent,
             sourceContent: cleanedContent,
             fullDocumentContent: cleanedContent,
             draftContent: cleanedContent,
-            mode: 'preview',
+            mode: isPartial ? 'preview' : 'edit',
             dirty: false,
             activeHeadingId: outline[0]?.id ?? null,
             pendingAnchor: null,
@@ -388,6 +445,7 @@ function getMarkdownWorkspaceState(payload: RenderPayload): MarkdownWorkspaceSta
             editorView: 'markdown',
             editorScrollTop: 0,
             saveIndicator: 'idle',
+            fileDeleted: false,
         };
     }
 
@@ -580,6 +638,10 @@ function attachCopyHandler(payload: RenderPayload): void {
             ? source
             : (getRenderedMarkdownCopyText(source) || source);
         const copied = await copyTextData(textToCopy);
+        if (copied) {
+            updateSaveStatusDOM('Copied', 'saved');
+            window.setTimeout(() => updateSaveStatusDOM('', ''), 1500);
+        }
         setIconButtonState(activeCopyButton, copied ? 'Copied!' : 'Copy failed', 'Copy', 1500);
     });
 }
@@ -814,6 +876,41 @@ function applyPendingMarkdownAnchor(): void {
     }
 }
 
+async function refreshMarkdownFromDisk(payload: RenderPayload): Promise<void> {
+    try {
+        const freshResult = await rpcCallTool?.('read_file', { path: payload.filePath });
+        const resultText = extractToolText(freshResult) ?? '';
+
+        if (resultText.toLowerCase().includes('error') && (resultText.toLowerCase().includes('not found') || resultText.toLowerCase().includes('no such file') || resultText.toLowerCase().includes('enoent'))) {
+            if (markdownWorkspaceState) {
+                markdownWorkspaceState.fileDeleted = true;
+            }
+            updateSaveStatusDOM('File deleted', 'saved');
+            // Disable non-applicable buttons via DOM
+            const revert = document.getElementById('revert-markdown') as HTMLButtonElement | null;
+            if (revert) revert.disabled = true;
+            const openFolder = document.getElementById('open-in-folder') as HTMLButtonElement | null;
+            if (openFolder) openFolder.disabled = true;
+            const openEditor = document.getElementById('open-in-editor') as HTMLButtonElement | null;
+            if (openEditor) openEditor.disabled = true;
+            return;
+        }
+
+        const freshPayload = extractRenderPayload(freshResult) ?? null;
+        if (!freshPayload) return;
+        const freshContent = stripReadStatusLine(freshPayload.content);
+        const currentContent = stripReadStatusLine(payload.content);
+        if (freshContent === currentContent) return;
+
+        syncPayload?.(freshPayload);
+        localPayloadOverride = freshPayload;
+        markdownWorkspaceState = undefined;
+        rerenderCurrent?.();
+    } catch {
+        // Silently fall back to host payload
+    }
+}
+
 async function readMarkdownPayload(filePath: string, length?: number): Promise<RenderPayload | null> {
     const result = await rpcCallTool?.('read_file', {
         path: filePath,
@@ -904,6 +1001,14 @@ async function navigateMarkdownLink(payload: RenderPayload, href: string): Promi
     }
 
     if (resolvedLink.kind === 'file' && resolvedLink.targetPath) {
+        // Delegate file navigation to the host so it can open the file in its own
+        // viewer (e.g. dc-app file preview modal with back/forward navigation).
+        // Fall back to in-app reading if the host doesn't handle the link.
+        const hostHandled = await openExternalLink?.(resolvedLink.targetPath);
+        if (hostHandled) {
+            return;
+        }
+
         const nextPayload = await readMarkdownPayload(resolvedLink.targetPath);
         if (!nextPayload) {
             if (markdownWorkspaceState) {
@@ -924,25 +1029,9 @@ async function navigateMarkdownLink(payload: RenderPayload, href: string): Promi
 
 async function requestMarkdownEditMode(payload: RenderPayload): Promise<void> {
     const workspaceState = getMarkdownWorkspaceState(payload);
-    const fullscreenAvailability = getMarkdownFullscreenAvailability({
-        availableDisplayModes: getAvailableDisplayModes(),
-    });
-
-    if (!fullscreenAvailability.canFullscreen) {
-        workspaceState.error = fullscreenAvailability.reason;
-        workspaceState.notice = null;
-        rerenderCurrent?.();
-        return;
-    }
 
     workspaceState.error = null;
     workspaceState.notice = null;
-    const nextMode = await requestDisplayMode?.('fullscreen');
-    if (nextMode !== 'fullscreen') {
-        workspaceState.error = 'Fullscreen mode is unavailable in this host.';
-        rerenderCurrent?.();
-        return;
-    }
 
     if (shouldAutoLoadMarkdownOnEnterFullscreen(payload.content)) {
         await loadFullMarkdownDocument(payload, { keepEditMode: true });
@@ -951,7 +1040,6 @@ async function requestMarkdownEditMode(payload: RenderPayload): Promise<void> {
 
     const editAvailability = getMarkdownEditAvailability({
         content: payload.content,
-        availableDisplayModes: getAvailableDisplayModes(),
     });
     if (!editAvailability.canEdit) {
         workspaceState.error = editAvailability.reason;
@@ -967,13 +1055,32 @@ async function requestMarkdownEditMode(payload: RenderPayload): Promise<void> {
     rerenderCurrent?.();
 }
 
-function revertMarkdownEditing(payload: RenderPayload): void {
-    const workspaceState = getMarkdownWorkspaceState(payload);
-    workspaceState.draftContent = workspaceState.fullDocumentContent;
-    workspaceState.dirty = false;
-    workspaceState.error = null;
-    workspaceState.notice = 'Reverted to the last loaded version.';
+async function requestMarkdownFullscreen(): Promise<boolean> {
+    const fullscreenAvailability = getMarkdownFullscreenAvailability({
+        availableDisplayModes: getAvailableDisplayModes(),
+    });
+    if (!fullscreenAvailability.canFullscreen) {
+        return false;
+    }
+    const nextMode = await requestDisplayMode?.('fullscreen');
+    return nextMode === 'fullscreen';
+}
+
+function revertMarkdownEditing(): void {
+    const ws = markdownWorkspaceState;
+    if (!ws) return;
+    ws.draftContent = ws.initialContent;
+    ws.sourceContent = ws.initialContent;
+    ws.dirty = ws.initialContent !== ws.fullDocumentContent;
+    ws.error = null;
+    ws.notice = null;
+    // Update currentPayload to match so re-render doesn't recreate state
+    if (currentPayload) {
+        currentPayload = { ...currentPayload, content: ws.initialContent };
+    }
     rerenderCurrent?.();
+    updateSaveStatusDOM('Reverted', 'saved');
+    window.setTimeout(() => updateSaveStatusDOM('', ''), 1500);
 }
 
 function cancelMarkdownEditing(payload: RenderPayload): void {
@@ -993,90 +1100,198 @@ function cancelMarkdownEditing(payload: RenderPayload): void {
     rerenderCurrent?.();
 }
 
-function isSuccessfulEditResult(result: unknown): boolean {
-    const message = extractToolText(result);
-    return typeof message === 'string' && message.startsWith('Successfully applied');
+interface DiffHunk {
+    oldStart: number;
+    oldEnd: number;
+    newStart: number;
+    newEnd: number;
 }
 
-async function saveMarkdownDocument(payload: RenderPayload): Promise<void> {
-    const workspaceState = getMarkdownWorkspaceState(payload);
-    if (workspaceState.saving || !workspaceState.dirty) {
+function computeDiffHunks(oldLines: string[], newLines: string[]): DiffHunk[] {
+    const m = oldLines.length;
+    const n = newLines.length;
+
+    // For very large files, treat as single change
+    if (m * n > 1_000_000) {
+        return [{ oldStart: 0, oldEnd: m, newStart: 0, newEnd: n }];
+    }
+
+    // LCS via DP
+    const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0) as number[]);
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            dp[i][j] = oldLines[i - 1] === newLines[j - 1]
+                ? dp[i - 1][j - 1] + 1
+                : Math.max(dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+
+    // Trace back to find matching line pairs
+    const matches: Array<[number, number]> = [];
+    let i = m;
+    let j = n;
+    while (i > 0 && j > 0) {
+        if (oldLines[i - 1] === newLines[j - 1]) {
+            matches.unshift([i - 1, j - 1]);
+            i--;
+            j--;
+        } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+            i--;
+        } else {
+            j--;
+        }
+    }
+
+    // Gaps between matches are change hunks
+    const hunks: DiffHunk[] = [];
+    let prevOld = 0;
+    let prevNew = 0;
+    for (const [oi, ni] of matches) {
+        if (oi > prevOld || ni > prevNew) {
+            hunks.push({ oldStart: prevOld, oldEnd: oi, newStart: prevNew, newEnd: ni });
+        }
+        prevOld = oi + 1;
+        prevNew = ni + 1;
+    }
+    if (prevOld < m || prevNew < n) {
+        hunks.push({ oldStart: prevOld, oldEnd: m, newStart: prevNew, newEnd: n });
+    }
+
+    return hunks;
+}
+
+function mergeCloseHunks(hunks: DiffHunk[], minGap: number): DiffHunk[] {
+    if (hunks.length <= 1) return hunks;
+    const merged: DiffHunk[] = [{ ...hunks[0] }];
+    for (let i = 1; i < hunks.length; i++) {
+        const prev = merged[merged.length - 1];
+        const curr = hunks[i];
+        if (curr.oldStart - prev.oldEnd < minGap) {
+            prev.oldEnd = curr.oldEnd;
+            prev.newEnd = curr.newEnd;
+        } else {
+            merged.push({ ...curr });
+        }
+    }
+    return merged;
+}
+
+function computeEditBlocks(oldText: string, newText: string): Array<{ old_string: string; new_string: string }> {
+    if (oldText === newText) return [];
+
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    const hunks = computeDiffHunks(oldLines, newLines);
+    if (hunks.length === 0) return [];
+
+    const CONTEXT = 3;
+    const merged = mergeCloseHunks(hunks, CONTEXT * 2 + 1);
+
+    // If changes cover most of the file, single full edit
+    const totalChanged = merged.reduce((sum, h) => sum + (h.oldEnd - h.oldStart), 0);
+    if (totalChanged > oldLines.length * 0.7) {
+        return [{ old_string: oldText, new_string: newText }];
+    }
+
+    return merged.map((hunk) => {
+        const ctxBefore = Math.max(0, hunk.oldStart - CONTEXT);
+        const ctxAfter = Math.min(oldLines.length, hunk.oldEnd + CONTEXT);
+
+        const oldBlock = oldLines.slice(ctxBefore, ctxAfter).join('\n');
+        const newBlock = [
+            ...oldLines.slice(ctxBefore, hunk.oldStart),
+            ...newLines.slice(hunk.newStart, hunk.newEnd),
+            ...oldLines.slice(hunk.oldEnd, ctxAfter),
+        ].join('\n');
+
+        return { old_string: oldBlock, new_string: newBlock };
+    }).filter((block) => block.old_string !== block.new_string);
+}
+
+function updateSaveStatusDOM(label: string, statusClass: string): void {
+    const existing = document.querySelector('.panel-save-status') as HTMLElement | null;
+    if (label) {
+        if (existing) {
+            existing.textContent = label;
+            existing.className = `panel-save-status panel-save-status--${statusClass}`;
+        } else {
+            const actions = document.querySelector('.panel-topbar-actions') as HTMLElement | null;
+            if (actions) {
+                const span = document.createElement('span');
+                span.className = `panel-save-status panel-save-status--${statusClass}`;
+                span.textContent = label;
+                actions.prepend(span);
+            }
+        }
+    } else if (existing) {
+        existing.remove();
+    }
+}
+
+async function saveMarkdownDocument(): Promise<void> {
+    const ws = markdownWorkspaceState;
+    if (!ws || ws.saving || !ws.dirty || ws.fileDeleted) {
         return;
     }
-    workspaceState.saving = true;
-    workspaceState.saveIndicator = 'saving';
-    workspaceState.error = null;
-    workspaceState.notice = null;
-    rerenderCurrent?.();
+    ws.saving = true;
+    ws.saveIndicator = 'saving';
+    ws.error = null;
+    ws.notice = null;
 
     try {
-        const result = await rpcCallTool?.('edit_block', {
-            file_path: payload.filePath,
-            old_string: workspaceState.fullDocumentContent,
-            new_string: workspaceState.draftContent,
-            expected_replacements: 1,
-        });
-
-        if (!isSuccessfulEditResult(result)) {
-            workspaceState.saving = false;
-            workspaceState.saveIndicator = 'idle';
-            workspaceState.error = 'File changed on disk. Reload before saving again.';
-            rerenderCurrent?.();
+        const blocks = computeEditBlocks(ws.fullDocumentContent, ws.draftContent);
+        if (blocks.length === 0) {
+            ws.saving = false;
+            ws.saveIndicator = 'idle';
+            ws.dirty = false;
             return;
         }
 
-        let nextPayload: RenderPayload = {
-            ...payload,
-            content: workspaceState.draftContent,
-        };
-
-        try {
-            const refreshedResult = await rpcCallTool?.('read_file', {
-                path: payload.filePath,
-                offset: 0,
-                length: 5000,
+        for (const block of blocks) {
+            await rpcCallTool?.('edit_block', {
+                file_path: ws.filePath,
+                old_string: block.old_string,
+                new_string: block.new_string,
+                expected_replacements: 1,
             });
-            const refreshedPayload = extractRenderPayload(refreshedResult);
-            if (refreshedPayload) {
-                nextPayload = refreshedPayload;
-            }
-        } catch {
-            // Fall back to local draft content if refresh fails.
         }
 
-        syncPayload?.(nextPayload);
-        localPayloadOverride = nextPayload;
-        const nextState = getMarkdownWorkspaceState(nextPayload);
-        nextState.mode = 'edit';
-        nextState.draftContent = nextState.sourceContent;
-        nextState.fullDocumentContent = nextState.sourceContent;
-        nextState.dirty = false;
-        nextState.saving = false;
-        nextState.saveIndicator = 'saved';
-        nextState.notice = null;
-        nextState.error = null;
-        rerenderCurrent?.();
+        ws.fullDocumentContent = ws.draftContent;
+        ws.sourceContent = ws.draftContent;
+        ws.dirty = false;
+        ws.saving = false;
+        ws.saveIndicator = 'saved';
+
+        // Update payloads so re-renders and refreshes use saved content (no re-render here)
+        if (currentPayload) {
+            const savedPayload: RenderPayload = { ...currentPayload, content: ws.draftContent };
+            localPayloadOverride = savedPayload;
+            currentPayload = savedPayload;
+            persistPayload?.(savedPayload);
+        }
+
+        updateSaveStatusDOM('Saved', 'saved');
+        const revert = document.getElementById('revert-markdown') as HTMLButtonElement | null;
+        if (revert) revert.disabled = ws.draftContent === ws.initialContent;
         window.setTimeout(() => {
-            if (markdownWorkspaceState?.filePath === nextState.filePath && !markdownWorkspaceState.dirty && !markdownWorkspaceState.saving) {
+            if (markdownWorkspaceState?.filePath === ws.filePath && !markdownWorkspaceState.dirty && !markdownWorkspaceState.saving) {
                 markdownWorkspaceState.saveIndicator = 'idle';
-                rerenderCurrent?.();
+                updateSaveStatusDOM('', '');
             }
         }, 1800);
     } catch {
-        workspaceState.saving = false;
-        workspaceState.saveIndicator = 'idle';
-        workspaceState.error = 'Saving failed. Reload the file and try again.';
-        rerenderCurrent?.();
+        ws.saving = false;
+        ws.saveIndicator = 'idle';
+        updateSaveStatusDOM('Save failed', 'saving');
+        window.setTimeout(() => updateSaveStatusDOM('', ''), 3000);
     }
 }
 
-function maybeAutosaveMarkdownDocument(payload: RenderPayload): void {
-    const workspaceState = getMarkdownWorkspaceState(payload);
-    if (!workspaceState.dirty || workspaceState.saving) {
+function maybeAutosaveMarkdownDocument(): void {
+    if (!markdownWorkspaceState?.dirty || markdownWorkspaceState.saving) {
         return;
     }
-
-    void saveMarkdownDocument(payload);
+    void saveMarkdownDocument();
 }
 
 function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
@@ -1089,10 +1304,6 @@ function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
     const markdownDoc = document.querySelector('.markdown-doc') as HTMLElement | null;
     const outline = extractMarkdownOutline(workspaceState.sourceContent);
 
-    const editButton = document.getElementById('edit-markdown') as HTMLButtonElement | null;
-    editButton?.addEventListener('click', () => {
-        void requestMarkdownEditMode(payload);
-    });
 
     if (workspaceState.mode === 'edit') {
         const editorRoot = document.getElementById('markdown-editor-root');
@@ -1111,9 +1322,13 @@ function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
                     if (workspaceState.dirty && workspaceState.saveIndicator === 'saved') {
                         workspaceState.saveIndicator = 'idle';
                     }
+                    const revert = document.getElementById('revert-markdown') as HTMLButtonElement | null;
+                    if (revert) {
+                        revert.disabled = value === workspaceState.initialContent;
+                    }
                 },
                 onBlur: () => {
-                    maybeAutosaveMarkdownDocument(payload);
+                    maybeAutosaveMarkdownDocument();
                 },
             });
             markdownEditorHandle.focus();
@@ -1121,7 +1336,12 @@ function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
 
         const revertButton = document.getElementById('revert-markdown') as HTMLButtonElement | null;
         revertButton?.addEventListener('click', () => {
-            revertMarkdownEditing(payload);
+            revertMarkdownEditing();
+        });
+
+        const expandButton = document.getElementById('expand-fullscreen') as HTMLButtonElement | null;
+        expandButton?.addEventListener('click', () => {
+            void requestMarkdownFullscreen();
         });
 
         const rawModeButton = document.getElementById('markdown-mode-raw') as HTMLButtonElement | null;
@@ -1363,13 +1583,6 @@ export function renderApp(
     }
 
     const markdownWorkspace = payload.fileType === 'markdown' ? getMarkdownWorkspaceState(payload) : undefined;
-    const markdownEditAvailability = payload.fileType === 'markdown'
-        ? getMarkdownEditAvailability({
-            content: payload.content,
-            availableDisplayModes: getAvailableDisplayModes(),
-        })
-        : undefined;
-
     const canCopy = payload.fileType !== 'unsupported' && payload.fileType !== 'image';
     const canOpenInFolder = !isLikelyUrl(payload.filePath);
     const fileExtension = getFileExtensionForAnalytics(payload.filePath);
@@ -1401,47 +1614,57 @@ export function renderApp(
     const markdownWordCount = payload.fileType === 'markdown'
         ? (stripReadStatusLine(markdownWorkspace?.mode === 'edit' ? markdownWorkspace.draftContent : payload.content).trim().split(/\s+/).filter(Boolean).length)
         : 0;
+    const markdownLineCount = payload.fileType === 'markdown'
+        ? countContentLines(stripReadStatusLine(markdownWorkspace?.mode === 'edit' ? markdownWorkspace.draftContent : payload.content))
+        : lineCount;
 
     if (markdownWorkspace?.mode === 'edit') {
-        if (markdownWorkspace.saving) {
-            footerLabel = `${escapeHtml(fileTypeLabel)} • EDIT MODE • ${lineCount} LINES • ${markdownWordCount} WORDS • SAVING`;
-        } else if (markdownWorkspace.dirty) {
-            footerLabel = `${escapeHtml(fileTypeLabel)} • EDIT MODE • ${lineCount} LINES • ${markdownWordCount} WORDS • UNSAVED`;
-        } else {
-            footerLabel = `${escapeHtml(fileTypeLabel)} • EDIT MODE • ${lineCount} LINES • ${markdownWordCount} WORDS`;
-        }
+        footerLabel = `${escapeHtml(fileTypeLabel)} • EDIT MODE • ${markdownLineCount} LINES • ${markdownWordCount} WORDS`;
     }
 
     const htmlToggle = payload.fileType === 'html'
         ? `<button class="panel-action" id="toggle-html-mode">${htmlMode === 'rendered' ? 'Source' : 'Rendered'}</button>`
         : '';
 
+    const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+    const undoIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 1 1 0 10h-1"/></svg>`;
+    const expandIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+    const isFullscreen = getCurrentDisplayMode() === 'fullscreen';
+    const canGoFullscreen = !isFullscreen && getMarkdownFullscreenAvailability({ availableDisplayModes: getAvailableDisplayModes() }).canFullscreen;
     let markdownActions = '';
     if (payload.fileType === 'markdown' && markdownWorkspace) {
-        const saveStatusLabel = markdownWorkspace.saving
-            ? 'Saving…'
-            : markdownWorkspace.saveIndicator === 'saved'
-                ? 'Saved'
-                : markdownWorkspace.dirty
-                    ? 'Unsaved'
-                    : '';
+        const saveStatusLabel = markdownWorkspace.saveIndicator === 'saved'
+            ? 'Saved'
+            : '';
         if (markdownWorkspace.mode === 'edit') {
-            markdownActions = `
-              ${saveStatusLabel ? `<span class="panel-save-status panel-save-status--${markdownWorkspace.saving ? 'saving' : markdownWorkspace.saveIndicator === 'saved' ? 'saved' : 'pending'}">${saveStatusLabel}</span>` : ''}
-              ${renderMarkdownModeToggle(markdownWorkspace.editorView)}
-              ${renderMarkdownCopyButton()}
-              <button class="panel-action" id="revert-markdown" ${markdownWorkspace.loadingDocument || !markdownWorkspace.dirty ? 'disabled' : ''}>Undo</button>
-            `;
-        } else {
-            if (getMarkdownFullscreenAvailability({ availableDisplayModes: getAvailableDisplayModes() }).canFullscreen) {
-                markdownActions += '<button class="panel-action panel-action--primary" id="edit-markdown">Edit</button>';
+            const deleted = markdownWorkspace.fileDeleted;
+            const revertDisabled = deleted || markdownWorkspace.loadingDocument || markdownWorkspace.draftContent === markdownWorkspace.initialContent;
+            if (isFullscreen) {
+                markdownActions = `
+                  ${deleted ? '<span class="panel-save-status panel-save-status--saved">File deleted</span>' : ''}
+                  ${!deleted && saveStatusLabel ? `<span class="panel-save-status panel-save-status--${markdownWorkspace.saving ? 'saving' : 'saved'}">${saveStatusLabel}</span>` : ''}
+                  ${renderMarkdownModeToggle(markdownWorkspace.editorView)}
+                  ${renderMarkdownCopyButton()}
+                  <button class="panel-action" id="revert-markdown" ${revertDisabled ? 'disabled' : ''}>${undoIcon} Undo</button>
+                `;
+            } else {
+                markdownActions = `
+                  ${deleted ? '<span class="panel-save-status panel-save-status--saved">File deleted</span>' : ''}
+                  ${!deleted && saveStatusLabel ? `<span class="panel-save-status panel-save-status--${markdownWorkspace.saving ? 'saving' : 'saved'}">${saveStatusLabel}</span>` : ''}
+                  ${canGoFullscreen ? `<button class="panel-action" id="expand-fullscreen" title="Expand" aria-label="Expand">${expandIcon}</button>` : ''}
+                  <button class="panel-action" id="copy-active-markdown" title="Copy" aria-label="Copy">${copyIcon}</button>
+                  <button class="panel-action" id="revert-markdown" title="Undo" aria-label="Undo" ${revertDisabled ? 'disabled' : ''}>${undoIcon}</button>
+                `;
             }
         }
     }
 
-    const copyIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-    const folderIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
     const editorIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+    const defaultMarkdownEditor = payload.fileType === 'markdown' ? markdownEditorAppCache.get(payload.filePath) : undefined;
+    if (payload.fileType === 'markdown' && !defaultMarkdownEditor) {
+        void detectDefaultMarkdownEditor(payload.filePath);
+    }
     
     // Content-area banners for missing lines
     const hasMissingBefore = range?.isPartial && range.fromLine > 1;
@@ -1453,18 +1676,19 @@ export function renderApp(
         ? `<button class="load-lines-banner" id="load-after">↓ Load lines ${range!.toLine + 1}–${range!.totalLines}</button>`
         : '';
 
-    const effectiveExpanded = isExpanded || getCurrentDisplayMode() === 'fullscreen' || markdownWorkspace?.mode === 'edit';
+    const effectiveExpanded = isExpanded || getCurrentDisplayMode() === 'fullscreen';
 
     container.innerHTML = `
-      <main id="tool-shell" class="shell tool-shell ${effectiveExpanded ? 'expanded' : 'collapsed'}${hideSummaryRow ? ' host-framed' : ''}">
-        ${markdownWorkspace?.mode === 'edit' || getCurrentDisplayMode() === 'fullscreen' ? '' : renderCompactRow({ id: 'compact-toggle', label: compactLabel, filename: payload.fileName, variant: 'ready', expandable: true, expanded: isExpanded, interactive: true })}
+      <main id="tool-shell" class="shell tool-shell ${effectiveExpanded ? 'expanded' : 'collapsed'}${hideSummaryRow ? ' host-framed' : ''}${getCurrentDisplayMode() === 'fullscreen' ? ' fullscreen' : ''}">
+        ${getCurrentDisplayMode() === 'fullscreen' ? '' : renderCompactRow({ id: 'compact-toggle', label: compactLabel, filename: payload.fileName, variant: 'ready', expandable: true, expanded: isExpanded, interactive: true })}
         <section class="panel">
           <div class="panel-topbar">
-            <span class="panel-breadcrumb" title="${escapeHtml(payload.filePath)}">${breadcrumb}</span>
+            ${hideSummaryRow ? '' : `<span class="panel-breadcrumb" title="${escapeHtml(payload.filePath)}">${breadcrumb}</span>`}
             <span class="panel-topbar-actions">
                ${markdownActions}
                ${htmlToggle}
-                ${canOpenInFolder && payload.fileType === 'markdown' && markdownWorkspace?.mode === 'edit' ? `<button class="panel-action" id="open-in-editor">${editorIcon} Open in editor</button>` : ''}
+                ${canOpenInFolder && payload.fileType === 'markdown' && markdownWorkspace?.mode === 'edit' && isFullscreen ? `<button class="panel-action" id="open-in-editor" ${markdownWorkspace?.fileDeleted ? 'disabled' : ''}>${renderMarkdownEditorAppIcon()} Open in ${escapeHtml(defaultMarkdownEditor?.appName ?? 'editor')}</button>` : ''}
+                ${canOpenInFolder && payload.fileType === 'markdown' && markdownWorkspace?.mode === 'edit' && !isFullscreen ? `<button class="panel-action" id="open-in-folder" title="Open in folder" aria-label="Open in folder" ${markdownWorkspace?.fileDeleted ? 'disabled' : ''}>${folderIcon}</button>` : ''}
                 ${canOpenInFolder && !(payload.fileType === 'markdown' && markdownWorkspace?.mode === 'edit') ? `<button class="panel-action" id="open-in-folder">${folderIcon} Open in folder</button>` : ''}
                 ${canCopy && supportsPreview && payload.fileType !== 'markdown' ? `<button class="panel-action" id="copy-source" title="Copy source" aria-label="Copy source">${copyIcon} Copy</button>` : ''}
             </span>
@@ -1573,6 +1797,7 @@ export function bootstrapApp(): void {
         renderAndSync(persistedPayload);
     };
     syncPayload = renderAndSync;
+    persistPayload = (payload: RenderPayload) => { widgetState.write(payload); };
     rerenderCurrent = () => {
         renderApp(container, currentPayload, currentHtmlMode, isExpanded);
     };
@@ -1587,6 +1812,10 @@ export function bootstrapApp(): void {
             renderAndSync(payload);
             if (payload.fileType === 'markdown' && getCurrentDisplayMode() === 'fullscreen') {
                 void requestMarkdownEditMode(payload);
+            }
+            // Re-read markdown from disk to pick up any saves from a previous session
+            if (payload.fileType === 'markdown') {
+                void refreshMarkdownFromDisk(payload);
             }
             return;
         }
@@ -1689,8 +1918,8 @@ export function bootstrapApp(): void {
                 isExpanded = true;
                 chrome.expanded = true;
                 if (markdownWorkspaceState) {
-                    markdownWorkspaceState.mode = 'preview';
                     markdownWorkspaceState.notice = null;
+                    markdownWorkspaceState.editorView = 'markdown';
                 }
             }
             if (initialStateResolved) {

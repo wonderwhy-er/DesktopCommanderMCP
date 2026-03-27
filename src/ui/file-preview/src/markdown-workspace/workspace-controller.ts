@@ -28,20 +28,12 @@ export function parseReadRange(content: string): ReadRange | undefined {
 
 export function getMarkdownEditAvailability(options: {
     content: string;
-    availableDisplayModes?: string[];
 }): { canEdit: true } | { canEdit: false; reason: string } {
     const readRange = parseReadRange(options.content);
     if (readRange?.isPartial) {
         return {
             canEdit: false,
             reason: 'Load the full document before editing.',
-        };
-    }
-
-    if (!options.availableDisplayModes?.includes('fullscreen')) {
-        return {
-            canEdit: false,
-            reason: 'Fullscreen editing is unavailable in this host.',
         };
     }
 

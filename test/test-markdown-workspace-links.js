@@ -122,7 +122,6 @@ async function testEditAvailability() {
   assert.deepStrictEqual(
     getMarkdownEditAvailability({
       content: '# Ready',
-      availableDisplayModes: ['inline', 'fullscreen'],
     }),
     { canEdit: true },
   );
@@ -130,20 +129,18 @@ async function testEditAvailability() {
   assert.deepStrictEqual(
     getMarkdownEditAvailability({
       content: '[Reading 10 lines from start (total: 20 lines, 10 remaining)]\n# Partial',
-      availableDisplayModes: ['inline', 'fullscreen'],
     }),
     { canEdit: false, reason: 'Load the full document before editing.' },
   );
 
   assert.deepStrictEqual(
     getMarkdownEditAvailability({
-      content: '# No fullscreen',
-      availableDisplayModes: ['inline'],
+      content: '# Inline only',
     }),
-    { canEdit: false, reason: 'Fullscreen editing is unavailable in this host.' },
+    { canEdit: true },
   );
 
-  console.log('✓ edit mode is gated by full-content availability and fullscreen support');
+  console.log('✓ edit mode is gated by full-content availability');
 }
 
 async function testFullscreenWorkspaceHelpers() {
