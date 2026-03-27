@@ -369,6 +369,40 @@ export async function readFileFromDisk(
     // Get file extension for telemetry
     const fileExtension = getFileExtension(validPath);
 
+    // Check if path is a directory — return listing instead of EISDIR error
+    try {
+        const stats = await fs.stat(validPath);
+        if (stats.isDirectory()) {
+            const dirListOp = async () => {
+                const entries = await listDirectory(validPath);
+                const listing = entries.join('\n');
+                return {
+                    content: `This is a directory, not a file. Use the list_directory tool instead of read_file for directories.\n\n${listing}`,
+                    mimeType: 'text/plain',
+                    metadata: { isImage: false, isDirectory: true }
+                } as FileResult;
+            };
+            const dirResult = await withTimeout(
+                dirListOp(),
+                FILE_OPERATION_TIMEOUTS.FILE_READ,
+                'Directory listing fallback',
+                null
+            );
+            if (dirResult === null) {
+                throw new Error(`Directory listing timed out for: ${filePath}`);
+            }
+            return dirResult;
+        }
+    } catch (error) {
+        // If stat itself failed, fall through to the read path which will produce a proper error.
+        // But if this was a directory-listing error, re-throw — don't let it fall into the file-read path.
+        const err = error as NodeJS.ErrnoException;
+        if (err.message?.includes('Directory listing') || err.message?.includes('list_directory')) {
+            throw error;
+        }
+        // stat() failed (e.g. ENOENT) — fall through to the read path below
+    }
+
     // Check file size before attempting to read
     try {
         const stats = await fs.stat(validPath);

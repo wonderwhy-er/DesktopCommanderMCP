@@ -111,6 +111,9 @@ export interface FileMetadata {
     /** For images */
     isImage?: boolean;
 
+    /** For directories (read_file fallback to listDirectory) */
+    isDirectory?: boolean;
+
     /** For binary files */
     isBinary?: boolean;
 
