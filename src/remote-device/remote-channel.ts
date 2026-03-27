@@ -442,13 +442,16 @@ export class RemoteChannel {
                 scriptPath,
                 deviceId,
                 supabaseUrl,
-                supabaseKey,
-                sessionData.session.access_token,
-                sessionData.session.refresh_token || ''
+                supabaseKey
             ], {
                 timeout: 3000,
                 stdio: 'pipe', // Capture output to prevent blocking
-                encoding: 'utf-8'
+                encoding: 'utf-8',
+                env: {
+                    ...process.env,
+                    SUPABASE_ACCESS_TOKEN: sessionData.session.access_token,
+                    SUPABASE_REFRESH_TOKEN: sessionData.session.refresh_token || ''
+                }
             });
 
             console.debug('[DEBUG] spawnSync completed, exit code:', result.status, 'signal:', result.signal);
