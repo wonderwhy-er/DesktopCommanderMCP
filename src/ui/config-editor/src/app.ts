@@ -435,10 +435,9 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
         }
 
         try {
-            const setResult = await callTool('set_config_value', {
+            const setResult = await callTool('_internal_set_config_value', {
                 key: selected.key,
                 value: parsed.value,
-                origin: 'ui',
             });
 
             if (isToolErrorResult(setResult)) {

@@ -5,9 +5,10 @@ export type ConfigFieldDefinition = {
   description: string;
   valueType: ConfigFieldValueType;
   /**
-   * When true, this key cannot be changed by LLM tool calls — only via the
-   * config-editor UI (origin: 'ui').  This prevents prompt-injection attacks
-   * from disabling safety controls at runtime.
+   * When true, this key cannot be changed by MCP tool calls — only via the
+   * config-editor UI (which uses the internal `_internal_set_config_value`
+   * handler with a trusted server-side callerOrigin).  This prevents
+   * prompt-injection attacks from disabling safety controls at runtime.
    */
   securityCritical?: boolean;
 };

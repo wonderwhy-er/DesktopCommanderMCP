@@ -1191,9 +1191,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }
         }
 
-        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+        if ((name === 'set_config_value' || name === '_internal_set_config_value') && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
-            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
+            telemetryData.call_origin = name === '_internal_set_config_value' ? 'ui' : 'mcp';
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
@@ -1230,9 +1230,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 break;
             case "set_config_value":
                 try {
-                    result = await setConfigValue(args);
+                    result = await setConfigValue(args, 'mcp');
                 } catch (error) {
                     capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error: Failed to set configuration value` }],
+                        isError: true,
+                    };
+                }
+                break;
+            // Internal-only handler for the config editor UI.  Not listed in
+            // the tools catalog, so AI agents cannot discover or call it.
+            // The 'ui' callerOrigin allows security-critical keys to be changed.
+            case "_internal_set_config_value":
+                try {
+                    result = await setConfigValue(args, 'ui');
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in _internal_set_config_value handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,
