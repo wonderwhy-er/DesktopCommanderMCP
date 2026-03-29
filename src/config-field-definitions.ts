@@ -4,6 +4,13 @@ export type ConfigFieldDefinition = {
   label: string;
   description: string;
   valueType: ConfigFieldValueType;
+  /**
+   * When true, this key cannot be changed by MCP tool calls — only via the
+   * config-editor UI (which uses the internal `_internal_set_config_value`
+   * handler with a trusted server-side callerOrigin).  This prevents
+   * prompt-injection attacks from disabling safety controls at runtime.
+   */
+  securityCritical?: boolean;
 };
 
 // Single source of truth for user-editable configuration fields.
@@ -12,16 +19,19 @@ export const CONFIG_FIELD_DEFINITIONS = {
     label: 'Blocked Commands',
     description: 'This is your personal safety blocklist. If a command appears here, Desktop Commander will refuse to run it even if a prompt asks for it. Add risky commands you never want executed by mistake.',
     valueType: 'array',
+    securityCritical: true,
   },
   allowedDirectories: {
     label: 'Allowed Folders',
     description: 'These are the folders Desktop Commander is allowed to read and edit. Think of this as a permission list. Keeping it small is safer. If this list is empty, Desktop Commander can access your entire filesystem.',
     valueType: 'array',
+    securityCritical: true,
   },
   defaultShell: {
     label: 'Default Shell',
     description: 'This is the shell used for new command sessions (for example /bin/bash or /bin/zsh). Only change this if you know your environment requires a specific shell.',
     valueType: 'string',
+    securityCritical: true,
   },
   telemetryEnabled: {
     label: 'Anonymous Telemetry',

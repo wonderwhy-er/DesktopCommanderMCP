@@ -9,6 +9,7 @@ import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
   isConfigFieldKey,
+  type ConfigFieldDefinition,
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
@@ -128,13 +129,14 @@ export async function getConfig() {
           availableShells,
         },
         entries: CONFIG_FIELD_KEYS.map((key) => {
-          const definition = CONFIG_FIELD_DEFINITIONS[key];
+          const definition: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[key];
           const value = (configWithSystemInfo as Record<string, unknown>)[key];
           return {
             key,
             value,
             valueType: definition.valueType,
             editable: true,
+            securityCritical: definition.securityCritical ?? false,
           };
         }),
       },
@@ -153,10 +155,16 @@ export async function getConfig() {
 }
 
 /**
- * Set a specific config value
+ * Set a specific config value.
+ *
+ * @param args  Tool arguments (key + value).  Parsed via SetConfigValueArgsSchema.
+ * @param callerOrigin  Trusted, server-set origin.  Only `'ui'` (set by the
+ *   internal config-editor handler) may modify security-critical keys.  MCP
+ *   tool calls always pass `'mcp'` (the default), so the AI agent can never
+ *   reach security-critical keys regardless of what it sends in the arguments.
  */
-export async function setConfigValue(args: unknown) {
-  console.error(`setConfigValue called with args: ${JSON.stringify(args)}`);
+export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' = 'mcp') {
+  console.error(`setConfigValue called with args: ${JSON.stringify(args)}, callerOrigin: ${callerOrigin}`);
   try {
     const parsed = SetConfigValueArgsSchema.safeParse(args);
     if (!parsed.success) {
@@ -175,6 +183,23 @@ export async function setConfigValue(args: unknown) {
         content: [{
           type: "text",
           text: `Key "${parsed.data.key}" is not configurable via this tool. Allowed keys: ${[...ALLOWED_CONFIG_KEYS].join(', ')}`
+        }],
+        isError: true
+      };
+    }
+
+    // Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+    // can only be changed through the config-editor UI, not by LLM tool calls.
+    // This prevents prompt-injection attacks from disabling safety controls.
+    // The callerOrigin is set server-side — it is never taken from tool arguments.
+    const fieldDef: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[parsed.data.key];
+    if (fieldDef.securityCritical && callerOrigin !== 'ui') {
+      return {
+        content: [{
+          type: "text",
+          text: `Security-critical key "${parsed.data.key}" cannot be modified by the AI agent. ` +
+            `This restriction prevents prompt-injection attacks from disabling safety controls. ` +
+            `To change this setting, use the Desktop Commander config editor UI (get_config tool).`
         }],
         isError: true
       };

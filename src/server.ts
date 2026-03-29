@@ -251,21 +251,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "set_config_value",
                 description: `
                         Set a specific configuration value by key.
-                        
-                        WARNING: Should be used in a separate chat from file operations and 
-                        command execution to prevent security issues.
-                        
-                        Config keys include:
-                        - blockedCommands (array)
-                        - defaultShell (string)
-                        - allowedDirectories (array of paths)
+
+                        Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+                        can ONLY be changed through the config editor UI, not via this tool.
+                        This prevents prompt-injection attacks from disabling safety controls.
+
+                        Config keys settable by the AI agent:
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
-                        
-                        IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
-                        to the entire file system, regardless of the operating system.
-                        
+
+                        Config keys settable only via config editor UI:
+                        - blockedCommands (array)
+                        - defaultShell (string)
+                        - allowedDirectories (array of paths)
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 annotations: {
@@ -1026,7 +1026,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Terminate a running process by PID.
 
-                        Use with caution as this will forcefully terminate the specified process.
+                        Only processes started by Desktop Commander (via start_process) can be
+                        terminated. Arbitrary system PIDs are rejected for safety.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(KillProcessArgsSchema),
@@ -1187,9 +1188,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }
         }
 
-        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+        if ((name === 'set_config_value' || name === '_internal_set_config_value') && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
-            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
+            telemetryData.call_origin = name === '_internal_set_config_value' ? 'ui' : 'mcp';
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
@@ -1226,9 +1227,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 break;
             case "set_config_value":
                 try {
-                    result = await setConfigValue(args);
+                    result = await setConfigValue(args, 'mcp');
                 } catch (error) {
                     capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error: Failed to set configuration value` }],
+                        isError: true,
+                    };
+                }
+                break;
+            // Internal-only handler for the config editor UI.  Not listed in
+            // the tools catalog, so AI agents cannot discover or call it.
+            // The 'ui' callerOrigin allows security-critical keys to be changed.
+            case "_internal_set_config_value":
+                try {
+                    result = await setConfigValue(args, 'ui');
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in _internal_set_config_value handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,

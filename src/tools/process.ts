@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import os from 'os';
 import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
+import { terminalManager } from '../terminal-manager.js';
 
 const execAsync = promisify(exec);
 
@@ -44,6 +45,18 @@ export async function killProcess(args: unknown): Promise<ServerResult> {
   if (!parsed.success) {
     return {
       content: [{ type: "text", text: `Error: Invalid arguments for kill_process: ${parsed.error}` }],
+      isError: true,
+    };
+  }
+
+  // Scope kill_process to sessions managed by Desktop Commander.
+  // This prevents the AI agent from terminating arbitrary system processes.
+  const session = terminalManager.getSession(parsed.data.pid);
+  if (!session) {
+    return {
+      content: [{ type: "text", text: `Error: PID ${parsed.data.pid} is not a process managed by Desktop Commander. ` +
+        `kill_process and force_terminate can only terminate processes started via start_process. ` +
+        `For other system processes, use OS-level tools directly.` }],
       isError: true,
     };
   }
