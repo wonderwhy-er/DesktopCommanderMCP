@@ -155,10 +155,16 @@ export async function getConfig() {
 }
 
 /**
- * Set a specific config value
+ * Set a specific config value.
+ *
+ * @param args  Tool arguments (key + value).  Parsed via SetConfigValueArgsSchema.
+ * @param callerOrigin  Trusted, server-set origin.  Only `'ui'` (set by the
+ *   internal config-editor handler) may modify security-critical keys.  MCP
+ *   tool calls always pass `'mcp'` (the default), so the AI agent can never
+ *   reach security-critical keys regardless of what it sends in the arguments.
  */
-export async function setConfigValue(args: unknown) {
-  console.error(`setConfigValue called with args: ${JSON.stringify(args)}`);
+export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' = 'mcp') {
+  console.error(`setConfigValue called with args: ${JSON.stringify(args)}, callerOrigin: ${callerOrigin}`);
   try {
     const parsed = SetConfigValueArgsSchema.safeParse(args);
     if (!parsed.success) {
@@ -185,8 +191,9 @@ export async function setConfigValue(args: unknown) {
     // Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
     // can only be changed through the config-editor UI, not by LLM tool calls.
     // This prevents prompt-injection attacks from disabling safety controls.
+    // The callerOrigin is set server-side — it is never taken from tool arguments.
     const fieldDef: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[parsed.data.key];
-    if (fieldDef.securityCritical && parsed.data.origin !== 'ui') {
+    if (fieldDef.securityCritical && callerOrigin !== 'ui') {
       return {
         content: [{
           type: "text",
