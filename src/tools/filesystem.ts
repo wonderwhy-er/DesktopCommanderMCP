@@ -246,25 +246,25 @@ export async function validatePath(requestedPath: string): Promise<string> {
             throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
 
+        // SECURITY: Always return the resolved path (with symlinks resolved) so that
+        // all subsequent file operations (read, write, mkdir, etc.) operate on the
+        // canonical target, not on a symlink that could point outside allowed directories.
+        // pathForNextCheck already holds resolvedRealPath ?? absoluteOriginal from above.
+
         // Check if path exists
         try {
             // fs.stat() will automatically follow symlinks, so we get existence info
-            const stats = await fs.stat(absoluteOriginal);
-            // If path exists, resolve any symlinks
-            if (resolvedRealPath) {
-                return resolvedRealPath;
-            }
-
-            return absoluteOriginal;
+            await fs.stat(pathForNextCheck);
+            return pathForNextCheck;
         } catch (error) {
             // Path doesn't exist - validate parent directories
-            if (await validateParentDirectories(absoluteOriginal)) {
-                // Return the path if a valid parent exists
+            if (await validateParentDirectories(pathForNextCheck)) {
+                // Return the resolved path if a valid parent exists
                 // This will be used for folder creation and many other file operations
-                return absoluteOriginal;
+                return pathForNextCheck;
             }
-            // If no valid parent found, return the absolute path anyway
-            return absoluteOriginal;
+            // If no valid parent found, return the resolved path anyway
+            return pathForNextCheck;
         }
     };
 
