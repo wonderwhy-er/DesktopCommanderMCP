@@ -204,7 +204,8 @@ export interface SearchSessionOptions {
         options.pattern,
         options.ignoreCase !== false,
         options.maxResults,
-        options.filePattern  // Pass filePattern to filter Excel files too
+        options.filePattern,  // Pass filePattern to filter Excel files too
+        options.literalSearch  // Respect literalSearch flag for Office files
       ).then(excelResults => {
         // Add Excel results to session (merged after initial response)
         for (const result of excelResults) {
@@ -227,7 +228,8 @@ export interface SearchSessionOptions {
         options.pattern,
         options.ignoreCase !== false,
         options.maxResults,
-        options.filePattern
+        options.filePattern,
+        options.literalSearch  // Respect literalSearch flag for Office files
       ).then(docxResults => {
         for (const result of docxResults) {
           session.results.push(result);
@@ -386,13 +388,18 @@ export interface SearchSessionOptions {
     pattern: string,
     ignoreCase: boolean,
     maxResults?: number,
-    filePattern?: string
+    filePattern?: string,
+    literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
     // Build regex for matching content, with ReDoS protection
+    // When literalSearch is true, escape the pattern so it's matched literally
     const flags = ignoreCase ? 'i' : '';
-    const { regex } = buildSafeRegex(pattern, flags);
+    const effectivePattern = literalSearch
+      ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : pattern;
+    const { regex } = buildSafeRegex(effectivePattern, flags);
 
     // Find Excel files recursively
     let excelFiles = await this.findExcelFiles(rootPath);
@@ -564,13 +571,18 @@ export interface SearchSessionOptions {
     pattern: string,
     ignoreCase: boolean,
     maxResults?: number,
-    filePattern?: string
+    filePattern?: string,
+    literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
     // Build regex for matching content, with ReDoS protection
+    // When literalSearch is true, escape the pattern so it's matched literally
     const flags = ignoreCase ? 'i' : '';
-    const { regex } = buildSafeRegex(pattern, flags);
+    const effectivePattern = literalSearch
+      ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      : pattern;
+    const { regex } = buildSafeRegex(effectivePattern, flags);
 
     let docxFiles = await this.findDocxFiles(rootPath);
 
