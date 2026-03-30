@@ -448,3 +448,155 @@
   .markdown-doc h3 { font-size: 18px; }
   .markdown-doc p, .markdown-doc li { font-size: 15px; }
 }
+
+/* ── Directory tree ── */
+
+.directory-content {
+  padding: 12px 16px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dir-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-entry, .dir-entry-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-row:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.dir-row-file:active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+.dir-row.dir-loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.dir-children {
+  padding-left: 20px;
+  border-left: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  margin-left: 11px;
+}
+
+.dir-children.dir-collapsed {
+  display: none;
+}
+
+.dir-chevron {
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--secondary);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.dir-icon, .file-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dir-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dir-name-denied {
+  color: var(--secondary);
+  text-decoration: line-through;
+}
+
+.file-name {
+  color: var(--secondary);
+}
+
+.dir-row-file:hover .file-name {
+  color: var(--text);
+}
+
+.dir-empty {
+  color: var(--secondary);
+  font-style: italic;
+  padding: 4px 6px;
+}
+
+.dir-row-warning {
+  cursor: default;
+  opacity: 0.7;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.dir-row-warning:hover {
+  background: none;
+}
+
+.dir-load-more {
+  cursor: pointer;
+}
+
+.dir-load-more:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent) !important;
+  opacity: 1;
+}
+
+.dir-load-more:hover .dir-warning-text {
+  text-decoration: underline;
+}
+
+.dir-warning-text {
+  color: var(--secondary);
+}
+
+.dir-back-btn {
+  flex-shrink: 0;
+  margin-right: 4px;
+  font-weight: 600;
+}
+
+.dir-open-btn {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0;
+  flex-shrink: 0;
+  border-radius: 3px;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.dir-open-btn:hover {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.dir-row-folder:hover .dir-open-btn {
+  opacity: 0.6;
+  pointer-events: auto;
+}
+
+.dir-row-folder:hover .dir-open-btn:hover {
+  opacity: 1;
+}
