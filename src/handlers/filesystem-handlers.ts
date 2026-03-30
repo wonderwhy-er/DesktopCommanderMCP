@@ -171,7 +171,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             const textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
-            const fileType = resolvePreviewFileType(resolvedFilePath);
+            const fileType = fileResult.metadata?.isDirectory ? 'directory' as const : resolvePreviewFileType(resolvedFilePath);
             return {
                 content: [{ type: "text", text: textContent }],
                 structuredContent: {
@@ -326,9 +326,15 @@ export async function handleListDirectory(args: unknown): Promise<ServerResult> 
         const duration = Date.now() - startTime;
 
         const resultText = entries.join('\n');
+        const resolvedPath = resolveAbsolutePath(parsed.path);
 
         return {
             content: [{ type: "text", text: resultText }],
+            structuredContent: {
+                fileName: path.basename(resolvedPath),
+                filePath: resolvedPath,
+                fileType: 'directory' as const,
+            },
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
