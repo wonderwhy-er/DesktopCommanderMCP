@@ -55,6 +55,50 @@ async function getDefaultReadLength(): Promise<number> {
     return config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
 }
 
+/**
+ * Returns a helpful error message when a file operation fails with a permission
+ * or timeout error. Covers the most common root causes:
+ *   1. File is in cloud storage (Google Drive, iCloud, Dropbox, OneDrive) but not downloaded locally
+ *   2. macOS TCC (Full Disk Access) not granted to the process
+ *   3. Cloud storage app is not running
+ */
+function buildPermissionError(filePath: string, errCode: string | undefined): Error {
+    const isMac = process.platform === 'darwin';
+    const isTimeout = errCode === 'ETIMEDOUT';
+
+    const lines = [
+        `Cannot read file — ${isTimeout ? 'operation timed out' : 'permission denied'} (${errCode}).`,
+        `Path: ${filePath}`,
+        ``,
+        `Possible causes and fixes:`,
+        `  1. File is in cloud storage (Google Drive / iCloud / Dropbox / OneDrive) but not downloaded locally.`,
+        `       → Right-click the file and choose "Download Now", "Make Available Offline", or "Keep on This Device".`,
+        `  2. Cloud storage app is not running or not signed in.`,
+        `       → Open your cloud storage app and make sure it is syncing.`,
+        `  3. The app does not have permission to access this file.`,
+    ];
+
+    if (isMac) {
+        lines.push(`       → Go to System Settings → Privacy & Security → Full Disk Access and enable Claude.`);
+        lines.push(`       → To open that settings pane directly, run this command in terminal:`);
+        lines.push(`           open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`);
+        lines.push(`         Then find "Claude" in the list and enable the toggle next to it.`);
+    } else {
+        lines.push(`       → Check that the app has permission to access this file location.`);
+    }
+
+    return new Error(lines.join('\n'));
+}
+
+/**
+ * Returns true if the path is under a known macOS cloud storage location.
+ * Used for list_directory to show a specific [CLOUD-UNAVAILABLE] marker.
+ */
+function isCloudStoragePath(filePath: string): boolean {
+    return filePath.includes('/Library/CloudStorage/') ||  // Google Drive, Dropbox, OneDrive (File Provider)
+           filePath.includes('/Library/Mobile Documents/'); // iCloud Drive
+}
+
 // Initialize allowed directories from configuration
 async function getAllowedDirs(): Promise<string[]> {
     try {
@@ -456,12 +500,21 @@ export async function readFileFromDisk(
     };
 
     // Execute with timeout
-    const result = await withTimeout(
-        readOperation(),
-        FILE_OPERATION_TIMEOUTS.FILE_READ,
-        `Read file operation for ${filePath}`,
-        null
-    );
+    let result;
+    try {
+        result = await withTimeout(
+            readOperation(),
+            FILE_OPERATION_TIMEOUTS.FILE_READ,
+            `Read file operation for ${filePath}`,
+            null
+        );
+    } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
+            throw buildPermissionError(filePath, err.code);
+        }
+        throw error;
+    }
 
     if (result == null) {
         // Handles the impossible case where withTimeout resolves to null instead of throwing
@@ -630,9 +683,15 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
         try {
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
-            // If we can't read this directory (permission denied), show as denied
+            const err = error as NodeJS.ErrnoException;
             const displayPath = relativePath || path.basename(currentPath);
-            results.push(`[DENIED] ${displayPath}`);
+            // Give a specific cloud storage message instead of a generic [DENIED]
+            if ((err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') &&
+                isCloudStoragePath(currentPath)) {
+                results.push(`[CLOUD-UNAVAILABLE] ${displayPath} — not accessible (cloud-only or Full Disk Access not granted)`);
+            } else {
+                results.push(`[DENIED] ${displayPath}`);
+            }
             return;
         }
 
