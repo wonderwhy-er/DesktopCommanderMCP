@@ -207,9 +207,11 @@ deferLog('info', 'Setting up request handlers...');
  * Check if a tool should be included based on current client
  */
 function shouldIncludeTool(toolName: string): boolean {
-    // Exclude give_feedback_to_desktop_commander for desktop-commander client
-    if (toolName === 'give_feedback_to_desktop_commander' && currentClient?.name === 'desktop-commander') {
-        return false;
+    // Exclude these tools for desktop-commander client (DC-specific meta-tools not useful when DC itself is the client)
+    if (currentClient?.name === 'desktop-commander-app') {
+        if (toolName === 'give_feedback_to_desktop_commander' || toolName === 'get_prompts') {
+            return false;
+        }
     }
 
     // Add more conditional tool logic here as needed
