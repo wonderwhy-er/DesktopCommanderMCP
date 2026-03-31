@@ -510,8 +510,11 @@ export async function readFileFromDisk(
         );
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
-        if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
-            throw buildPermissionError(filePath, err.code);
+        // withTimeout rejects with a plain string "__ERROR__: ... timed out after N seconds"
+        // when defaultValue is null — it has no .code property, so check for that too.
+        const isWithTimeoutString = typeof error === 'string' && (error as string).startsWith('__ERROR__:');
+        if (isWithTimeoutString || err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
+            throw buildPermissionError(filePath, isWithTimeoutString ? 'ETIMEDOUT' : err.code);
         }
         throw error;
     }
@@ -685,10 +688,11 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
         } catch (error) {
             const err = error as NodeJS.ErrnoException;
             const displayPath = relativePath || path.basename(currentPath);
-            // Give a specific cloud storage message instead of a generic [DENIED]
+            // Keep [DENIED] prefix so UI parser regex /^\[(DIR|FILE|DENIED|WARNING)\]/ still matches.
+            // Append a cloud hint for known cloud paths so the user gets context without breaking the UI.
             if ((err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') &&
                 isCloudStoragePath(currentPath)) {
-                results.push(`[CLOUD-UNAVAILABLE] ${displayPath} — not accessible (cloud-only or Full Disk Access not granted)`);
+                results.push(`[DENIED] ${displayPath} — cloud storage file not accessible (not downloaded or Full Disk Access not granted)`);
             } else {
                 results.push(`[DENIED] ${displayPath}`);
             }
