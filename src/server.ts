@@ -52,6 +52,7 @@ import {
     WritePdfArgsSchema,
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
+import { configManager } from './config-manager.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -70,6 +71,16 @@ import {
     FILE_PREVIEW_RESOURCE_URI
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
+
+/**
+ * Resolve whether a tool call should render an MCP UI widget.
+ * Priority: per-call `showUI` arg > global `showMcpUI` config > true (default on).
+ */
+async function shouldShowUI(args: { showUI?: boolean }): Promise<boolean> {
+  if (args.showUI !== undefined) return args.showUI;
+  const config = await configManager.getConfig();
+  return config.showMcpUI ?? true;
+}
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -237,10 +248,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - showMcpUI (boolean, default true — controls whether read_file, list_directory and get_config render interactive UI widgets; use set_config_value to change)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
+                        Pass showUI=false to suppress the UI widget for this call only.
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true),
@@ -264,6 +277,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
+                        - showMcpUI (boolean, default true — set to false to disable interactive UI widgets globally for read_file, list_directory and get_config)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -334,6 +348,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           * For BULK changes (translation, mass replacements): use start_process with Python
                             zipfile module to find/replace all <w:t> elements at once.
 
+                        Pass showUI=false to suppress the interactive UI widget for this call only. Global default is controlled by the showMcpUI config setting.
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
@@ -520,7 +535,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         If a directory cannot be accessed, it will show [DENIED] instead.
                         Only works within allowed directories.
-                        
+                        Pass showUI=false to suppress the interactive UI widget for this call only. Global default is controlled by the showMcpUI config setting.
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
@@ -1219,6 +1234,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_config":
                 try {
                     result = await getConfig();
+                    if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                        (result as any)._meta = buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true);
+                    }
                 } catch (error) {
                     capture('server_request_error', { message: `Error in get_config handler: ${error}` });
                     result = {
@@ -1368,6 +1386,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             // Filesystem tools
             case "read_file":
                 result = await handlers.handleReadFile(args);
+                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                    (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
+                }
                 break;
 
             case "read_multiple_files":
@@ -1388,6 +1409,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "list_directory":
                 result = await handlers.handleListDirectory(args);
+                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                    (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
+                }
                 break;
 
             case "move_file":

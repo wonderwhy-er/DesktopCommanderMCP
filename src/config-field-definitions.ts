@@ -38,6 +38,11 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'Maximum number of lines that can be written in one edit operation. This helps prevent accidental oversized writes and keeps file changes predictable.',
     valueType: 'number',
   },
+  showMcpUI: {
+    label: 'Show MCP UI Widgets',
+    description: 'When on, tools like read_file, list_directory, and get_config render an interactive UI widget in supported clients (e.g. Claude Desktop). When off, those tools return plain text only. Individual tool calls can override this default by passing the showUI parameter.',
+    valueType: 'boolean',
+  },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 
 export type ConfigFieldKey = keyof typeof CONFIG_FIELD_DEFINITIONS;
