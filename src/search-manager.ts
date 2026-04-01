@@ -389,17 +389,13 @@ export interface SearchSessionOptions {
     ignoreCase: boolean,
     maxResults?: number,
     filePattern?: string,
-    literalSearch?: boolean
+    _literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
-    // Build regex for matching content, with ReDoS protection
-    // When literalSearch is true, escape the pattern so it's matched literally
-    const flags = ignoreCase ? 'i' : '';
-    const effectivePattern = literalSearch
-      ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      : pattern;
-    const { regex } = buildSafeRegex(effectivePattern, flags);
+    // Office file search always uses literal matching to prevent ReDoS.
+    // Regex patterns are treated as literal strings — this is intentional.
+    const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
     let excelFiles = await this.findExcelFiles(rootPath);
@@ -412,9 +408,9 @@ export interface SearchSessionOptions {
         return patterns.some(pat => {
           // Support glob-like patterns
           if (pat.includes('*')) {
+            // Glob patterns are safe (generated from sanitized file extensions, not user regex)
             const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
-            const { regex: globRegex } = buildSafeRegex(`^${regexPat}$`, 'i');
-            return globRegex.test(fileName);
+            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           // Exact match (case-insensitive)
           return fileName.toLowerCase() === pat.toLowerCase();
@@ -470,12 +466,10 @@ export interface SearchSessionOptions {
             // Join all cell values with space for cross-column matching
             const rowText = rowValues.join(' ');
 
-            if (regex.test(rowText)) {
-              // Extract the matching portion for display
-              const match = rowText.match(regex);
-              const matchContext = match
-                ? this.getMatchContext(rowText, match.index || 0, match[0].length)
-                : rowText.substring(0, 150);
+            const textToSearch = ignoreCase ? rowText.toLowerCase() : rowText;
+            const matchIndex = textToSearch.indexOf(searchTerm);
+            if (matchIndex !== -1) {
+              const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
 
               results.push({
                 file: `${filePath}:${sheetName}!Row${rowNumber}`,
@@ -572,17 +566,13 @@ export interface SearchSessionOptions {
     ignoreCase: boolean,
     maxResults?: number,
     filePattern?: string,
-    literalSearch?: boolean
+    _literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
-    // Build regex for matching content, with ReDoS protection
-    // When literalSearch is true, escape the pattern so it's matched literally
-    const flags = ignoreCase ? 'i' : '';
-    const effectivePattern = literalSearch
-      ? pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      : pattern;
-    const { regex } = buildSafeRegex(effectivePattern, flags);
+    // Office file search always uses literal matching to prevent ReDoS.
+    // Regex patterns are treated as literal strings — this is intentional.
+    const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     let docxFiles = await this.findDocxFiles(rootPath);
 
@@ -593,8 +583,7 @@ export interface SearchSessionOptions {
         return patterns.some(pat => {
           if (pat.includes('*')) {
             const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
-            const { regex: globRegex } = buildSafeRegex(`^${regexPat}$`, 'i');
-            return globRegex.test(fileName);
+            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           return fileName.toLowerCase() === pat.toLowerCase();
         });
@@ -630,11 +619,10 @@ export interface SearchSessionOptions {
             if (!text || !text.trim()) continue;
             lineNum++;
 
-            if (regex.test(text)) {
-              const match = text.match(regex);
-              const matchContext = match
-                ? this.getMatchContext(text, match.index || 0, match[0].length)
-                : text.substring(0, 150);
+            const textToSearch = ignoreCase ? text.toLowerCase() : text;
+            const matchIndex = textToSearch.indexOf(searchTerm);
+            if (matchIndex !== -1) {
+              const matchContext = this.getMatchContext(text, matchIndex, searchTerm.length);
 
               const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
               results.push({
