@@ -26,7 +26,7 @@ export async function openBrowser(url: string): Promise<void> {
         break;
       case 'win32':
         // Windows 'start' is a shell builtin, use spawn with shell but pass URL as separate arg
-        spawn('cmd', ['/c', 'start', '', url], { shell: false }).on('close', (code) => {
+        spawn('cmd', ['/c', 'start', '', url], { shell: false, windowsHide: true }).on('close', (code) => {
           code === 0 ? resolve() : reject(new Error(`Exit code ${code}`));
         });
         break;
