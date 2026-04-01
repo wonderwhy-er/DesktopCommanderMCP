@@ -21,9 +21,9 @@ export function isSafeRegex(pattern: string): boolean {
     return false;
   }
 
-  // Detect overlapping alternations in quantified groups: (a|a)+, (\w|\d)+
-  // These can also cause catastrophic backtracking
-  const overlappingAlt = /\((?:[^)]*\|[^)]*)\)[+*]\s*[+*?{]/;
+  // Detect overlapping alternations in quantified groups: (a|a)+, (a|aa)+, (\w|\d)+
+  // These can cause catastrophic backtracking even without a second outer quantifier
+  const overlappingAlt = /\((?:[^)]*\|[^)]*)\)[+*]/;
   if (overlappingAlt.test(pattern)) {
     return false;
   }
