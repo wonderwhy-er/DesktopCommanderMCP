@@ -164,7 +164,7 @@ export async function getConfig() {
  *   reach security-critical keys regardless of what it sends in the arguments.
  */
 export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' = 'mcp') {
-  console.error(`setConfigValue called with args: ${JSON.stringify(args)}, callerOrigin: ${callerOrigin}`);
+  console.error(`setConfigValue called with callerOrigin: ${callerOrigin}`);
   try {
     const parsed = SetConfigValueArgsSchema.safeParse(args);
     if (!parsed.success) {
