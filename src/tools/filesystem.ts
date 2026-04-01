@@ -57,42 +57,63 @@ async function getDefaultReadLength(): Promise<number> {
 
 /**
  * Returns a helpful error message when a file operation fails with a permission
- * or timeout error. Covers the most common root causes:
- *   1. File is in cloud storage (Google Drive, iCloud, Dropbox, OneDrive) but not downloaded locally
- *   2. macOS TCC (Full Disk Access) not granted to the process
- *   3. Cloud storage app is not running
+ * or timeout error.
+ *
+ * If the path is a known cloud storage location, cloud-specific causes are listed
+ * first. Otherwise, a plain permission-denied message is shown first and cloud
+ * storage is mentioned as a secondary possibility.
+ *
+ * Always includes a generic "restricted permissions" bullet so the LLM has a
+ * correct explanation path for non-cloud EPERM cases (chmod 000, system files, etc.)
  */
 function buildPermissionError(filePath: string, errCode: string | undefined): Error {
     const isMac = process.platform === 'darwin';
     const isTimeout = errCode === 'ETIMEDOUT';
+    const isCloud = isCloudStoragePath(filePath);
 
-    const lines = [
-        `Cannot read file — ${isTimeout ? 'operation timed out' : 'permission denied'} (${errCode}).`,
-        `Path: ${filePath}`,
-        ``,
-        `Possible causes and fixes:`,
+    const header = `Cannot read file — ${isTimeout ? 'operation timed out' : 'permission denied'} (${errCode}).`;
+
+    const cloudCauses = [
         `  1. File is in cloud storage (Google Drive / iCloud / Dropbox / OneDrive) but not downloaded locally.`,
         `       → Right-click the file and choose "Download Now", "Make Available Offline", or "Keep on This Device".`,
         `  2. Cloud storage app is not running or not signed in.`,
         `       → Open your cloud storage app and make sure it is syncing.`,
-        `  3. The app does not have permission to access this file.`,
+    ];
+
+    const permissionCause = [
+        `  ${isCloud ? '3' : '1'}. The file has restricted permissions or the app is not allowed to access it.`,
     ];
 
     if (isMac) {
-        lines.push(`       → Go to System Settings → Privacy & Security → Full Disk Access and enable Claude.`);
-        lines.push(`       → To open that settings pane directly, run this command in terminal:`);
-        lines.push(`           open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`);
-        lines.push(`         Then find "Claude" in the list and enable the toggle next to it.`);
+        permissionCause.push(`       → Go to System Settings → Privacy & Security → Full Disk Access and enable Claude.`);
+        permissionCause.push(`       → To open that pane directly, run in terminal:`);
+        permissionCause.push(`           open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`);
+        permissionCause.push(`         Then find "Claude" in the list and enable the toggle next to it.`);
     } else {
-        lines.push(`       → Check that the app has permission to access this file location.`);
+        permissionCause.push(`       → Check that the app has permission to access this file location.`);
     }
+
+    const cloudSecondary = isCloud ? [] : [
+        ``,
+        `  Note: If this file is in cloud storage (Google Drive / iCloud / Dropbox / OneDrive),`,
+        `  it may not be downloaded locally — right-click it and choose "Make Available Offline".`,
+    ];
+
+    const lines = [
+        header,
+        `Path: ${filePath}`,
+        ``,
+        `Possible causes and fixes:`,
+        ...(isCloud ? cloudCauses : []),
+        ...permissionCause,
+        ...cloudSecondary,
+    ];
 
     return new Error(lines.join('\n'));
 }
 
 /**
  * Returns true if the path is under a known macOS cloud storage location.
- * Used for list_directory to show a specific [CLOUD-UNAVAILABLE] marker.
  */
 function isCloudStoragePath(filePath: string): boolean {
     return filePath.includes('/Library/CloudStorage/') ||  // Google Drive, Dropbox, OneDrive (File Provider)
