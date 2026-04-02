@@ -9,6 +9,7 @@ import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
   isConfigFieldKey,
+  type ConfigFieldDefinition,
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
@@ -129,7 +130,8 @@ export async function getConfig() {
         },
         entries: CONFIG_FIELD_KEYS.map((key) => {
           const definition = CONFIG_FIELD_DEFINITIONS[key];
-          const value = (configWithSystemInfo as Record<string, unknown>)[key];
+          const rawValue = (configWithSystemInfo as Record<string, unknown>)[key];
+          const value = rawValue !== undefined ? rawValue : (definition as ConfigFieldDefinition).defaultValue;
           return {
             key,
             value,

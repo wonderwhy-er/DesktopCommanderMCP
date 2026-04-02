@@ -4,6 +4,7 @@ export type ConfigFieldDefinition = {
   label: string;
   description: string;
   valueType: ConfigFieldValueType;
+  defaultValue?: unknown;
 };
 
 // Single source of truth for user-editable configuration fields.
@@ -42,6 +43,7 @@ export const CONFIG_FIELD_DEFINITIONS = {
     label: 'Show MCP UI Widgets',
     description: 'When on, tools like read_file, list_directory, and get_config render an interactive UI widget in supported clients (e.g. Claude Desktop). When off, those tools return plain text only. Individual tool calls can override this default by passing the showUI parameter.',
     valueType: 'boolean',
+    defaultValue: true,
   },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 
