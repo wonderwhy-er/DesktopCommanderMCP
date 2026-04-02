@@ -41,7 +41,25 @@ export const CONFIG_FIELD_DEFINITIONS = {
   },
   showMcpUI: {
     label: 'Show MCP UI Widgets',
-    description: 'When on, tools like read_file, list_directory, and get_config render an interactive UI widget in supported clients (e.g. Claude Desktop). When off, those tools return plain text only. Individual tool calls can override this default by passing the showUI parameter.',
+    description: 'Global default for whether tools render interactive UI widgets in supported clients (e.g. Claude Desktop). Individual tools below can override this. Per-call showUI parameter overrides everything.',
+    valueType: 'boolean',
+    defaultValue: true,
+  },
+  showReadFileUI: {
+    label: 'Show File Preview Widget',
+    description: 'When on, read_file renders an interactive file preview widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
+    valueType: 'boolean',
+    defaultValue: true,
+  },
+  showListDirectoryUI: {
+    label: 'Show Directory Listing Widget',
+    description: 'When on, list_directory renders an interactive directory tree widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
+    valueType: 'boolean',
+    defaultValue: true,
+  },
+  showGetConfigUI: {
+    label: 'Show Config Editor Widget',
+    description: 'When on, get_config renders an interactive config editor widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
     valueType: 'boolean',
     defaultValue: true,
   },

@@ -14,6 +14,9 @@ export interface ServerConfig {
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   showMcpUI?: boolean; // Whether to render interactive UI widgets for read_file, list_directory, get_config
+  showReadFileUI?: boolean; // Per-tool override for read_file widget
+  showListDirectoryUI?: boolean; // Per-tool override for list_directory widget
+  showGetConfigUI?: boolean; // Per-tool override for get_config widget
   clientId?: string; // Unique client identifier for analytics
   currentClient?: ClientInfo; // Current connected client information
   [key: string]: any; // Allow for arbitrary configuration keys (including abTest_* keys)

@@ -53,6 +53,7 @@ import {
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { configManager } from './config-manager.js';
+import type { ServerConfig } from './config-manager.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -74,12 +75,17 @@ import { listUiResources, readUiResource } from './ui/resources.js';
 
 /**
  * Resolve whether a tool call should render an MCP UI widget.
- * Priority: per-call `showUI` arg > global `showMcpUI` config > true (default on).
+ * Priority: per-call `showUI` arg > per-tool config > global `showMcpUI` config > true (default on).
  */
-async function shouldShowUI(args: { showUI?: boolean }): Promise<boolean> {
+async function shouldShowUI(args: { showUI?: boolean }, toolConfigKey?: keyof ServerConfig): Promise<boolean> {
   if (args.showUI !== undefined) return args.showUI;
   const config = await configManager.getConfig();
-  return config.showMcpUI ?? true;
+  const globalDefault = config.showMcpUI ?? true;
+  if (toolConfigKey !== undefined) {
+    const perTool = config[toolConfigKey];
+    if (typeof perTool === 'boolean') return perTool;
+  }
+  return globalDefault;
 }
 
 // Store startup messages to send after initialization
@@ -1234,7 +1240,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_config":
                 try {
                     result = await getConfig();
-                    if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                    if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showGetConfigUI')) {
                         (result as any)._meta = buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true);
                     }
                 } catch (error) {
@@ -1386,7 +1392,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             // Filesystem tools
             case "read_file":
                 result = await handlers.handleReadFile(args);
-                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showReadFileUI')) {
                     (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
                 }
                 break;
@@ -1409,7 +1415,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "list_directory":
                 result = await handlers.handleListDirectory(args);
-                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean })) {
+                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showListDirectoryUI')) {
                     (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
                 }
                 break;
