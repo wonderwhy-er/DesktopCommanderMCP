@@ -1,0 +1,23 @@
+{
+  "name": "desktop-commander",
+  "version": "0.1.0",
+  "description": "Terminal control and file system operations from Codex via MCP",
+  "author": {
+    "name": "wonderwhy-er",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP"
+  },
+  "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "repository": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Desktop Commander MCP",
+    "shortDescription": "Terminal control and file system operations from Codex via MCP",
+    "longDescription": "MCP server that gives Claude terminal control, file system search and diff file editing capabilities.",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/wonderwhy-er/DesktopCommanderMCP"
+  }
+}
