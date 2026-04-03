@@ -13,7 +13,16 @@ import {
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { timingSafeEqual } from 'crypto';
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
+
+// Optional per-session token for the config-editor UI.
+// When the env var DESKTOP_COMMANDER_UI_TOKEN is set by the hosting app, callers of
+// _internal_set_config_value must supply the matching value in args._uiToken.  The
+// hosting app is responsible for injecting the same token into the UI webview (e.g.
+// via window.__DC_UI_TOKEN in an Electron preload script).
+// If the env var is NOT set, token validation is skipped for backward compatibility.
+const UI_SESSION_TOKEN: string | null = process.env.DESKTOP_COMMANDER_UI_TOKEN ?? null;
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -1242,7 +1251,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             // Internal-only handler for the config editor UI.  Not listed in
             // the tools catalog, so AI agents cannot discover or call it.
             // The 'ui' callerOrigin allows security-critical keys to be changed.
-            case "_internal_set_config_value":
+            // A per-session token (UI_SESSION_TOKEN) provides a second layer of
+            // defence: callers must supply the token in args._uiToken.  The
+            // hosting app is responsible for injecting the token into the UI.
+            case "_internal_set_config_value": {
+                // Validate the per-session UI token when enforcement is active.
+                // Enforcement is opt-in: set DESKTOP_COMMANDER_UI_TOKEN in the
+                // server environment to enable it.  The hosting app must also
+                // inject the same token into the UI webview (window.__DC_UI_TOKEN).
+                if (UI_SESSION_TOKEN !== null) {
+                    const internalArgs = (args ?? {}) as Record<string, unknown>;
+                    const providedToken = typeof internalArgs._uiToken === 'string'
+                        ? internalArgs._uiToken : '';
+                    const expectedBuf = Buffer.from(UI_SESSION_TOKEN);
+                    const providedBuf = Buffer.allocUnsafe(expectedBuf.length);
+                    providedBuf.fill(0);
+                    Buffer.from(providedToken).copy(providedBuf, 0, 0, expectedBuf.length);
+                    const tokenValid = providedToken.length === UI_SESSION_TOKEN.length
+                        && timingSafeEqual(expectedBuf, providedBuf);
+                    if (!tokenValid) {
+                        capture('server_request_error', { message: 'Rejected _internal_set_config_value: invalid or missing UI session token' });
+                        result = {
+                            content: [{ type: "text", text: `Error: Unauthorized` }],
+                            isError: true,
+                        };
+                        break;
+                    }
+                }
                 try {
                     result = await setConfigValue(args, 'ui');
                 } catch (error) {
@@ -1253,6 +1288,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     };
                 }
                 break;
+            }
 
             case "get_usage_stats":
                 try {

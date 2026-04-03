@@ -14,6 +14,10 @@ import {
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
 
+/**
+ * Returns true if the given path is accessible and executable.
+ * Used to probe shell binary availability before reporting them in config.
+ */
 async function pathExists(pathValue: string): Promise<boolean> {
   try {
     await access(pathValue, fsConstants.X_OK);
@@ -23,6 +27,13 @@ async function pathExists(pathValue: string): Promise<boolean> {
   }
 }
 
+/**
+ * Probes for shells available on the current system by testing known binary
+ * paths from the system-info default shell and a fixed candidate list.
+ *
+ * @param systemInfo System information object returned by getSystemInfo().
+ * @returns Sorted, deduplicated array of absolute shell paths that exist on disk.
+ */
 async function detectAvailableShells(systemInfo: ReturnType<typeof getSystemInfo>): Promise<string[]> {
   const detected = new Set<string>();
   const add = (shell: string): void => {
@@ -117,7 +128,7 @@ export async function getConfig() {
     };
     const availableShells = await detectAvailableShells(systemInfo);
     
-    console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
+    console.error(`getConfig: returning config with ${CONFIG_FIELD_KEYS.length} keys`);
     return {
       content: [{
         type: "text",
@@ -135,7 +146,7 @@ export async function getConfig() {
             key,
             value,
             valueType: definition.valueType,
-            editable: true,
+            editable: !(definition.securityCritical ?? false),
             securityCritical: definition.securityCritical ?? false,
           };
         }),
@@ -215,7 +226,7 @@ export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' =
           (valueToStore.startsWith('[') || valueToStore.startsWith('{'))) {
         try {
           valueToStore = JSON.parse(valueToStore);
-          console.error(`Parsed string value to object/array: ${JSON.stringify(valueToStore)}`);
+          console.error(`Parsed string value to object/array for key ${parsed.data.key} (type: ${typeof valueToStore})`);
         } catch (parseError) {
           console.error(`Failed to parse string as JSON, using as-is: ${parseError}`);
         }
@@ -272,7 +283,7 @@ export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' =
       await configManager.setValue(parsed.data.key, valueToStore);
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
-      console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);
+      console.error(`setConfigValue: Successfully set ${parsed.data.key} (type: ${typeof valueToStore}, isArray: ${Array.isArray(valueToStore)})`);
       return {
         content: [{
           type: "text",

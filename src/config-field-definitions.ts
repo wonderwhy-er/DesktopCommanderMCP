@@ -54,6 +54,10 @@ export type ConfigFieldKey = keyof typeof CONFIG_FIELD_DEFINITIONS;
 
 export const CONFIG_FIELD_KEYS = Object.keys(CONFIG_FIELD_DEFINITIONS) as ConfigFieldKey[];
 
+/**
+ * Type guard that checks whether `value` is a valid config field key.
+ * Used to validate tool-argument keys before accessing CONFIG_FIELD_DEFINITIONS.
+ */
 export function isConfigFieldKey(value: string): value is ConfigFieldKey {
   return Object.prototype.hasOwnProperty.call(CONFIG_FIELD_DEFINITIONS, value);
 }

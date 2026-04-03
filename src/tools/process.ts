@@ -7,6 +7,10 @@ import { terminalManager } from '../terminal-manager.js';
 
 const execAsync = promisify(exec);
 
+/**
+ * Lists all running system processes with their PID, command, CPU, and memory usage.
+ * Uses `ps aux` on Unix and `tasklist` on Windows.
+ */
 export async function listProcesses(): Promise<ServerResult> {
   const command = os.platform() === 'win32' ? 'tasklist' : 'ps aux';
   try {
@@ -40,6 +44,13 @@ export async function listProcesses(): Promise<ServerResult> {
   }
 }
 
+/**
+ * Terminates a process started via Desktop Commander's start_process tool.
+ * Only processes tracked by the internal terminal manager can be killed,
+ * preventing the AI agent from terminating arbitrary system processes.
+ *
+ * @param args Tool arguments containing the target PID. Parsed via KillProcessArgsSchema.
+ */
 export async function killProcess(args: unknown): Promise<ServerResult> {
   const parsed = KillProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
