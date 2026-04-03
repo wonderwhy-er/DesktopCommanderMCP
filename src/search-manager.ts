@@ -408,8 +408,13 @@ export interface SearchSessionOptions {
         return patterns.some(pat => {
           // Support glob-like patterns
           if (pat.includes('*')) {
-            // Glob patterns are safe (generated from sanitized file extensions, not user regex)
-            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            // Escape all regex metacharacters first (preserving * for glob expansion),
+            // then convert the remaining * wildcards to .* for glob matching.
+            // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
+            // misinterpreted as regex groups/character-classes.
+            const regexPat = pat
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+              .replace(/\*/g, '.*');                  // glob * → regex .*
             return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           // Exact match (case-insensitive)
@@ -582,7 +587,9 @@ export interface SearchSessionOptions {
         const fileName = path.basename(filePath);
         return patterns.some(pat => {
           if (pat.includes('*')) {
-            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            const regexPat = pat
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+              .replace(/\*/g, '.*');                  // glob * → regex .*
             return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           return fileName.toLowerCase() === pat.toLowerCase();
