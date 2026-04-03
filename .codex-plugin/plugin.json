@@ -16,8 +16,9 @@
   "interface": {
     "displayName": "Desktop Commander MCP",
     "shortDescription": "Terminal control and file system operations from Codex via MCP",
-    "longDescription": "MCP server that gives Claude terminal control, file system search and diff file editing capabilities.",
+    "longDescription": "MCP server that gives Codex terminal control, file system search and diff file editing capabilities.",
     "category": "Productivity",
     "websiteURL": "https://github.com/wonderwhy-er/DesktopCommanderMCP"
-  }
+  },
+  "skills": "./skills/"
 }
