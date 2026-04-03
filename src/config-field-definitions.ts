@@ -5,6 +5,7 @@ export type ConfigFieldDefinition = {
   description: string;
   valueType: ConfigFieldValueType;
   defaultValue?: unknown;
+  parentKey?: string; // If set, this field is a child of the named parent field
 };
 
 // Single source of truth for user-editable configuration fields.
@@ -46,22 +47,25 @@ export const CONFIG_FIELD_DEFINITIONS = {
     defaultValue: true,
   },
   showReadFileUI: {
-    label: 'Show File Preview Widget',
-    description: 'When on, read_file renders an interactive file preview widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
+    label: 'File Preview Widget',
+    description: 'When on, read_file renders an interactive file preview widget. When off, it returns plain text.',
     valueType: 'boolean',
     defaultValue: true,
+    parentKey: 'showMcpUI',
   },
   showListDirectoryUI: {
-    label: 'Show Directory Listing Widget',
-    description: 'When on, list_directory renders an interactive directory tree widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
+    label: 'Directory Listing Widget',
+    description: 'When on, list_directory renders an interactive directory tree widget. When off, it returns plain text.',
     valueType: 'boolean',
     defaultValue: true,
+    parentKey: 'showMcpUI',
   },
   showGetConfigUI: {
-    label: 'Show Config Editor Widget',
-    description: 'When on, get_config renders an interactive config editor widget. When off, it returns plain text. Overrides the global Show MCP UI Widgets setting for this tool.',
+    label: 'Config Editor Widget',
+    description: 'When on, get_config renders an interactive config editor widget. When off, it returns plain text.',
     valueType: 'boolean',
     defaultValue: true,
+    parentKey: 'showMcpUI',
   },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 

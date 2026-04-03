@@ -16,6 +16,7 @@ export interface ConfigEntry {
     value: unknown;
     valueType: 'string' | 'number' | 'boolean' | 'array' | 'null' | string;
     editable: boolean;
+    parentKey?: string;
 }
 
 export interface ConfigEditorPayload {
@@ -164,6 +165,7 @@ function extractPayload(result: unknown): ConfigEditorPayload | null {
                 value: entry.value,
                 valueType: typeof entry.valueType === 'string' ? entry.valueType : 'string',
                 editable: entry.editable !== false,
+                parentKey: typeof entry.parentKey === 'string' ? entry.parentKey : undefined,
             };
         });
 
@@ -549,6 +551,12 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         const description = entry.description ?? '';
         const summary = getSettingSummary(entry);
 
+        // Determine if this child entry is disabled because its parent is off
+        const isChild = !!entry.parentKey;
+        const parentEntry = entry.parentKey ? entries.find(e => e.key === entry.parentKey) : undefined;
+        const parentIsOff = parentEntry !== undefined && String(parentEntry.value) !== 'true';
+        const childDisabled = isChild && parentIsOff;
+
         let controlHtml: string;
         if (entry.key === 'defaultShell') {
             const currentShell = String(entry.value ?? '');
@@ -568,7 +576,8 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
             `;
         } else if (entry.valueType === 'boolean') {
             const checked = String(entry.value) === 'true' ? 'checked' : '';
-            controlHtml = `<label class="setting-switch"><input type="checkbox" data-action="toggle-boolean" data-key-index="${index}" ${checked}/><span class="config-boolean-slider"></span></label>`;
+            const disabledAttr = childDisabled ? 'disabled' : '';
+            controlHtml = `<label class="setting-switch"><input type="checkbox" data-action="toggle-boolean" data-key-index="${index}" ${checked} ${disabledAttr}/><span class="config-boolean-slider"></span></label>`;
         } else if (entry.valueType === 'number') {
             controlHtml = `<input class="setting-inline-input" data-action="edit-number" data-key-index="${index}" type="number" step="any" value="${escapeHtml(String(entry.value ?? ''))}"/>`;
         } else if (entry.valueType === 'array') {
@@ -579,8 +588,10 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
             controlHtml = `<input class="setting-inline-input" data-action="edit-string" data-key-index="${index}" type="text" value="${escapeHtml(String(entry.value ?? ''))}"/>`;
         }
 
+        const rowClasses = ['setting-row', isChild ? 'setting-row--child' : '', childDisabled ? 'setting-row--disabled' : ''].filter(Boolean).join(' ');
+
         return `
-          <section class="setting-row">
+          <section class="${rowClasses}">
             <div class="setting-info">
               <h3>${escapeHtml(keyTitle)}</h3>
               ${description ? `<p>${escapeHtml(description)}</p>` : ''}

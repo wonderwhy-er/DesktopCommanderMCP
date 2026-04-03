@@ -137,6 +137,7 @@ export async function getConfig() {
             value,
             valueType: definition.valueType,
             editable: true,
+            parentKey: (definition as ConfigFieldDefinition).parentKey,
           };
         }),
       },

@@ -76,6 +76,18 @@ body {
   border-top: 1px solid color-mix(in srgb, var(--cfg-border) 40%, transparent);
 }
 
+.setting-row--child {
+  padding-left: 20px;
+  border-left: 2px solid color-mix(in srgb, var(--cfg-border) 60%, transparent);
+  margin-left: 4px;
+  background: color-mix(in srgb, var(--cfg-bg) 60%, transparent);
+}
+
+.setting-row--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 .setting-info h3 {
   margin: 0;
   font-size: 14px;
