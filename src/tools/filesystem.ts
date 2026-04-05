@@ -244,6 +244,65 @@ export async function validatePath(requestedPath: string): Promise<string> {
                 });
                 throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
             }
+
+            // SECURITY FIX: Check if the path is a broken symlink (symlink whose target
+            // doesn't exist yet). fs.realpath() fails with ENOENT for broken symlinks, but
+            // fs.lstat() succeeds because the symlink itself exists.
+            // Without this check, the parent-directory fallback below would return the
+            // symlink name rather than its target, allowing fs.writeFile() (which follows
+            // symlinks) to write outside the allowlist.
+            try {
+                const lstat = await fs.lstat(absoluteOriginal);
+                if (lstat.isSymbolicLink()) {
+                    // Read the raw symlink target and resolve it to an absolute path
+                    const linkTarget = await fs.readlink(absoluteOriginal);
+                    const resolvedTarget = path.isAbsolute(linkTarget)
+                        ? path.resolve(linkTarget)
+                        : path.resolve(path.dirname(absoluteOriginal), linkTarget);
+                    // Use the resolved target as the canonical path for allowlist checking
+                    // and as the actual path for all subsequent file operations.
+                    resolvedRealPath = resolvedTarget;
+                }
+            } catch {
+                // Not a symlink or unreadable; fall through to parent-directory resolution
+            }
+
+            // SECURITY FIX: When the full path doesn't exist (e.g., writing a new file),
+            // resolve the parent directory to detect symlinks in the path chain.
+            // Without this, an attacker could create a symlink inside an allowed directory
+            // pointing to a restricted location, then write to a non-existent file through
+            // that symlink — bypassing the directory restriction check.
+            if (resolvedRealPath === null) {
+                try {
+                    const parentDir = path.dirname(absoluteOriginal);
+                    const resolvedParent = await fs.realpath(parentDir, { encoding: 'utf8' });
+                    const basename = path.basename(absoluteOriginal);
+                    resolvedRealPath = path.join(resolvedParent, basename);
+                } catch {
+                    // Parent also doesn't exist — walk up the tree to find
+                    // the deepest existing ancestor and resolve it
+                    let current = absoluteOriginal;
+                    let remaining: string[] = [];
+                    while (true) {
+                        const parent = path.dirname(current);
+                        if (parent === current) break; // reached filesystem root
+                        remaining.unshift(path.basename(current));
+                        current = parent;
+                        try {
+                            const resolvedAncestor = await fs.realpath(current, { encoding: 'utf8' });
+                            resolvedRealPath = path.join(resolvedAncestor, ...remaining);
+                            break;
+                        } catch (walkErr) {
+                            const walkError = walkErr as NodeJS.ErrnoException;
+                            // Non-ENOENT error (e.g., EPERM) means we cannot safely
+                            // resolve this ancestor — stop walking to avoid returning
+                            // an unresolved path that could bypass allowlist checks.
+                            if (walkError.code && walkError.code !== 'ENOENT') break;
+                            // ENOENT: keep walking up
+                        }
+                    }
+                }
+            }
         }
 
         const pathForNextCheck = resolvedRealPath ?? absoluteOriginal;
@@ -258,25 +317,25 @@ export async function validatePath(requestedPath: string): Promise<string> {
             throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
         }
 
+        // SECURITY: Always return the resolved path (with symlinks resolved) so that
+        // all subsequent file operations (read, write, mkdir, etc.) operate on the
+        // canonical target, not on a symlink that could point outside allowed directories.
+        // pathForNextCheck already holds resolvedRealPath ?? absoluteOriginal from above.
+
         // Check if path exists
         try {
             // fs.stat() will automatically follow symlinks, so we get existence info
-            const stats = await fs.stat(absoluteOriginal);
-            // If path exists, resolve any symlinks
-            if (resolvedRealPath) {
-                return resolvedRealPath;
-            }
-
-            return absoluteOriginal;
+            await fs.stat(pathForNextCheck);
+            return pathForNextCheck;
         } catch (error) {
             // Path doesn't exist - validate parent directories
-            if (await validateParentDirectories(absoluteOriginal)) {
-                // Return the path if a valid parent exists
+            if (await validateParentDirectories(pathForNextCheck)) {
+                // Return the resolved path if a valid parent exists
                 // This will be used for folder creation and many other file operations
-                return absoluteOriginal;
+                return pathForNextCheck;
             }
-            // If no valid parent found, return the absolute path anyway
-            return absoluteOriginal;
+            // If no valid parent found, return the resolved path anyway
+            return pathForNextCheck;
         }
     };
 
