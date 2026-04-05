@@ -9,10 +9,15 @@ import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
   isConfigFieldKey,
+  type ConfigFieldDefinition,
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
 
+/**
+ * Returns true if the given path is accessible and executable.
+ * Used to probe shell binary availability before reporting them in config.
+ */
 async function pathExists(pathValue: string): Promise<boolean> {
   try {
     await access(pathValue, fsConstants.X_OK);
@@ -22,6 +27,13 @@ async function pathExists(pathValue: string): Promise<boolean> {
   }
 }
 
+/**
+ * Probes for shells available on the current system by testing known binary
+ * paths from the system-info default shell and a fixed candidate list.
+ *
+ * @param systemInfo System information object returned by getSystemInfo().
+ * @returns Sorted, deduplicated array of absolute shell paths that exist on disk.
+ */
 async function detectAvailableShells(systemInfo: ReturnType<typeof getSystemInfo>): Promise<string[]> {
   const detected = new Set<string>();
   const add = (shell: string): void => {
@@ -116,7 +128,7 @@ export async function getConfig() {
     };
     const availableShells = await detectAvailableShells(systemInfo);
     
-    console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
+    console.error(`getConfig: returning config with ${CONFIG_FIELD_KEYS.length} keys`);
     return {
       content: [{
         type: "text",
@@ -128,13 +140,14 @@ export async function getConfig() {
           availableShells,
         },
         entries: CONFIG_FIELD_KEYS.map((key) => {
-          const definition = CONFIG_FIELD_DEFINITIONS[key];
+          const definition: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[key];
           const value = (configWithSystemInfo as Record<string, unknown>)[key];
           return {
             key,
             value,
             valueType: definition.valueType,
-            editable: true,
+            editable: !(definition.securityCritical ?? false),
+            securityCritical: definition.securityCritical ?? false,
           };
         }),
       },
@@ -153,10 +166,16 @@ export async function getConfig() {
 }
 
 /**
- * Set a specific config value
+ * Set a specific config value.
+ *
+ * @param args  Tool arguments (key + value).  Parsed via SetConfigValueArgsSchema.
+ * @param callerOrigin  Trusted, server-set origin.  Only `'ui'` (set by the
+ *   internal config-editor handler) may modify security-critical keys.  MCP
+ *   tool calls always pass `'mcp'` (the default), so the AI agent can never
+ *   reach security-critical keys regardless of what it sends in the arguments.
  */
-export async function setConfigValue(args: unknown) {
-  console.error(`setConfigValue called with args: ${JSON.stringify(args)}`);
+export async function setConfigValue(args: unknown, callerOrigin: 'mcp' | 'ui' = 'mcp') {
+  console.error(`setConfigValue called with callerOrigin: ${callerOrigin}`);
   try {
     const parsed = SetConfigValueArgsSchema.safeParse(args);
     if (!parsed.success) {
@@ -180,6 +199,23 @@ export async function setConfigValue(args: unknown) {
       };
     }
 
+    // Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+    // can only be changed through the config-editor UI, not by LLM tool calls.
+    // This prevents prompt-injection attacks from disabling safety controls.
+    // The callerOrigin is set server-side — it is never taken from tool arguments.
+    const fieldDef: ConfigFieldDefinition = CONFIG_FIELD_DEFINITIONS[parsed.data.key];
+    if (fieldDef.securityCritical && callerOrigin !== 'ui') {
+      return {
+        content: [{
+          type: "text",
+          text: `Security-critical key "${parsed.data.key}" cannot be modified by the AI agent. ` +
+            `This restriction prevents prompt-injection attacks from disabling safety controls. ` +
+            `To change this setting, use the Desktop Commander config editor UI (get_config tool).`
+        }],
+        isError: true
+      };
+    }
+
     try {
       const fieldDefinition = CONFIG_FIELD_DEFINITIONS[parsed.data.key];
       // Parse string values that should be arrays or objects
@@ -190,7 +226,7 @@ export async function setConfigValue(args: unknown) {
           (valueToStore.startsWith('[') || valueToStore.startsWith('{'))) {
         try {
           valueToStore = JSON.parse(valueToStore);
-          console.error(`Parsed string value to object/array: ${JSON.stringify(valueToStore)}`);
+          console.error(`Parsed string value to object/array for key ${parsed.data.key} (type: ${typeof valueToStore})`);
         } catch (parseError) {
           console.error(`Failed to parse string as JSON, using as-is: ${parseError}`);
         }
@@ -247,7 +283,7 @@ export async function setConfigValue(args: unknown) {
       await configManager.setValue(parsed.data.key, valueToStore);
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
-      console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);
+      console.error(`setConfigValue: Successfully set ${parsed.data.key} (type: ${typeof valueToStore}, isArray: ${Array.isArray(valueToStore)})`);
       return {
         content: [{
           type: "text",
