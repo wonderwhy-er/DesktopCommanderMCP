@@ -40,6 +40,7 @@ let persistPayload: ((payload: RenderPayload) => void) | undefined;
 let markdownEditorHandle: MarkdownEditorHandle | undefined;
 let markdownTocHandle: MarkdownTocHandle | undefined;
 let localPayloadOverride: RenderPayload | undefined;
+let directoryBackPayload: RenderPayload | undefined;
 const markdownEditorAppCache = new Map<string, { appName: string; appPath?: string }>();
 const markdownEditorAppPending = new Set<string>();
 
@@ -368,6 +369,226 @@ function renderRawFallback(source: string): string {
     return `<pre class="code-viewer"><code class="hljs language-text">${escapeHtml(source)}</code></pre>`;
 }
 
+interface DirEntry {
+    name: string;
+    isDir: boolean;
+    isDenied: boolean;
+    isWarning: boolean;
+    warningText: string;
+    depth: number;
+    children: DirEntry[];
+    relativePath: string;
+}
+
+function parseDirectoryEntries(content: string): { hint: string; entries: DirEntry[] } {
+    const lines = content.split('\n');
+    // First line(s) before listing are the hint message
+    const hintLines: string[] = [];
+    const entryLines: string[] = [];
+    for (const line of lines) {
+        if (/^\[(DIR|FILE|DENIED|WARNING)\]/.test(line.trim())) {
+            entryLines.push(line.trim());
+        } else if (entryLines.length === 0) {
+            hintLines.push(line);
+        }
+    }
+
+    // Build flat list
+    const flat: { name: string; fullPath: string; isDir: boolean; isDenied: boolean; isWarning: boolean; warningText: string; depth: number }[] = [];
+    for (const line of entryLines) {
+        if (line.startsWith('[WARNING]')) {
+            // Format: [WARNING] dirName: N items hidden (showing first M of T total)
+            const warnBody = line.replace(/^\[WARNING\]\s*/, '');
+            const colonIdx = warnBody.indexOf(':');
+            const dirName = colonIdx >= 0 ? warnBody.slice(0, colonIdx).trim() : '';
+            const msg = colonIdx >= 0 ? warnBody.slice(colonIdx + 1).trim() : warnBody;
+            // Depth matches the directory it belongs to — infer from dirName path segments
+            const parts = dirName.replace(/\\/g, '/').split('/').filter(Boolean);
+            const depth = parts.length; // warning sits inside the dir, so same depth as children
+            flat.push({ name: dirName, fullPath: dirName, isDir: false, isDenied: false, isWarning: true, warningText: msg, depth });
+            continue;
+        }
+        const isDir = line.startsWith('[DIR]');
+        const isDenied = line.startsWith('[DENIED]');
+        const name = line.replace(/^\[(DIR|FILE|DENIED)\]\s*/, '');
+        const parts = name.replace(/\\/g, '/').split('/');
+        flat.push({ name, fullPath: name, isDir, isDenied, isWarning: false, warningText: '', depth: parts.length - 1 });
+    }
+
+    // Build tree from flat list
+    const root: DirEntry[] = [];
+    const stack: DirEntry[][] = [root];
+
+    for (const item of flat) {
+        const baseName = item.fullPath.replace(/\\/g, '/').split('/').pop() ?? item.fullPath;
+        const entry: DirEntry = { name: baseName, isDir: item.isDir, isDenied: item.isDenied, isWarning: item.isWarning, warningText: item.warningText, depth: item.depth, children: [], relativePath: item.fullPath };
+
+        // Adjust stack to match depth
+        while (stack.length > item.depth + 1) stack.pop();
+
+        const parent = stack[stack.length - 1];
+        parent.push(entry);
+
+        if (item.isDir) {
+            stack.push(entry.children);
+        }
+    }
+
+    return { hint: hintLines.join('\n').trim(), entries: root };
+}
+
+let dirEntryIdCounter = 0;
+
+function renderDirTree(entries: DirEntry[], rootPath: string): string {
+    if (entries.length === 0) return '<div class="dir-tree"><span class="dir-empty">Empty directory</span></div>';
+
+    function renderEntries(items: DirEntry[]): string {
+        return items.map(item => {
+            const id = `de-${dirEntryIdCounter++}`;
+            const fullPath = rootPath + '/' + item.relativePath.replace(/\\/g, '/');
+            const ep = escapeHtml(fullPath);
+
+            if (item.isWarning) {
+                const parentPath = rootPath + '/' + item.relativePath.replace(/\\/g, '/');
+                const epp = escapeHtml(parentPath);
+                return `<div class="dir-entry"><button class="dir-row dir-row-warning dir-load-more" data-loadpath="${epp}"><span class="dir-warning-icon">⚠️</span> <span class="dir-warning-text">${escapeHtml(item.warningText)} — click to load all</span></button></div>`;
+            }
+            if (item.isDenied) {
+                return `<div class="dir-entry"><span class="dir-icon">🚫</span> <span class="dir-name-denied">${escapeHtml(item.name)}</span></div>`;
+            }
+            if (item.isDir) {
+                const has = item.children.length > 0;
+                const chev = `<span class="dir-chevron${has ? ' expanded' : ''}">${has ? '▼' : '▶'}</span>`;
+                const openBtn = `<button class="dir-open-btn" data-openpath="${ep}" title="Open in Finder">📂</button>`;
+                const ch = has ? `<div class="dir-children" id="${id}-ch">${renderEntries(item.children)}</div>` : '';
+                return `<div class="dir-entry-group" id="${id}"><div class="dir-row dir-row-folder" data-path="${ep}" data-eid="${id}" data-loaded="${has}">${chev} <span class="dir-icon">📁</span> <span class="dir-name">${escapeHtml(item.name)}</span>${openBtn}</div>${ch}</div>`;
+            }
+            return `<div class="dir-entry"><div class="dir-row dir-row-file" data-path="${ep}"><span class="file-icon">📄</span> <span class="file-name">${escapeHtml(item.name)}</span></div></div>`;
+        }).join('');
+    }
+
+    return `<div class="dir-tree">${renderEntries(entries)}</div>`;
+}
+
+function renderDirectoryBody(content: string, rootPath: string): { html: string; notice?: string } {
+    dirEntryIdCounter = 0;
+    const { hint, entries } = parseDirectoryEntries(content);
+    const treeHtml = renderDirTree(entries, rootPath);
+    return {
+        notice: hint || undefined,
+        html: `<div class="panel-content directory-content">${treeHtml}</div>`
+    };
+}
+
+function attachDirectoryHandlers(container: HTMLElement, rootPayload: RenderPayload): void {
+    const tree = container.querySelector('.dir-tree');
+    if (!tree) return;
+
+    tree.addEventListener('click', async (e) => {
+        // Handle "open in finder" button — stop propagation so folder doesn't toggle
+        const openBtn = (e.target as HTMLElement).closest('.dir-open-btn') as HTMLElement | null;
+        if (openBtn) {
+            e.stopPropagation();
+            const openPath = openBtn.dataset.openpath;
+            if (!openPath) return;
+            const cmd = buildOpenInFolderCommand(openPath);
+            if (cmd) {
+                try { await rpcCallTool?.('start_process', { command: cmd, timeout_ms: 12000 }); } catch {}
+            }
+            return;
+        }
+
+        // Handle "load more" warning button — reload parent directory fully
+        const loadMoreBtn = (e.target as HTMLElement).closest('.dir-load-more') as HTMLElement | null;
+        if (loadMoreBtn) {
+            e.stopPropagation();
+            const loadPath = loadMoreBtn.dataset.loadpath;
+            if (!loadPath) return;
+            loadMoreBtn.querySelector('.dir-warning-text')!.textContent = 'Loading…';
+            (loadMoreBtn as HTMLButtonElement).disabled = true;
+            try {
+                const result = await rpcCallTool?.('list_directory', { path: loadPath, depth: 1 });
+                const text = (result as any)?.content?.[0]?.text;
+                if (text && typeof text === 'string') {
+                    const parsed = parseDirectoryEntries(text);
+                    const html = renderDirTree(parsed.entries, loadPath);
+                    // Replace the parent .dir-children container contents
+                    const parentChildren = loadMoreBtn.closest('.dir-children');
+                    if (parentChildren) {
+                        const temp = document.createElement('div');
+                        temp.innerHTML = html;
+                        const inner = temp.querySelector('.dir-tree');
+                        parentChildren.innerHTML = inner ? inner.innerHTML : '';
+                    }
+                }
+            } catch {
+                loadMoreBtn.querySelector('.dir-warning-text')!.textContent = 'Failed to load';
+                (loadMoreBtn as HTMLButtonElement).disabled = false;
+            }
+            return;
+        }
+
+        const target = (e.target as HTMLElement).closest('.dir-row') as HTMLElement | null;
+        if (!target) return;
+        const fullPath = target.dataset.path;
+        if (!fullPath) return;
+
+        if (target.classList.contains('dir-row-folder')) {
+            const eid = target.dataset.eid;
+            if (!eid) return;
+            const childrenEl = document.getElementById(`${eid}-ch`);
+            const chevron = target.querySelector('.dir-chevron');
+
+            if (childrenEl) {
+                const hidden = childrenEl.classList.toggle('dir-collapsed');
+                chevron?.classList.toggle('expanded', !hidden);
+                if (chevron) chevron.textContent = hidden ? '▶' : '▼';
+            } else {
+                if (target.dataset.loaded === 'true') return;
+                if (chevron) chevron.textContent = '⏳';
+                try {
+                    const result = await rpcCallTool?.('list_directory', { path: fullPath, depth: 2 });
+                    const text = (result as any)?.content?.[0]?.text;
+                    if (text && typeof text === 'string') {
+                        target.dataset.loaded = 'true';
+                        const parsed = parseDirectoryEntries(text);
+                        const html = renderDirTree(parsed.entries, fullPath);
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'dir-children';
+                        wrapper.id = `${eid}-ch`;
+                        const temp = document.createElement('div');
+                        temp.innerHTML = html;
+                        const inner = temp.querySelector('.dir-tree');
+                        wrapper.innerHTML = inner ? inner.innerHTML : '<span class="dir-empty">Empty</span>';
+                        target.parentElement?.appendChild(wrapper);
+                        chevron?.classList.add('expanded');
+                        if (chevron) chevron.textContent = '▼';
+                    }
+                } catch {
+                    if (chevron) chevron.textContent = '⚠';
+                }
+            }
+            return;
+        }
+
+        if (target.classList.contains('dir-row-file')) {
+            target.classList.add('dir-loading');
+            try {
+                const result = await rpcCallTool?.('read_file', { path: fullPath });
+                const r = result as any;
+                if (r?.structuredContent) {
+                    directoryBackPayload = rootPayload;
+                    const text = r.content?.[0]?.text ?? '';
+                    const newPayload = buildRenderPayload(r.structuredContent, text);
+                    renderApp(container.closest('#app') as HTMLElement, newPayload, 'rendered', true);
+                }
+            } catch {
+                target.classList.remove('dir-loading');
+            }
+        }
+    });
+}
+
 function renderImageBody(payload: RenderPayload): { html: string; notice?: string } {
     const mimeType = normalizeImageMimeType(payload.mimeType);
     if (!isAllowedImageMimeType(mimeType)) {
@@ -527,6 +748,10 @@ function renderBody(payload: RenderPayload, htmlMode: HtmlPreviewMode, startLine
 
     if (payload.fileType === 'image') {
         return renderImageBody(payload);
+    }
+
+    if (payload.fileType === 'directory') {
+        return renderDirectoryBody(cleanedContent, payload.filePath);
     }
 
     if (payload.fileType === 'unsupported') {
@@ -1602,11 +1827,13 @@ export function renderApp(
     const fileTypeLabel = payload.fileType === 'markdown' ? 'MARKDOWN'
         : payload.fileType === 'html' ? 'HTML'
         : payload.fileType === 'image' ? 'IMAGE'
+        : payload.fileType === 'directory' ? 'DIRECTORY'
         : fileExtension !== 'none' ? fileExtension.toUpperCase()
         : 'TEXT';
 
     const compactLabel = range?.isPartial
         ? `View lines ${range.fromLine}–${range.toLine}`
+        : payload.fileType === 'directory' ? 'View directory'
         : 'View file';
     let footerLabel = range?.isPartial
         ? `${escapeHtml(fileTypeLabel)} • LINES ${range.fromLine}–${range.toLine} OF ${range.totalLines}`
@@ -1677,12 +1904,16 @@ export function renderApp(
         : '';
 
     const effectiveExpanded = isExpanded || getCurrentDisplayMode() === 'fullscreen';
+    const backButton = (directoryBackPayload && payload.fileType !== 'directory')
+        ? `<button class="panel-action dir-back-btn" id="dir-back" title="Back to directory">← Back</button>`
+        : '';
 
     container.innerHTML = `
       <main id="tool-shell" class="shell tool-shell ${effectiveExpanded ? 'expanded' : 'collapsed'}${hideSummaryRow ? ' host-framed' : ''}${getCurrentDisplayMode() === 'fullscreen' ? ' fullscreen' : ''}">
         ${getCurrentDisplayMode() === 'fullscreen' ? '' : renderCompactRow({ id: 'compact-toggle', label: compactLabel, filename: payload.fileName, variant: 'ready', expandable: true, expanded: isExpanded, interactive: true })}
         <section class="panel">
           <div class="panel-topbar">
+            ${backButton}
             ${hideSummaryRow ? '' : `<span class="panel-breadcrumb" title="${escapeHtml(payload.filePath)}">${breadcrumb}</span>`}
             <span class="panel-topbar-actions">
                ${markdownActions}
@@ -1713,6 +1944,22 @@ export function renderApp(
     attachLoadAllHandler(container, payload, htmlMode);
     attachMarkdownWorkspaceHandlers(payload);
     attachTextSelectionHandler(payload);
+    if (payload.fileType === 'directory') {
+        attachDirectoryHandlers(container, payload);
+    }
+    // Back to directory navigation
+    const backBtn = document.getElementById('dir-back');
+    if (backBtn && directoryBackPayload) {
+        const savedPayload = directoryBackPayload;
+        backBtn.addEventListener('click', () => {
+            directoryBackPayload = undefined;
+            renderApp(container, savedPayload, 'rendered', true);
+        });
+    }
+    // Clear back state when showing a directory
+    if (payload.fileType === 'directory') {
+        directoryBackPayload = undefined;
+    }
 
     const compactRow = document.getElementById('compact-toggle') as HTMLElement | null;
 
