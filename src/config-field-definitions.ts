@@ -5,6 +5,14 @@ export type ConfigFieldDefinition = {
   description: string;
   valueType: ConfigFieldValueType;
   /**
+   * Whether this field is editable in the config-editor UI.
+   * Defaults to true when omitted — all fields can be modified via the UI.
+   * Note: fields with securityCritical:true additionally require
+   * callerOrigin:'ui' in the server-side setConfigValue() check; this flag
+   * only controls whether the edit control is shown in the UI.
+   */
+  editable?: boolean;
+  /**
    * When true, this key cannot be changed by MCP tool calls — only via the
    * config-editor UI (which uses the internal `_internal_set_config_value`
    * handler with a trusted server-side callerOrigin).  This prevents
