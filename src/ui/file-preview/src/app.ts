@@ -162,7 +162,7 @@ function getAncestorDirectories(filePath: string): string[] {
     return ancestors;
 }
 
-function parseDirectoryEntries(text: string): string[] {
+function splitListingLines(text: string): string[] {
     return text.split('\n').map((line) => line.trim()).filter(Boolean);
 }
 
@@ -198,7 +198,7 @@ async function resolveMarkdownLinkSearchRoot(filePath: string): Promise<string> 
         try {
             const result = await rpcCallTool?.('list_directory', { path: ancestor, depth: 1 });
             const text = extractToolText(result) ?? '';
-            const entries = parseDirectoryEntries(text);
+            const entries = splitListingLines(text);
             if (markers.some((marker) => entries.some((entry) => entry.includes(marker)))) {
                 return ancestor;
             }
@@ -1526,7 +1526,6 @@ function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
 
     const workspaceState = getMarkdownWorkspaceState(payload);
     const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
-    const markdownDoc = document.querySelector('.markdown-doc') as HTMLElement | null;
     const outline = extractMarkdownOutline(workspaceState.sourceContent);
 
 
@@ -1580,20 +1579,16 @@ function attachMarkdownWorkspaceHandlers(payload: RenderPayload): void {
         });
     }
 
-    if (markdownDoc) {
-        markdownDoc.addEventListener('click', (event) => {
+    if (wrapper) {
+        wrapper.addEventListener('click', (event) => {
             const target = event.target as HTMLElement | null;
             const link = target?.closest<HTMLAnchorElement>('a[href]');
-            const href = link?.getAttribute('href');
-            if (!href) {
+            if (!link || !link.closest('.markdown-doc')) {
                 return;
             }
-
-            if (workspaceState.mode === 'edit' && workspaceState.editorView === 'markdown') {
-                const mouseEvent = event as MouseEvent;
-                if (!(mouseEvent.metaKey || mouseEvent.ctrlKey)) {
-                    return;
-                }
+            const href = link.getAttribute('href');
+            if (!href) {
+                return;
             }
 
             event.preventDefault();
@@ -2049,6 +2044,11 @@ export function bootstrapApp(): void {
         renderApp(container, currentPayload, currentHtmlMode, isExpanded);
     };
 
+    // Cached payload from a previous session, stashed at onConnected. Used when
+    // the host's ontoolinput announces the same file path so we can show the
+    // last-known content instantly instead of flashing a loading state on reopen.
+    // Fresh tool_result still wins and replaces the cached render when it arrives.
+    let pendingCachedPayload: RenderPayload | undefined;
     let initialStateResolved = false;
     const resolveInitialState = (payload?: RenderPayload, message?: string): void => {
         if (initialStateResolved) {
@@ -2113,21 +2113,36 @@ export function bootstrapApp(): void {
         return {};
     };
 
-    app.ontoolinput = (_params) => {
+    app.ontoolinput = (params) => {
+        // If we have a cached payload from a previous session for the file the
+        // host is now asking us to preview, render it immediately so reopening
+        // the same document feels instant. Fresh tool_result will replace it.
+        const requestedPath = typeof params.arguments?.path === 'string' ? params.arguments.path : undefined;
+        if (
+            !initialStateResolved
+            && pendingCachedPayload
+            && requestedPath
+            && pendingCachedPayload.filePath === requestedPath
+        ) {
+            const cached = pendingCachedPayload;
+            pendingCachedPayload = undefined;
+            resolveInitialState(cached);
+            return;
+        }
+
         // Tool is executing – show loading state
         renderLoadingState(container);
         onRender?.();
     };
 
     app.ontoolresult = (result) => {
+        // Fresh data wins; discard any cache hint we held for the optimistic render path.
+        pendingCachedPayload = undefined;
         const payload = extractRenderPayload(result);
         const message = extractToolText(result as unknown as Record<string, unknown>);
         if (!initialStateResolved) {
             if (payload) {
-                const effectivePayload = getEffectiveIncomingPayload(payload);
-                renderLoadingState(container);
-                onRender?.();
-                window.setTimeout(() => resolveInitialState(effectivePayload), 120);
+                resolveInitialState(getEffectiveIncomingPayload(payload));
                 return;
             }
             if (message) {
@@ -2175,11 +2190,11 @@ export function bootstrapApp(): void {
         },
         onConnected: () => {
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
-            // Try to restore from persisted widget state (survives refresh on some hosts)
-            const cachedPayload = widgetState.read();
-            if (cachedPayload) {
-                window.setTimeout(() => resolveInitialState(cachedPayload), 50);
-            }
+            // Stash any persisted payload so ontoolinput can show it instantly
+            // when the host announces the same file path. Fresh tool_result still
+            // wins. If the host never sends ontoolresult, the 8s fallback below
+            // surfaces an error so the user doesn't see stale or empty content.
+            pendingCachedPayload = widgetState.read() ?? undefined;
 
             // Fallback: if no tool data arrives, show a helpful status message
             window.setTimeout(() => {

@@ -23,15 +23,22 @@ const FALLBACK_WIDGET_STATE_KEY = 'desktop-commander:file-preview:widget-state';
  * Check if we're running in ChatGPT (has special widget state API)
  */
 export function isChatGPT(): boolean {
-    return typeof window !== 'undefined' && 
+    return typeof window !== 'undefined' &&
            typeof (window as any).openai?.setWidgetState === 'function';
 }
 
 /**
  * Create a widget state storage adapter.
- * 
+ *
  * On ChatGPT: Uses window.openai.widgetState for persistence
- * On other hosts: Returns no-op adapter (state comes from ui/notifications/tool-result)
+ * On other hosts: Uses sessionStorage as a fallback so the preview can survive
+ *   transient interruptions (page refresh on hosts that don't re-send tool_result,
+ *   visibility/focus loss, etc.).
+ *
+ *   Note: when iframes share a parent origin (e.g. dc-app's same-origin sandbox),
+ *   they all read/write the same sessionStorage key. The init-time read in app.ts
+ *   must therefore defer to fresh tool_result before falling back to the cache,
+ *   otherwise stale state can leak across file switches.
  */
 export function createWidgetStateStorage<T>(
     validator?: (state: unknown) => boolean
