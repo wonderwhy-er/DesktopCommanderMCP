@@ -241,6 +241,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
 
+        // Resolve UI visibility config once for tool definition _meta
+        const uiConfig = await configManager.getConfig();
+        const globalUI = uiConfig.showMcpUI ?? true;
+        const showReadFileUIMeta   = typeof uiConfig.showReadFileUI   === 'boolean' ? uiConfig.showReadFileUI   : globalUI;
+        const showListDirUIMeta    = typeof uiConfig.showListDirectoryUI === 'boolean' ? uiConfig.showListDirectoryUI : globalUI;
+        const showGetConfigUIMeta  = typeof uiConfig.showGetConfigUI  === 'boolean' ? uiConfig.showGetConfigUI  : globalUI;
+
         // Build complete tools array
         const allTools = [
             // Configuration tools
@@ -262,7 +269,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Pass showUI=false to suppress the UI widget for this call only.
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
-                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true),
+                ...(showGetConfigUIMeta ? { _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true) } : {}),
                 annotations: {
                     title: "Get Configuration",
                     readOnlyHint: true,
@@ -358,7 +365,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
+                ...(showReadFileUIMeta ? { _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true) } : {}),
                 annotations: {
                     title: "Read File or URL",
                     readOnlyHint: true,
@@ -545,7 +552,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
-                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
+                ...(showListDirUIMeta ? { _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true) } : {}),
                 annotations: {
                     title: "List Directory Contents",
                     readOnlyHint: true,
@@ -1254,6 +1261,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "set_config_value":
                 try {
                     result = await setConfigValue(args);
+                    // Notify client to re-fetch tools list if a UI visibility setting changed
+                    const UI_CONFIG_KEYS = new Set(['showMcpUI', 'showReadFileUI', 'showListDirectoryUI', 'showGetConfigUI']);
+                    if (!result.isError && args && typeof args === 'object' && UI_CONFIG_KEYS.has((args as any).key)) {
+                        server.sendToolListChanged();
+                    }
                 } catch (error) {
                     capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
                     result = {
