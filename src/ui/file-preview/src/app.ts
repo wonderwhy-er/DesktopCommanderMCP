@@ -806,7 +806,15 @@ export function renderApp(
     shellController = undefined;
 
     if (!payload) {
-        renderStatusState(container, 'No preview available for this response.');
+        // No structuredContent — widget is suppressed via config (showReadFileUI/showListDirectoryUI).
+        // Render zero-height so autoResize reports height:0 and the host collapses the iframe.
+        container.innerHTML = '';
+        document.documentElement.style.height = '0';
+        document.documentElement.style.overflow = 'hidden';
+        document.body.style.height = '0';
+        document.body.style.margin = '0';
+        document.body.style.padding = '0';
+        document.body.style.overflow = 'hidden';
         onRender?.();
         return;
     }
