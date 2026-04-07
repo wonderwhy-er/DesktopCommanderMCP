@@ -74,6 +74,20 @@ import { listUiResources, readUiResource } from './ui/resources.js';
 
 
 
+/**
+ * Resolve whether a tool call should render its UI widget.
+ * Priority: per-tool config key > global showMcpUI > true (default on).
+ * When false, we strip structuredContent from the response so the widget
+ * has no data to render — the _meta stays on the tool definition always
+ * to avoid "no ui/resourceUri" errors from preloading clients.
+ */
+async function shouldShowUI(toolConfigKey: 'showReadFileUI' | 'showListDirectoryUI' | 'showGetConfigUI'): Promise<boolean> {
+  const config = await configManager.getConfig();
+  const globalDefault = config.showMcpUI ?? true;
+  const perTool = config[toolConfigKey];
+  return typeof perTool === 'boolean' ? perTool : globalDefault;
+}
+
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
 function deferLog(level: string, message: string) {
@@ -227,13 +241,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
 
-        // Resolve UI visibility config once for tool definition _meta
-        const uiConfig = await configManager.getConfig();
-        const globalUI = uiConfig.showMcpUI ?? true;
-        const showReadFileUIMeta   = typeof uiConfig.showReadFileUI   === 'boolean' ? uiConfig.showReadFileUI   : globalUI;
-        const showListDirUIMeta    = typeof uiConfig.showListDirectoryUI === 'boolean' ? uiConfig.showListDirectoryUI : globalUI;
-        const showGetConfigUIMeta  = typeof uiConfig.showGetConfigUI  === 'boolean' ? uiConfig.showGetConfigUI  : globalUI;
-
         // Build complete tools array
         const allTools = [
             // Configuration tools
@@ -254,7 +261,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
-                ...(showGetConfigUIMeta ? { _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true) } : {}),
+                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true),
                 annotations: {
                     title: "Get Configuration",
                     readOnlyHint: true,
@@ -349,7 +356,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
-                ...(showReadFileUIMeta ? { _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true) } : {}),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Read File or URL",
                     readOnlyHint: true,
@@ -535,7 +542,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
-                ...(showListDirUIMeta ? { _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true) } : {}),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "List Directory Contents",
                     readOnlyHint: true,
@@ -1230,6 +1237,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_config":
                 try {
                     result = await getConfig();
+                    if (result && !result.isError && !await shouldShowUI('showGetConfigUI')) {
+                        delete (result as any).structuredContent;
+                    }
                 } catch (error) {
                     capture('server_request_error', { message: `Error in get_config handler: ${error}` });
                     result = {
@@ -1384,6 +1394,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             // Filesystem tools
             case "read_file":
                 result = await handlers.handleReadFile(args);
+                if (result && !result.isError && !await shouldShowUI('showReadFileUI')) {
+                    delete (result as any).structuredContent;
+                }
                 break;
 
             case "read_multiple_files":
@@ -1404,6 +1417,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "list_directory":
                 result = await handlers.handleListDirectory(args);
+                if (result && !result.isError && !await shouldShowUI('showListDirectoryUI')) {
+                    delete (result as any).structuredContent;
+                }
                 break;
 
             case "move_file":
