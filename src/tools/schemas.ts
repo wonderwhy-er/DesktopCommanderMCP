@@ -1,9 +1,7 @@
 import { z } from "zod";
 
 // Config tools schemas
-export const GetConfigArgsSchema = z.object({
-  showUI: z.boolean().optional(),
-});
+export const GetConfigArgsSchema = z.object({});
 
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
@@ -55,7 +53,6 @@ export const ReadFileArgsSchema = z.object({
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional(),
-  showUI: z.boolean().optional(),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -114,7 +111,6 @@ export const CreateDirectoryArgsSchema = z.object({
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
   depth: z.number().optional().default(2),
-  showUI: z.boolean().optional(),
 });
 
 export const MoveFileArgsSchema = z.object({

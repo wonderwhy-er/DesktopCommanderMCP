@@ -53,7 +53,6 @@ import {
 } from './tools/schemas.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { configManager } from './config-manager.js';
-import type { ServerConfig } from './config-manager.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -73,20 +72,7 @@ import {
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
 
-/**
- * Resolve whether a tool call should render an MCP UI widget.
- * Priority: per-call `showUI` arg > per-tool config > global `showMcpUI` config > true (default on).
- */
-async function shouldShowUI(args: { showUI?: boolean }, toolConfigKey?: keyof ServerConfig): Promise<boolean> {
-  if (args.showUI !== undefined) return args.showUI;
-  const config = await configManager.getConfig();
-  const globalDefault = config.showMcpUI ?? true;
-  if (toolConfigKey !== undefined) {
-    const perTool = config[toolConfigKey];
-    if (typeof perTool === 'boolean') return perTool;
-  }
-  return globalDefault;
-}
+
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -266,7 +252,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
                         - systemInfo (operating system and environment details)
-                        Pass showUI=false to suppress the UI widget for this call only.
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
                 ...(showGetConfigUIMeta ? { _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true) } : {}),
@@ -361,7 +346,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           * For BULK changes (translation, mass replacements): use start_process with Python
                             zipfile module to find/replace all <w:t> elements at once.
 
-                        Pass showUI=false to suppress the interactive UI widget for this call only. Global default is controlled by the showMcpUI config setting.
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
@@ -548,7 +532,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         If a directory cannot be accessed, it will show [DENIED] instead.
                         Only works within allowed directories.
-                        Pass showUI=false to suppress the interactive UI widget for this call only. Global default is controlled by the showMcpUI config setting.
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
@@ -1247,9 +1230,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             case "get_config":
                 try {
                     result = await getConfig();
-                    if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showGetConfigUI')) {
-                        (result as any)._meta = buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true);
-                    }
                 } catch (error) {
                     capture('server_request_error', { message: `Error in get_config handler: ${error}` });
                     result = {
@@ -1404,9 +1384,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             // Filesystem tools
             case "read_file":
                 result = await handlers.handleReadFile(args);
-                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showReadFileUI')) {
-                    (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
-                }
                 break;
 
             case "read_multiple_files":
@@ -1427,9 +1404,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             case "list_directory":
                 result = await handlers.handleListDirectory(args);
-                if (result && !result.isError && await shouldShowUI(args as { showUI?: boolean }, 'showListDirectoryUI')) {
-                    (result as any)._meta = buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true);
-                }
                 break;
 
             case "move_file":
