@@ -146,7 +146,7 @@ export async function getConfig() {
             key,
             value,
             valueType: definition.valueType,
-            editable: !(definition.securityCritical ?? false),
+            editable: definition.editable ?? true,
             securityCritical: definition.securityCritical ?? false,
           };
         }),
