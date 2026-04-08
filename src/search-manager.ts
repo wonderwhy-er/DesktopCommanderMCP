@@ -7,51 +7,6 @@ import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
 
-/**
- * Check if a regex pattern is safe from catastrophic backtracking (ReDoS).
- * Rejects patterns with nested quantifiers like (a+)+, (a*)+, (a+)*, (a*)*,
- * and similar constructs that cause exponential runtime.
- */
-export function isSafeRegex(pattern: string): boolean {
-  // Detect nested quantifiers: a group containing a quantifier, followed by a quantifier
-  // Matches patterns like (a+)+, (a+)*, (a*)+, (a*)*,  (?:a+)+, etc.
-  // Also catches {n,m} style quantifiers nested inside quantified groups
-  const nestedQuantifier = /([^\\]|^)\((?:[^)]*[+*}])\s*\)[+*?]|\((?:[^)]*[+*}])\s*\)\{/;
-  if (nestedQuantifier.test(pattern)) {
-    return false;
-  }
-
-  // Detect overlapping alternations in quantified groups: (a|a)+, (a|aa)+, (\w|\d)+
-  // These can cause catastrophic backtracking even without a second outer quantifier
-  const overlappingAlt = /\((?:[^)]*\|[^)]*)\)[+*]/;
-  if (overlappingAlt.test(pattern)) {
-    return false;
-  }
-
-  return true;
-}
-
-/**
- * Build a RegExp safely, falling back to literal string matching if the pattern
- * is invalid or vulnerable to ReDoS.
- * Returns { regex, isLiteral } so callers know if fallback occurred.
- */
-export function buildSafeRegex(pattern: string, flags: string): { regex: RegExp; isLiteral: boolean } {
-  // Check for ReDoS-prone patterns first
-  if (!isSafeRegex(pattern)) {
-    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return { regex: new RegExp(escaped, flags), isLiteral: true };
-  }
-
-  try {
-    return { regex: new RegExp(pattern, flags), isLiteral: false };
-  } catch {
-    // If pattern is not valid regex, escape it for literal matching
-    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return { regex: new RegExp(escaped, flags), isLiteral: true };
-  }
-}
-
 export interface SearchResult {
   file: string;
   line?: number;
