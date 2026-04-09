@@ -20,16 +20,20 @@ export function slugifyMarkdownHeading(text: string): string {
 
 export function createSlugTracker(): MarkdownSlugTracker {
     const counts = new Map<string, number>();
+    const usedSlugs = new Set<string>();
 
     return (text: string): string => {
         const baseSlug = slugifyMarkdownHeading(text);
-        const nextCount = (counts.get(baseSlug) ?? 0) + 1;
-        counts.set(baseSlug, nextCount);
+        let nextCount = counts.get(baseSlug) ?? 1;
+        let nextSlug = nextCount === 1 ? baseSlug : `${baseSlug}-${nextCount}`;
 
-        if (nextCount === 1) {
-            return baseSlug;
+        while (usedSlugs.has(nextSlug)) {
+            nextCount += 1;
+            nextSlug = `${baseSlug}-${nextCount}`;
         }
 
-        return `${baseSlug}-${nextCount}`;
+        counts.set(baseSlug, nextCount + 1);
+        usedSlugs.add(nextSlug);
+        return nextSlug;
     };
 }

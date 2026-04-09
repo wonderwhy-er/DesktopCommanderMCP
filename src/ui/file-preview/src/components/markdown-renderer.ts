@@ -1,51 +1,11 @@
 /**
  * Markdown rendering pipeline for preview mode. It configures markdown-it and highlighting so markdown content is rendered consistently with code block support.
  */
-// markdown-it is intentionally typed locally here to avoid maintaining global ambient module declarations.
-// @ts-expect-error markdown-it does not provide local TypeScript typings in this setup.
-import MarkdownIt from 'markdown-it';
 import { highlightSource } from './highlighting.js';
-import { rewriteWikiLinks } from '../markdown-workspace/linking.js';
-import { createSlugTracker } from '../markdown-workspace/slugify.js';
+import { createMarkdownIt, prepareMarkdownSource, readHeadingProjection, type MarkdownToken } from '../markdown/parser.js';
+import { createSlugTracker } from '../markdown/slugify.js';
 
-interface MarkdownRenderer {
-    render: (source: string, env?: Record<string, unknown>) => string;
-    renderer: {
-        rules: Record<string, (...args: unknown[]) => string>;
-    };
-}
-
-type MarkdownItConstructor = new (options?: {
-    html?: boolean;
-    linkify?: boolean;
-    typographer?: boolean;
-    highlight?: (code: string, language: string) => string;
-}) => MarkdownRenderer;
-
-const MarkdownItCtor = MarkdownIt as unknown as MarkdownItConstructor;
-
-function extractInlineText(token: Record<string, unknown> | undefined): string {
-    if (!token) {
-        return '';
-    }
-
-    const children = Array.isArray(token.children) ? token.children : [];
-    if (children.length === 0) {
-        return typeof token.content === 'string' ? token.content : '';
-    }
-
-    return children.map((child) => {
-        if (typeof child.content === 'string') {
-            return child.content;
-        }
-        return '';
-    }).join('');
-}
-
-const markdown = new MarkdownItCtor({
-    html: false,
-    linkify: true,
-    typographer: false,
+const markdown = createMarkdownIt({
     highlight(code: string, language: string): string {
         const normalizedLanguage = (language || 'text').toLowerCase();
         const highlighted = highlightSource(code, normalizedLanguage);
@@ -55,7 +15,7 @@ const markdown = new MarkdownItCtor({
 
 const renderHeadingOpen = markdown.renderer.rules.heading_open;
 markdown.renderer.rules.heading_open = (...args: unknown[]): string => {
-    const tokens = args[0] as Array<Record<string, unknown>>;
+    const tokens = args[0] as MarkdownToken[];
     const index = args[1] as number;
     const options = args[2] as unknown;
     const environment = (args[3] as Record<string, unknown> | undefined) ?? {};
@@ -65,18 +25,18 @@ markdown.renderer.rules.heading_open = (...args: unknown[]): string => {
         : createSlugTracker();
     environment.nextSlug = nextSlug;
 
-    const inlineToken = tokens[index + 1];
-    const headingText = extractInlineText(inlineToken).trim();
-    const headingId = nextSlug(headingText || 'section');
+    const heading = readHeadingProjection(tokens, index, nextSlug);
     const token = tokens[index] as { attrSet?: (name: string, value: string) => void };
-    token.attrSet?.('id', headingId);
-    token.attrSet?.('data-heading-id', headingId);
+    if (heading) {
+        token.attrSet?.('id', heading.id);
+        token.attrSet?.('data-heading-id', heading.id);
+    }
 
     if (typeof renderHeadingOpen === 'function') {
         return renderHeadingOpen(...args);
     }
 
-    return self.renderToken(tokens, index, options);
+    return self.renderToken(tokens as Array<Record<string, unknown>>, index, options);
 };
 
 const renderLinkOpen = markdown.renderer.rules.link_open;
@@ -104,5 +64,5 @@ markdown.renderer.rules.link_open = (...args: unknown[]): string => {
 };
 
 export function renderMarkdown(content: string): string {
-    return markdown.render(rewriteWikiLinks(content), { nextSlug: createSlugTracker() });
+    return markdown.render(prepareMarkdownSource(content), { nextSlug: createSlugTracker() });
 }

@@ -1,4 +1,5 @@
 import { renderMarkdown } from '../components/markdown-renderer.js';
+import { createSlugTracker } from './slugify.js';
 
 export type MarkdownEditorView = 'raw' | 'markdown';
 
@@ -21,6 +22,12 @@ export interface MarkdownEditorHandle {
     setValue: (value: string) => void;
     revealLine: (lineNumber: number, headingId?: string) => void;
     setScrollTop: (scrollTop: number) => void;
+}
+
+function shouldIgnoreBlur(shell: Element | null | undefined, event: FocusEvent): boolean {
+    const nextTarget = event.relatedTarget as Node | null;
+    const widgetShell = shell?.closest('.tool-shell');
+    return Boolean(nextTarget && (shell?.contains(nextTarget) || widgetShell?.contains(nextTarget)));
 }
 
 function renderFormattingButtons(): string {
@@ -53,6 +60,15 @@ function renderModeToggleIcon(view: MarkdownEditorView): string {
     return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M4 12h10"></path><path d="M4 17h7"></path></svg>';
 }
 
+function renderHeadingOptionLabel(headings: MarkdownLinkHeading[], heading: MarkdownLinkHeading): string {
+    const duplicateCount = headings.filter((candidate) => candidate.text === heading.text).length;
+    if (duplicateCount <= 1) {
+        return heading.text;
+    }
+
+    return `${heading.text} (#${heading.id})`;
+}
+
 export function renderMarkdownCopyButton(): string {
     return `<button class="markdown-editor-copy-button" type="button" id="copy-active-markdown" title="Copy" aria-label="Copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>`;
 }
@@ -68,7 +84,6 @@ export function renderMarkdownModeToggle(view: MarkdownEditorView): string {
 }
 
 export function renderMarkdownEditorShell(options: {
-    content: string;
     view: MarkdownEditorView;
 }): string {
     const isMarkdownView = options.view === 'markdown';
@@ -192,22 +207,20 @@ function applyRawTab(textarea: HTMLTextAreaElement): void {
     textarea.selectionEnd = start + 1;
 }
 
-function wrapSelectionWithInlineStyle(style: { color?: string; fontSize?: string }): void {
+function replaceSelectionWithNode(node: Node): boolean {
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-        return;
+    if (!selection || selection.rangeCount === 0) {
+        return false;
     }
 
     const range = selection.getRangeAt(0);
-    const span = document.createElement('span');
-    if (style.color) span.style.color = style.color;
-    if (style.fontSize) span.style.fontSize = style.fontSize;
-    span.appendChild(range.extractContents());
-    range.insertNode(span);
+    range.deleteContents();
+    range.insertNode(node);
+    range.setStartAfter(node);
+    range.collapse(true);
     selection.removeAllRanges();
-    const nextRange = document.createRange();
-    nextRange.selectNodeContents(span);
-    selection.addRange(nextRange);
+    selection.addRange(range);
+    return true;
 }
 
 function applyMarkdownFormat(format: string, value?: string): void {
@@ -227,20 +240,18 @@ function applyMarkdownFormat(format: string, value?: string): void {
         case 'list':
             document.execCommand('insertUnorderedList');
             break;
-        case 'link': {
-            if (value?.trim()) {
-                document.execCommand('createLink', false, value.trim());
-            }
-            break;
-        }
         case 'block-style':
             if (value) {
                 document.execCommand('formatBlock', false, value);
             }
             break;
         case 'code':
-            document.execCommand('insertHTML', false, `<code>${window.getSelection()?.toString() || 'code'}</code>`);
+        {
+            const code = document.createElement('code');
+            code.textContent = window.getSelection()?.toString() || 'code';
+            replaceSelectionWithNode(code);
             break;
+        }
         default:
             break;
     }
@@ -278,6 +289,10 @@ export function mountMarkdownEditor(options: {
     let linkMode: 'file' | 'url' = 'file';
     let linkSearchResults: MarkdownLinkSearchItem[] = [];
     let selectedLinkItem: MarkdownLinkSearchItem | null = null;
+    let linkResultsMessage = 'Search for a file to link';
+    let linkSearchRequestId = 0;
+    let linkHeadingRequestId = 0;
+    let lastMarkdownValue = options.value;
 
     if (options.view === 'markdown') {
         const editor = document.createElement('div');
@@ -288,8 +303,74 @@ export function mountMarkdownEditor(options: {
         editor.innerHTML = renderMarkdown(options.value);
         options.target.replaceChildren(editor);
 
-        const syncFromEditor = (): void => {
-            options.onChange(htmlToMarkdown(editor.innerHTML));
+        const syncHeadingAttributes = (): void => {
+            const nextSlug = createSlugTracker();
+            const headings = Array.from(editor.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
+
+            for (const heading of headings) {
+                const text = heading.textContent?.trim() ?? '';
+                if (!text) {
+                    heading.removeAttribute('id');
+                    heading.removeAttribute('data-heading-id');
+                    continue;
+                }
+
+                const headingId = nextSlug(text);
+                heading.id = headingId;
+                heading.setAttribute('data-heading-id', headingId);
+            }
+        };
+
+        const setLinkHeadingOptions = (headings: MarkdownLinkHeading[] = [], placeholder: string = 'None'): void => {
+            if (!linkHeadingSelect) {
+                return;
+            }
+
+            linkHeadingSelect.replaceChildren();
+            const noneOption = document.createElement('option');
+            noneOption.value = '';
+            noneOption.textContent = placeholder;
+            linkHeadingSelect.appendChild(noneOption);
+
+            for (const heading of headings) {
+                const option = document.createElement('option');
+                option.value = heading.id;
+                option.textContent = renderHeadingOptionLabel(headings, heading);
+                option.dataset.headingText = heading.text;
+                linkHeadingSelect.appendChild(option);
+            }
+        };
+
+        const loadHeadingsForItem = async (item: MarkdownLinkSearchItem): Promise<void> => {
+            if (!linkHeadingSelect) {
+                return;
+            }
+
+            const requestId = ++linkHeadingRequestId;
+            setLinkHeadingOptions([], 'Loading…');
+            try {
+                const headings = await options.loadHeadings?.(item.path) ?? [];
+                if (requestId !== linkHeadingRequestId || selectedLinkItem?.path !== item.path) {
+                    return;
+                }
+                setLinkHeadingOptions(headings);
+            } catch {
+                if (requestId !== linkHeadingRequestId || selectedLinkItem?.path !== item.path) {
+                    return;
+                }
+                setLinkHeadingOptions([], 'Failed to load headings');
+            }
+        };
+
+        const syncFromEditor = (syncContent: boolean): void => {
+            if (syncContent) {
+                syncHeadingAttributes();
+                const nextMarkdownValue = htmlToMarkdown(editor.innerHTML);
+                if (nextMarkdownValue !== lastMarkdownValue) {
+                    lastMarkdownValue = nextMarkdownValue;
+                    options.onChange(nextMarkdownValue);
+                }
+            }
             if (contextMenu) {
                 const selection = window.getSelection();
                 const hasSelection = !!selection && !selection.isCollapsed && editor.contains(selection.anchorNode);
@@ -322,36 +403,37 @@ export function mountMarkdownEditor(options: {
             }
 
             if (linkSearchResults.length === 0) {
-                linkResults.innerHTML = '<div class="markdown-link-results-empty">Search for a file to link</div>';
+                const empty = document.createElement('div');
+                empty.className = 'markdown-link-results-empty';
+                empty.textContent = linkResultsMessage;
+                linkResults.replaceChildren(empty);
                 return;
             }
 
-            linkResults.innerHTML = linkSearchResults.map((item) => `
-              <button type="button" class="markdown-link-result${selectedLinkItem?.path === item.path ? ' is-active' : ''}" data-link-path="${item.path}">
-                <span class="markdown-link-result-title">${item.title}</span>
-                <span class="markdown-link-result-path">${item.relativePath}</span>
-              </button>
-            `).join('');
+            const fragment = document.createDocumentFragment();
+            for (const item of linkSearchResults) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `markdown-link-result${selectedLinkItem?.path === item.path ? ' is-active' : ''}`;
+                button.dataset.linkPath = item.path;
 
-            const buttons = Array.from(linkResults.querySelectorAll<HTMLButtonElement>('[data-link-path]'));
-            for (const button of buttons) {
-                button.addEventListener('click', async () => {
-                    const nextItem = linkSearchResults.find((item) => item.path === button.dataset.linkPath);
-                    if (!nextItem) {
-                        return;
-                    }
+                const title = document.createElement('span');
+                title.className = 'markdown-link-result-title';
+                title.textContent = item.title;
 
-                    selectedLinkItem = nextItem;
+                const path = document.createElement('span');
+                path.className = 'markdown-link-result-path';
+                path.textContent = item.relativePath;
+
+                button.append(title, path);
+                button.addEventListener('click', () => {
+                    selectedLinkItem = item;
                     renderLinkResults();
-                    if (!linkHeadingSelect) {
-                        return;
-                    }
-
-                    linkHeadingSelect.innerHTML = '<option value="">Loading…</option>';
-                    const headings = await options.loadHeadings?.(nextItem.path) ?? [];
-                    linkHeadingSelect.innerHTML = `<option value="">None</option>${headings.map((heading) => `<option value="${heading.text}">${heading.text}</option>`).join('')}`;
+                    void loadHeadingsForItem(item);
                 });
+                fragment.appendChild(button);
             }
+            linkResults.replaceChildren(fragment);
         };
 
         const updateLinkMode = (mode: 'file' | 'url'): void => {
@@ -373,44 +455,61 @@ export function mountMarkdownEditor(options: {
 
             const query = linkSearchInput.value.trim();
             if (query.length === 0) {
+                linkSearchRequestId += 1;
                 linkSearchResults = [];
                 selectedLinkItem = null;
-                if (linkHeadingSelect) {
-                    linkHeadingSelect.innerHTML = '<option value="">None</option>';
-                }
+                linkResultsMessage = 'Search for a file to link';
+                setLinkHeadingOptions();
                 renderLinkResults();
                 return;
             }
 
-            linkSearchResults = await options.searchLinks(query);
-            selectedLinkItem = linkSearchResults[0] ?? null;
-            renderLinkResults();
-            if (selectedLinkItem && linkHeadingSelect) {
-                const headings = await options.loadHeadings?.(selectedLinkItem.path) ?? [];
-                linkHeadingSelect.innerHTML = `<option value="">None</option>${headings.map((heading) => `<option value="${heading.text}">${heading.text}</option>`).join('')}`;
+            const requestId = ++linkSearchRequestId;
+            try {
+                const results = await options.searchLinks(query);
+                if (requestId !== linkSearchRequestId || query !== linkSearchInput.value.trim()) {
+                    return;
+                }
+
+                linkSearchResults = results;
+                selectedLinkItem = results[0] ?? null;
+                linkResultsMessage = results.length === 0 ? 'No matching files found' : 'Search for a file to link';
+                renderLinkResults();
+                if (selectedLinkItem) {
+                    void loadHeadingsForItem(selectedLinkItem);
+                } else {
+                    setLinkHeadingOptions();
+                }
+            } catch {
+                if (requestId !== linkSearchRequestId) {
+                    return;
+                }
+                linkSearchResults = [];
+                selectedLinkItem = null;
+                linkResultsMessage = 'Search failed. Try again.';
+                setLinkHeadingOptions();
+                renderLinkResults();
             }
         };
 
         const handleInput = (): void => {
-            syncFromEditor();
+            syncFromEditor(true);
         };
 
         const handleKeyDown = (event: KeyboardEvent): void => {
             if (event.key === 'Tab') {
                 event.preventDefault();
                 document.execCommand('insertText', false, '    ');
-                syncFromEditor();
+                syncFromEditor(true);
             }
         };
 
         const handleSelectionChange = (): void => {
-            syncFromEditor();
+            syncFromEditor(false);
         };
 
         const handleFocusOut = (event: FocusEvent): void => {
-            const nextTarget = event.relatedTarget as Node | null;
-            const widgetShell = shell?.closest('.tool-shell');
-            if (nextTarget && (shell?.contains(nextTarget) || widgetShell?.contains(nextTarget))) {
+            if (shouldIgnoreBlur(shell, event)) {
                 return;
             }
             if (contextMenu) {
@@ -444,14 +543,13 @@ export function mountMarkdownEditor(options: {
                 }
                 linkSearchResults = [];
                 selectedLinkItem = null;
-                if (linkHeadingSelect) {
-                    linkHeadingSelect.innerHTML = '<option value="">None</option>';
-                }
+                linkResultsMessage = 'Search for a file to link';
+                setLinkHeadingOptions();
                 renderLinkResults();
                 return;
             }
             applyMarkdownFormat(format);
-            syncFromEditor();
+            syncFromEditor(true);
         };
 
         const handleBlockStyleChange = (): void => {
@@ -461,7 +559,7 @@ export function mountMarkdownEditor(options: {
             editor.focus();
             restoreSelection();
             applyMarkdownFormat('block-style', blockStyleSelect.value);
-            syncFromEditor();
+            syncFromEditor(true);
         };
 
         const closeLinkModal = (): void => {
@@ -478,11 +576,10 @@ export function mountMarkdownEditor(options: {
             if (linkSearchInput) {
                 linkSearchInput.value = '';
             }
-            if (linkHeadingSelect) {
-                linkHeadingSelect.innerHTML = '<option value="">None</option>';
-            }
+            setLinkHeadingOptions();
             linkSearchResults = [];
             selectedLinkItem = null;
+            linkResultsMessage = 'Search for a file to link';
             renderLinkResults();
         };
 
@@ -493,18 +590,28 @@ export function mountMarkdownEditor(options: {
                 const href = linkInput?.value?.trim();
                 const label = linkLabelInput?.value?.trim() || window.getSelection()?.toString().trim() || href || 'link';
                 if (href) {
-                    document.execCommand('insertHTML', false, `<a href="${href}">${label}</a>`);
-                    syncFromEditor();
+                    const anchor = document.createElement('a');
+                    anchor.setAttribute('href', href);
+                    anchor.textContent = label;
+                    if (replaceSelectionWithNode(anchor)) {
+                        syncFromEditor(true);
+                    }
                 }
             } else if (selectedLinkItem) {
-                const selectedHeading = linkHeadingSelect?.value?.trim();
+                const selectedHeadingId = linkHeadingSelect?.value?.trim();
+                const selectedHeadingText = linkHeadingSelect?.selectedOptions[0]?.dataset.headingText?.trim();
                 const alias = linkAliasInput?.value?.trim();
                 const pathPart = selectedLinkItem.path === options.currentFilePath ? '' : selectedLinkItem.wikiPath;
-                const wikiLink = `[[${pathPart}${selectedHeading ? `#${selectedHeading}` : ''}${alias ? `|${alias}` : ''}]]`;
-                const href = `${selectedLinkItem.relativePath}${selectedHeading ? `#${selectedHeading}` : ''}`;
-                const label = alias || selectedHeading || selectedLinkItem.title;
-                document.execCommand('insertHTML', false, `<a href="${href}" data-wiki-link="${wikiLink}">${label}</a>`);
-                syncFromEditor();
+                const wikiLink = `[[${pathPart}${selectedHeadingId ? `#${selectedHeadingId}` : ''}${alias ? `|${alias}` : ''}]]`;
+                const href = `${selectedLinkItem.relativePath}${selectedHeadingId ? `#${selectedHeadingId}` : ''}`;
+                const label = alias || selectedHeadingText || selectedLinkItem.title;
+                const anchor = document.createElement('a');
+                anchor.setAttribute('href', href);
+                anchor.dataset.wikiLink = wikiLink;
+                anchor.textContent = label;
+                if (replaceSelectionWithNode(anchor)) {
+                    syncFromEditor(true);
+                }
             }
             closeLinkModal();
         };
@@ -524,7 +631,8 @@ export function mountMarkdownEditor(options: {
         linkSearchInput?.addEventListener('input', handleSearchInput);
         linkApply?.addEventListener('click', handleLinkApply);
         linkCancel?.addEventListener('click', closeLinkModal);
-        syncFromEditor();
+        syncHeadingAttributes();
+        syncFromEditor(false);
         renderLinkResults();
         if (typeof options.initialScrollTop === 'number') {
             editor.scrollTop = options.initialScrollTop;
@@ -548,8 +656,10 @@ export function mountMarkdownEditor(options: {
             },
             getValue: () => htmlToMarkdown(editor.innerHTML),
             setValue: (value: string) => {
+                lastMarkdownValue = value;
                 editor.innerHTML = renderMarkdown(value);
-                syncFromEditor();
+                syncHeadingAttributes();
+                syncFromEditor(false);
             },
             revealLine: (_lineNumber: number, headingId?: string) => {
                 if (headingId) {
@@ -592,9 +702,7 @@ export function mountMarkdownEditor(options: {
     };
 
     const handleFocusOut = (event: FocusEvent): void => {
-        const nextTarget = event.relatedTarget as Node | null;
-        const widgetShell = shell?.closest('.tool-shell');
-        if (nextTarget && (shell?.contains(nextTarget) || widgetShell?.contains(nextTarget))) {
+        if (shouldIgnoreBlur(shell, event)) {
             return;
         }
         options.onBlur?.();

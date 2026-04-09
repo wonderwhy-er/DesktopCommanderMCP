@@ -1,16 +1,15 @@
-import type { MarkdownOutlineItem } from './outline.js';
+import { escapeHtml } from '../../shared/escape-html.js';
 
-export interface MarkdownTocHandle {
-    dispose: () => void;
+export interface DocumentOutlineItem {
+    id: string;
+    text: string;
+    level: number;
+    line?: number;
 }
 
-function escapeHtml(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+export interface DocumentOutlineHandle {
+    dispose: () => void;
+    refresh: (outline: DocumentOutlineItem[], activeHeadingId?: string | null) => void;
 }
 
 function setActiveItem(nav: HTMLElement, activeId: string | null): void {
@@ -22,34 +21,37 @@ function setActiveItem(nav: HTMLElement, activeId: string | null): void {
     });
 }
 
-export function renderMarkdownToc(outline: MarkdownOutlineItem[], activeHeadingId?: string | null): string {
+function renderDocumentOutlineItems(outline: DocumentOutlineItem[], activeHeadingId?: string | null): string {
+    return outline.map((item) => {
+        const activeClass = item.id === activeHeadingId ? ' is-active' : '';
+        return `<button class="document-outline-link markdown-toc-link${activeClass}" type="button" data-toc-id="${escapeHtml(item.id)}" data-level="${item.level}" aria-current="${item.id === activeHeadingId ? 'location' : 'false'}">${escapeHtml(item.text)}</button>`;
+    }).join('');
+}
+
+export function renderDocumentOutline(outline: DocumentOutlineItem[], activeHeadingId?: string | null): string {
     if (outline.length === 0) {
         return '';
     }
 
-    const items = outline.map((item) => {
-        const activeClass = item.id === activeHeadingId ? ' is-active' : '';
-        return `<button class="markdown-toc-link${activeClass}" type="button" data-toc-id="${escapeHtml(item.id)}" data-level="${item.level}" aria-current="${item.id === activeHeadingId ? 'location' : 'false'}">${escapeHtml(item.text)}</button>`;
-    }).join('');
-
     return `
-      <aside class="markdown-toc-shell" aria-label="Table of contents">
-        <div class="markdown-toc-title">Contents</div>
-        <nav class="markdown-toc-nav">${items}</nav>
+      <aside class="document-outline-shell markdown-toc-shell" aria-label="Table of contents">
+        <div class="document-outline-title markdown-toc-title">Contents</div>
+        <nav class="document-outline-nav markdown-toc-nav">${renderDocumentOutlineItems(outline, activeHeadingId)}</nav>
       </aside>
     `;
 }
 
-export function attachMarkdownToc(options: {
+export function attachDocumentOutline(options: {
     shell: HTMLElement;
-    outline: MarkdownOutlineItem[];
+    outline: DocumentOutlineItem[];
     scrollContainer: HTMLElement;
     onSelect: (headingId: string) => void;
-}): MarkdownTocHandle | null {
-    const nav = options.shell.querySelector('.markdown-toc-nav') as HTMLElement | null;
+}): DocumentOutlineHandle | null {
+    const nav = options.shell.querySelector('.document-outline-nav') as HTMLElement | null;
     if (!nav) {
         return null;
     }
+    let currentOutline = options.outline;
 
     const handleClick = (event: Event): void => {
         const target = event.target as HTMLElement | null;
@@ -64,12 +66,12 @@ export function attachMarkdownToc(options: {
     };
 
     const updateActiveHeading = (): void => {
-        const headings = options.outline
+        const headings = currentOutline
             .map((item) => {
                 const element = document.getElementById(item.id);
                 return element ? { item, element } : null;
             })
-            .filter((entry): entry is { item: MarkdownOutlineItem; element: HTMLElement } => entry !== null);
+            .filter((entry): entry is { item: DocumentOutlineItem; element: HTMLElement } => entry !== null);
 
         if (headings.length === 0) {
             return;
@@ -94,6 +96,12 @@ export function attachMarkdownToc(options: {
         dispose: () => {
             nav.removeEventListener('click', handleClick);
             options.scrollContainer.removeEventListener('scroll', updateActiveHeading);
+        },
+        refresh: (outline, activeHeadingId) => {
+            currentOutline = outline;
+            nav.innerHTML = renderDocumentOutlineItems(currentOutline, activeHeadingId);
+            setActiveItem(nav, activeHeadingId ?? null);
+            updateActiveHeading();
         },
     };
 }

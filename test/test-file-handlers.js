@@ -365,7 +365,7 @@ async function testMarkdownExactMatchSave() {
   });
 
   assert.ok(Array.isArray(result.content), 'edit_block result should include content array');
-  assert.ok(result.content[0].text.includes('Successfully applied 1 edit'), 'edit_block should report exact-match success');
+  assert.match(result.content[0].text, /Successfully applied 1 edit(?:\(s\))?/, 'edit_block should report exact-match success');
 
   const readBack = await fs.readFile(MD_FILE, 'utf8');
   assert.strictEqual(readBack, updatedContent, 'Markdown file should be rewritten with the updated content');

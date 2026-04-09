@@ -16,7 +16,6 @@ const TARGETS = {
     styleLayers: [
       'src/ui/styles/base.css',
       'src/ui/styles/components/compact-row.css',
-      'src/ui/styles/components/tool-header.css',
       'src/ui/styles/apps/file-preview.css'
     ]
   },

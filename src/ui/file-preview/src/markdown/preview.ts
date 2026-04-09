@@ -1,6 +1,5 @@
 import { renderMarkdown } from '../components/markdown-renderer.js';
-import type { MarkdownOutlineItem } from './outline.js';
-import { renderMarkdownToc } from './toc.js';
+import { renderDocumentOutline, type DocumentOutlineItem } from '../document-outline.js';
 
 export function getRenderedMarkdownCopyText(content: string): string {
     const html = renderMarkdown(content);
@@ -25,11 +24,11 @@ export function getRenderedMarkdownCopyText(content: string): string {
 
 export function renderMarkdownWorkspacePreview(options: {
     content: string;
-    outline: MarkdownOutlineItem[];
+    outline: DocumentOutlineItem[];
     activeHeadingId?: string | null;
     showToc?: boolean;
 }): string {
-    const tocHtml = options.showToc ? renderMarkdownToc(options.outline, options.activeHeadingId) : '';
+    const tocHtml = options.showToc ? renderDocumentOutline(options.outline, options.activeHeadingId) : '';
     const hasToc = tocHtml.length > 0;
 
     return `

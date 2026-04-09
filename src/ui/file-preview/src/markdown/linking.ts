@@ -1,4 +1,5 @@
 import { slugifyMarkdownHeading } from './slugify.js';
+import { getParentDirectory, isWindowsAbsolutePath, normalizeFilePath, normalizePathSeparators } from '../path-utils.js';
 
 export interface ResolvedMarkdownLink {
     kind: 'external' | 'anchor' | 'file';
@@ -17,21 +18,16 @@ interface ParsedWikiLink {
 const WIKI_LINK_PATTERN = /\[\[([^\]|#]*)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 const FENCE_PATTERN = /^(`{3,}|~{3,})/;
 
-function isWindowsAbsolutePath(value: string): boolean {
-    return /^[A-Za-z]:[\\/]/.test(value);
-}
-
-function normalizePathSeparators(value: string): string {
-    return value.replace(/\\/g, '/');
-}
-
-function normalizeFilePath(value: string): string {
-    const normalized = normalizePathSeparators(value);
-    return normalized.replace(/\/+/g, '/');
-}
-
 function encodeLinkPath(pathValue: string): string {
     return encodeURI(normalizePathSeparators(pathValue));
+}
+
+function safeDecodeURIComponent(value: string): string {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return value;
+    }
 }
 
 function parseWikiLink(rawHref: string): ParsedWikiLink | null {
@@ -96,24 +92,49 @@ function buildWikiHref(link: ParsedWikiLink): string {
     return `${encodedPath}#${slugifyMarkdownHeading(link.anchor)}`;
 }
 
-function replaceWikiLinksOutsideInlineCode(line: string): string {
-    const segments = line.split(/(`[^`]*`)/g);
-    return segments.map((segment) => {
-        if (segment.startsWith('`') && segment.endsWith('`')) {
-            return segment;
+function rewriteWikiLinksInPlainText(segment: string): string {
+    return segment.replace(WIKI_LINK_PATTERN, (match) => {
+        const parsed = parseWikiLink(match);
+        if (!parsed) {
+            return match;
         }
 
-        return segment.replace(WIKI_LINK_PATTERN, (match) => {
-            const parsed = parseWikiLink(match);
-            if (!parsed) {
-                return match;
-            }
+        const displayText = buildWikiDisplayText(parsed);
+        const href = buildWikiHref(parsed);
+        return `[${displayText}](${href} "mcp-wiki:${encodeURIComponent(match)}")`;
+    });
+}
 
-            const displayText = buildWikiDisplayText(parsed);
-            const href = buildWikiHref(parsed);
-            return `[${displayText}](${href} "mcp-wiki:${encodeURIComponent(match)}")`;
-        });
-    }).join('');
+function replaceWikiLinksOutsideInlineCode(line: string): string {
+    let result = '';
+    let cursor = 0;
+
+    while (cursor < line.length) {
+        const codeStart = line.indexOf('`', cursor);
+        if (codeStart === -1) {
+            result += rewriteWikiLinksInPlainText(line.slice(cursor));
+            break;
+        }
+
+        result += rewriteWikiLinksInPlainText(line.slice(cursor, codeStart));
+
+        let delimiterEnd = codeStart;
+        while (delimiterEnd < line.length && line[delimiterEnd] === '`') {
+            delimiterEnd += 1;
+        }
+
+        const delimiter = line.slice(codeStart, delimiterEnd);
+        const codeEnd = line.indexOf(delimiter, delimiterEnd);
+        if (codeEnd === -1) {
+            result += line.slice(codeStart);
+            break;
+        }
+
+        result += line.slice(codeStart, codeEnd + delimiter.length);
+        cursor = codeEnd + delimiter.length;
+    }
+
+    return result;
 }
 
 function decodeAnchorFragment(fragment: string | undefined): string | undefined {
@@ -121,7 +142,7 @@ function decodeAnchorFragment(fragment: string | undefined): string | undefined 
         return undefined;
     }
 
-    return decodeURIComponent(fragment);
+    return safeDecodeURIComponent(fragment);
 }
 
 function splitHref(rawHref: string): { pathPart: string; anchorPart?: string } {
@@ -134,16 +155,6 @@ function splitHref(rawHref: string): { pathPart: string; anchorPart?: string } {
         pathPart: rawHref.slice(0, hashIndex),
         anchorPart: rawHref.slice(hashIndex + 1),
     };
-}
-
-function getDirectoryPath(filePath: string): string {
-    const normalized = normalizeFilePath(filePath);
-    const lastSlashIndex = normalized.lastIndexOf('/');
-    if (lastSlashIndex < 0) {
-        return normalized;
-    }
-
-    return normalized.slice(0, lastSlashIndex);
 }
 
 function toDirectoryFileUrl(directoryPath: string): URL {
@@ -162,7 +173,7 @@ function toDirectoryFileUrl(directoryPath: string): URL {
 }
 
 function fromFileUrl(url: URL): string {
-    const decodedPath = decodeURIComponent(url.pathname);
+    const decodedPath = safeDecodeURIComponent(url.pathname);
     if (/^\/[A-Za-z]:\//.test(decodedPath)) {
         return decodedPath.slice(1);
     }
@@ -175,12 +186,15 @@ function isExternalHref(rawHref: string): boolean {
 }
 
 function resolveFileTargetPath(currentPath: string, rawPath: string): string {
-    const normalizedRawPath = normalizePathSeparators(decodeURIComponent(rawPath));
+    const normalizedRawPath = normalizePathSeparators(safeDecodeURIComponent(rawPath));
     if (normalizedRawPath.startsWith('/') || isWindowsAbsolutePath(normalizedRawPath)) {
         return normalizeFilePath(normalizedRawPath);
     }
 
-    const baseDirectory = getDirectoryPath(currentPath);
+    const baseDirectory = getParentDirectory(currentPath);
+    if (baseDirectory === '.' && !normalizeFilePath(currentPath).includes('/')) {
+        return normalizeFilePath(normalizedRawPath);
+    }
     const resolvedUrl = new URL(encodeURI(normalizedRawPath), toDirectoryFileUrl(baseDirectory));
     return normalizeFilePath(fromFileUrl(resolvedUrl));
 }
@@ -195,8 +209,8 @@ export function rewriteWikiLinks(source: string): string {
         if (fenceMatch) {
             const marker = fenceMatch[1];
             if (!activeFence) {
-                activeFence = marker[0].repeat(marker.length);
-            } else if (trimmedStart.startsWith(activeFence[0].repeat(3))) {
+                activeFence = marker;
+            } else if (marker[0] === activeFence[0] && marker.length >= activeFence.length) {
                 activeFence = null;
             }
             return line;

@@ -101,7 +101,7 @@ html:has(.fullscreen) #app {
   pointer-events: none;
   padding: 4px 8px;
   gap: 6px;
-  background: var(--color-bg-primary, #fff);
+  background: var(--panel);
   border-radius: 0 0 0 var(--border-radius-md, 6px);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
@@ -1037,7 +1037,7 @@ html:has(.fullscreen) #app {
 }
 
 .markdown-doc a:hover {
-  text-decoration-color: currentColor;
+  text-decoration-color: currentcolor;
 }
 
 /* ── HTML frame ── */

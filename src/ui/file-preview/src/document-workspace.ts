@@ -26,7 +26,7 @@ export function parseReadRange(content: string): ReadRange | undefined {
     };
 }
 
-export function getMarkdownEditAvailability(options: {
+export function getDocumentEditAvailability(options: {
     content: string;
 }): { canEdit: true } | { canEdit: false; reason: string } {
     const readRange = parseReadRange(options.content);
@@ -40,7 +40,7 @@ export function getMarkdownEditAvailability(options: {
     return { canEdit: true };
 }
 
-export function getMarkdownFullscreenAvailability(options: {
+export function getDocumentFullscreenAvailability(options: {
     availableDisplayModes?: string[];
 }): { canFullscreen: true } | { canFullscreen: false; reason: string } {
     if (!options.availableDisplayModes?.includes('fullscreen')) {
@@ -53,6 +53,6 @@ export function getMarkdownFullscreenAvailability(options: {
     return { canFullscreen: true };
 }
 
-export function shouldAutoLoadMarkdownOnEnterFullscreen(content: string): boolean {
+export function shouldAutoLoadDocumentOnEnterFullscreen(content: string): boolean {
     return parseReadRange(content)?.isPartial === true;
 }
