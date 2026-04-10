@@ -14,7 +14,8 @@ class CommandManager {
             commandString = commandString.trim();
 
             // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            // Include newline variants to prevent newline-based blocklist bypass (#422)
+            const separators = ['\r\n', '\n', '\r', ';', '&&', '||', '|', '&'];
 
             // This will store our extracted commands
             const commands: string[] = [];
@@ -217,6 +218,18 @@ class CommandManager {
                 return null;
             }
 
+            // Strip surrounding quotes so that e.g. "rm" is caught as rm (#421)
+            if ((firstToken.startsWith('"') && firstToken.endsWith('"')) ||
+                (firstToken.startsWith("'") && firstToken.endsWith("'"))) {
+                firstToken = firstToken.slice(1, -1);
+            }
+
+            // Reject commands containing glob/wildcard characters to prevent
+            // wildcard-based blocklist bypass, e.g. /usr/bin/su*o (#421)
+            if (/[*?\[\]]/.test(firstToken)) {
+                return null;
+            }
+
             // strip path prefix so /usr/bin/sudo gets caught as "sudo"
             const baseName = path.basename(firstToken);
             return baseName.toLowerCase();
@@ -231,6 +244,12 @@ class CommandManager {
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
+
+            // Reject commands containing glob/wildcard characters outright (#421)
+            // These could be used to bypass blocklist matching via shell expansion
+            if (/[*?\[\]]/.test(command)) {
+                return false;
+            }
             
             // Extract all commands from the command string
             const allCommands = this.extractCommands(command);
