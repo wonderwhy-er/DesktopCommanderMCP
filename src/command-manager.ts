@@ -218,11 +218,9 @@ class CommandManager {
                 return null;
             }
 
-            // Strip surrounding quotes so that e.g. "rm" is caught as rm (#421)
-            if ((firstToken.startsWith('"') && firstToken.endsWith('"')) ||
-                (firstToken.startsWith("'") && firstToken.endsWith("'"))) {
-                firstToken = firstToken.slice(1, -1);
-            }
+            // Strip all quote characters so that concatenated fragments like
+            // "r"m, r"m", 'r''m' are normalized to the actual command name (#421)
+            firstToken = firstToken.replace(/["']/g, '');
 
             // Reject commands containing glob/wildcard characters to prevent
             // wildcard-based blocklist bypass, e.g. /usr/bin/su*o (#421)
@@ -245,12 +243,6 @@ class CommandManager {
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
 
-            // Reject commands containing glob/wildcard characters outright (#421)
-            // These could be used to bypass blocklist matching via shell expansion
-            if (/[*?\[\]]/.test(command)) {
-                return false;
-            }
-            
             // Extract all commands from the command string
             const allCommands = this.extractCommands(command);
             
