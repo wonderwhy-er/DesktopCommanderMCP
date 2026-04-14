@@ -37,6 +37,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [How to install](#how-to-install)
 - [Getting Started](#getting-started)
 - [Usage](#usage)
+- [File Preview UI & Markdown Editor](#file-preview-ui--markdown-editor)
 - [Handling Long-Running Commands](#handling-long-running-commands)
 - [Work in Progress and TODOs](#roadmap)
 - [Sponsors and Supporters](#support-desktop-commander)
@@ -54,7 +55,7 @@ Execute long-running terminal commands on your computer and manage processes thr
 ## Features
 
 - **Remote AI Control** - Use Desktop Commander from ChatGPT, Claude web, and other AI services via [Remote MCP](https://mcp.desktopcommander.app)
-- **File Preview UI** - Visual file previews in Claude Desktop with rendered markdown, inline images, expandable content, and quick "Open in folder" access
+- **File Preview UI** - Visual file previews in Claude Desktop with rendered markdown, inline images, expandable content, built-in markdown editor, and quick "Open in folder" access
 - **Enhanced terminal commands with interactive process control**
 - **Execute code in memory (Python, Node.js, R) without saving files**
 - **Instant data analysis - just ask to analyze CSV/JSON/Excel files**
@@ -693,6 +694,44 @@ Desktop Commander can be run in Docker containers for **complete isolation from 
 - Images (local or from URLs) are displayed visually in Claude's interface, not as text
 - Claude can see and analyze the actual image content
 - Default 30-second timeout for URL requests
+
+## File Preview UI & Markdown Editor
+
+Desktop Commander includes a rich file preview widget in Claude Desktop that renders files visually as AI works with them.
+
+### Supported file types
+- **Markdown** — rendered preview with a built-in editor
+- **Images** — inline display (PNG, JPEG, GIF, WebP, etc.)
+- **Code files** — syntax-highlighted source view
+- **HTML** — rendered preview with toggle to source view
+- **Directories** — interactive tree with expand/collapse and lazy loading
+- **PDF, Excel, DOCX** — native content extraction and display
+
+### Markdown Editor
+
+When viewing a `.md` file in Claude Desktop, you can edit it directly inside the preview panel — no need to open a separate app.
+
+**How to use:**
+1. Ask Claude to read or create a markdown file
+2. Expand the file preview to fullscreen using the **⤢ Expand** button
+3. The editor activates automatically in fullscreen mode
+4. Edit your content with a live preview toggle, copy, undo, and save controls
+5. Changes are saved back to disk; collapse to return to inline view
+
+**Editor features:**
+- Live **edit / preview toggle** — switch between raw markdown and rendered output
+- **Auto-save** to disk with save status indicator
+- **Undo** support to revert unsaved changes
+- **Copy** button to grab the full markdown source
+- **Open in editor** — launch your default markdown app directly from the panel
+- Partial-file awareness — loads and merges surrounding lines when the file was only partially read
+- Text selection context — select text in preview mode and the AI can reference your selection
+
+### Other preview features
+- **Expand / collapse** — toggle between compact summary row and full panel
+- **Open in folder** — reveal the file in Finder/Explorer with one click
+- **Load more lines** — incrementally load content above or below a partial read window
+- **Text selection** — highlight text in any preview; the AI can see and reference your selection
 
 ## Fuzzy Search Log Analysis (npm scripts)
 
