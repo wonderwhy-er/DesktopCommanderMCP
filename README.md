@@ -727,6 +727,18 @@ When viewing a `.md` file in Claude Desktop, you can edit it directly inside the
 - Partial-file awareness — loads and merges surrounding lines when the file was only partially read
 - Text selection context — select text in preview mode and the AI can reference your selection
 
+### Directory Browser
+
+When Claude runs `list_directory`, the result opens as an interactive file tree inside the preview panel — not just raw text output.
+
+**Features:**
+- **Expandable tree** — folders expand and collapse on click; top-level contents shown immediately
+- **Lazy loading** — subfolders load on demand to keep the initial view fast
+- **Large directory handling** — directories with many items show a `⚠ click to load all` button instead of overwhelming the view
+- **Open in Finder/Explorer** — each folder has a quick-open button to reveal it in your file manager
+- **Click to preview** — clicking any file in the tree opens it in the file preview panel directly
+- **Back navigation** — after opening a file from the tree, a ← Back button returns you to the directory view
+
 ### Other preview features
 - **Expand / collapse** — toggle between compact summary row and full panel
 - **Open in folder** — reveal the file in Finder/Explorer with one click
