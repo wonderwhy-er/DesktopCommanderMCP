@@ -905,6 +905,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         handleInlineExitFromFullscreen,
         isUndoAvailable,
         readCompletePayload,
+        maybeAutosave,
         readPayload,
         readPayloadContent,
         refreshFromDisk,

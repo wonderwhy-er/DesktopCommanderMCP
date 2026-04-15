@@ -490,7 +490,13 @@ export function mountMarkdownEditor(options: {
                 }
                 return result;
             }
-            return originalSource;
+            // Block count changed — serialize all blocks from the DOM.
+            // This may lose some markdown formatting nuances but never deletes content.
+            return Array.from(currentElements)
+                .map((el) => serializeNode(el))
+                .join('')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
         };
 
         const syncHeadingAttributes = (): void => {
@@ -698,11 +704,89 @@ export function mountMarkdownEditor(options: {
             syncFromEditor(true);
         };
 
+        /**
+         * Get the visible-text offset of the cursor within a given container element.
+         * Walks the DOM tree in order, counting text characters until the cursor position.
+         */
+        const getCursorTextOffset = (container: Element): number | null => {
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) return null;
+            const range = sel.getRangeAt(0);
+            // Create a range from container start to cursor
+            const preRange = document.createRange();
+            preRange.setStart(container, 0);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            // Use a temporary element to extract text length
+            const fragment = preRange.cloneContents();
+            const div = document.createElement('div');
+            div.appendChild(fragment);
+            return extractVisibleText(div).length;
+        };
+
         const handleKeyDown = (event: KeyboardEvent): void => {
             if (event.key === 'Tab') {
                 event.preventDefault();
                 document.execCommand('insertText', false, '    ');
                 syncFromEditor(true);
+                return;
+            }
+            if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+                // Insert \n\n directly into the raw source at the cursor position
+                const blockRange = getSelectionBlockRange();
+                const sel = window.getSelection();
+                let blockEl: Element | null = null;
+                let node: Node | null = sel?.anchorNode ?? null;
+                while (node && node.parentElement !== editor) {
+                    node = node.parentElement;
+                }
+                if (node) blockEl = node as Element;
+                const blockIdx = blockEl ? Array.from(editor.children).indexOf(blockEl) : -1;
+
+                if (blockRange && blockEl && blockIdx >= 0) {
+                    const cursorOffset = getCursorTextOffset(blockEl);
+                    if (cursorOffset !== null) {
+                        const blockText = extractVisibleText(blockEl);
+                        const textBefore = blockText.slice(Math.max(0, cursorOffset - 30), cursorOffset);
+                        const blockSource = originalSource.slice(blockRange.start, blockRange.end);
+
+                        // Find cursor position in source using text context
+                        let sourcePos = -1;
+                        if (textBefore.length > 0) {
+                            const idx = blockSource.lastIndexOf(textBefore);
+                            if (idx >= 0) {
+                                sourcePos = blockRange.start + idx + textBefore.length;
+                            }
+                        } else {
+                            // Cursor at start of block
+                            sourcePos = blockRange.start;
+                        }
+
+                        if (sourcePos >= 0) {
+                            event.preventDefault();
+                            originalSource = originalSource.slice(0, sourcePos) + '\n\n' + originalSource.slice(sourcePos);
+                            lastMarkdownValue = originalSource;
+                            editor.innerHTML = renderMarkdown(originalSource);
+                            resetBaselines();
+                            syncHeadingAttributes();
+                            options.onChange(originalSource);
+                            // Place cursor after the new paragraph break
+                            requestAnimationFrame(() => {
+                                const newChildren = Array.from(editor.children);
+                                // The new block should be right after the split
+                                const targetBlock = newChildren[blockIdx + 1] ?? newChildren[blockIdx];
+                                if (targetBlock) {
+                                    const r = document.createRange();
+                                    r.setStart(targetBlock, 0);
+                                    r.collapse(true);
+                                    const s = window.getSelection();
+                                    s?.removeAllRanges();
+                                    s?.addRange(r);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                }
             }
         };
 
@@ -720,6 +804,17 @@ export function mountMarkdownEditor(options: {
             options.onBlur?.();
         };
 
+        const getSelectionBlockRange = (): BlockRange | null => {
+            const sel = window.getSelection();
+            let node: Node | null = sel?.anchorNode ?? null;
+            while (node && node.parentElement !== editor) {
+                node = node.parentElement;
+            }
+            if (!node) return null;
+            const idx = Array.from(editor.children).indexOf(node as Element);
+            return idx >= 0 && idx < blockRanges.length ? blockRanges[idx] : null;
+        };
+
         const applyMarkdownFormatToSource = (format: string, selectedText: string): boolean => {
             if (!selectedText) {
                 return false;
@@ -735,18 +830,23 @@ export function mountMarkdownEditor(options: {
                 return false;
             }
             const [prefix, suffix] = wrapper;
+            const range = getSelectionBlockRange();
+            const searchSlice = range ? originalSource.slice(range.start, range.end) : originalSource;
+            const offset = range ? range.start : 0;
             // Check if already wrapped — toggle off
             const wrappedSearch = `${prefix}${selectedText}${suffix}`;
-            const unwrapIdx = originalSource.indexOf(wrappedSearch);
+            const unwrapIdx = searchSlice.indexOf(wrappedSearch);
             if (unwrapIdx >= 0) {
-                originalSource = originalSource.slice(0, unwrapIdx) + selectedText + originalSource.slice(unwrapIdx + wrappedSearch.length);
+                const abs = offset + unwrapIdx;
+                originalSource = originalSource.slice(0, abs) + selectedText + originalSource.slice(abs + wrappedSearch.length);
             } else {
                 // Wrap — find the selected text in source
-                const idx = originalSource.indexOf(selectedText);
+                const idx = searchSlice.indexOf(selectedText);
                 if (idx < 0) {
                     return false;
                 }
-                originalSource = originalSource.slice(0, idx) + prefix + selectedText + suffix + originalSource.slice(idx + selectedText.length);
+                const abs = offset + idx;
+                originalSource = originalSource.slice(0, abs) + prefix + selectedText + suffix + originalSource.slice(abs + selectedText.length);
             }
             lastMarkdownValue = originalSource;
             editor.innerHTML = renderMarkdown(originalSource);
@@ -819,6 +919,7 @@ export function mountMarkdownEditor(options: {
             setLinkHeadingOptions();
             linkSearchResults = [];
             selectedLinkItem = null;
+            editingLinkOldHref = null;
             linkResultsMessage = 'Search for a file to link';
             renderLinkResults();
         };
@@ -832,9 +933,16 @@ export function mountMarkdownEditor(options: {
                 const selectedText = window.getSelection()?.toString() ?? '';
                 if (href && selectedText) {
                     const markdownLink = `[${label}](${href})`;
-                    const idx = originalSource.indexOf(selectedText);
+                    const range = getSelectionBlockRange();
+                    const searchSlice = range ? originalSource.slice(range.start, range.end) : originalSource;
+                    const searchOffset = range ? range.start : 0;
+                    // When editing an existing link, replace the full [text](old-url) instead of just the visible text
+                    const oldLink = editingLinkOldHref ? `[${selectedText}](${editingLinkOldHref})` : null;
+                    const searchTarget = oldLink && searchSlice.includes(oldLink) ? oldLink : selectedText;
+                    const idx = searchSlice.indexOf(searchTarget);
                     if (idx >= 0) {
-                        originalSource = originalSource.slice(0, idx) + markdownLink + originalSource.slice(idx + selectedText.length);
+                        const abs = searchOffset + idx;
+                        originalSource = originalSource.slice(0, abs) + markdownLink + originalSource.slice(abs + searchTarget.length);
                         lastMarkdownValue = originalSource;
                         editor.innerHTML = renderMarkdown(originalSource);
                         resetBaselines();
@@ -877,6 +985,7 @@ export function mountMarkdownEditor(options: {
         let popoverHideTimer: ReturnType<typeof setTimeout> | null = null;
 
         let activePopoverAnchor: HTMLAnchorElement | null = null;
+        let editingLinkOldHref: string | null = null;
 
         const showLinkPopover = (anchor: HTMLAnchorElement): void => {
             if (popoverHideTimer) {
@@ -910,6 +1019,7 @@ export function mountMarkdownEditor(options: {
                     savedRange = range.cloneRange();
                 }
                 const label = anchor.textContent?.trim() ?? '';
+                editingLinkOldHref = href;
                 linkModal?.removeAttribute('hidden');
                 updateLinkMode('url');
                 if (linkInput) { linkInput.value = href; }

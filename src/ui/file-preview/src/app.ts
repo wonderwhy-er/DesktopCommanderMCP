@@ -544,6 +544,9 @@ export function bootstrapApp(): void {
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
             const nextDisplayMode = getCurrentDisplayMode();
             const displayModeChanged = previousDisplayMode !== nextDisplayMode;
+            if (displayModeChanged) {
+                markdownController.maybeAutosave();
+            }
             if (
                 previousDisplayMode === 'fullscreen'
                 && nextDisplayMode === 'inline'

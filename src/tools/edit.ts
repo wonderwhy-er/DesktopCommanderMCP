@@ -205,12 +205,11 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         const resolvedEditPath = resolveAbsolutePath(filePath);
 
         // Show a partial preview centered on the edited area
-        const replacement = normalizeLineEndings(block.replace, fileLineEnding);
         const newLines = newContent.split('\n');
         const totalLines = newLines.length;
-        const changePos = newContent.indexOf(replacement);
+        const changePos = content.indexOf(normalizedSearch);
         const changeStartLine = changePos >= 0 ? newContent.substring(0, changePos).split('\n').length - 1 : 0;
-        const changeLineCount = replacement.split('\n').length;
+        const changeLineCount = block.replace.split('\n').length;
         const contextLines = 10;
         const previewStart = Math.max(0, changeStartLine - contextLines);
         const previewEnd = Math.min(totalLines, changeStartLine + changeLineCount + contextLines);
