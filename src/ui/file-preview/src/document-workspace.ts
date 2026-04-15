@@ -3,6 +3,8 @@ export interface ReadRange {
     toLine: number;
     totalLines: number;
     isPartial: boolean;
+    /** 0-based offset for read_file calls. "from start" → 0, "from line N" → N. */
+    readOffset: number;
 }
 
 export function stripReadStatusLine(content: string): string {
@@ -16,28 +18,17 @@ export function parseReadRange(content: string): ReadRange | undefined {
     }
 
     const count = Number.parseInt(match[1], 10);
-    const fromLine = match[2] === 'start' ? 1 : Number.parseInt(match[2], 10);
+    const isFromStart = match[2] === 'start';
+    const readOffset = isFromStart ? 0 : Number.parseInt(match[2], 10);
+    const fromLine = isFromStart ? 1 : readOffset;
     const totalLines = Number.parseInt(match[3], 10);
     return {
         fromLine,
         toLine: fromLine + count - 1,
         totalLines,
         isPartial: count < totalLines,
+        readOffset,
     };
-}
-
-export function getDocumentEditAvailability(options: {
-    content: string;
-}): { canEdit: true } | { canEdit: false; reason: string } {
-    const readRange = parseReadRange(options.content);
-    if (readRange?.isPartial) {
-        return {
-            canEdit: false,
-            reason: 'Load the full document before editing.',
-        };
-    }
-
-    return { canEdit: true };
 }
 
 export function getDocumentFullscreenAvailability(options: {

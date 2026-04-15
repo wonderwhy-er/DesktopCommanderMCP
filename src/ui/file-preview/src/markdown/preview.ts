@@ -1,5 +1,4 @@
 import { renderMarkdown } from '../components/markdown-renderer.js';
-import { renderDocumentOutline, type DocumentOutlineItem } from '../document-outline.js';
 
 export function getRenderedMarkdownCopyText(content: string): string {
     const html = renderMarkdown(content);
@@ -22,21 +21,3 @@ export function getRenderedMarkdownCopyText(content: string): string {
         .trim();
 }
 
-export function renderMarkdownWorkspacePreview(options: {
-    content: string;
-    outline: DocumentOutlineItem[];
-    activeHeadingId?: string | null;
-    showToc?: boolean;
-}): string {
-    const tocHtml = options.showToc ? renderDocumentOutline(options.outline, options.activeHeadingId) : '';
-    const hasToc = tocHtml.length > 0;
-
-    return `
-      <div class="markdown-workspace markdown-workspace--preview${hasToc ? ' markdown-workspace--with-toc' : ''}">
-        ${tocHtml}
-        <section class="markdown-workspace-main">
-          <article class="markdown markdown-doc">${renderMarkdown(options.content)}</article>
-        </section>
-      </div>
-    `;
-}

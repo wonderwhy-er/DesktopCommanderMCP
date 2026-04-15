@@ -1,5 +1,53 @@
 import { renderMarkdown } from '../components/markdown-renderer.js';
+import { createMarkdownIt, prepareMarkdownSource } from './parser.js';
 import { createSlugTracker } from './slugify.js';
+
+const blockTokenizer = createMarkdownIt();
+
+interface BlockRange {
+    /** Character offset of block start in the source string */
+    start: number;
+    /** Character offset of block end in the source string */
+    end: number;
+}
+
+/**
+ * Compute character-offset ranges for each top-level markdown block.
+ * Each range maps 1:1 to a top-level HTML element in the rendered output.
+ */
+function computeBlockRanges(source: string): BlockRange[] {
+    const prepared = prepareMarkdownSource(source);
+    const tokens = blockTokenizer.parse(prepared, {});
+    const lines = source.split('\n');
+    const ranges: BlockRange[] = [];
+    let lastEndLine = 0;
+
+    // Precompute line start offsets
+    const lineOffsets: number[] = [0];
+    for (let i = 0; i < lines.length; i++) {
+        lineOffsets.push(lineOffsets[i] + lines[i].length + 1);
+    }
+
+    for (const token of tokens) {
+        if (!token.map || token.map.length < 2) {
+            continue;
+        }
+        const [startLine, endLine] = token.map;
+        const isOpening = typeof token.type === 'string'
+            && (token.type.endsWith('_open') || token.type === 'hr' || token.type === 'fence' || token.type === 'code_block' || token.type === 'html_block');
+        if (!isOpening || startLine < lastEndLine) {
+            continue;
+        }
+
+        ranges.push({
+            start: lineOffsets[startLine],
+            end: lineOffsets[endLine] - 1, // exclude trailing \n
+        });
+        lastEndLine = endLine;
+    }
+
+    return ranges;
+}
 
 export type MarkdownEditorView = 'raw' | 'markdown';
 
@@ -171,31 +219,25 @@ function serializeNode(node: Node): string {
         case 'blockquote':
             return `${children.trim().split('\n').map((line) => `> ${line}`).join('\n')}\n\n`;
         case 'ul':
-            return `${Array.from(element.children).map((child) => `- ${collapseWhitespace(serializeNode(child))}`).join('\n')}\n\n`;
+            return `${Array.from(element.children).map((child) => {
+                const content = serializeNode(child).trim();
+                const lines = content.split('\n');
+                return lines.map((line, idx) => idx === 0 ? `- ${line}` : `  ${line}`).join('\n');
+            }).join('\n')}\n\n`;
         case 'ol':
-            return `${Array.from(element.children).map((child, index) => `${index + 1}. ${collapseWhitespace(serializeNode(child))}`).join('\n')}\n\n`;
+            return `${Array.from(element.children).map((child, index) => {
+                const content = serializeNode(child).trim();
+                const prefix = `${index + 1}. `;
+                const lines = content.split('\n');
+                return lines.map((line, idx) => idx === 0 ? `${prefix}${line}` : `${' '.repeat(prefix.length)}${line}`).join('\n');
+            }).join('\n')}\n\n`;
         case 'li':
-            return collapseWhitespace(children);
+            return children;
         case 'div':
             return `${children}${children.endsWith('\n') ? '' : '\n'}`;
         default:
             return children;
     }
-}
-
-function htmlToMarkdown(html: string): string {
-    const parser = new DOMParser();
-    const documentNode = parser.parseFromString(`<div>${html}</div>`, 'text/html');
-    const root = documentNode.body.firstElementChild;
-    if (!root) {
-        return '';
-    }
-
-    return Array.from(root.childNodes)
-        .map(serializeNode)
-        .join('')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
 }
 
 function applyRawTab(textarea: HTMLTextAreaElement): void {
@@ -303,6 +345,154 @@ export function mountMarkdownEditor(options: {
         editor.innerHTML = renderMarkdown(options.value);
         options.target.replaceChildren(editor);
 
+        // Block-level preservation: store original source, block ranges, baseline HTML
+        // and baseline text per block. On edits, try to patch the raw markdown directly
+        // using text diffs — only fall back to serializeNode when text patching fails.
+        let originalSource = options.value;
+        let blockRanges = computeBlockRanges(options.value);
+        let baselineElementsHtml = Array.from(editor.children).map((el) => el.innerHTML);
+        const extractVisibleText = (el: Element): string => {
+            let text = '';
+            for (const node of el.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    text += node.textContent ?? '';
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    const child = node as Element;
+                    if (child.tagName === 'IMG') {
+                        text += child.getAttribute('alt') ?? '';
+                    } else if (child.tagName === 'BR') {
+                        text += '\n';
+                    } else {
+                        text += extractVisibleText(child);
+                    }
+                }
+            }
+            return text;
+        };
+
+        let baselineElementsText = Array.from(editor.children).map((el) => extractVisibleText(el));
+        let baselineSerializedBlocks = Array.from(editor.children).map((el) => serializeNode(el).trim());
+
+        /**
+         * Try to apply a text-level change directly to the raw markdown source.
+         * Compares plain text before/after to find what changed, then locates
+         * and replaces that text in the source — no HTML→markdown conversion needed.
+         */
+        const tryTextPatch = (
+            oldText: string,
+            newText: string,
+            source: string,
+            rangeStart: number,
+            rangeEnd: number
+        ): string | null => {
+            if (oldText === newText) {
+                return null; // Text unchanged, formatting changed — serialize block to markdown
+            }
+
+            let prefixLen = 0;
+            const minLen = Math.min(oldText.length, newText.length);
+            while (prefixLen < minLen && oldText[prefixLen] === newText[prefixLen]) {
+                prefixLen++;
+            }
+
+            let suffixLen = 0;
+            const maxSuffix = Math.min(oldText.length - prefixLen, newText.length - prefixLen);
+            while (
+                suffixLen < maxSuffix
+                && oldText[oldText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+            ) {
+                suffixLen++;
+            }
+
+            const oldPart = oldText.slice(prefixLen, oldText.length - suffixLen);
+            const newPart = newText.slice(prefixLen, newText.length - suffixLen);
+
+            if (oldPart.length === 0 && newPart.length === 0) {
+                return source;
+            }
+
+            const blockSource = source.slice(rangeStart, rangeEnd);
+
+            if (oldPart.length === 0) {
+                // Insertion: locate by surrounding context (before + after)
+                const contextBefore = oldText.slice(Math.max(0, prefixLen - 30), prefixLen);
+                const contextAfter = oldText.slice(prefixLen, prefixLen + 30);
+                const fullContext = contextBefore + contextAfter;
+                if (fullContext.length > 0) {
+                    const contextIndex = blockSource.indexOf(fullContext);
+                    if (contextIndex >= 0) {
+                        const insertPos = rangeStart + contextIndex + contextBefore.length;
+                        return source.slice(0, insertPos) + newPart + source.slice(insertPos);
+                    }
+                }
+                if (contextBefore.length > 0) {
+                    const contextIndex = blockSource.indexOf(contextBefore);
+                    if (contextIndex >= 0) {
+                        const insertPos = rangeStart + contextIndex + contextBefore.length;
+                        return source.slice(0, insertPos) + newPart + source.slice(insertPos);
+                    }
+                }
+                return null;
+            }
+
+            // Replacement or deletion: use surrounding context to find the right occurrence
+            const contextBefore = oldText.slice(Math.max(0, prefixLen - 30), prefixLen);
+            const contextAfter = oldText.slice(prefixLen + oldPart.length, prefixLen + oldPart.length + 30);
+            const searchWithContext = contextBefore + oldPart + contextAfter;
+            const contextIdx = blockSource.indexOf(searchWithContext);
+            if (contextIdx >= 0) {
+                const pos = rangeStart + contextIdx + contextBefore.length;
+                return source.slice(0, pos) + newPart + source.slice(pos + oldPart.length);
+            }
+
+            // No context match — try plain search, but only if unambiguous
+            const firstIndex = blockSource.indexOf(oldPart);
+            if (firstIndex < 0) {
+                return null;
+            }
+            if (blockSource.indexOf(oldPart, firstIndex + 1) >= 0) {
+                return null; // ambiguous — fall back to serializeNode
+            }
+
+            const pos = rangeStart + firstIndex;
+            return source.slice(0, pos) + newPart + source.slice(pos + oldPart.length);
+        };
+
+        const patchMarkdownFromHtml = (): string => {
+            const currentElements = Array.from(editor.children);
+            if (
+                currentElements.length === baselineElementsHtml.length
+                && baselineElementsHtml.length === blockRanges.length
+            ) {
+                let result = originalSource;
+                for (let i = currentElements.length - 1; i >= 0; i--) {
+                    if (currentElements[i].innerHTML === baselineElementsHtml[i]) {
+                        continue;
+                    }
+
+                    const oldText = baselineElementsText[i];
+                    const newText = extractVisibleText(currentElements[i]);
+
+                    // Try text-level patch first (preserves all raw markdown)
+                    const patched = tryTextPatch(oldText, newText, result, blockRanges[i].start, blockRanges[i].end);
+                    if (patched !== null) {
+                        result = patched;
+                    } else {
+                        // Formatting-only change: diff serialized outputs and apply
+                        // only the formatting markers to the raw source
+                        const oldSerialized = baselineSerializedBlocks[i];
+                        const newSerialized = serializeNode(currentElements[i]).trim();
+                        const formattingPatched = tryTextPatch(oldSerialized, newSerialized, result, blockRanges[i].start, blockRanges[i].end);
+                        if (formattingPatched !== null) {
+                            result = formattingPatched;
+                        }
+                    }
+                }
+                return result;
+            }
+            return originalSource;
+        };
+
         const syncHeadingAttributes = (): void => {
             const nextSlug = createSlugTracker();
             const headings = Array.from(editor.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
@@ -362,13 +552,25 @@ export function mountMarkdownEditor(options: {
             }
         };
 
+        const resetBaselines = (): void => {
+            blockRanges = computeBlockRanges(originalSource);
+            baselineElementsHtml = Array.from(editor.children).map((el) => el.innerHTML);
+            baselineElementsText = Array.from(editor.children).map((el) => extractVisibleText(el));
+            baselineSerializedBlocks = Array.from(editor.children).map((el) => serializeNode(el).trim());
+        };
+
         const syncFromEditor = (syncContent: boolean): void => {
             if (syncContent) {
                 syncHeadingAttributes();
-                const nextMarkdownValue = htmlToMarkdown(editor.innerHTML);
+                const nextMarkdownValue = patchMarkdownFromHtml();
                 if (nextMarkdownValue !== lastMarkdownValue) {
                     lastMarkdownValue = nextMarkdownValue;
+                    originalSource = nextMarkdownValue;
+                    resetBaselines();
                     options.onChange(nextMarkdownValue);
+                } else {
+                    // DOM changed but markdown didn't — keep baselines in sync
+                    resetBaselines();
                 }
             }
             if (contextMenu) {
@@ -518,6 +720,42 @@ export function mountMarkdownEditor(options: {
             options.onBlur?.();
         };
 
+        const applyMarkdownFormatToSource = (format: string, selectedText: string): boolean => {
+            if (!selectedText) {
+                return false;
+            }
+            const wrappers: Record<string, [string, string]> = {
+                bold: ['**', '**'],
+                italic: ['*', '*'],
+                strike: ['~~', '~~'],
+                code: ['`', '`'],
+            };
+            const wrapper = wrappers[format];
+            if (!wrapper) {
+                return false;
+            }
+            const [prefix, suffix] = wrapper;
+            // Check if already wrapped — toggle off
+            const wrappedSearch = `${prefix}${selectedText}${suffix}`;
+            const unwrapIdx = originalSource.indexOf(wrappedSearch);
+            if (unwrapIdx >= 0) {
+                originalSource = originalSource.slice(0, unwrapIdx) + selectedText + originalSource.slice(unwrapIdx + wrappedSearch.length);
+            } else {
+                // Wrap — find the selected text in source
+                const idx = originalSource.indexOf(selectedText);
+                if (idx < 0) {
+                    return false;
+                }
+                originalSource = originalSource.slice(0, idx) + prefix + selectedText + suffix + originalSource.slice(idx + selectedText.length);
+            }
+            lastMarkdownValue = originalSource;
+            editor.innerHTML = renderMarkdown(originalSource);
+            resetBaselines();
+            syncHeadingAttributes();
+            options.onChange(originalSource);
+            return true;
+        };
+
         const handleFormatClick = (event: Event): void => {
             const target = event.currentTarget as HTMLButtonElement;
             const format = target.dataset.format;
@@ -530,16 +768,13 @@ export function mountMarkdownEditor(options: {
             if (format === 'link') {
                 const selectedText = window.getSelection()?.toString().trim() ?? '';
                 linkModal?.removeAttribute('hidden');
-                updateLinkMode('file');
-                if (linkAliasInput) {
-                    linkAliasInput.value = selectedText;
-                }
+                updateLinkMode('url');
                 if (linkLabelInput) {
                     linkLabelInput.value = selectedText;
                 }
-                if (linkSearchInput) {
-                    linkSearchInput.value = '';
-                    linkSearchInput.focus();
+                if (linkInput) {
+                    linkInput.value = '';
+                    linkInput.focus();
                 }
                 linkSearchResults = [];
                 selectedLinkItem = null;
@@ -548,6 +783,11 @@ export function mountMarkdownEditor(options: {
                 renderLinkResults();
                 return;
             }
+            const selectedText = window.getSelection()?.toString() ?? '';
+            if (applyMarkdownFormatToSource(format, selectedText)) {
+                return;
+            }
+            // Fallback for unsupported formats
             applyMarkdownFormat(format);
             syncFromEditor(true);
         };
@@ -589,7 +829,20 @@ export function mountMarkdownEditor(options: {
             if (linkMode === 'url') {
                 const href = linkInput?.value?.trim();
                 const label = linkLabelInput?.value?.trim() || window.getSelection()?.toString().trim() || href || 'link';
-                if (href) {
+                const selectedText = window.getSelection()?.toString() ?? '';
+                if (href && selectedText) {
+                    const markdownLink = `[${label}](${href})`;
+                    const idx = originalSource.indexOf(selectedText);
+                    if (idx >= 0) {
+                        originalSource = originalSource.slice(0, idx) + markdownLink + originalSource.slice(idx + selectedText.length);
+                        lastMarkdownValue = originalSource;
+                        editor.innerHTML = renderMarkdown(originalSource);
+                        resetBaselines();
+                        syncHeadingAttributes();
+                        options.onChange(originalSource);
+                    }
+                } else if (href) {
+                    // No selection — insert link at cursor
                     const anchor = document.createElement('a');
                     anchor.setAttribute('href', href);
                     anchor.textContent = label;
@@ -616,6 +869,87 @@ export function mountMarkdownEditor(options: {
             closeLinkModal();
         };
 
+        // Link hover popover
+        const linkPopover = document.createElement('div');
+        linkPopover.className = 'markdown-link-popover';
+        linkPopover.hidden = true;
+        editor.parentElement?.appendChild(linkPopover);
+        let popoverHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+        let activePopoverAnchor: HTMLAnchorElement | null = null;
+
+        const showLinkPopover = (anchor: HTMLAnchorElement): void => {
+            if (popoverHideTimer) {
+                clearTimeout(popoverHideTimer);
+                popoverHideTimer = null;
+            }
+            activePopoverAnchor = anchor;
+            const href = anchor.getAttribute('href') ?? '';
+            linkPopover.innerHTML = `<button class="markdown-link-popover-btn" id="link-popover-edit" type="button" title="Edit link"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button><button class="markdown-link-popover-btn" id="link-popover-open" type="button" title="Open link"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>`;
+            linkPopover.hidden = false;
+
+            linkPopover.querySelector('#link-popover-open')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                linkPopover.hidden = true;
+                // Dispatch a click on the anchor so the controller's link handler opens it
+                anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            }, { once: true });
+
+            linkPopover.querySelector('#link-popover-edit')?.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                linkPopover.hidden = true;
+                // Select the link text and open the link modal in URL mode
+                const selection = window.getSelection();
+                if (selection) {
+                    const range = document.createRange();
+                    range.selectNodeContents(anchor);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    savedRange = range.cloneRange();
+                }
+                const label = anchor.textContent?.trim() ?? '';
+                linkModal?.removeAttribute('hidden');
+                updateLinkMode('url');
+                if (linkInput) { linkInput.value = href; }
+                if (linkLabelInput) { linkLabelInput.value = label; }
+            }, { once: true });
+
+            const rect = anchor.getBoundingClientRect();
+            const parentRect = (editor.parentElement as HTMLElement).getBoundingClientRect();
+            linkPopover.style.left = `${Math.max(4, rect.left - parentRect.left)}px`;
+            linkPopover.style.top = `${rect.bottom - parentRect.top + 4}px`;
+        };
+
+        const hideLinkPopover = (): void => {
+            popoverHideTimer = setTimeout(() => {
+                linkPopover.hidden = true;
+            }, 200);
+        };
+
+        editor.addEventListener('mouseover', (e) => {
+            const target = (e.target as HTMLElement)?.closest?.('a[href]') as HTMLAnchorElement | null;
+            if (target && editor.contains(target)) {
+                showLinkPopover(target);
+            }
+        });
+        editor.addEventListener('mouseout', (e) => {
+            const target = (e.target as HTMLElement)?.closest?.('a[href]');
+            if (target) {
+                hideLinkPopover();
+            }
+        });
+        linkPopover.addEventListener('mouseenter', () => {
+            if (popoverHideTimer) {
+                clearTimeout(popoverHideTimer);
+                popoverHideTimer = null;
+            }
+        });
+        linkPopover.addEventListener('mouseleave', () => {
+            hideLinkPopover();
+        });
+
         editor.addEventListener('input', handleInput);
         editor.addEventListener('keydown', handleKeyDown);
         editor.addEventListener('focusout', handleFocusOut);
@@ -631,6 +965,12 @@ export function mountMarkdownEditor(options: {
         linkSearchInput?.addEventListener('input', handleSearchInput);
         linkApply?.addEventListener('click', handleLinkApply);
         linkCancel?.addEventListener('click', closeLinkModal);
+        const handleModalBackdropClick = (e: MouseEvent): void => {
+            if (e.target === linkModal) {
+                closeLinkModal();
+            }
+        };
+        linkModal?.addEventListener('click', handleModalBackdropClick);
         syncHeadingAttributes();
         syncFromEditor(false);
         renderLinkResults();
@@ -649,15 +989,20 @@ export function mountMarkdownEditor(options: {
                 linkSearchInput?.removeEventListener('input', handleSearchInput);
                 linkApply?.removeEventListener('click', handleLinkApply);
                 linkCancel?.removeEventListener('click', closeLinkModal);
+                linkModal?.removeEventListener('click', handleModalBackdropClick);
+                linkPopover.remove();
+                if (popoverHideTimer) { clearTimeout(popoverHideTimer); }
                 options.target.replaceChildren();
             },
             focus: () => {
                 editor.focus();
             },
-            getValue: () => htmlToMarkdown(editor.innerHTML),
+            getValue: () => patchMarkdownFromHtml(),
             setValue: (value: string) => {
                 lastMarkdownValue = value;
                 editor.innerHTML = renderMarkdown(value);
+                originalSource = value;
+                resetBaselines();
                 syncHeadingAttributes();
                 syncFromEditor(false);
             },

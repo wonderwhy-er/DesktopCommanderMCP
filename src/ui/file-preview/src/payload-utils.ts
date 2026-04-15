@@ -74,13 +74,9 @@ export function assertSuccessfulEditBlockResult(result: unknown): void {
         throw new Error('edit_block did not return a valid result.');
     }
 
-    const message = extractToolText(result) ?? '';
     if (result.isError === true) {
+        const message = extractToolText(result) ?? '';
         throw new Error(message || 'edit_block failed.');
-    }
-
-    if (!/Successfully applied/i.test(message)) {
-        throw new Error(message || 'edit_block did not confirm success.');
     }
 }
 

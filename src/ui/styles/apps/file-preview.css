@@ -21,7 +21,7 @@
   --notice-bg: var(--panel-subtle);
   --notice-border: var(--border);
   --notice-text: var(--text-secondary);
-  --toc-rail-width: 250px;
+  --toc-rail-width: 320px;
 }
 
 /* ── Panel (Claude-style card) ── */
@@ -291,16 +291,6 @@ html:has(.fullscreen) #app {
 }
 
 .markdown-workspace--with-toc {
-  background: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--panel-subtle) 90%, transparent) 0,
-    color-mix(in srgb, var(--panel-subtle) 90%, transparent) var(--toc-rail-width),
-    transparent var(--toc-rail-width),
-    transparent 100%
-  );
-}
-
-.markdown-workspace--with-toc {
   align-items: stretch;
 }
 
@@ -478,12 +468,12 @@ html:has(.fullscreen) #app {
 }
 
 .markdown-link-modal {
-  position: absolute;
+  position: fixed;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(15, 23, 42, 0.22);
+  background: transparent;
   z-index: 30;
 }
 
@@ -680,7 +670,7 @@ html:has(.fullscreen) #app {
   flex: 0 0 var(--toc-rail-width);
   width: var(--toc-rail-width);
   border-right: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
-  background: transparent;
+  background: color-mix(in srgb, var(--panel-subtle) 90%, transparent);
   padding: 18px 14px 18px 16px;
   display: flex;
   flex-direction: column;
@@ -688,16 +678,68 @@ html:has(.fullscreen) #app {
   position: sticky;
   top: 12px;
   max-height: calc(100vh - 120px);
-  overflow: hidden;
+  overflow: visible;
+  transition: flex-basis 0.2s ease, width 0.2s ease, padding 0.2s ease;
+}
+
+.markdown-toc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  min-height: 20px;
 }
 
 .markdown-toc-title {
-  margin-bottom: 12px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+.document-outline-toggle {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+}
+.document-outline-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--border) 20%, transparent);
+}
+
+.markdown-toc-collapsed {
+  flex: 0 0 44px !important;
+  width: 44px !important;
+  padding: 12px 6px !important;
+  overflow: hidden;
+  background: transparent !important;
+  border-right: none !important;
+}
+.markdown-toc-collapsed .markdown-toc-header {
+  justify-content: center;
+}
+.markdown-toc-collapsed .markdown-toc-title,
+.markdown-toc-collapsed .markdown-toc-nav {
+  display: none;
+}
+.markdown-toc-collapsed .document-outline-toggle {
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+  border-radius: 8px;
+  opacity: 0.7;
 }
 
 .markdown-toc-nav {
@@ -737,10 +779,42 @@ html:has(.fullscreen) #app {
   background: color-mix(in srgb, var(--panel) 82%, var(--border) 18%);
 }
 
+.markdown-link-popover {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.markdown-link-popover[hidden] { display: none; }
+.markdown-link-popover-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.markdown-link-popover-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--border) 30%, transparent);
+}
+
 .markdown-editor-root {
   flex: 1 1 auto;
   min-height: 0;
   padding: 0;
+  position: relative;
 }
 
 .markdown-editor-surface {
@@ -1072,10 +1146,17 @@ html:has(.fullscreen) #app {
     max-height: none;
     overflow: visible;
     align-self: stretch;
-    width: 100%;
-    flex-basis: auto;
+    width: 100% !important;
+    flex-basis: auto !important;
     border-right: none;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  }
+  .markdown-toc-collapsed .markdown-toc-title,
+  .markdown-toc-collapsed .markdown-toc-nav {
+    display: flex;
+  }
+  .document-outline-toggle {
+    display: none;
   }
   .markdown-workspace-main {
     padding-left: 0;

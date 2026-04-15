@@ -37,6 +37,7 @@ let syncPayload: ((payload?: RenderPayload) => void) | undefined;
 let persistPayload: ((payload: RenderPayload) => void) | undefined;
 let localPayloadOverride: RenderPayload | undefined;
 let hostPayload: RenderPayload | undefined;
+let inlinePayloadBeforeFullscreen: RenderPayload | undefined;
 let directoryBackPayload: RenderPayload | undefined;
 let selectionAbortController: AbortController | null = null;
 const markdownEditorAppCache = new Map<string, { appName: string; appPath?: string }>();
@@ -123,6 +124,38 @@ const markdownController = createMarkdownController({
     },
     updateSaveStatus: updateSaveStatusDOM,
 });
+
+/**
+ * Check if a payload needs its file content to be read.
+ * Tool results from edit_block/write_file include structuredContent but
+ * their text is a success message, not file content. Detect this by
+ * checking for the absence of the read status line that read_file always includes.
+ */
+function needsContentRead(payload: RenderPayload): boolean {
+    if (payload.fileType === 'directory' || payload.fileType === 'image' || payload.fileType === 'unsupported') {
+        return false;
+    }
+    return !parseReadRange(payload.content);
+}
+
+async function readAndResolvePayload(
+    payload: RenderPayload,
+    onReady: (payload: RenderPayload) => void
+): Promise<void> {
+    try {
+        const freshPayload = await markdownController.readPayload(payload.filePath);
+        if (freshPayload) {
+            onReady(freshPayload);
+            if (freshPayload.fileType === 'markdown') {
+                void markdownController.refreshFromDisk(freshPayload);
+            }
+            return;
+        }
+    } catch {
+        // Fall through to original payload.
+    }
+    onReady(payload);
+}
 
 function renderStatusState(container: HTMLElement, message: string): void {
     container.innerHTML = `
@@ -247,7 +280,7 @@ export function renderApp(
 
     selectionAbortController = attachSelectionContext({
         payload,
-        isMarkdownEditing: payload.fileType === 'markdown' && markdownWorkspace?.mode === 'edit',
+        isMarkdownEditing: payload.fileType === 'markdown' && !!markdownWorkspace,
         updateContext: rpcUpdateContext,
         trackUiEvent,
         getFileExtensionForAnalytics,
@@ -440,6 +473,10 @@ export function bootstrapApp(): void {
         const message = extractToolText(result as unknown as Record<string, unknown>);
         if (!initialStateResolved) {
             if (payload) {
+                if (needsContentRead(payload)) {
+                    void readAndResolvePayload(payload, (p) => resolveInitialState(getEffectiveIncomingPayload(p)));
+                    return;
+                }
                 resolveInitialState(getEffectiveIncomingPayload(payload));
                 return;
             }
@@ -450,7 +487,12 @@ export function bootstrapApp(): void {
         }
 
         if (payload) {
-            renderAndSync(getEffectiveIncomingPayload(payload));
+            if (needsContentRead(payload)) {
+                renderLoadingState(container);
+                void readAndResolvePayload(payload, (p) => renderAndSync(getEffectiveIncomingPayload(p)));
+            } else {
+                renderAndSync(getEffectiveIncomingPayload(payload));
+            }
         } else if (message) {
             renderStatusState(container, message);
             onRender?.();
@@ -467,7 +509,12 @@ export function bootstrapApp(): void {
         }
     };
     const handleFocusSync = (): void => {
-        syncFromPersistedWidgetState();
+        // Only sync cross-tab state if the page was hidden (tab switch).
+        // Simple focus changes within the same page should not trigger a re-render
+        // as it destroys the active editor.
+        if (document.visibilityState !== 'visible') {
+            syncFromPersistedWidgetState();
+        }
     };
 
     const teardown = (): void => {
@@ -496,6 +543,7 @@ export function bootstrapApp(): void {
             syncChromeState();
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
             const nextDisplayMode = getCurrentDisplayMode();
+            const displayModeChanged = previousDisplayMode !== nextDisplayMode;
             if (
                 previousDisplayMode === 'fullscreen'
                 && nextDisplayMode === 'inline'
@@ -503,16 +551,14 @@ export function bootstrapApp(): void {
             ) {
                 isExpanded = true;
                 chrome.expanded = true;
-                const hostWasPartial = hostPayload ? parseReadRange(hostPayload.content)?.isPartial === true : false;
-                if (hostWasPartial) {
-                    localPayloadOverride = undefined;
-                    if (hostPayload) {
-                        currentPayload = hostPayload;
-                        widgetState.write(hostPayload);
-                    }
-                    void markdownController.handleInlineExitFromFullscreen(hostPayload).then((freshPayload) => {
+                const restorePayload = inlinePayloadBeforeFullscreen ?? hostPayload;
+                const restoreWasPartial = restorePayload ? parseReadRange(restorePayload.content)?.isPartial === true : false;
+                if (restoreWasPartial && restorePayload) {
+                    localPayloadOverride = restorePayload;
+                    currentPayload = restorePayload;
+                    widgetState.write(restorePayload);
+                    void markdownController.handleInlineExitFromFullscreen(restorePayload).then((freshPayload) => {
                         if (freshPayload) {
-                            hostPayload = freshPayload;
                             currentPayload = freshPayload;
                             localPayloadOverride = freshPayload;
                             widgetState.write(freshPayload);
@@ -522,16 +568,19 @@ export function bootstrapApp(): void {
                 } else {
                     void markdownController.handleInlineExitFromFullscreen();
                 }
+                inlinePayloadBeforeFullscreen = undefined;
             }
             if (
                 previousDisplayMode !== 'fullscreen'
                 && nextDisplayMode === 'fullscreen'
                 && currentPayload?.fileType === 'markdown'
-                && markdownController.getState(currentPayload).mode !== 'edit'
             ) {
-                void markdownController.requestEditMode(currentPayload);
+                inlinePayloadBeforeFullscreen = currentPayload;
+                if (parseReadRange(currentPayload.content)?.isPartial) {
+                    void markdownController.requestEditMode(currentPayload);
+                }
             }
-            if (initialStateResolved) {
+            if (initialStateResolved && displayModeChanged) {
                 rerenderCurrent?.();
             }
         },

@@ -28,6 +28,14 @@ function renderDocumentOutlineItems(outline: DocumentOutlineItem[], activeHeadin
     }).join('');
 }
 
+function renderCollapseIcon(): string {
+    return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
+}
+
+function renderExpandIcon(): string {
+    return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+}
+
 export function renderDocumentOutline(outline: DocumentOutlineItem[], activeHeadingId?: string | null): string {
     if (outline.length === 0) {
         return '';
@@ -35,7 +43,10 @@ export function renderDocumentOutline(outline: DocumentOutlineItem[], activeHead
 
     return `
       <aside class="document-outline-shell markdown-toc-shell" aria-label="Table of contents">
-        <div class="document-outline-title markdown-toc-title">Contents</div>
+        <div class="document-outline-header markdown-toc-header">
+          <span class="document-outline-title markdown-toc-title">Contents</span>
+          <button class="document-outline-toggle" id="toc-toggle" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">${renderCollapseIcon()}</button>
+        </div>
         <nav class="document-outline-nav markdown-toc-nav">${renderDocumentOutlineItems(outline, activeHeadingId)}</nav>
       </aside>
     `;
@@ -88,6 +99,17 @@ export function attachDocumentOutline(options: {
         setActiveItem(nav, nextActive);
     };
 
+    const toggleButton = options.shell.querySelector('#toc-toggle') as HTMLButtonElement | null;
+    const handleToggle = (): void => {
+        const isCollapsed = options.shell.classList.toggle('markdown-toc-collapsed');
+        if (toggleButton) {
+            toggleButton.innerHTML = isCollapsed ? renderExpandIcon() : renderCollapseIcon();
+            toggleButton.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+            toggleButton.setAttribute('aria-label', isCollapsed ? 'Expand sidebar' : 'Collapse sidebar');
+        }
+    };
+    toggleButton?.addEventListener('click', handleToggle);
+
     nav.addEventListener('click', handleClick);
     options.scrollContainer.addEventListener('scroll', updateActiveHeading, { passive: true });
     updateActiveHeading();
@@ -96,6 +118,7 @@ export function attachDocumentOutline(options: {
         dispose: () => {
             nav.removeEventListener('click', handleClick);
             options.scrollContainer.removeEventListener('scroll', updateActiveHeading);
+            toggleButton?.removeEventListener('click', handleToggle);
         },
         refresh: (outline, activeHeadingId) => {
             currentOutline = outline;

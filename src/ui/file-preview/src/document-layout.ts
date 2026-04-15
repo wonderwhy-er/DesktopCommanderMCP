@@ -69,7 +69,7 @@ export function buildDocumentLayout(options: {
         ? `${fileTypeLabel} • LINES ${range.fromLine}–${range.toLine} OF ${range.totalLines}`
         : `${fileTypeLabel} • ${lineCount} LINE${lineCount !== 1 ? 'S' : ''}`;
 
-    if (options.markdownWorkspace?.mode === 'edit') {
+    if (options.markdownWorkspace) {
         const source = stripReadStatusLine(options.markdownWorkspace.draftContent);
         const markdownWordCount = source.trim().split(/\s+/).filter(Boolean).length;
         const markdownLineCount = countContentLines(source);
@@ -85,7 +85,7 @@ export function buildDocumentLayout(options: {
         : '';
 
     const isMarkdown = options.payload.fileType === 'markdown';
-    const isMarkdownEdit = isMarkdown && options.markdownWorkspace?.mode === 'edit';
+    const isMarkdownEdit = isMarkdown && !!options.markdownWorkspace;
     const revertDisabled = isMarkdownEdit && (options.markdownWorkspace!.fileDeleted || options.markdownWorkspace!.loadingDocument || !options.isMarkdownUndoAvailable);
     const fileDeleted = isMarkdownEdit && options.markdownWorkspace!.fileDeleted;
 

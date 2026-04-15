@@ -45,7 +45,7 @@ function expandHome(filePath: string): string {
  * Resolve a file path to an absolute path for use in structured content.
  * This ensures "Open in folder" always has a valid absolute path.
  */
-function resolveAbsolutePath(filePath: string): string {
+export function resolveAbsolutePath(filePath: string): string {
     const expanded = expandHome(filePath);
     return path.isAbsolute(expanded)
         ? path.resolve(expanded)
@@ -286,12 +286,18 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
 
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
+        const resolvedWritePath = resolveAbsolutePath(parsed.path);
 
         return {
             content: [{
                 type: "text",
                 text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
             }],
+            structuredContent: {
+                fileName: path.basename(resolvedWritePath),
+                filePath: resolvedWritePath,
+                fileType: resolvePreviewFileType(resolvedWritePath),
+            },
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

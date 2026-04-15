@@ -1,12 +1,12 @@
 import { attachDocumentOutline, renderDocumentOutline, type DocumentOutlineHandle } from '../document-outline.js';
-import { getDocumentEditAvailability, getDocumentFullscreenAvailability, parseReadRange, shouldAutoLoadDocumentOnEnterFullscreen, stripReadStatusLine } from '../document-workspace.js';
+import { getDocumentFullscreenAvailability, parseReadRange, shouldAutoLoadDocumentOnEnterFullscreen, stripReadStatusLine } from '../document-workspace.js';
 import type { MarkdownWorkspaceState, RenderBodyResult, RenderPayload } from '../model.js';
 import { assertSuccessfulEditBlockResult, extractRenderPayload, extractToolText } from '../payload-utils.js';
 import { getAncestorDirectories, getParentDirectory, toPosixRelativePath } from '../path-utils.js';
 import { mountMarkdownEditor, renderMarkdownEditorShell, type MarkdownEditorHandle, type MarkdownEditorView, type MarkdownLinkHeading, type MarkdownLinkSearchItem } from './editor.js';
 import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
-import { getRenderedMarkdownCopyText, renderMarkdownWorkspacePreview } from './preview.js';
+import { getRenderedMarkdownCopyText } from './preview.js';
 import { slugifyMarkdownHeading } from './slugify.js';
 
 export interface MarkdownControllerDependencies {
@@ -253,7 +253,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
         if (!workspaceState || workspaceState.filePath !== payload.filePath || workspaceState.sourceContent !== cleanedContent) {
             const outline = extractMarkdownOutline(cleanedContent);
-            const isPartial = parseReadRange(payload.content)?.isPartial === true;
             workspaceState = {
                 filePath: payload.filePath,
                 sourceContent: cleanedContent,
@@ -261,7 +260,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 draftContent: cleanedContent,
                 outline,
                 pendingExternalPayload: null,
-                mode: isPartial ? 'preview' : 'edit',
+                mode: 'edit',
                 dirty: false,
                 activeHeadingId: outline[0]?.id ?? null,
                 pendingAnchor: null,
@@ -296,30 +295,18 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const notice = [state.error, state.notice]
             .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
-        if (state.mode === 'edit') {
-            return {
-                notice,
-                html: `
-                  <div class="panel-content markdown-content markdown-content--workspace">
-                    <div class="markdown-workspace markdown-workspace--edit${tocHtml ? ' markdown-workspace--with-toc' : ''}">
-                      ${tocHtml}
-                      <section class="markdown-workspace-main markdown-workspace-main--editor">
-                        ${renderMarkdownEditorShell({ view: state.editorView })}
-                      </section>
-                    </div>
-                  </div>
-                `,
-            };
-        }
-
         return {
             notice,
-            html: `<div class="panel-content markdown-content markdown-content--workspace">${renderMarkdownWorkspacePreview({
-                content: state.sourceContent,
-                outline,
-                activeHeadingId: state.activeHeadingId,
-                showToc: isFullscreen,
-            })}</div>`,
+            html: `
+              <div class="panel-content markdown-content markdown-content--workspace">
+                <div class="markdown-workspace markdown-workspace--edit${tocHtml ? ' markdown-workspace--with-toc' : ''}">
+                  ${tocHtml}
+                  <section class="markdown-workspace-main markdown-workspace-main--editor">
+                    ${renderMarkdownEditorShell({ view: state.editorView })}
+                  </section>
+                </div>
+              </div>
+            `,
         };
     }
 
@@ -475,7 +462,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         try {
             const range = parseReadRange(payload.content);
             const freshPayload = range?.isPartial
-                ? await readPayload(payload.filePath, range.toLine - range.fromLine + 1, range.fromLine)
+                ? await readPayload(payload.filePath, range.toLine - range.fromLine + 1, range.readOffset)
                 : await readPayload(payload.filePath);
             if (!freshPayload) {
                 if (isMissingFileErrorResult(freshPayload)) {
@@ -563,7 +550,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
     async function navigateLink(payload: RenderPayload, href: string): Promise<void> {
         const state = getState(payload);
-        if (state.mode === 'edit' && state.dirty) {
+        if (state.dirty) {
             const shouldDiscard = window.confirm('Discard unsaved changes and follow this link?');
             if (!shouldDiscard) {
                 return;
@@ -576,9 +563,8 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
         if (resolvedLink.kind === 'external' && resolvedLink.url) {
             const opened = await dependencies.openExternalLink?.(resolvedLink.url);
-            if (!opened && workspaceState) {
-                workspaceState.error = 'The host blocked that external link.';
-                dependencies.rerender();
+            if (!opened) {
+                try { window.open(resolvedLink.url, '_blank', 'noopener'); } catch { /* sandbox may block */ }
             }
             return;
         }
@@ -623,13 +609,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
         if (shouldAutoLoadDocumentOnEnterFullscreen(payload.content)) {
             await loadFullDocument(payload, { keepEditMode: true });
-            return;
-        }
-
-        const editAvailability = getDocumentEditAvailability({ content: payload.content });
-        if (!editAvailability.canEdit) {
-            state.error = editAvailability.reason;
-            dependencies.rerender();
             return;
         }
 
@@ -724,7 +703,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             const savedContent = state.draftContent;
             const currentPayload = dependencies.getCurrentPayload();
             if (currentPayload) {
-                dependencies.storePayloadOverride({ ...currentPayload, content: savedContent });
+                const statusLineMatch = currentPayload.content.match(/^(\[Reading [^\]]+\]\r?\n(?:\r?\n)?)/);
+                const statusLine = statusLineMatch?.[1] ?? '';
+                dependencies.storePayloadOverride({ ...currentPayload, content: statusLine + savedContent });
             }
 
             const revert = document.getElementById('revert-markdown') as HTMLButtonElement | null;
@@ -754,7 +735,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
             state.notice = null;
             state.error = reloadedFromDisk
-                ? 'Save stopped before all edits were applied. Reloaded the latest file from disk as the new baseline; review the document before saving again.'
+                ? 'Save failed. Reloaded the file from disk.'
                 : error instanceof Error ? error.message : 'Save failed.';
             dependencies.rerender();
             flashSaveStatus('Save failed', 'saving', 3000);
@@ -762,7 +743,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     }
 
     function maybeAutosave(): void {
-        if (!workspaceState?.dirty || workspaceState.saving) {
+        if (!workspaceState?.dirty || workspaceState.saving || workspaceState.error) {
             return;
         }
         void saveDocument();
@@ -791,7 +772,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
         const outline = state.outline;
 
-        if (state.mode === 'edit') {
+        {
             const editorRoot = document.getElementById('markdown-editor-root');
             if (editorRoot) {
                 markdownEditorHandle = mountMarkdownEditor({
@@ -874,15 +855,10 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 scrollContainer: wrapper,
                 onSelect: (headingId) => {
                     const selectedHeading = state.outline.find((item) => item.id === headingId);
-                    if (state.mode === 'edit') {
-                        if (selectedHeading && typeof selectedHeading.line === 'number') {
-                            markdownEditorHandle?.revealLine(selectedHeading.line, selectedHeading.id);
-                            state.activeHeadingId = selectedHeading.id;
-                        }
-                        return;
+                    if (selectedHeading && typeof selectedHeading.line === 'number') {
+                        markdownEditorHandle?.revealLine(selectedHeading.line, selectedHeading.id);
+                        state.activeHeadingId = selectedHeading.id;
                     }
-
-                    scrollHeadingIntoView(headingId);
                 },
             }) ?? undefined;
         }
@@ -894,7 +870,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
     function getCopyText(payload: RenderPayload): string | null {
         const state = getState(payload);
-        const source = state.mode === 'edit' ? state.draftContent : stripReadStatusLine(payload.content);
+        const source = state.draftContent;
         return state.editorView === 'raw'
             ? source
             : (getRenderedMarkdownCopyText(source) || source);
@@ -909,7 +885,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         if (wasDirty && originalPayload) {
             const range = parseReadRange(originalPayload.content);
             if (range?.isPartial) {
-                const freshPayload = await readPayload(originalPayload.filePath, range.toLine - range.fromLine + 1, range.fromLine);
+                const freshPayload = await readPayload(originalPayload.filePath, range.toLine - range.fromLine + 1, range.readOffset);
                 if (freshPayload) {
                     return freshPayload;
                 }

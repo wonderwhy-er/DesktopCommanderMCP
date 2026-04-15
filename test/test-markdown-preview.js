@@ -4,11 +4,11 @@ import { pathToFileURL } from 'url';
 import { renderMarkdown } from '../dist/ui/file-preview/src/components/markdown-renderer.js';
 import { resolveMarkdownLink, rewriteWikiLinks } from '../dist/ui/file-preview/src/markdown/linking.js';
 import { extractMarkdownOutline } from '../dist/ui/file-preview/src/markdown/outline.js';
-import { getRenderedMarkdownCopyText, renderMarkdownWorkspacePreview } from '../dist/ui/file-preview/src/markdown/preview.js';
+import { getRenderedMarkdownCopyText } from '../dist/ui/file-preview/src/markdown/preview.js';
 import { renderMarkdownEditorShell } from '../dist/ui/file-preview/src/markdown/editor.js';
 import { createMarkdownController } from '../dist/ui/file-preview/src/markdown/controller.js';
 import { createSlugTracker, slugifyMarkdownHeading } from '../dist/ui/file-preview/src/markdown/slugify.js';
-import { getDocumentEditAvailability, getDocumentFullscreenAvailability, shouldAutoLoadDocumentOnEnterFullscreen } from '../dist/ui/file-preview/src/document-workspace.js';
+import { getDocumentFullscreenAvailability, shouldAutoLoadDocumentOnEnterFullscreen } from '../dist/ui/file-preview/src/document-workspace.js';
 
 async function testSlugGeneration() {
   console.log('\n--- Test 1: heading slug generation ---');
@@ -286,7 +286,7 @@ async function testFailedSaveResyncsEditBaseline() {
     ].join('\n'), 'Local unsaved edits should stay in the editor');
     assert.strictEqual(state.dirty, true, 'The editor should stay dirty against the new disk baseline');
     assert.strictEqual(state.pendingExternalPayload, null, 'The fresh disk state should be applied immediately instead of waiting behind undo');
-    assert.ok(state.error?.includes('Reloaded the latest file from disk as the new baseline'), 'The error should explain that the editor resynced to disk');
+    assert.ok(state.error?.includes('Reloaded the file from disk'), 'The error should explain that the editor resynced to disk');
     assert.deepStrictEqual(storedPayloads, [{
       fileName: payload.fileName,
       filePath: payload.filePath,
@@ -356,33 +356,6 @@ async function testSuccessfulSaveResetsUndoBaseline() {
   console.log('✓ successful saves clear undo state against the latest saved content');
 }
 
-async function testEditAvailability() {
-  console.log('\n--- Test 5: fullscreen edit availability ---');
-
-  assert.deepStrictEqual(
-    getDocumentEditAvailability({
-      content: '# Ready',
-    }),
-    { canEdit: true },
-  );
-
-  assert.deepStrictEqual(
-    getDocumentEditAvailability({
-      content: '[Reading 10 lines from start (total: 20 lines, 10 remaining)]\n# Partial',
-    }),
-    { canEdit: false, reason: 'Load the full document before editing.' },
-  );
-
-  assert.deepStrictEqual(
-    getDocumentEditAvailability({
-      content: '# Inline only',
-    }),
-    { canEdit: true },
-  );
-
-  console.log('✓ edit mode is gated by full-content availability');
-}
-
 async function testFullscreenWorkspaceHelpers() {
   console.log('\n--- Test 6: fullscreen document helpers ---');
 
@@ -407,29 +380,6 @@ async function testFullscreenWorkspaceHelpers() {
   assert.strictEqual(shouldAutoLoadDocumentOnEnterFullscreen('# Full'), false);
 
   console.log('✓ fullscreen entry support and partial-read auto-load are detected correctly');
-}
-
-async function testPreviewTocRendering() {
-  console.log('\n--- Test 7: TOC only renders when requested ---');
-
-  const outline = extractMarkdownOutline(['# Title', '## Section'].join('\n'));
-  const inlineHtml = renderMarkdownWorkspacePreview({
-    content: '# Title\n\n## Section',
-    outline,
-    activeHeadingId: 'title',
-    showToc: false,
-  });
-  const fullscreenHtml = renderMarkdownWorkspacePreview({
-    content: '# Title\n\n## Section',
-    outline,
-    activeHeadingId: 'title',
-    showToc: true,
-  });
-
-  assert.ok(!inlineHtml.includes('markdown-toc-shell'), 'Inline preview should not render a TOC shell');
-  assert.ok(fullscreenHtml.includes('markdown-toc-shell'), 'Fullscreen preview should render a TOC shell');
-
-  console.log('✓ preview TOC stays hidden inline and appears when fullscreen layout requests it');
 }
 
 async function testCopyFormatsAndEditorShell() {
@@ -562,9 +512,7 @@ export default async function runTests() {
     await testOutlineExtraction();
     await testLinkResolution();
     await testWikiRewriteAndRendering();
-    await testEditAvailability();
     await testFullscreenWorkspaceHelpers();
-    await testPreviewTocRendering();
     await testCopyFormatsAndEditorShell();
     await testPartialDocumentBecomesNewEditBaseline();
     await testRefreshDoesNotMisclassifyMarkdownContentAsDeletion();

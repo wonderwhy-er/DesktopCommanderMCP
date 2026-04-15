@@ -11,7 +11,7 @@ export interface MarkdownWorkspaceState {
     draftContent: string;
     outline: DocumentOutlineItem[];
     pendingExternalPayload: RenderPayload | null;
-    mode: 'preview' | 'edit';
+    mode: 'edit';
     dirty: boolean;
     activeHeadingId: string | null;
     pendingAnchor: string | null;
