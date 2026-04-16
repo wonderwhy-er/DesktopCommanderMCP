@@ -199,6 +199,22 @@ function resolveFileTargetPath(currentPath: string, rawPath: string): string {
     return normalizeFilePath(fromFileUrl(resolvedUrl));
 }
 
+/**
+ * Invert `rewriteWikiLinks`: convert `[alias](href "mcp-wiki:ENCODED")` links
+ * back to their original `[[...]]` form. Used when serializing a WYSIWYG
+ * edit session back to markdown — the `mcp-wiki:` title prefix is the
+ * round-trip marker written by `rewriteWikiLinks`.
+ */
+export function restoreWikiLinks(markdown: string): string {
+    return markdown.replace(/\[([^\]]*)\]\(([^)\s]*)(?:\s+"mcp-wiki:([^"]+)")\)/g, (_, _alias, _href, encoded) => {
+        try {
+            return decodeURIComponent(encoded);
+        } catch {
+            return `[[${encoded}]]`;
+        }
+    });
+}
+
 export function rewriteWikiLinks(source: string): string {
     const lines = source.split('\n');
     let activeFence: string | null = null;

@@ -214,7 +214,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         state.fullDocumentContent = content;
         state.draftContent = nextDraftContent;
         state.outline = extractMarkdownOutline(content);
-        state.pendingExternalPayload = null;
         state.dirty = nextDraftContent !== content;
         state.fileDeleted = false;
         if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
@@ -222,12 +221,16 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         }
     }
 
-    async function readPayload(filePath: string, length?: number, offset?: number): Promise<RenderPayload | null> {
-        const result = await dependencies.callTool?.('read_file', {
+    async function callReadFile(filePath: string, length?: number, offset?: number): Promise<{ rawResult: unknown; payload: RenderPayload | null }> {
+        const rawResult = await dependencies.callTool?.('read_file', {
             path: filePath,
             ...(typeof length === 'number' ? { offset: offset ?? 0, length } : {}),
         });
-        return extractRenderPayload(result) ?? null;
+        return { rawResult, payload: extractRenderPayload(rawResult) ?? null };
+    }
+
+    async function readPayload(filePath: string, length?: number, offset?: number): Promise<RenderPayload | null> {
+        return (await callReadFile(filePath, length, offset)).payload;
     }
 
     async function ensureCompletePayload(payload: RenderPayload): Promise<RenderPayload> {
@@ -259,7 +262,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 fullDocumentContent: cleanedContent,
                 draftContent: cleanedContent,
                 outline,
-                pendingExternalPayload: null,
                 mode: 'edit',
                 dirty: false,
                 activeHeadingId: outline[0]?.id ?? null,
@@ -279,8 +281,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     }
 
     function isUndoAvailable(state: MarkdownWorkspaceState): boolean {
-        return state.pendingExternalPayload !== null
-            || state.draftContent !== state.fullDocumentContent;
+        return state.draftContent !== state.fullDocumentContent;
     }
 
     function buildBody(payload: RenderPayload): RenderBodyResult {
@@ -461,11 +462,11 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     async function refreshFromDisk(payload: RenderPayload): Promise<void> {
         try {
             const range = parseReadRange(payload.content);
-            const freshPayload = range?.isPartial
-                ? await readPayload(payload.filePath, range.toLine - range.fromLine + 1, range.readOffset)
-                : await readPayload(payload.filePath);
+            const { rawResult, payload: freshPayload } = range?.isPartial
+                ? await callReadFile(payload.filePath, range.toLine - range.fromLine + 1, range.readOffset)
+                : await callReadFile(payload.filePath);
             if (!freshPayload) {
-                if (isMissingFileErrorResult(freshPayload)) {
+                if (isMissingFileErrorResult(rawResult)) {
                     if (workspaceState) {
                         workspaceState.fileDeleted = true;
                     }
@@ -628,23 +629,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         if (!workspaceState) {
             return;
         }
-        const pendingExternalPayload = workspaceState.pendingExternalPayload;
-        if (pendingExternalPayload) {
-            const freshContent = stripReadStatusLine(pendingExternalPayload.content);
-            syncStateFromContent(workspaceState, freshContent);
-            workspaceState.pendingAnchor = null;
-            workspaceState.error = null;
-            workspaceState.notice = null;
-            workspaceState.saving = false;
-            workspaceState.loadingDocument = false;
-            workspaceState.saveIndicator = 'idle';
-            workspaceState.fileDeleted = false;
-            dependencies.storePayloadOverride(pendingExternalPayload);
-            dependencies.rerender();
-            flashSaveStatus('Reloaded from disk', 'saved', 1500);
-            return;
-        }
-
         workspaceState.draftContent = workspaceState.fullDocumentContent;
         workspaceState.dirty = false;
         workspaceState.error = null;
@@ -685,7 +669,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             state.fullDocumentContent = state.draftContent;
             state.sourceContent = state.draftContent;
             state.outline = extractMarkdownOutline(state.sourceContent);
-            state.pendingExternalPayload = null;
             state.dirty = false;
             state.saving = false;
             state.saveIndicator = 'saved';

@@ -10,7 +10,6 @@ export interface MarkdownWorkspaceState {
     fullDocumentContent: string;
     draftContent: string;
     outline: DocumentOutlineItem[];
-    pendingExternalPayload: RenderPayload | null;
     mode: 'edit';
     dirty: boolean;
     activeHeadingId: string | null;

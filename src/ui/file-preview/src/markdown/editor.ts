@@ -2,7 +2,7 @@ import { Editor } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Markdown } from 'tiptap-markdown';
-import { rewriteWikiLinks } from './linking.js';
+import { restoreWikiLinks, rewriteWikiLinks } from './linking.js';
 import { createSlugTracker } from './slugify.js';
 
 export type MarkdownEditorView = 'raw' | 'markdown';
@@ -112,32 +112,9 @@ function applyRawTab(textarea: HTMLTextAreaElement): void {
 }
 
 /**
- * Preprocess raw markdown before feeding Tiptap: rewrite [[wiki]] links to
- * standard `[alias](href "mcp-wiki:ENCODED")` form. The title-prefixed
- * representation survives round-trips through the prose-model and lets us
- * restore the original wiki syntax on serialize.
- */
-function preprocessForTiptap(source: string): string {
-    return rewriteWikiLinks(source);
-}
-
-/**
- * Postprocess Tiptap's markdown output: convert `[alias](href "mcp-wiki:enc")`
- * links back to their original `[[...]]` wiki syntax.
- */
-function postprocessFromTiptap(markdown: string): string {
-    return markdown.replace(/\[([^\]]*)\]\(([^)\s]*)(?:\s+"mcp-wiki:([^"]+)")\)/g, (_, _alias, _href, encoded) => {
-        try {
-            return decodeURIComponent(encoded);
-        } catch {
-            return `[[${encoded}]]`;
-        }
-    });
-}
-
-/**
  * Walk the prose-mirror DOM and assign slug-based id attributes to headings
- * so the outline's revealLine can scroll to them. Re-run after every update.
+ * so the outline's revealLine can scroll to them. Re-run after every update;
+ * no-op writes are skipped so identical ids don't dirty the style engine.
  */
 function syncHeadingIds(root: HTMLElement): void {
     const nextSlug = createSlugTracker();
@@ -145,13 +122,21 @@ function syncHeadingIds(root: HTMLElement): void {
     for (const heading of headings) {
         const text = heading.textContent?.trim() ?? '';
         if (!text) {
-            heading.removeAttribute('id');
-            heading.removeAttribute('data-heading-id');
+            if (heading.hasAttribute('id')) {
+                heading.removeAttribute('id');
+            }
+            if (heading.hasAttribute('data-heading-id')) {
+                heading.removeAttribute('data-heading-id');
+            }
             continue;
         }
         const headingId = nextSlug(text);
-        heading.id = headingId;
-        heading.setAttribute('data-heading-id', headingId);
+        if (heading.id !== headingId) {
+            heading.id = headingId;
+        }
+        if (heading.getAttribute('data-heading-id') !== headingId) {
+            heading.setAttribute('data-heading-id', headingId);
+        }
     }
 }
 
@@ -195,7 +180,7 @@ export function mountMarkdownEditor(options: {
 
         const getTiptapMarkdown = (): string => {
             const storage = tiptap.storage as { markdown?: { getMarkdown: () => string } };
-            return postprocessFromTiptap(storage.markdown?.getMarkdown() ?? '');
+            return restoreWikiLinks(storage.markdown?.getMarkdown() ?? '');
         };
 
         const tiptap = new Editor({
@@ -221,7 +206,7 @@ export function mountMarkdownEditor(options: {
                     transformCopiedText: false,
                 }),
             ],
-            content: preprocessForTiptap(options.value),
+            content: rewriteWikiLinks(options.value),
             editorProps: {
                 attributes: {
                     class: 'markdown-editor-surface markdown-editor-surface--markdown markdown markdown-doc',
@@ -452,7 +437,6 @@ export function mountMarkdownEditor(options: {
                         marks: [{ type: 'link', attrs: { href } }],
                     }).run();
                 } else {
-                    // Replace selection with new text that carries the link mark.
                     tiptap.chain()
                         .focus()
                         .deleteRange({ from, to })
@@ -497,7 +481,6 @@ export function mountMarkdownEditor(options: {
             if (!format) {
                 return;
             }
-            tiptap.commands.focus();
             switch (format) {
                 case 'bold':
                     tiptap.chain().focus().toggleBold().run();
@@ -520,8 +503,6 @@ export function mountMarkdownEditor(options: {
                 case 'link':
                     openLinkModalForSelection();
                     break;
-                default:
-                    break;
             }
         };
 
@@ -530,7 +511,6 @@ export function mountMarkdownEditor(options: {
             if (!value) {
                 return;
             }
-            tiptap.commands.focus();
             if (value === 'p') {
                 tiptap.chain().focus().setParagraph().run();
                 return;
@@ -542,7 +522,6 @@ export function mountMarkdownEditor(options: {
             }
         };
 
-        // Link hover popover (edit / open)
         const linkPopover = document.createElement('div');
         linkPopover.className = 'markdown-link-popover';
         linkPopover.hidden = true;
@@ -572,7 +551,6 @@ export function mountMarkdownEditor(options: {
                 if (!linkModal) {
                     return;
                 }
-                // Select the link text in the editor, then open the modal in URL mode.
                 const pos = tiptap.view.posAtDOM(anchor, 0);
                 if (pos >= 0) {
                     const endPos = pos + (anchor.textContent?.length ?? 0);
@@ -613,34 +591,38 @@ export function mountMarkdownEditor(options: {
                 hideLinkPopover();
             }
         };
-        editorDom.addEventListener('mouseover', handleMouseOver);
-        editorDom.addEventListener('mouseout', handleMouseOut);
-        linkPopover.addEventListener('mouseenter', () => {
+        const handlePopoverEnter = (): void => {
             if (popoverHideTimer) {
                 clearTimeout(popoverHideTimer);
                 popoverHideTimer = null;
             }
-        });
-        linkPopover.addEventListener('mouseleave', () => {
+        };
+        const handlePopoverLeave = (): void => {
             hideLinkPopover();
-        });
-
-        formatButtons.forEach((button) => button.addEventListener('click', handleFormatClick));
-        blockStyleSelect?.addEventListener('change', handleBlockStyleChange);
-        linkModeFile?.addEventListener('click', () => updateLinkMode('file'));
-        linkModeUrl?.addEventListener('click', () => {
+        };
+        const handleLinkModeFileClick = (): void => updateLinkMode('file');
+        const handleLinkModeUrlClick = (): void => {
             updateLinkMode('url');
             linkInput?.focus();
-        });
+        };
         const handleSearchInput = (): void => { void runLinkSearch(); };
-        linkSearchInput?.addEventListener('input', handleSearchInput);
-        linkApply?.addEventListener('click', handleLinkApply);
-        linkCancel?.addEventListener('click', closeLinkModal);
         const handleModalBackdropClick = (e: MouseEvent): void => {
             if (e.target === linkModal) {
                 closeLinkModal();
             }
         };
+
+        editorDom.addEventListener('mouseover', handleMouseOver);
+        editorDom.addEventListener('mouseout', handleMouseOut);
+        linkPopover.addEventListener('mouseenter', handlePopoverEnter);
+        linkPopover.addEventListener('mouseleave', handlePopoverLeave);
+        formatButtons.forEach((button) => button.addEventListener('click', handleFormatClick));
+        blockStyleSelect?.addEventListener('change', handleBlockStyleChange);
+        linkModeFile?.addEventListener('click', handleLinkModeFileClick);
+        linkModeUrl?.addEventListener('click', handleLinkModeUrlClick);
+        linkSearchInput?.addEventListener('input', handleSearchInput);
+        linkApply?.addEventListener('click', handleLinkApply);
+        linkCancel?.addEventListener('click', closeLinkModal);
         linkModal?.addEventListener('click', handleModalBackdropClick);
 
         if (typeof options.initialScrollTop === 'number') {
@@ -652,8 +634,12 @@ export function mountMarkdownEditor(options: {
             destroy: () => {
                 editorDom.removeEventListener('mouseover', handleMouseOver);
                 editorDom.removeEventListener('mouseout', handleMouseOut);
+                linkPopover.removeEventListener('mouseenter', handlePopoverEnter);
+                linkPopover.removeEventListener('mouseleave', handlePopoverLeave);
                 formatButtons.forEach((button) => button.removeEventListener('click', handleFormatClick));
                 blockStyleSelect?.removeEventListener('change', handleBlockStyleChange);
+                linkModeFile?.removeEventListener('click', handleLinkModeFileClick);
+                linkModeUrl?.removeEventListener('click', handleLinkModeUrlClick);
                 linkSearchInput?.removeEventListener('input', handleSearchInput);
                 linkApply?.removeEventListener('click', handleLinkApply);
                 linkCancel?.removeEventListener('click', closeLinkModal);
@@ -668,7 +654,7 @@ export function mountMarkdownEditor(options: {
             },
             getValue: () => getTiptapMarkdown(),
             setValue: (value: string) => {
-                tiptap.commands.setContent(preprocessForTiptap(value), { emitUpdate: false });
+                tiptap.commands.setContent(rewriteWikiLinks(value), { emitUpdate: false });
                 syncHeadingIds(editorDom);
             },
             revealLine: (_lineNumber: number, headingId?: string) => {
@@ -690,7 +676,6 @@ export function mountMarkdownEditor(options: {
         };
     }
 
-    // Raw textarea view — unchanged behavior.
     const textarea = document.createElement('textarea');
     textarea.className = 'markdown-editor-textarea markdown-editor-textarea--raw';
     textarea.spellcheck = false;
