@@ -718,13 +718,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         }
     }
 
-    function maybeAutosave(): void {
-        if (!workspaceState?.dirty || workspaceState.saving || workspaceState.error) {
-            return;
-        }
-        void saveDocument();
-    }
-
     function setEditorView(payload: RenderPayload, view: MarkdownEditorView): void {
         const state = getState(payload);
         const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
@@ -779,7 +772,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         }
                     },
                     onBlur: () => {
-                        maybeAutosave();
+                        void saveDocument();
                     },
                 });
                 markdownEditorHandle.focus();
@@ -881,7 +874,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         handleInlineExitFromFullscreen,
         isUndoAvailable,
         readCompletePayload,
-        maybeAutosave,
         readPayload,
         readPayloadContent,
         refreshFromDisk,

@@ -130,9 +130,14 @@ const markdownController = createMarkdownController({
  * Tool results from edit_block/write_file include structuredContent but
  * their text is a success message, not file content. Detect this by
  * checking for the absence of the read status line that read_file always includes.
+ * URL payloads are fetched remotely by read_file(isUrl:true); we can't
+ * re-fetch them from here (no isUrl flag on the refresh path), so skip.
  */
 function needsContentRead(payload: RenderPayload): boolean {
     if (payload.fileType === 'directory' || payload.fileType === 'image' || payload.fileType === 'unsupported') {
+        return false;
+    }
+    if (/^https?:\/\//i.test(payload.filePath)) {
         return false;
     }
     return !parseReadRange(payload.content);
@@ -544,9 +549,9 @@ export function bootstrapApp(): void {
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
             const nextDisplayMode = getCurrentDisplayMode();
             const displayModeChanged = previousDisplayMode !== nextDisplayMode;
-            if (displayModeChanged) {
-                markdownController.maybeAutosave();
-            }
+            // Clicking a display-mode button blurs the editor first, and the
+            // editor's onBlur handler already persists dirty drafts, so there
+            // is nothing additional to save here.
             if (
                 previousDisplayMode === 'fullscreen'
                 && nextDisplayMode === 'inline'
