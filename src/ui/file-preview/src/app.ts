@@ -123,6 +123,7 @@ const markdownController = createMarkdownController({
         rerenderCurrent?.();
     },
     updateSaveStatus: updateSaveStatusDOM,
+    trackUiEvent: (event, params) => trackUiEvent?.(event, params),
 });
 
 /**

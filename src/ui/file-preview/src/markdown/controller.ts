@@ -8,6 +8,7 @@ import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
 import { getRenderedMarkdownCopyText } from './preview.js';
 import { slugifyMarkdownHeading } from './slugify.js';
+import { getFileExtensionForAnalytics } from '../payload-utils.js';
 
 export interface MarkdownControllerDependencies {
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown | undefined>;
@@ -21,6 +22,7 @@ export interface MarkdownControllerDependencies {
     storePayloadOverride: (payload: RenderPayload) => void;
     rerender: () => void;
     updateSaveStatus: (label: string, statusClass: string) => void;
+    trackUiEvent?: (event: string, params?: Record<string, unknown>) => void;
 }
 
 interface ToolErrorResult {
@@ -629,12 +631,16 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         if (!workspaceState) {
             return;
         }
+        const filePath = workspaceState.filePath;
         workspaceState.draftContent = workspaceState.fullDocumentContent;
         workspaceState.dirty = false;
         workspaceState.error = null;
         workspaceState.notice = null;
         dependencies.rerender();
         flashSaveStatus('Reverted', 'saved', 1500);
+        dependencies.trackUiEvent?.('markdown_reverted', {
+            file_extension: getFileExtensionForAnalytics(filePath),
+        });
     }
 
     async function saveDocument(): Promise<void> {
@@ -695,6 +701,10 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 }
                 return false;
             });
+            dependencies.trackUiEvent?.('markdown_saved', {
+                file_extension: getFileExtensionForAnalytics(state.filePath),
+                blocks: blocks.length,
+            });
         } catch (error) {
             state.saving = false;
             state.saveIndicator = 'idle';
@@ -715,6 +725,10 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 : error instanceof Error ? error.message : 'Save failed.';
             dependencies.rerender();
             flashSaveStatus('Save failed', 'saving', 3000);
+            dependencies.trackUiEvent?.('markdown_save_failed', {
+                file_extension: getFileExtensionForAnalytics(state.filePath),
+                reloaded_from_disk: reloadedFromDisk,
+            });
         }
     }
 
@@ -722,10 +736,17 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const state = getState(payload);
         const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
         state.editorScrollTop = wrapper?.scrollTop ?? 0;
+        const previousView = state.editorView;
         state.editorView = view;
         state.notice = null;
         state.error = null;
         dependencies.rerender();
+        if (previousView !== view) {
+            dependencies.trackUiEvent?.('markdown_view_toggled', {
+                file_extension: getFileExtensionForAnalytics(payload.filePath),
+                view,
+            });
+        }
         if (typeof state.editorScrollTop === 'number') {
             window.requestAnimationFrame(() => {
                 const nextWrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
@@ -740,6 +761,8 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const state = getState(payload);
         const wrapper = document.querySelector('.panel-content-wrapper') as HTMLElement | null;
         const outline = state.outline;
+        const fileExtension = getFileExtensionForAnalytics(payload.filePath);
+        let editStartedFired = false;
 
         {
             const editorRoot = document.getElementById('markdown-editor-root');
@@ -755,6 +778,13 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                     onChange: (value) => {
                         state.draftContent = value;
                         state.dirty = value !== state.fullDocumentContent;
+                        if (state.dirty && !editStartedFired) {
+                            editStartedFired = true;
+                            dependencies.trackUiEvent?.('markdown_edit_started', {
+                                file_extension: fileExtension,
+                                view: state.editorView,
+                            });
+                        }
                         const nextOutline = extractMarkdownOutline(value);
                         if (!areOutlineItemsEqual(state.outline, nextOutline)) {
                             state.outline = nextOutline;
