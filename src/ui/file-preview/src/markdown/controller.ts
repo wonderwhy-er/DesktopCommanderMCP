@@ -480,16 +480,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 return;
             }
 
-            if (
-                workspaceState?.filePath === payload.filePath
-                && (workspaceState.dirty || workspaceState.saving)
-            ) {
-                workspaceState.pendingExternalPayload = freshPayload;
-                workspaceState.notice = 'A newer version is available on disk. Discard local edits to reload it.';
-                dependencies.rerender();
-                return;
-            }
-
+            // refreshFromDisk only runs at mount (no file watcher in this app),
+            // so disk-vs-payload mismatch means the host sent a stale cached
+            // payload — trust the disk read and reload silently.
             dependencies.storePayloadOverride(freshPayload);
             workspaceState = undefined;
             dependencies.rerender();

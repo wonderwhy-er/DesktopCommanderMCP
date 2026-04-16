@@ -1,5 +1,4 @@
 // markdown-it is intentionally typed locally here to avoid maintaining ambient module declarations.
-// @ts-expect-error markdown-it does not provide local TypeScript typings in this setup.
 import MarkdownIt from 'markdown-it';
 import type { MarkdownSlugTracker } from './slugify.js';
 import { rewriteWikiLinks } from './linking.js';

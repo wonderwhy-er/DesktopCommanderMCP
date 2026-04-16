@@ -72,7 +72,7 @@ async function buildTarget(targetName) {
     platform: 'browser',
     target: ['es2020'],
     outfile: outputPath,
-    minify: false,
+    minify: true,
     sourcemap: false
   });
 }
