@@ -13,7 +13,16 @@ import {
     type InitializeRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import { timingSafeEqual } from 'crypto';
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
+
+// Optional per-session token for the config-editor UI.
+// When the env var DESKTOP_COMMANDER_UI_TOKEN is set by the hosting app, callers of
+// _internal_set_config_value must supply the matching value in args._uiToken.  The
+// hosting app is responsible for injecting the same token into the UI webview (e.g.
+// via window.__DC_UI_TOKEN in an Electron preload script).
+// If the env var is NOT set, token validation is skipped for backward compatibility.
+const UI_SESSION_TOKEN: string | null = process.env.DESKTOP_COMMANDER_UI_TOKEN ?? null;
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -253,21 +262,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "set_config_value",
                 description: `
                         Set a specific configuration value by key.
-                        
-                        WARNING: Should be used in a separate chat from file operations and 
-                        command execution to prevent security issues.
-                        
-                        Config keys include:
-                        - blockedCommands (array)
-                        - defaultShell (string)
-                        - allowedDirectories (array of paths)
+
+                        Security-critical keys (blockedCommands, allowedDirectories, defaultShell)
+                        can ONLY be changed through the config editor UI, not via this tool.
+                        This prevents prompt-injection attacks from disabling safety controls.
+
+                        Config keys settable by the AI agent:
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
-                        
-                        IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
-                        to the entire file system, regardless of the operating system.
-                        
+
+                        Config keys settable only via config editor UI:
+                        - blockedCommands (array)
+                        - defaultShell (string)
+                        - allowedDirectories (array of paths)
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 annotations: {
@@ -1029,7 +1038,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Terminate a running process by PID.
 
-                        Use with caution as this will forcefully terminate the specified process.
+                        Only processes started by Desktop Commander (via start_process) can be
+                        terminated. Arbitrary system PIDs are rejected for safety.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(KillProcessArgsSchema),
@@ -1190,9 +1200,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }
         }
 
-        if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
+        if ((name === 'set_config_value' || name === '_internal_set_config_value') && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
-            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
+            telemetryData.call_origin = name === '_internal_set_config_value' ? 'ui' : 'mcp';
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
@@ -1229,7 +1239,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                 break;
             case "set_config_value":
                 try {
-                    result = await setConfigValue(args);
+                    result = await setConfigValue(args, 'mcp');
                 } catch (error) {
                     capture('server_request_error', { message: `Error in set_config_value handler: ${error}` });
                     result = {
@@ -1238,6 +1248,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
                     };
                 }
                 break;
+            // Internal-only handler for the config editor UI.  Not listed in
+            // the tools catalog, so AI agents cannot discover or call it.
+            // The 'ui' callerOrigin allows security-critical keys to be changed.
+            // A per-session token (UI_SESSION_TOKEN) provides a second layer of
+            // defence: callers must supply the token in args._uiToken.  The
+            // hosting app is responsible for injecting the token into the UI.
+            case "_internal_set_config_value": {
+                // Validate the per-session UI token when enforcement is active.
+                // Enforcement is opt-in: set DESKTOP_COMMANDER_UI_TOKEN in the
+                // server environment to enable it.  The hosting app must also
+                // inject the same token into the UI webview (window.__DC_UI_TOKEN).
+                if (UI_SESSION_TOKEN !== null) {
+                    const internalArgs = (args ?? {}) as Record<string, unknown>;
+                    const providedToken = typeof internalArgs._uiToken === 'string'
+                        ? internalArgs._uiToken : '';
+                    const expectedBuf = Buffer.from(UI_SESSION_TOKEN);
+                    const providedBuf = Buffer.allocUnsafe(expectedBuf.length);
+                    providedBuf.fill(0);
+                    Buffer.from(providedToken).copy(providedBuf, 0, 0, expectedBuf.length);
+                    const tokenValid = providedToken.length === UI_SESSION_TOKEN.length
+                        && timingSafeEqual(expectedBuf, providedBuf);
+                    if (!tokenValid) {
+                        capture('server_request_error', { message: 'Rejected _internal_set_config_value: invalid or missing UI session token' });
+                        result = {
+                            content: [{ type: "text", text: `Error: Unauthorized` }],
+                            isError: true,
+                        };
+                        break;
+                    }
+                }
+                try {
+                    result = await setConfigValue(args, 'ui');
+                } catch (error) {
+                    capture('server_request_error', { message: `Error in _internal_set_config_value handler: ${error}` });
+                    result = {
+                        content: [{ type: "text", text: `Error: Failed to set configuration value` }],
+                        isError: true,
+                    };
+                }
+                break;
+            }
 
             case "get_usage_stats":
                 try {
