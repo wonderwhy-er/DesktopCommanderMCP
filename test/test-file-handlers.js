@@ -365,7 +365,17 @@ async function testMarkdownExactMatchSave() {
   });
 
   assert.ok(Array.isArray(result.content), 'edit_block result should include content array');
-  assert.match(result.content[0].text, /Successfully applied 1 edit(?:\(s\))?/, 'edit_block should report exact-match success');
+  // After the file-preview refactor (commit 8fd8f94), edit_block's exact-match
+  // path returns a file preview + structuredContent instead of a
+  // "Successfully applied N edit(s)" message. Verify the new contract here.
+  assert.strictEqual(result.content[0].type, 'text', 'edit_block result[0] should be text');
+  assert.ok(result.structuredContent, 'edit_block should return structuredContent');
+  assert.ok(result.structuredContent.filePath, 'edit_block structuredContent should include filePath');
+  assert.match(
+    result.content[0].text,
+    /\[Reading \d+ lines? from/,
+    'edit_block should return a file-preview status line'
+  );
 
   const readBack = await fs.readFile(MD_FILE, 'utf8');
   assert.strictEqual(readBack, updatedContent, 'Markdown file should be rewritten with the updated content');
