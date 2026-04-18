@@ -159,7 +159,8 @@ export interface SearchSessionOptions {
         options.pattern,
         options.ignoreCase !== false,
         options.maxResults,
-        options.filePattern  // Pass filePattern to filter Excel files too
+        options.filePattern,  // Pass filePattern to filter Excel files too
+        options.literalSearch  // Respect literalSearch flag for Office files
       ).then(excelResults => {
         // Add Excel results to session (merged after initial response)
         for (const result of excelResults) {
@@ -182,7 +183,8 @@ export interface SearchSessionOptions {
         options.pattern,
         options.ignoreCase !== false,
         options.maxResults,
-        options.filePattern
+        options.filePattern,
+        options.literalSearch  // Respect literalSearch flag for Office files
       ).then(docxResults => {
         for (const result of docxResults) {
           session.results.push(result);
@@ -341,20 +343,14 @@ export interface SearchSessionOptions {
     pattern: string,
     ignoreCase: boolean,
     maxResults?: number,
-    filePattern?: string
+    filePattern?: string,
+    _literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
-    // Build regex for matching content
-    const flags = ignoreCase ? 'i' : '';
-    let regex: RegExp;
-    try {
-      regex = new RegExp(pattern, flags);
-    } catch {
-      // If pattern is not valid regex, escape it for literal matching
-      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      regex = new RegExp(escaped, flags);
-    }
+    // Office file search always uses literal matching to prevent ReDoS.
+    // Regex patterns are treated as literal strings — this is intentional.
+    const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
     let excelFiles = await this.findExcelFiles(rootPath);
@@ -367,7 +363,13 @@ export interface SearchSessionOptions {
         return patterns.some(pat => {
           // Support glob-like patterns
           if (pat.includes('*')) {
-            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            // Escape all regex metacharacters first (preserving * for glob expansion),
+            // then convert the remaining * wildcards to .* for glob matching.
+            // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
+            // misinterpreted as regex groups/character-classes.
+            const regexPat = pat
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+              .replace(/\*/g, '.*');                  // glob * → regex .*
             return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           // Exact match (case-insensitive)
@@ -424,12 +426,10 @@ export interface SearchSessionOptions {
             // Join all cell values with space for cross-column matching
             const rowText = rowValues.join(' ');
 
-            if (regex.test(rowText)) {
-              // Extract the matching portion for display
-              const match = rowText.match(regex);
-              const matchContext = match
-                ? this.getMatchContext(rowText, match.index || 0, match[0].length)
-                : rowText.substring(0, 150);
+            const textToSearch = ignoreCase ? rowText.toLowerCase() : rowText;
+            const matchIndex = textToSearch.indexOf(searchTerm);
+            if (matchIndex !== -1) {
+              const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
 
               results.push({
                 file: `${filePath}:${sheetName}!Row${rowNumber}`,
@@ -525,18 +525,14 @@ export interface SearchSessionOptions {
     pattern: string,
     ignoreCase: boolean,
     maxResults?: number,
-    filePattern?: string
+    filePattern?: string,
+    _literalSearch?: boolean
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
-    const flags = ignoreCase ? 'i' : '';
-    let regex: RegExp;
-    try {
-      regex = new RegExp(pattern, flags);
-    } catch {
-      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      regex = new RegExp(escaped, flags);
-    }
+    // Office file search always uses literal matching to prevent ReDoS.
+    // Regex patterns are treated as literal strings — this is intentional.
+    const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     let docxFiles = await this.findDocxFiles(rootPath);
 
@@ -546,7 +542,9 @@ export interface SearchSessionOptions {
         const fileName = path.basename(filePath);
         return patterns.some(pat => {
           if (pat.includes('*')) {
-            const regexPat = pat.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            const regexPat = pat
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+              .replace(/\*/g, '.*');                  // glob * → regex .*
             return new RegExp(`^${regexPat}$`, 'i').test(fileName);
           }
           return fileName.toLowerCase() === pat.toLowerCase();
@@ -583,11 +581,10 @@ export interface SearchSessionOptions {
             if (!text || !text.trim()) continue;
             lineNum++;
 
-            if (regex.test(text)) {
-              const match = text.match(regex);
-              const matchContext = match
-                ? this.getMatchContext(text, match.index || 0, match[0].length)
-                : text.substring(0, 150);
+            const textToSearch = ignoreCase ? text.toLowerCase() : text;
+            const matchIndex = textToSearch.indexOf(searchTerm);
+            if (matchIndex !== -1) {
+              const matchContext = this.getMatchContext(text, matchIndex, searchTerm.length);
 
               const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
               results.push({

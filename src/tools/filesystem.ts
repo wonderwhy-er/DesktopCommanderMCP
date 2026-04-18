@@ -55,6 +55,48 @@ async function getDefaultReadLength(): Promise<number> {
     return config.fileReadLineLimit ?? 1000; // Default to 1000 lines if not set
 }
 
+/**
+ * Returns a helpful error message when a file operation fails with a permission
+ * or timeout error.
+ *
+ * Lists all common causes without path-based detection — the AI receiving this
+ * error should inspect the path and inform the user which cause is most likely
+ * (e.g. cloud storage folder, network drive, system file, locked file, etc.)
+ */
+function buildPermissionError(filePath: string, errCode: string | undefined): Error {
+    const isMac = process.platform === 'darwin';
+    const isTimeout = errCode === 'ETIMEDOUT';
+
+    const lines = [
+        `Cannot read file — ${isTimeout ? 'operation timed out' : 'permission denied'} (${errCode}).`,
+        `Path: ${filePath}`,
+        ``,
+        `[AI: based on the path above, determine which cause is most likely and explain it to the user.]`,
+        ``,
+        `Possible causes and fixes:`,
+        `  1. File is in cloud storage (Google Drive / iCloud / Dropbox / OneDrive) but not downloaded locally.`,
+        `       → Right-click the file and choose "Download Now", "Make Available Offline", or "Keep on This Device".`,
+        `  2. Cloud storage app is not running or not signed in.`,
+        `       → Open your cloud storage app and make sure it is syncing.`,
+        `  3. File is on a network drive or virtual filesystem that is currently unavailable.`,
+        `       → Check that the network share or drive is mounted and accessible.`,
+        `  4. File has restricted permissions (e.g. system file, locked by another process, or chmod 000).`,
+        `       → Check file permissions or close any app that may have the file open.`,
+        `  5. The app does not have permission to access this location (macOS Full Disk Access).`,
+    ];
+
+    if (isMac) {
+        lines.push(`       → Go to System Settings → Privacy & Security → Full Disk Access and enable Claude.`);
+        lines.push(`       → To open that pane directly, run in terminal:`);
+        lines.push(`           open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`);
+        lines.push(`         Then find "Claude" in the list and enable the toggle next to it.`);
+    } else {
+        lines.push(`       → Check that the app has permission to access this file location.`);
+    }
+
+    return new Error(lines.join('\n'));
+}
+
 // Initialize allowed directories from configuration
 async function getAllowedDirs(): Promise<string[]> {
     try {
@@ -456,12 +498,24 @@ export async function readFileFromDisk(
     };
 
     // Execute with timeout
-    const result = await withTimeout(
-        readOperation(),
-        FILE_OPERATION_TIMEOUTS.FILE_READ,
-        `Read file operation for ${filePath}`,
-        null
-    );
+    let result;
+    try {
+        result = await withTimeout(
+            readOperation(),
+            FILE_OPERATION_TIMEOUTS.FILE_READ,
+            `Read file operation for ${filePath}`,
+            null
+        );
+    } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        // withTimeout rejects with a plain string "__ERROR__: ... timed out after N seconds"
+        // when defaultValue is null — it has no .code property, so check for that too.
+        const isWithTimeoutString = typeof error === 'string' && (error as string).startsWith('__ERROR__:');
+        if (isWithTimeoutString || err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
+            throw buildPermissionError(filePath, isWithTimeoutString ? 'ETIMEDOUT' : err.code);
+        }
+        throw error;
+    }
 
     if (result == null) {
         // Handles the impossible case where withTimeout resolves to null instead of throwing
@@ -630,9 +684,15 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
         try {
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
-            // If we can't read this directory (permission denied), show as denied
+            const err = error as NodeJS.ErrnoException;
             const displayPath = relativePath || path.basename(currentPath);
-            results.push(`[DENIED] ${displayPath}`);
+            // Keep [DENIED] prefix so UI parser regex still matches.
+            // Append a hint for permission/timeout errors so user gets context.
+            if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
+                results.push(`[DENIED] ${displayPath} — not accessible (permission denied, cloud-only file, or Full Disk Access not granted)`);
+            } else {
+                results.push(`[DENIED] ${displayPath}`);
+            }
             return;
         }
 
