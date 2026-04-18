@@ -205,8 +205,14 @@ async function testFailedSaveResyncsEditBaseline() {
           const nextContent = diskContent.replace(oldString, newString);
           assert.notStrictEqual(nextContent, diskContent, 'Each edit block should match the current disk content');
           diskContent = nextContent;
+          // See Test 12 for why structuredContent is required in the mock.
           return {
             content: [{ type: 'text', text: 'Successfully applied 1 edit to notes.md' }],
+            structuredContent: {
+              fileName: payload.fileName,
+              filePath: payload.filePath,
+              fileType: payload.fileType,
+            },
           };
         }
 
@@ -324,8 +330,17 @@ async function testSuccessfulSaveResetsUndoBaseline() {
           throw new Error(`Unexpected tool call: ${name}`);
         }
 
+        // Successful edit_block returns carry structuredContent with
+        // fileName/filePath/fileType (per commit 8fd8f94). The client's
+        // assertSuccessfulEditBlockResult now uses its presence as the
+        // success signal, so the mock has to match that contract.
         return {
           content: [{ type: 'text', text: 'Successfully applied 1 edit(s) to notes.md' }],
+          structuredContent: {
+            fileName: payload.fileName,
+            filePath: payload.filePath,
+            fileType: payload.fileType,
+          },
         };
       },
       getAvailableDisplayModes: () => ['inline', 'fullscreen'],
