@@ -14,6 +14,11 @@ import { getFileTypeCapabilities, renderPayloadBody } from './file-type-handlers
 import { buildOpenInEditorCommand, buildOpenInFolderCommand, detectDefaultMarkdownEditor, renderMarkdownEditorAppIcon } from './host/external-actions.js';
 import { attachSelectionContext } from './host/selection-context.js';
 import { createMarkdownController } from './markdown/controller.js';
+import {
+    createConflictDialogController,
+    renderConflictDialogMarkup,
+    type ConflictDialogController,
+} from './markdown/conflict-dialog.js';
 import type { RenderPayload } from './model.js';
 import { attachPanelActions } from './panel-actions.js';
 import { extractRenderPayload, extractToolText, getFileExtensionForAnalytics, isLikelyUrl, isPreviewStructuredContent } from './payload-utils.js';
@@ -24,6 +29,7 @@ let hideSummaryRow = false;
 let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
+let conflictDialogController: ConflictDialogController | undefined;
 let rpcCallTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | undefined;
 let rpcUpdateContext: ((text: string) => void) | undefined;
 let openExternalLink: ((url: string) => Promise<boolean>) | undefined;
@@ -124,6 +130,7 @@ const markdownController = createMarkdownController({
     },
     updateSaveStatus: updateSaveStatusDOM,
     trackUiEvent: (event, params) => trackUiEvent?.(event, params),
+    showConflictDialog: (options) => conflictDialogController?.open(options),
 });
 
 /**
@@ -353,6 +360,19 @@ export function bootstrapApp(): void {
         return;
     }
     renderLoadingState(container);
+
+    // Mount the conflict dialog once at body level. It's position: fixed and
+    // must live outside the app container so that re-renders of the document
+    // body never wipe it while it's open.
+    if (!document.getElementById('md-conflict-modal')) {
+        const dialogHost = document.createElement('div');
+        dialogHost.innerHTML = renderConflictDialogMarkup();
+        const dialogRoot = dialogHost.firstElementChild;
+        if (dialogRoot) {
+            document.body.appendChild(dialogRoot);
+        }
+    }
+    conflictDialogController = createConflictDialogController({ container: document });
 
     const app = new App(
         { name: 'Desktop Commander File Preview', version: '1.0.0' },

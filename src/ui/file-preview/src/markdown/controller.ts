@@ -4,6 +4,7 @@ import type { MarkdownWorkspaceState, RenderBodyResult, RenderPayload } from '..
 import { assertSuccessfulEditBlockResult, extractRenderPayload, extractToolText } from '../payload-utils.js';
 import { getAncestorDirectories, getParentDirectory, toPosixRelativePath } from '../path-utils.js';
 import { mountMarkdownEditor, renderMarkdownEditorShell, type MarkdownEditorHandle, type MarkdownEditorView, type MarkdownLinkHeading, type MarkdownLinkSearchItem } from './editor.js';
+import type { OpenConflictDialogOptions } from './conflict-dialog.js';
 import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
 import { getRenderedMarkdownCopyText } from './preview.js';
@@ -23,6 +24,7 @@ export interface MarkdownControllerDependencies {
     rerender: () => void;
     updateSaveStatus: (label: string, statusClass: string) => void;
     trackUiEvent?: (event: string, params?: Record<string, unknown>) => void;
+    showConflictDialog?: (options: OpenConflictDialogOptions) => void;
 }
 
 interface ToolErrorResult {
@@ -710,21 +712,87 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             state.saveIndicator = 'idle';
             const freshPayload = await readCompletePayload(state.filePath).catch(() => null);
             let reloadedFromDisk = false;
+            let freshContentForDialog: string | null = null;
             if (freshPayload) {
                 const freshContent = readPayloadContent(freshPayload);
                 if (freshContent !== state.fullDocumentContent) {
                     syncStateFromContent(state, freshContent, { keepDraft: true });
                     dependencies.storePayloadOverride(freshPayload);
                     reloadedFromDisk = true;
+                    freshContentForDialog = freshContent;
                 }
             }
 
             state.notice = null;
-            state.error = reloadedFromDisk
-                ? 'Save failed. Reloaded the file from disk.'
-                : error instanceof Error ? error.message : 'Save failed.';
-            dependencies.rerender();
-            flashSaveStatus('Save failed', 'saving', 3000);
+
+            if (reloadedFromDisk && dependencies.showConflictDialog && freshContentForDialog !== null) {
+                // Disk changed externally. Keep the inline error empty — the modal
+                // is the primary surface for this case; inline notices were easy
+                // to miss. Also don't flash "Save failed" since the save will
+                // likely succeed once the user picks an action.
+                const savedFreshContent = freshContentForDialog;
+                const normalized = state.filePath.replace(/\\/g, '/');
+                const displayName = normalized.split('/').pop() || state.filePath;
+                state.error = null;
+                dependencies.rerender();
+                dependencies.trackUiEvent?.('markdown_save_conflict_shown', {
+                    file_extension: getFileExtensionForAnalytics(state.filePath),
+                });
+                dependencies.showConflictDialog({
+                    fileName: displayName,
+                    onUseDiskVersion: () => {
+                        // Only apply if the state object we captured is still the
+                        // live workspaceState. If the user navigated away, this
+                        // is a no-op (mutating an orphaned state has no effect
+                        // on UI, which is fine).
+                        if (workspaceState === state) {
+                            syncStateFromContent(state, savedFreshContent);
+                            dependencies.rerender();
+                        }
+                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
+                            file_extension: getFileExtensionForAnalytics(state.filePath),
+                            action: 'use_disk',
+                        });
+                    },
+                    onSaveMyChanges: () => {
+                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
+                            file_extension: getFileExtensionForAnalytics(state.filePath),
+                            action: 'save_mine',
+                        });
+                        // Re-run saveDocument. computeEditBlocks will diff against
+                        // the fresh sourceContent that keepDraft: true left in place,
+                        // so hunks the user actually modified win over disk on
+                        // those specific lines and disk-only changes elsewhere are
+                        // preserved.
+                        void saveDocument();
+                    },
+                    onCancel: () => {
+                        // Dismissed without choosing. Draft stays dirty; show
+                        // the short inline note so the save button's context is
+                        // clear and the user can retry or keep editing.
+                        if (workspaceState === state) {
+                            state.error = 'File changed on disk. Save again to merge your edits, or reopen to discard them.';
+                            dependencies.rerender();
+                        }
+                        dependencies.trackUiEvent?.('markdown_save_conflict_resolved', {
+                            file_extension: getFileExtensionForAnalytics(state.filePath),
+                            action: 'dismissed',
+                        });
+                    },
+                });
+            } else {
+                // Not a disk-change conflict: either no fresh read available,
+                // disk matches what we had (edit_block failed for another
+                // reason — e.g. expected_replacements mismatch on unchanged
+                // content), or the host didn't wire a conflict dialog.
+                // Fall back to the inline error path.
+                state.error = reloadedFromDisk
+                    ? 'Save failed. Reloaded the file from disk.'
+                    : error instanceof Error ? error.message : 'Save failed.';
+                dependencies.rerender();
+                flashSaveStatus('Save failed', 'saving', 3000);
+            }
+
             dependencies.trackUiEvent?.('markdown_save_failed', {
                 file_extension: getFileExtensionForAnalytics(state.filePath),
                 reloaded_from_disk: reloadedFromDisk,
