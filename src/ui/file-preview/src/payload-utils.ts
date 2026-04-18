@@ -78,6 +78,20 @@ export function assertSuccessfulEditBlockResult(result: unknown): void {
         const message = extractToolText(result) ?? '';
         throw new Error(message || 'edit_block failed.');
     }
+
+    // edit_block uses soft-failure returns (no isError flag) for cases the LLM
+    // is meant to recover from — "Search content not found", "Expected N
+    // occurrences but found M", fuzzy-match-too-close-to-ignore, etc. These
+    // look like success to a naive client. A real success always carries
+    // structuredContent (see src/tools/edit.ts — the write path attaches
+    // fileName/filePath/fileType); absence means the edit did not land.
+    // Throwing here routes soft failures through saveDocument's catch, which
+    // reloads disk, preserves the user's draft, and surfaces the server's
+    // message to the user.
+    if (!isObjectRecord(result.structuredContent)) {
+        const message = extractToolText(result) ?? '';
+        throw new Error(message || 'edit_block did not confirm success.');
+    }
 }
 
 export function isLikelyUrl(filePath: string): boolean {
