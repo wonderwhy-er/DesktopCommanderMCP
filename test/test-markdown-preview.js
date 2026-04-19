@@ -291,7 +291,7 @@ async function testFailedSaveResyncsEditBaseline() {
       '',
     ].join('\n'), 'Local unsaved edits should stay in the editor');
     assert.strictEqual(state.dirty, true, 'The editor should stay dirty against the new disk baseline');
-    assert.ok(state.error?.includes('Reloaded the file from disk'), 'The error should explain that the editor resynced to disk');
+    assert.ok(state.error?.includes('changed on disk'), 'The error should explain that the file changed on disk');
     assert.deepStrictEqual(storedPayloads, [{
       fileName: payload.fileName,
       filePath: payload.filePath,

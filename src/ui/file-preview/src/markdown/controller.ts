@@ -664,14 +664,46 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 return;
             }
 
+            // Try each hunk independently. Previously the loop threw on the
+            // first soft-failure, which left earlier hunks already written to
+            // disk while the UI claimed "Save failed" — making it look like the
+            // editor had silently overwritten external changes. Now we track
+            // per-hunk outcomes so we can give the user an honest accounting.
+            let appliedCount = 0;
+            const skippedHunks: typeof blocks = [];
+            let lastHardError: unknown = null;
             for (const block of blocks) {
-                const editResult = await dependencies.callTool?.('edit_block', {
-                    file_path: state.filePath,
-                    old_string: block.old_string,
-                    new_string: block.new_string,
-                    expected_replacements: 1,
-                });
-                assertSuccessfulEditBlockResult(editResult);
+                try {
+                    const editResult = await dependencies.callTool?.('edit_block', {
+                        file_path: state.filePath,
+                        old_string: block.old_string,
+                        new_string: block.new_string,
+                        expected_replacements: 1,
+                    });
+                    assertSuccessfulEditBlockResult(editResult);
+                    appliedCount++;
+                } catch (hunkError) {
+                    // A per-hunk failure is almost always "old_string not on
+                    // disk" because the file changed there. Record it and keep
+                    // going so other hunks still get their chance.
+                    skippedHunks.push(block);
+                    lastHardError = hunkError;
+                }
+            }
+
+            if (skippedHunks.length > 0) {
+                // Partial (or total) failure. Let the catch branch take it —
+                // throw an error carrying counts so the catch can decide how
+                // to communicate and how to resync baseline vs. disk.
+                const err = new Error(
+                    `${appliedCount} of ${blocks.length} edit${blocks.length === 1 ? '' : 's'} applied; ` +
+                    `${skippedHunks.length} could not land because the text changed on disk.`
+                ) as Error & { appliedCount?: number; skippedCount?: number; totalCount?: number; underlyingError?: unknown };
+                err.appliedCount = appliedCount;
+                err.skippedCount = skippedHunks.length;
+                err.totalCount = blocks.length;
+                err.underlyingError = lastHardError;
+                throw err;
             }
 
             state.fullDocumentContent = state.draftContent;
@@ -710,6 +742,16 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         } catch (error) {
             state.saving = false;
             state.saveIndicator = 'idle';
+
+            // Pull per-hunk counts from the synthetic error thrown by the save
+            // loop, when this catch is reached via a partial/total hunk failure.
+            const errWithCounts = error as { appliedCount?: number; skippedCount?: number; totalCount?: number };
+            const appliedCount = typeof errWithCounts.appliedCount === 'number' ? errWithCounts.appliedCount : 0;
+            const skippedCount = typeof errWithCounts.skippedCount === 'number' ? errWithCounts.skippedCount : 0;
+            const totalCount = typeof errWithCounts.totalCount === 'number' ? errWithCounts.totalCount : 0;
+            const isPartialSuccess = appliedCount > 0 && skippedCount > 0;
+            const isTotalFailure = appliedCount === 0 && skippedCount > 0;
+
             const freshPayload = await readCompletePayload(state.filePath).catch(() => null);
             let reloadedFromDisk = false;
             let freshContentForDialog: string | null = null;
@@ -725,11 +767,29 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
             state.notice = null;
 
-            if (reloadedFromDisk && dependencies.showConflictDialog && freshContentForDialog !== null) {
-                // Disk changed externally. Keep the inline error empty — the modal
-                // is the primary surface for this case; inline notices were easy
-                // to miss. Also don't flash "Save failed" since the save will
-                // likely succeed once the user picks an action.
+            if (isPartialSuccess) {
+                // Some hunks landed on disk, some didn't. The user would be
+                // misled by a "Save failed" message — and would be misled by
+                // a conflict dialog claiming nothing was saved. Tell them the
+                // truth: N saved, M skipped, with the skipped lines preserved
+                // in their draft so they can re-try or edit around the
+                // external change.
+                state.error = (
+                    `${appliedCount} of ${totalCount} edit${totalCount === 1 ? '' : 's'} saved. ` +
+                    `${skippedCount} ${skippedCount === 1 ? 'edit' : 'edits'} did not apply because that text changed on disk — ` +
+                    `your draft still has them; save again to merge.`
+                );
+                dependencies.rerender();
+                flashSaveStatus('Saved (partial)', 'saved', 3000);
+                dependencies.trackUiEvent?.('markdown_save_partial', {
+                    file_extension: getFileExtensionForAnalytics(state.filePath),
+                    applied: appliedCount,
+                    skipped: skippedCount,
+                    total: totalCount,
+                });
+            } else if (isTotalFailure && reloadedFromDisk && dependencies.showConflictDialog && freshContentForDialog !== null) {
+                // No hunks landed and disk has changed. Genuine conflict — show
+                // the modal so the user can pick keep-mine / use-disk.
                 const savedFreshContent = freshContentForDialog;
                 const normalized = state.filePath.replace(/\\/g, '/');
                 const displayName = normalized.split('/').pop() || state.filePath;
@@ -741,10 +801,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 dependencies.showConflictDialog({
                     fileName: displayName,
                     onUseDiskVersion: () => {
-                        // Only apply if the state object we captured is still the
-                        // live workspaceState. If the user navigated away, this
-                        // is a no-op (mutating an orphaned state has no effect
-                        // on UI, which is fine).
                         if (workspaceState === state) {
                             syncStateFromContent(state, savedFreshContent);
                             dependencies.rerender();
@@ -767,9 +823,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         void saveDocument();
                     },
                     onCancel: () => {
-                        // Dismissed without choosing. Draft stays dirty; show
-                        // the short inline note so the save button's context is
-                        // clear and the user can retry or keep editing.
                         if (workspaceState === state) {
                             state.error = 'File changed on disk. Save again to merge your edits, or reopen to discard them.';
                             dependencies.rerender();
@@ -781,13 +834,11 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                     },
                 });
             } else {
-                // Not a disk-change conflict: either no fresh read available,
-                // disk matches what we had (edit_block failed for another
-                // reason — e.g. expected_replacements mismatch on unchanged
-                // content), or the host didn't wire a conflict dialog.
-                // Fall back to the inline error path.
+                // Fallback: unexpected error that isn't a per-hunk soft-fail
+                // (e.g. read_file failure during resync, or an exception before
+                // the save loop started). Use a generic inline message.
                 state.error = reloadedFromDisk
-                    ? 'Save failed. Reloaded the file from disk.'
+                    ? 'File changed on disk. Save again to merge your edits, or reopen the file to discard them.'
                     : error instanceof Error ? error.message : 'Save failed.';
                 dependencies.rerender();
                 flashSaveStatus('Save failed', 'saving', 3000);
@@ -796,6 +847,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             dependencies.trackUiEvent?.('markdown_save_failed', {
                 file_extension: getFileExtensionForAnalytics(state.filePath),
                 reloaded_from_disk: reloadedFromDisk,
+                applied: appliedCount,
+                skipped: skippedCount,
+                total: totalCount,
             });
         }
     }

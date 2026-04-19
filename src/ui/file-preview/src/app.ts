@@ -130,7 +130,17 @@ const markdownController = createMarkdownController({
     },
     updateSaveStatus: updateSaveStatusDOM,
     trackUiEvent: (event, params) => trackUiEvent?.(event, params),
-    showConflictDialog: (options) => conflictDialogController?.open(options),
+    showConflictDialog: (options) => {
+        if (conflictDialogController) {
+            conflictDialogController.open(options);
+            return;
+        }
+        // Dialog not yet initialized (would only happen if the save failure
+        // somehow fires before bootstrapApp). Fall back to the cancel callback
+        // so the editor still shows its inline note instead of silently no-op'ing.
+        console.warn('[file-preview] conflictDialogController not ready; firing onCancel fallback');
+        options.onCancel?.();
+    },
 });
 
 /**
