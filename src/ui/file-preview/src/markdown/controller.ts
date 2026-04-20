@@ -191,8 +191,29 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     let workspaceState: MarkdownWorkspaceState | undefined;
     let markdownEditorHandle: MarkdownEditorHandle | undefined;
     let markdownTocHandle: DocumentOutlineHandle | undefined;
+    let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const AUTOSAVE_DEBOUNCE_MS = 1000;
+
+    function scheduleAutosave(): void {
+        if (autosaveTimer !== null) {
+            clearTimeout(autosaveTimer);
+        }
+        autosaveTimer = setTimeout(() => {
+            autosaveTimer = null;
+            void saveDocument();
+        }, AUTOSAVE_DEBOUNCE_MS);
+    }
+
+    function cancelAutosave(): void {
+        if (autosaveTimer !== null) {
+            clearTimeout(autosaveTimer);
+            autosaveTimer = null;
+        }
+    }
 
     function disposeHandles(): void {
+        cancelAutosave();
         markdownEditorHandle?.destroy();
         markdownEditorHandle = undefined;
         markdownTocHandle?.dispose();
@@ -649,6 +670,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         if (!workspaceState || workspaceState.saving || !workspaceState.dirty || workspaceState.fileDeleted) {
             return;
         }
+        cancelAutosave();
         const state = workspaceState;
         state.saving = true;
         state.saveIndicator = 'saving';
@@ -907,6 +929,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                                 view: state.editorView,
                             });
                         }
+                        if (state.dirty) {
+                            scheduleAutosave();
+                        }
                         const nextOutline = extractMarkdownOutline(value);
                         if (!areOutlineItemsEqual(state.outline, nextOutline)) {
                             state.outline = nextOutline;
@@ -924,6 +949,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         }
                     },
                     onBlur: () => {
+                        cancelAutosave();
                         void saveDocument();
                     },
                 });
