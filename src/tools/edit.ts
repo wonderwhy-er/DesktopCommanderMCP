@@ -26,6 +26,8 @@ import path from 'path';
 import { detectLineEnding, normalizeLineEndings } from '../utils/lineEndingHandler.js';
 import { configManager } from '../config-manager.js';
 import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
+import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
+import { resolveAbsolutePath } from '../handlers/filesystem-handlers.js';
 
 interface SearchReplace {
     search: string;
@@ -200,11 +202,32 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         
         await writeFile(filePath, newContent);
         capture('server_edit_block_exact_success', {fileExtension: fileExtension, expectedReplacements, hasWarning: warningMessage !== ""});
+        const resolvedEditPath = resolveAbsolutePath(filePath);
+
+        // Show a partial preview centered on the edited area
+        const newLines = newContent.split('\n');
+        const totalLines = newLines.length;
+        const changePos = content.indexOf(normalizedSearch);
+        const changeStartLine = changePos >= 0 ? newContent.substring(0, changePos).split('\n').length - 1 : 0;
+        const changeLineCount = block.replace.split('\n').length;
+        const contextLines = 10;
+        const previewStart = Math.max(0, changeStartLine - contextLines);
+        const previewEnd = Math.min(totalLines, changeStartLine + changeLineCount + contextLines);
+        const previewContent = newLines.slice(previewStart, previewEnd).join('\n');
+        const previewLineCount = previewEnd - previewStart;
+        const remaining = totalLines - previewEnd;
+        const statusLine = `[Reading ${previewLineCount} lines from ${previewStart === 0 ? 'start' : `line ${previewStart}`} (total: ${totalLines} lines, ${remaining} remaining)]\n\n`;
+
         return {
-            content: [{ 
-                type: "text", 
-                text: `Successfully applied ${expectedReplacements} edit${expectedReplacements > 1 ? 's' : ''} to ${filePath}${warningMessage}` 
+            content: [{
+                type: "text",
+                text: `${statusLine}${previewContent}`
             }],
+            structuredContent: {
+                fileName: path.basename(resolvedEditPath),
+                filePath: resolvedEditPath,
+                fileType: resolvePreviewFileType(resolvedEditPath),
+            },
         };
     }
     
@@ -405,11 +428,17 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
             try {
                 // parsed.range is guaranteed non-empty string by hasRange check above
                 await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                const resolvedRangePath = resolveAbsolutePath(parsed.file_path);
                 return {
                     content: [{
                         type: "text",
                         text: `Successfully updated range ${parsed.range} in ${parsed.file_path}`
                     }],
+                    structuredContent: {
+                        fileName: path.basename(resolvedRangePath),
+                        filePath: resolvedRangePath,
+                        fileType: resolvePreviewFileType(resolvedRangePath),
+                    },
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -437,11 +466,17 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
             });
 
             if (result.success) {
+                const resolvedEditRangePath = resolveAbsolutePath(parsed.file_path);
                 return {
                     content: [{
                         type: "text",
                         text: `Successfully applied ${result.editsApplied} edit(s) to ${parsed.file_path}`
                     }],
+                    structuredContent: {
+                        fileName: path.basename(resolvedEditRangePath),
+                        filePath: resolvedEditRangePath,
+                        fileType: resolvePreviewFileType(resolvedEditRangePath),
+                    },
                 };
             }
 

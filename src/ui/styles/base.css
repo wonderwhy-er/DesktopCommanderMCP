@@ -50,7 +50,8 @@ body {
 
 body.dc-ready {
   max-height: none;
-  overflow: visible;
+  overflow: auto;
+  overflow: clip;
 }
 
 #app {

@@ -16,7 +16,6 @@ const TARGETS = {
     styleLayers: [
       'src/ui/styles/base.css',
       'src/ui/styles/components/compact-row.css',
-      'src/ui/styles/components/tool-header.css',
       'src/ui/styles/apps/file-preview.css'
     ]
   },
@@ -73,7 +72,7 @@ async function buildTarget(targetName) {
     platform: 'browser',
     target: ['es2020'],
     outfile: outputPath,
-    minify: false,
+    minify: true,
     sourcemap: false
   });
 }
