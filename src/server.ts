@@ -405,6 +405,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(WriteFileArgsSchema),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Write File",
                     readOnlyHint: false,
@@ -784,6 +785,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(EditBlockArgsSchema),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Edit Block",
                     readOnlyHint: false,

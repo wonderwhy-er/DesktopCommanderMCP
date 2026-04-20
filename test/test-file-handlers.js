@@ -19,6 +19,7 @@ import assert from 'assert';
 import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
 import { handleReadFile } from '../dist/handlers/filesystem-handlers.js';
+import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -346,6 +347,43 @@ async function testReadFilePreviewMetadata() {
 }
 
 /**
+ * Test 10: Markdown exact-match save flow works through edit_block
+ */
+async function testMarkdownExactMatchSave() {
+  console.log('\n--- Test 10: markdown exact-match save flow ---');
+
+  const originalContent = '# Title\n\nOriginal paragraph.\n';
+  const updatedContent = '# Title\n\nUpdated paragraph.\n';
+
+  await fs.writeFile(MD_FILE, originalContent);
+
+  const result = await handleEditBlock({
+    file_path: MD_FILE,
+    old_string: originalContent,
+    new_string: updatedContent,
+    expected_replacements: 1,
+  });
+
+  assert.ok(Array.isArray(result.content), 'edit_block result should include content array');
+  // After the file-preview refactor (commit 8fd8f94), edit_block's exact-match
+  // path returns a file preview + structuredContent instead of a
+  // "Successfully applied N edit(s)" message. Verify the new contract here.
+  assert.strictEqual(result.content[0].type, 'text', 'edit_block result[0] should be text');
+  assert.ok(result.structuredContent, 'edit_block should return structuredContent');
+  assert.ok(result.structuredContent.filePath, 'edit_block structuredContent should include filePath');
+  assert.match(
+    result.content[0].text,
+    /\[Reading \d+ lines? from/,
+    'edit_block should return a file-preview status line'
+  );
+
+  const readBack = await fs.readFile(MD_FILE, 'utf8');
+  assert.strictEqual(readBack, updatedContent, 'Markdown file should be rewritten with the updated content');
+
+  console.log('✓ markdown exact-match save flow works');
+}
+
+/**
  * Run all tests
  */
 async function runAllTests() {
@@ -360,6 +398,7 @@ async function runAllTests() {
   await testFileInfo();
   await testWriteModes();
   await testReadFilePreviewMetadata();
+  await testMarkdownExactMatchSave();
 
   console.log('\n✅ All file handler tests passed!');
 }

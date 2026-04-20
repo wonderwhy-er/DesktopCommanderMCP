@@ -28,6 +28,30 @@ const CR_FILE = path.join(TEST_DIR, 'file_with_cr.txt');
 const MIXED_FILE = path.join(TEST_DIR, 'file_with_mixed.txt');
 
 /**
+ * Assert that an edit_block result indicates success.
+ *
+ * Since the file-preview refactor (commit 8fd8f94), handleEditBlock's
+ * exact-match path no longer returns a "Successfully applied N edit(s)"
+ * text message — it returns a file preview (status line + snippet of
+ * the edited region) plus structuredContent carrying fileName/filePath/
+ * fileType for the preview UI.
+ *
+ * We assert the new contract: text response + structuredContent present
+ * + preview status line shape, which together mean the edit was written
+ * and a preview was produced. Callers additionally verify the edit
+ * landed by reading the file back.
+ */
+function assertEditBlockSuccess(result, message) {
+  assert.strictEqual(result.content[0].type, 'text', `${message} (should return text content)`);
+  assert.ok(result.structuredContent, `${message} (should return structuredContent)`);
+  assert.ok(result.structuredContent.filePath, `${message} (structuredContent.filePath should be set)`);
+  assert.ok(
+    /\[Reading \d+ lines? from/.test(result.content[0].text),
+    `${message} (text should contain file-preview status line)`
+  );
+}
+
+/**
  * Setup function to prepare the test environment
  */
 async function setup() {
@@ -102,11 +126,7 @@ async function testLFLineEndings() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the LF edit'
-    );
+    assertEditBlockSuccess(result, 'Should report success with the LF edit');
     
     // Verify file still has LF line endings
     const rawContent = await readRawFile(LF_FILE);
@@ -137,11 +157,7 @@ async function testCRLFLineEndings() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the CRLF edit'
-    );
+    assertEditBlockSuccess(result, 'Should report success with the CRLF edit');
     
     // Verify file still has CRLF line endings
     const rawContent = await readRawFile(CRLF_FILE);
@@ -156,11 +172,7 @@ async function testCRLFLineEndings() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the multi-line CRLF edit'
-    );
+    assertEditBlockSuccess(result, 'Should report success with the multi-line CRLF edit');
     
     console.log('✓ CRLF line endings test passed');
   } catch (error) {
@@ -185,11 +197,7 @@ async function testCRLineEndings() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the CR edit'
-    );
+    assertEditBlockSuccess(result, 'Should report success with the CR edit');
     
     // Verify file still has CR line endings
     const rawContent = await readRawFile(CR_FILE);
@@ -220,11 +228,7 @@ async function testMixedLineEndings() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the mixed line ending edit'
-    );
+    assertEditBlockSuccess(result, 'Should report success with the mixed line ending edit');
     
     // Verify file preserves mixed line endings
     const rawContent = await readRawFile(MIXED_FILE);
@@ -258,10 +262,7 @@ async function testContextAwareReplacement() {
       expected_replacements: 1
     });
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle multi-line replacement in CRLF file'
-    );
+    assertEditBlockSuccess(result, 'Should handle multi-line replacement in CRLF file');
     
     // Re-create LF file (it was modified in previous tests)
     const lfContent = `First line with LF
@@ -279,10 +280,7 @@ Fifth line with LF`;
       expected_replacements: 1
     });
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle multi-line replacement in LF file'
-    );
+    assertEditBlockSuccess(result, 'Should handle multi-line replacement in LF file');
     
     console.log('✓ Context-aware replacement test passed');
   } catch (error) {
@@ -323,10 +321,7 @@ async function testLargeFilePerformance() {
     });
     const timeLF = Date.now() - startLF;
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle large LF file'
-    );
+    assertEditBlockSuccess(result, 'Should handle large LF file');
     
     // Test CRLF file
     const startCRLF = Date.now();
@@ -338,10 +333,7 @@ async function testLargeFilePerformance() {
     });
     const timeCRLF = Date.now() - startCRLF;
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle large CRLF file'
-    );
+    assertEditBlockSuccess(result, 'Should handle large CRLF file');
     
     console.log(`✓ Performance test passed (LF: ${timeLF}ms, CRLF: ${timeCRLF}ms)`);
   } catch (error) {
@@ -387,10 +379,7 @@ async function testEdgeCases() {
       expected_replacements: 1
     });
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle single line file'
-    );
+    assertEditBlockSuccess(result, 'Should handle single line file');
     
     // Test file without trailing line ending
     result = await handleEditBlock({
@@ -400,10 +389,7 @@ async function testEdgeCases() {
       expected_replacements: 1
     });
     
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should handle file without trailing line ending'
-    );
+    assertEditBlockSuccess(result, 'Should handle file without trailing line ending');
     
     console.log('✓ Edge cases test passed');
   } catch (error) {
