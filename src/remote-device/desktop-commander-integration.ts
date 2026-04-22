@@ -94,7 +94,7 @@ export class DesktopCommanderIntegration {
                 // We can't run it directly as it's an stdio MCP server that waits for input
                 const whichCommand = process.platform === 'win32' ? 'where' : 'which';
                 console.debug('[DEBUG] Using platform command:', whichCommand, 'on platform:', process.platform);
-                const check = spawn(whichCommand, [commandName]);
+                const check = spawn(whichCommand, [commandName], { windowsHide: true });  // Prevent visible console windows on Windows
                 check.on('error', (err) => {
                     console.debug('[DEBUG] Spawn error for', whichCommand, ':', err.message);
                     reject(err);
