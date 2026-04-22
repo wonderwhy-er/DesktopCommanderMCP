@@ -81,7 +81,7 @@ export interface SearchSessionOptions {
     }
     
     // Start ripgrep process
-    const rgProcess = spawn(rgPath, args);
+    const rgProcess = spawn(rgPath, args, { windowsHide: true });  // Prevent visible console windows on Windows
     
     if (!rgProcess.pid) {
       throw new Error('Failed to start ripgrep process');

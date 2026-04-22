@@ -33,7 +33,8 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000): Promis
     const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
       const proc = spawn(process.execPath, [tempFile], {
         cwd: mcpRoot,
-        timeout: timeout_ms
+        timeout: timeout_ms,
+        windowsHide: true  // Prevent visible console windows on Windows
       });
 
       let stdout = '';
