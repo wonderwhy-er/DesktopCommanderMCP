@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.38",
+  "version": "0.2.39",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -53,6 +53,7 @@
     "release:dry": "node scripts/publish-release.cjs --dry-run",
     "release:mcp": "node scripts/publish-release.cjs --mcp-only",
     "release:alpha": "node scripts/publish-release.cjs --npm-only --alpha",
+    "release:skip-mcp": "node scripts/publish-release.cjs --skip-mcp",
     "logs:view": "npm run build && node scripts/view-fuzzy-logs.js",
     "logs:analyze": "npm run build && node scripts/analyze-fuzzy-logs.js",
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
