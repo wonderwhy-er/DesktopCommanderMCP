@@ -428,15 +428,14 @@ function checkMcpTokenExpiration() {
     printInfo('Checking MCP Registry token validity...');
     
     try {
-        // mcp-publisher stores token in ~/.mcp_publisher_token
         const homeDir = process.env.HOME || process.env.USERPROFILE;
-        const tokenPath = path.join(homeDir, '.mcp_publisher_token');
-        
+        const tokenPath = path.join(homeDir, '.config', 'mcp-publisher', 'token.json');
+
         if (!fs.existsSync(tokenPath)) {
             printError('MCP Registry token not found. Please run: mcp-publisher login github');
             return false;
         }
-        
+
         const authData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
         const token = authData.token;
         
