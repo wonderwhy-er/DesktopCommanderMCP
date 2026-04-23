@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
 
-// Ensure the directory for the log file exists
+// Ensure the directory for the log file exists (use sync to avoid top-level await
+// which breaks esbuild ESM bundling due to async propagation issues in __esm wrappers)
 const logDir = path.dirname(TOOL_CALL_FILE);
-await fs.promises.mkdir(logDir, { recursive: true });
+fs.mkdirSync(logDir, { recursive: true });
 
 /**
  * Track tool calls and save them to a log file
