@@ -138,7 +138,8 @@ class CommandManager {
                         // We found a separator - extract the command before it
                         if (currentCmd.trim()) {
                             const baseCommand = this.extractBaseCommand(currentCmd.trim());
-                            if (baseCommand) commands.push(baseCommand);
+                            // null means glob/invalid — push sentinel so validateCommand fails closed
+                            commands.push(baseCommand !== null ? baseCommand : '__INVALID_COMMAND__');
                         }
 
                         // Move past the separator
@@ -157,7 +158,8 @@ class CommandManager {
             // Don't forget to add the last command
             if (currentCmd.trim()) {
                 const baseCommand = this.extractBaseCommand(currentCmd.trim());
-                if (baseCommand) commands.push(baseCommand);
+                // null means glob/invalid — push sentinel so validateCommand fails closed
+                commands.push(baseCommand !== null ? baseCommand : '__INVALID_COMMAND__');
             }
 
             // Remove duplicates and return
@@ -222,9 +224,9 @@ class CommandManager {
             // "r"m, r"m", 'r''m' are normalized to the actual command name (#421)
             firstToken = firstToken.replace(/["']/g, '');
 
-            // Reject commands containing glob/wildcard characters to prevent
-            // wildcard-based blocklist bypass, e.g. /usr/bin/su*o (#421)
-            if (/[*?\[\]]/.test(firstToken)) {
+            // Reject commands containing glob/wildcard or brace-expansion characters
+            // to prevent blocklist bypass, e.g. /usr/bin/su*o or /usr/bin/s{udo,x} (#421)
+            if (/[*?\[\]{}]/.test(firstToken)) {
                 return null;
             }
 
@@ -249,14 +251,20 @@ class CommandManager {
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
                 const baseCommand = this.getBaseCommand(command);
-                // Reject if the base command contains glob/wildcard characters
-                // to prevent bypass via e.g. /usr/bin/su*o (#421)
-                if (/[*?\[\]]/.test(baseCommand)) {
+                // Reject if the base command contains glob/wildcard/brace characters
+                // to prevent bypass via e.g. /usr/bin/su*o or s{udo,x} (#421)
+                if (/[*?\[\]{}]/.test(baseCommand)) {
                     return false;
                 }
                 return !blockedCommands.includes(baseCommand);
             }
-            
+
+            // Fail closed: if any segment failed extraction (e.g. contained a glob),
+            // reject the entire command rather than silently ignoring the bad segment.
+            if (allCommands.includes('__INVALID_COMMAND__')) {
+                return false;
+            }
+
             // Check if any of the extracted commands are in the blocked list
             for (const cmd of allCommands) {
                 if (blockedCommands.includes(cmd)) {
