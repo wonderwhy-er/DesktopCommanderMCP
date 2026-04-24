@@ -249,6 +249,11 @@ class CommandManager {
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
                 const baseCommand = this.getBaseCommand(command);
+                // Reject if the base command contains glob/wildcard characters
+                // to prevent bypass via e.g. /usr/bin/su*o (#421)
+                if (/[*?\[\]]/.test(baseCommand)) {
+                    return false;
+                }
                 return !blockedCommands.includes(baseCommand);
             }
             
