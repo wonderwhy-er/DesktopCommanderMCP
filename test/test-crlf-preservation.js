@@ -39,7 +39,12 @@ async function setup() {
 }
 
 async function teardown(originalConfig) {
-  await configManager.updateConfig(originalConfig);
+  // Explicitly restore allowedDirectories — shallow merge via updateConfig()
+  // won't remove keys that were added during setup
+  await configManager.setValue(
+    'allowedDirectories',
+    originalConfig.allowedDirectories ?? []
+  );
   await fs.rm(TEST_DIR, { recursive: true, force: true });
   console.log('  Teardown: cleaned up');
 }
@@ -194,6 +199,12 @@ async function testReadWriteRoundtrip() {
   assert.ok(
     !withoutCRLF.includes('\n'),
     'Must not contain bare LF after roundtrip'
+  );
+
+  // Verify trailing newline is preserved
+  assert.ok(
+    rawAfter.endsWith('\r\n'),
+    'Trailing CRLF must be preserved after roundtrip'
   );
 
   console.log('    PASS');

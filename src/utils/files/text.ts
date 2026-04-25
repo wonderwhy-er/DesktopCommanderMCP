@@ -60,12 +60,18 @@ export class TextFileHandler implements FileHandler {
         // readline strips \r\n → \n; we need to restore the original style
         // so that downstream consumers (e.g. write_file) preserve line endings.
         const lineEnding = await this.detectFileLineEnding(filePath);
+        const endsWithNewline = await this.fileEndsWithNewline(filePath);
 
         const result = await this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage);
 
         // Restore original line endings if the file uses CRLF or CR
         if (lineEnding !== '\n' && typeof result.content === 'string') {
             result.content = normalizeLineEndings(result.content, lineEnding);
+        }
+
+        // Restore trailing newline stripped by readline
+        if (endsWithNewline && typeof result.content === 'string' && !result.content.endsWith(lineEnding)) {
+            result.content += lineEnding;
         }
 
         return result;
@@ -144,15 +150,61 @@ export class TextFileHandler implements FileHandler {
     }
 
     /**
-     * Detect line ending style by reading the first few KB of a file
+     * Detect line ending style by scanning file chunks until a newline is found.
+     * Reads in 8KB chunks up to 64KB to handle files whose first line exceeds 8KB.
      */
     private async detectFileLineEnding(filePath: string): Promise<LineEndingStyle> {
+        const CHUNK_SIZE = 8192;
+        const MAX_SCAN = 65536; // 64KB cap
         const fd = await fs.open(filePath, 'r');
         try {
-            const buffer = Buffer.alloc(8192);
-            const { bytesRead } = await fd.read(buffer, 0, 8192, 0);
-            const sample = buffer.toString('utf-8', 0, bytesRead);
-            return detectLineEnding(sample);
+            const buffer = Buffer.alloc(CHUNK_SIZE);
+            let position = 0;
+            let prevEndedWithCR = false;
+            while (position < MAX_SCAN) {
+                const { bytesRead } = await fd.read(buffer, 0, CHUNK_SIZE, position);
+                if (bytesRead === 0) {
+                    return prevEndedWithCR ? '\r' : '\n';
+                }
+                const chunk = buffer.toString('utf-8', 0, bytesRead);
+                // Handle \r at previous chunk boundary followed by \n here
+                if (prevEndedWithCR) {
+                    return chunk[0] === '\n' ? '\r\n' : '\r';
+                }
+                for (let i = 0; i < chunk.length; i++) {
+                    if (chunk[i] === '\r') {
+                        if (i + 1 < chunk.length) {
+                            return chunk[i + 1] === '\n' ? '\r\n' : '\r';
+                        }
+                        // \r at end of chunk — check next chunk for \n
+                        prevEndedWithCR = true;
+                        break;
+                    }
+                    if (chunk[i] === '\n') {
+                        return '\n';
+                    }
+                }
+                position += bytesRead;
+            }
+            // No newline found within cap — default to LF
+            return '\n';
+        } finally {
+            await fd.close();
+        }
+    }
+
+    /**
+     * Check whether the file ends with a newline character (\n or \r).
+     * Used to restore trailing newlines stripped by readline.
+     */
+    private async fileEndsWithNewline(filePath: string): Promise<boolean> {
+        const stats = await fs.stat(filePath);
+        if (stats.size === 0) return false;
+        const fd = await fs.open(filePath, 'r');
+        try {
+            const buf = Buffer.alloc(1);
+            await fd.read(buf, 0, 1, stats.size - 1);
+            return buf[0] === 0x0A || buf[0] === 0x0D; // \n or \r
         } finally {
             await fd.close();
         }
