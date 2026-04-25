@@ -14,7 +14,8 @@ class CommandManager {
             commandString = commandString.trim();
 
             // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            // Include newline variants to prevent newline-based blocklist bypass (#422)
+            const separators = ['\r\n', '\n', '\r', ';', '&&', '||', '|', '&'];
 
             // This will store our extracted commands
             const commands: string[] = [];
@@ -137,7 +138,8 @@ class CommandManager {
                         // We found a separator - extract the command before it
                         if (currentCmd.trim()) {
                             const baseCommand = this.extractBaseCommand(currentCmd.trim());
-                            if (baseCommand) commands.push(baseCommand);
+                            // null means glob/invalid — push sentinel so validateCommand fails closed
+                            commands.push(baseCommand !== null ? baseCommand : '__INVALID_COMMAND__');
                         }
 
                         // Move past the separator
@@ -156,7 +158,8 @@ class CommandManager {
             // Don't forget to add the last command
             if (currentCmd.trim()) {
                 const baseCommand = this.extractBaseCommand(currentCmd.trim());
-                if (baseCommand) commands.push(baseCommand);
+                // null means glob/invalid — push sentinel so validateCommand fails closed
+                commands.push(baseCommand !== null ? baseCommand : '__INVALID_COMMAND__');
             }
 
             // Remove duplicates and return
@@ -217,6 +220,16 @@ class CommandManager {
                 return null;
             }
 
+            // Strip all quote characters so that concatenated fragments like
+            // "r"m, r"m", 'r''m' are normalized to the actual command name (#421)
+            firstToken = firstToken.replace(/["']/g, '');
+
+            // Reject commands containing glob/wildcard or brace-expansion characters
+            // to prevent blocklist bypass, e.g. /usr/bin/su*o or /usr/bin/s{udo,x} (#421)
+            if (/[*?\[\]{}]/.test(firstToken)) {
+                return null;
+            }
+
             // strip path prefix so /usr/bin/sudo gets caught as "sudo"
             const baseName = path.basename(firstToken);
             return baseName.toLowerCase();
@@ -231,16 +244,27 @@ class CommandManager {
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
-            
+
             // Extract all commands from the command string
             const allCommands = this.extractCommands(command);
             
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
                 const baseCommand = this.getBaseCommand(command);
+                // Reject if the base command contains glob/wildcard/brace characters
+                // to prevent bypass via e.g. /usr/bin/su*o or s{udo,x} (#421)
+                if (/[*?\[\]{}]/.test(baseCommand)) {
+                    return false;
+                }
                 return !blockedCommands.includes(baseCommand);
             }
-            
+
+            // Fail closed: if any segment failed extraction (e.g. contained a glob),
+            // reject the entire command rather than silently ignoring the bad segment.
+            if (allCommands.includes('__INVALID_COMMAND__')) {
+                return false;
+            }
+
             // Check if any of the extracted commands are in the blocked list
             for (const cmd of allCommands) {
                 if (blockedCommands.includes(cmd)) {
