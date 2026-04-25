@@ -22,15 +22,22 @@ const __dirname = path.dirname(__filename);
 const TEST_DIR = path.join(__dirname, 'test_crlf_preservation');
 const CRLF_FILE = path.join(TEST_DIR, 'crlf_file.txt');
 const LF_FILE = path.join(TEST_DIR, 'lf_file.txt');
+const CRLF_NO_TRAILING_FILE = path.join(TEST_DIR, 'crlf_no_trailing.txt');
+const LF_NO_TRAILING_FILE = path.join(TEST_DIR, 'lf_no_trailing.txt');
 
 // The raw CRLF content (5 lines, each ending with \r\n)
 const CRLF_CONTENT = 'Line one\r\nLine two\r\nLine three\r\nLine four\r\nLine five\r\n';
 const LF_CONTENT = 'Line one\nLine two\nLine three\nLine four\nLine five\n';
+// Files without trailing newline (last line has no newline after it)
+const CRLF_NO_TRAILING_CONTENT = 'Line one\r\nLine two\r\nLine three\r\nLine four\r\nLine five';
+const LF_NO_TRAILING_CONTENT = 'Line one\nLine two\nLine three\nLine four\nLine five';
 
 async function setup() {
   await fs.mkdir(TEST_DIR, { recursive: true });
   await fs.writeFile(CRLF_FILE, CRLF_CONTENT, 'utf8');
   await fs.writeFile(LF_FILE, LF_CONTENT, 'utf8');
+  await fs.writeFile(CRLF_NO_TRAILING_FILE, CRLF_NO_TRAILING_CONTENT, 'utf8');
+  await fs.writeFile(LF_NO_TRAILING_FILE, LF_NO_TRAILING_CONTENT, 'utf8');
 
   const originalConfig = await configManager.getConfig();
   await configManager.setValue('allowedDirectories', [TEST_DIR]);
@@ -210,6 +217,116 @@ async function testReadWriteRoundtrip() {
   console.log('    PASS');
 }
 
+/**
+ * Test 6: Partial read (not reaching EOF) preserves CRLF on last line
+ * Edge case from CodeRabbit review: when reading only a subset of lines,
+ * the last line read still has content after it in the file, so its
+ * trailing newline must be preserved.
+ */
+async function testPartialReadPreservesCRLF() {
+  console.log('\n  Test 6: partial read (not reaching EOF) preserves CRLF');
+
+  // Read only first 2 lines of the 5-line CRLF file
+  const result = await handleReadFile({ path: CRLF_FILE, offset: 0, length: 2 });
+  const text = result.content[0].text;
+
+  const contentStart = text.indexOf('Line one');
+  const fileContent = text.substring(contentStart);
+
+  // Should contain CRLF, not bare LF
+  assert.ok(
+    fileContent.includes('\r\n'),
+    'Partial read must preserve CRLF line endings'
+  );
+  assert.ok(
+    !fileContent.match(/(?<!\r)\n/),
+    'Partial read must not contain bare LF'
+  );
+  // The last line read ("Line two") should end with \r\n because
+  // there are more lines after it in the file
+  assert.ok(
+    fileContent.endsWith('\r\n'),
+    'Last line of partial read must end with CRLF (more content follows in file)'
+  );
+  console.log('    PASS');
+}
+
+/**
+ * Test 7: Partial read (not reaching EOF) of LF file preserves LF on last line
+ */
+async function testPartialReadPreservesLF() {
+  console.log('\n  Test 7: partial read (not reaching EOF) preserves LF');
+
+  const result = await handleReadFile({ path: LF_FILE, offset: 0, length: 2 });
+  const text = result.content[0].text;
+
+  const contentStart = text.indexOf('Line one');
+  const fileContent = text.substring(contentStart);
+
+  assert.ok(
+    !fileContent.includes('\r'),
+    'LF partial read must not contain CR'
+  );
+  assert.ok(
+    fileContent.endsWith('\n'),
+    'Last line of LF partial read must end with LF (more content follows in file)'
+  );
+  console.log('    PASS');
+}
+
+/**
+ * Test 8: Full read of file without trailing newline must NOT add one
+ */
+async function testNoTrailingNewlinePreserved() {
+  console.log('\n  Test 8: full read of file without trailing newline does not add one');
+
+  // Read all 5 lines (the file has no trailing newline)
+  const result = await handleReadFile({ path: CRLF_NO_TRAILING_FILE, offset: 0, length: 1000 });
+  const text = result.content[0].text;
+
+  const contentStart = text.indexOf('Line one');
+  const fileContent = text.substring(contentStart);
+
+  // All internal line endings should be CRLF
+  assert.ok(
+    fileContent.includes('\r\n'),
+    'Internal line endings must be CRLF'
+  );
+  // But the content must NOT end with \r\n since the file doesn't
+  assert.ok(
+    !fileContent.endsWith('\r\n'),
+    'Must not add trailing CRLF when original file lacks one'
+  );
+  assert.ok(
+    fileContent.endsWith('Line five'),
+    'Content must end with last line text (no trailing newline)'
+  );
+  console.log('    PASS');
+}
+
+/**
+ * Test 9: Partial read of file without trailing newline - mid-file read should still get newline
+ */
+async function testPartialReadNoTrailingNewlineFile() {
+  console.log('\n  Test 9: partial read of no-trailing-newline file still gets newline at mid-file');
+
+  // Read first 2 lines of the no-trailing-newline file
+  const result = await handleReadFile({ path: CRLF_NO_TRAILING_FILE, offset: 0, length: 2 });
+  const text = result.content[0].text;
+
+  const contentStart = text.indexOf('Line one');
+  const fileContent = text.substring(contentStart);
+
+  // Even though the file doesn't end with a newline, our partial read
+  // is in the middle of the file — the last line we read ("Line two")
+  // definitely has a newline after it.
+  assert.ok(
+    fileContent.endsWith('\r\n'),
+    'Partial read from middle of file must end with CRLF regardless of file trailing newline'
+  );
+  console.log('    PASS');
+}
+
 async function runTests() {
   console.log('=== CRLF Preservation Tests (issue #97) ===');
   let originalConfig;
@@ -220,6 +337,10 @@ async function runTests() {
     await testReadFileLFUnchanged();
     await testEditBlockPreservesCRLF();
     await testReadWriteRoundtrip();
+    await testPartialReadPreservesCRLF();
+    await testPartialReadPreservesLF();
+    await testNoTrailingNewlinePreserved();
+    await testPartialReadNoTrailingNewlineFile();
     console.log('\n  All CRLF preservation tests passed!\n');
     return true;
   } catch (error) {

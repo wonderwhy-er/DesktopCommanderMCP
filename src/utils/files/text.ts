@@ -69,9 +69,15 @@ export class TextFileHandler implements FileHandler {
             result.content = normalizeLineEndings(result.content, lineEnding);
         }
 
-        // Restore trailing newline stripped by readline
-        if (endsWithNewline && typeof result.content === 'string' && !result.content.endsWith(lineEnding)) {
-            result.content += lineEnding;
+        // Restore trailing newline stripped by readline.
+        // When we haven't reached EOF, the last line we read definitely had
+        // a newline after it (there's more content following in the file).
+        // When we have reached EOF, only restore if the original file ended with one.
+        if (typeof result.content === 'string' && !result.content.endsWith(lineEnding)) {
+            const reachedEOF = result.metadata?.reachedEOF !== false;
+            if (!reachedEOF || endsWithNewline) {
+                result.content += lineEnding;
+            }
         }
 
         return result;
@@ -362,7 +368,7 @@ export class TextFileHandler implements FileHandler {
                 ? `${this.generateEnhancedStatusMessage(result.length, -n, fileTotalLines, true)}\n\n${result.join('\n')}`
                 : result.join('\n');
 
-            return { content, mimeType, metadata: {} };
+            return { content, mimeType, metadata: { reachedEOF: true } };
         } finally {
             await fd.close();
         }
@@ -409,7 +415,7 @@ export class TextFileHandler implements FileHandler {
             ? `${this.generateEnhancedStatusMessage(result.length, -requestedLines, fileTotalLines, true)}\n\n${result.join('\n')}`
             : result.join('\n');
 
-        return { content, mimeType, metadata: {} };
+        return { content, mimeType, metadata: { reachedEOF: true } };
     }
 
     /**
@@ -430,12 +436,15 @@ export class TextFileHandler implements FileHandler {
 
         const result: string[] = [];
         let lineNumber = 0;
+        let reachedEOF = true;
 
         for await (const line of rl) {
             if (lineNumber >= offset && result.length < length) {
                 result.push(line);
+            } else if (result.length >= length) {
+                reachedEOF = false;
+                break;
             }
-            if (result.length >= length) break;
             lineNumber++;
         }
 
@@ -444,10 +453,10 @@ export class TextFileHandler implements FileHandler {
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
             const content = `${statusMessage}\n\n${result.join('\n')}`;
-            return { content, mimeType, metadata: {} };
+            return { content, mimeType, metadata: { reachedEOF } };
         } else {
             const content = result.join('\n');
-            return { content, mimeType, metadata: {} };
+            return { content, mimeType, metadata: { reachedEOF } };
         }
     }
 
@@ -500,6 +509,7 @@ export class TextFileHandler implements FileHandler {
 
             const result: string[] = [];
             let firstLineSkipped = false;
+            let reachedEOF = true;
 
             for await (const line of rl2) {
                 if (!firstLineSkipped && startPosition > 0) {
@@ -510,6 +520,7 @@ export class TextFileHandler implements FileHandler {
                 if (result.length < length) {
                     result.push(line);
                 } else {
+                    reachedEOF = false;
                     break;
                 }
             }
@@ -520,7 +531,7 @@ export class TextFileHandler implements FileHandler {
                 ? `${this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
                 : result.join('\n');
 
-            return { content, mimeType, metadata: {} };
+            return { content, mimeType, metadata: { reachedEOF } };
         } finally {
             await fd.close();
         }
