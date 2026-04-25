@@ -23,6 +23,7 @@ import {
     FileResult,
     FileInfo
 } from './base.js';
+import { detectLineEnding, normalizeLineEndings, type LineEndingStyle } from '../lineEndingHandler.js';
 
 // TODO: Centralize these constants with filesystem.ts to avoid silent drift
 // These duplicate concepts from filesystem.ts and should be moved to a shared
@@ -55,8 +56,19 @@ export class TextFileHandler implements FileHandler {
         const length = options?.length ?? 1000; // Default from config
         const includeStatusMessage = options?.includeStatusMessage ?? true;
 
-        // Binary detection is done at factory level - just read as text
-        return this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage);
+        // Detect original line ending before reading.
+        // readline strips \r\n → \n; we need to restore the original style
+        // so that downstream consumers (e.g. write_file) preserve line endings.
+        const lineEnding = await this.detectFileLineEnding(filePath);
+
+        const result = await this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage);
+
+        // Restore original line endings if the file uses CRLF or CR
+        if (lineEnding !== '\n' && typeof result.content === 'string') {
+            result.content = normalizeLineEndings(result.content, lineEnding);
+        }
+
+        return result;
     }
 
     async write(path: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
@@ -129,6 +141,21 @@ export class TextFileHandler implements FileHandler {
             // If we can't read the file, return undefined
         }
         return undefined;
+    }
+
+    /**
+     * Detect line ending style by reading the first few KB of a file
+     */
+    private async detectFileLineEnding(filePath: string): Promise<LineEndingStyle> {
+        const fd = await fs.open(filePath, 'r');
+        try {
+            const buffer = Buffer.alloc(8192);
+            const { bytesRead } = await fd.read(buffer, 0, 8192, 0);
+            const sample = buffer.toString('utf-8', 0, bytesRead);
+            return detectLineEnding(sample);
+        } finally {
+            await fd.close();
+        }
     }
 
     /**
