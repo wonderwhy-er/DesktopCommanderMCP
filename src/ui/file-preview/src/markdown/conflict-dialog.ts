@@ -2,7 +2,7 @@
  * The "file changed on disk" conflict resolver.
  *
  * Shown when saveDocument detected that disk differs from what the editor
- * thought it had. The editor has already re-synced its sourceContent to the
+ * thought it had. The editor has already re-synced its disk baseline to the
  * fresh disk content with keepDraft: true — so the dialog's two actions map
  * onto concrete state transitions:
  *

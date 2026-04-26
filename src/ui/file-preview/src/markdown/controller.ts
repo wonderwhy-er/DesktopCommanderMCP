@@ -1,15 +1,13 @@
 import { attachDocumentOutline, renderDocumentOutline, type DocumentOutlineHandle } from '../document-outline.js';
 import { getDocumentFullscreenAvailability, parseReadRange, shouldAutoLoadDocumentOnEnterFullscreen, stripReadStatusLine } from '../document-workspace.js';
 import type { MarkdownWorkspaceState, RenderBodyResult, RenderPayload } from '../model.js';
-import { assertSuccessfulEditBlockResult, extractRenderPayload, extractToolText } from '../payload-utils.js';
+import { assertSuccessfulEditBlockResult, extractRenderPayload, extractToolText, getFileExtensionForAnalytics } from '../payload-utils.js';
 import { getAncestorDirectories, getParentDirectory, toPosixRelativePath } from '../path-utils.js';
 import { mountMarkdownEditor, renderMarkdownEditorShell, type MarkdownEditorHandle, type MarkdownEditorView, type MarkdownLinkHeading, type MarkdownLinkSearchItem } from './editor.js';
 import type { OpenConflictDialogOptions } from './conflict-dialog.js';
 import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
-import { getRenderedMarkdownCopyText } from './preview.js';
 import { slugifyMarkdownHeading } from './slugify.js';
-import { getFileExtensionForAnalytics } from '../payload-utils.js';
 
 export interface MarkdownControllerDependencies {
     callTool?: (name: string, args: Record<string, unknown>) => Promise<unknown | undefined>;
@@ -192,8 +190,10 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     let markdownEditorHandle: MarkdownEditorHandle | undefined;
     let markdownTocHandle: DocumentOutlineHandle | undefined;
     let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+    let outlineRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     const AUTOSAVE_DEBOUNCE_MS = 1000;
+    const OUTLINE_REFRESH_DEBOUNCE_MS = 200;
 
     function scheduleAutosave(): void {
         if (autosaveTimer !== null) {
@@ -212,8 +212,37 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         }
     }
 
+    function cancelOutlineRefresh(): void {
+        if (outlineRefreshTimer !== null) {
+            clearTimeout(outlineRefreshTimer);
+            outlineRefreshTimer = null;
+        }
+    }
+
+    function applyOutlineUpdate(state: MarkdownWorkspaceState, nextOutline: MarkdownWorkspaceState['outline']): void {
+        if (areOutlineItemsEqual(state.outline, nextOutline)) {
+            return;
+        }
+        state.outline = nextOutline;
+        if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
+            state.activeHeadingId = state.outline[0]?.id ?? null;
+        }
+        markdownTocHandle?.refresh(state.outline, state.activeHeadingId);
+    }
+
+    function scheduleOutlineRefresh(state: MarkdownWorkspaceState): void {
+        if (outlineRefreshTimer !== null) {
+            clearTimeout(outlineRefreshTimer);
+        }
+        outlineRefreshTimer = setTimeout(() => {
+            outlineRefreshTimer = null;
+            applyOutlineUpdate(state, extractMarkdownOutline(state.draftContent));
+        }, OUTLINE_REFRESH_DEBOUNCE_MS);
+    }
+
     function disposeHandles(): void {
         cancelAutosave();
+        cancelOutlineRefresh();
         markdownEditorHandle?.destroy();
         markdownEditorHandle = undefined;
         markdownTocHandle?.dispose();
@@ -235,7 +264,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         options: { keepDraft?: boolean } = {}
     ): void {
         const nextDraftContent = options.keepDraft ? state.draftContent : content;
-        state.sourceContent = content;
         state.fullDocumentContent = content;
         state.draftContent = nextDraftContent;
         state.outline = extractMarkdownOutline(content);
@@ -279,15 +307,13 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     function getState(payload: RenderPayload): MarkdownWorkspaceState {
         const cleanedContent = stripReadStatusLine(payload.content);
 
-        if (!workspaceState || workspaceState.filePath !== payload.filePath || workspaceState.sourceContent !== cleanedContent) {
+        if (!workspaceState || workspaceState.filePath !== payload.filePath || workspaceState.fullDocumentContent !== cleanedContent) {
             const outline = extractMarkdownOutline(cleanedContent);
             workspaceState = {
                 filePath: payload.filePath,
-                sourceContent: cleanedContent,
                 fullDocumentContent: cleanedContent,
                 draftContent: cleanedContent,
                 outline,
-                mode: 'edit',
                 dirty: false,
                 activeHeadingId: outline[0]?.id ?? null,
                 pendingAnchor: null,
@@ -321,6 +347,13 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const notice = [state.error, state.notice]
             .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
+        // While loading the full document, suppress the editor entirely so the
+        // user never sees the partial source briefly (especially in raw mode,
+        // where it would otherwise read as the content actually being edited).
+        const mainContent = state.loadingDocument
+            ? '<div class="markdown-editor-loading">Loading full document…</div>'
+            : renderMarkdownEditorShell({ view: state.editorView });
+
         return {
             notice,
             html: `
@@ -328,7 +361,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 <div class="markdown-workspace markdown-workspace--edit${tocHtml ? ' markdown-workspace--with-toc' : ''}">
                   ${tocHtml}
                   <section class="markdown-workspace-main markdown-workspace-main--editor">
-                    ${renderMarkdownEditorShell({ view: state.editorView })}
+                    ${mainContent}
                   </section>
                 </div>
               </div>
@@ -522,11 +555,10 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const range = parseReadRange(payload.content);
         if (!range?.isPartial) {
             if (options.keepEditMode) {
-                state.mode = 'edit';
                 state.editorView = 'markdown';
                 state.notice = null;
                 state.error = null;
-                state.draftContent = state.sourceContent;
+                state.draftContent = state.fullDocumentContent;
                 state.dirty = false;
                 dependencies.rerender();
             }
@@ -553,9 +585,8 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             nextState.loadingDocument = false;
             nextState.notice = null;
             nextState.error = null;
-            syncStateFromContent(nextState, nextState.sourceContent);
+            syncStateFromContent(nextState, nextState.fullDocumentContent);
             if (options.keepEditMode) {
-                nextState.mode = 'edit';
                 nextState.editorView = 'markdown';
                 dependencies.rerender();
             }
@@ -631,7 +662,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             return;
         }
 
-        state.mode = 'edit';
         state.draftContent = state.fullDocumentContent;
         state.dirty = false;
         state.editorView = 'markdown';
@@ -678,7 +708,8 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         state.notice = null;
 
         try {
-            const blocks = computeEditBlocks(state.fullDocumentContent, state.draftContent);
+            const savedContent = state.draftContent;
+            const blocks = computeEditBlocks(state.fullDocumentContent, savedContent);
             if (blocks.length === 0) {
                 state.saving = false;
                 state.saveIndicator = 'idle';
@@ -728,17 +759,18 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 throw err;
             }
 
-            state.fullDocumentContent = state.draftContent;
-            state.sourceContent = state.draftContent;
-            state.outline = extractMarkdownOutline(state.sourceContent);
-            state.dirty = false;
+            const hasNewUnsavedDraft = state.draftContent !== savedContent;
+            state.fullDocumentContent = savedContent;
+            if (!hasNewUnsavedDraft) {
+                state.outline = extractMarkdownOutline(state.fullDocumentContent);
+            }
+            state.dirty = hasNewUnsavedDraft;
             state.saving = false;
-            state.saveIndicator = 'saved';
+            state.saveIndicator = hasNewUnsavedDraft ? 'idle' : 'saved';
             if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
                 state.activeHeadingId = state.outline[0]?.id ?? null;
             }
 
-            const savedContent = state.draftContent;
             const currentPayload = dependencies.getCurrentPayload();
             if (currentPayload) {
                 const statusLineMatch = currentPayload.content.match(/^(\[Reading [^\]]+\]\r?\n(?:\r?\n)?)/);
@@ -750,13 +782,17 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             if (revert) {
                 revert.disabled = !isUndoAvailable(state);
             }
-            flashSaveStatus('Saved', 'saved', 1800, () => {
-                if (!state.dirty && !state.saving) {
-                    state.saveIndicator = 'idle';
-                    return true;
-                }
-                return false;
-            });
+            if (hasNewUnsavedDraft) {
+                scheduleAutosave();
+            } else {
+                flashSaveStatus('Saved', 'saved', 1800, () => {
+                    if (!state.dirty && !state.saving) {
+                        state.saveIndicator = 'idle';
+                        return true;
+                    }
+                    return false;
+                });
+            }
             dependencies.trackUiEvent?.('markdown_saved', {
                 file_extension: getFileExtensionForAnalytics(state.filePath),
                 blocks: blocks.length,
@@ -838,7 +874,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                             action: 'save_mine',
                         });
                         // Re-run saveDocument. computeEditBlocks will diff against
-                        // the fresh sourceContent that keepDraft: true left in place,
+                        // the fresh disk baseline that keepDraft: true left in place,
                         // so hunks the user actually modified win over disk on
                         // those specific lines and disk-only changes elsewhere are
                         // preserved.
@@ -919,6 +955,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                     currentFilePath: payload.filePath,
                     searchLinks: (query) => searchLinkTargets(payload.filePath, query),
                     loadHeadings: (targetPath) => loadLinkHeadings(payload.filePath, targetPath),
+                    onOpenLink: (href) => {
+                        void navigateLink(payload, href);
+                    },
                     onChange: (value) => {
                         state.draftContent = value;
                         state.dirty = value !== state.fullDocumentContent;
@@ -932,14 +971,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         if (state.dirty) {
                             scheduleAutosave();
                         }
-                        const nextOutline = extractMarkdownOutline(value);
-                        if (!areOutlineItemsEqual(state.outline, nextOutline)) {
-                            state.outline = nextOutline;
-                            if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
-                                state.activeHeadingId = state.outline[0]?.id ?? null;
-                            }
-                            markdownTocHandle?.refresh(state.outline, state.activeHeadingId);
-                        }
+                        scheduleOutlineRefresh(state);
                         if (state.dirty && state.saveIndicator === 'saved') {
                             state.saveIndicator = 'idle';
                         }
@@ -977,22 +1009,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             void requestFullscreen();
         });
 
-        if (wrapper) {
-            wrapper.addEventListener('click', (event) => {
-                const target = event.target as HTMLElement | null;
-                const link = target?.closest<HTMLAnchorElement>('a[href]');
-                if (!link || !link.closest('.markdown-doc')) {
-                    return;
-                }
-                const href = link.getAttribute('href');
-                if (!href) {
-                    return;
-                }
-
-                event.preventDefault();
-                void navigateLink(payload, href);
-            });
-        }
 
         const tocShell = document.querySelector('.document-outline-shell') as HTMLElement | null;
         if (tocShell && wrapper) {
@@ -1017,10 +1033,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
     function getCopyText(payload: RenderPayload): string | null {
         const state = getState(payload);
-        const source = state.draftContent;
-        return state.editorView === 'raw'
-            ? source
-            : (getRenderedMarkdownCopyText(source) || source);
+        return state.draftContent;
     }
 
     async function handleInlineExitFromFullscreen(originalPayload?: RenderPayload): Promise<RenderPayload | undefined> {
@@ -1046,7 +1059,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         buildBody,
         clear,
         disposeHandles,
-        ensureCompletePayload,
         getCopyText,
         getState,
         handleInlineExitFromFullscreen,
@@ -1058,7 +1070,6 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         requestEditMode,
         requestFullscreen,
         saveDocument,
-        setEditorView,
     };
 }
 
