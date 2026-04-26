@@ -6,11 +6,9 @@ export type RenderPayload = FilePreviewStructuredContent & { content: string };
 
 export interface MarkdownWorkspaceState {
     filePath: string;
-    sourceContent: string;
     fullDocumentContent: string;
     draftContent: string;
     outline: DocumentOutlineItem[];
-    mode: 'edit';
     dirty: boolean;
     activeHeadingId: string | null;
     pendingAnchor: string | null;

@@ -15,9 +15,6 @@ interface ParsedWikiLink {
     alias?: string;
 }
 
-const WIKI_LINK_PATTERN = /\[\[([^\]|#]*)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
-const FENCE_PATTERN = /^(`{3,}|~{3,})/;
-
 function encodeLinkPath(pathValue: string): string {
     return encodeURI(normalizePathSeparators(pathValue));
 }
@@ -41,22 +38,6 @@ function parseWikiLink(rawHref: string): ParsedWikiLink | null {
         anchor: match[2]?.trim(),
         alias: match[3]?.trim(),
     };
-}
-
-function buildWikiDisplayText(link: ParsedWikiLink): string {
-    if (link.alias && link.alias.length > 0) {
-        return link.alias;
-    }
-
-    if (link.path && link.anchor) {
-        return `${link.path}#${link.anchor}`;
-    }
-
-    if (link.path) {
-        return link.path;
-    }
-
-    return link.anchor ?? '';
 }
 
 function appendMarkdownExtension(pathValue: string): string {
@@ -90,51 +71,6 @@ function buildWikiHref(link: ParsedWikiLink): string {
     }
 
     return `${encodedPath}#${slugifyMarkdownHeading(link.anchor)}`;
-}
-
-function rewriteWikiLinksInPlainText(segment: string): string {
-    return segment.replace(WIKI_LINK_PATTERN, (match) => {
-        const parsed = parseWikiLink(match);
-        if (!parsed) {
-            return match;
-        }
-
-        const displayText = buildWikiDisplayText(parsed);
-        const href = buildWikiHref(parsed);
-        return `[${displayText}](${href} "mcp-wiki:${encodeURIComponent(match)}")`;
-    });
-}
-
-function replaceWikiLinksOutsideInlineCode(line: string): string {
-    let result = '';
-    let cursor = 0;
-
-    while (cursor < line.length) {
-        const codeStart = line.indexOf('`', cursor);
-        if (codeStart === -1) {
-            result += rewriteWikiLinksInPlainText(line.slice(cursor));
-            break;
-        }
-
-        result += rewriteWikiLinksInPlainText(line.slice(cursor, codeStart));
-
-        let delimiterEnd = codeStart;
-        while (delimiterEnd < line.length && line[delimiterEnd] === '`') {
-            delimiterEnd += 1;
-        }
-
-        const delimiter = line.slice(codeStart, delimiterEnd);
-        const codeEnd = line.indexOf(delimiter, delimiterEnd);
-        if (codeEnd === -1) {
-            result += line.slice(codeStart);
-            break;
-        }
-
-        result += line.slice(codeStart, codeEnd + delimiter.length);
-        cursor = codeEnd + delimiter.length;
-    }
-
-    return result;
 }
 
 function decodeAnchorFragment(fragment: string | undefined): string | undefined {
@@ -197,47 +133,6 @@ function resolveFileTargetPath(currentPath: string, rawPath: string): string {
     }
     const resolvedUrl = new URL(encodeURI(normalizedRawPath), toDirectoryFileUrl(baseDirectory));
     return normalizeFilePath(fromFileUrl(resolvedUrl));
-}
-
-/**
- * Invert `rewriteWikiLinks`: convert `[alias](href "mcp-wiki:ENCODED")` links
- * back to their original `[[...]]` form. Used when serializing a WYSIWYG
- * edit session back to markdown — the `mcp-wiki:` title prefix is the
- * round-trip marker written by `rewriteWikiLinks`.
- */
-export function restoreWikiLinks(markdown: string): string {
-    return markdown.replace(/\[([^\]]*)\]\(([^)\s]*)(?:\s+"mcp-wiki:([^"]+)")\)/g, (_, _alias, _href, encoded) => {
-        try {
-            return decodeURIComponent(encoded);
-        } catch {
-            return `[[${encoded}]]`;
-        }
-    });
-}
-
-export function rewriteWikiLinks(source: string): string {
-    const lines = source.split('\n');
-    let activeFence: string | null = null;
-
-    return lines.map((line) => {
-        const trimmedStart = line.trimStart();
-        const fenceMatch = trimmedStart.match(FENCE_PATTERN);
-        if (fenceMatch) {
-            const marker = fenceMatch[1];
-            if (!activeFence) {
-                activeFence = marker;
-            } else if (marker[0] === activeFence[0] && marker.length >= activeFence.length) {
-                activeFence = null;
-            }
-            return line;
-        }
-
-        if (activeFence) {
-            return line;
-        }
-
-        return replaceWikiLinksOutsideInlineCode(line);
-    }).join('\n');
 }
 
 export function resolveMarkdownLink(currentPath: string, rawHref: string): ResolvedMarkdownLink {

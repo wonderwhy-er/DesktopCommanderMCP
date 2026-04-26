@@ -1,10 +1,8 @@
 import assert from 'assert';
 import { pathToFileURL } from 'url';
 
-import { renderMarkdown } from '../dist/ui/file-preview/src/components/markdown-renderer.js';
-import { resolveMarkdownLink, rewriteWikiLinks } from '../dist/ui/file-preview/src/markdown/linking.js';
+import { resolveMarkdownLink } from '../dist/ui/file-preview/src/markdown/linking.js';
 import { extractMarkdownOutline } from '../dist/ui/file-preview/src/markdown/outline.js';
-import { getRenderedMarkdownCopyText } from '../dist/ui/file-preview/src/markdown/preview.js';
 import { renderMarkdownEditorShell } from '../dist/ui/file-preview/src/markdown/editor.js';
 import { createMarkdownController } from '../dist/ui/file-preview/src/markdown/controller.js';
 import { createSlugTracker, slugifyMarkdownHeading } from '../dist/ui/file-preview/src/markdown/slugify.js';
@@ -125,40 +123,28 @@ async function testLinkResolution() {
   console.log('✓ anchors, file links, absolute paths, external URLs, and wiki links resolve correctly');
 }
 
-async function testWikiRewriteAndRendering() {
-  console.log('\n--- Test 4: wiki link rewrite and rendering ---');
+async function testOutlineFromMarkdownSource() {
+  console.log('\n--- Test 4: source-backed outline text ---');
 
-  const rewritten = rewriteWikiLinks('See [[Meeting Notes#Action Items|Actions]] and `[[Code]]`.');
-  assert.ok(rewritten.includes('[Actions](./Meeting%20Notes.md#action-items "mcp-wiki:'), 'Wiki links should rewrite to markdown links with round-trip metadata');
-  assert.ok(rewritten.includes('`[[Code]]`'), 'Inline code should remain untouched');
-  const multiTickRewrite = rewriteWikiLinks('Use ``[[Code]]`` and `code [[still-not-link]]` samples.');
-  assert.ok(multiTickRewrite.includes('``[[Code]]``'), 'Multi-backtick inline code should remain untouched');
-  assert.ok(multiTickRewrite.includes('`code [[still-not-link]]`'), 'Wiki links inside inline code should stay literal');
-
-  const fencedRewrite = rewriteWikiLinks([
-    '````md',
-    '```',
-    '[[Inside Code]]',
-    '````',
-    '[[Outside Code]]',
-  ].join('\n'));
-  assert.ok(fencedRewrite.includes('[[Inside Code]]'), 'Long code fences should remain open until a matching-length close fence appears');
-  assert.ok(fencedRewrite.includes('[Outside Code](./Outside%20Code.md "mcp-wiki:'), 'Wiki links outside closed fences should still rewrite');
-
-  const html = renderMarkdown([
+  const outline = extractMarkdownOutline([
     '# Title',
     '## Details',
     '## Details',
     '',
-    'Go to [[Meeting Notes#Action Items|Actions]].',
+    '### Linked [Section](#details)',
   ].join('\n'));
 
-  assert.ok(html.includes('id="title"'), 'Rendered markdown should include slugged heading ids');
-  assert.ok(html.includes('id="details-2"'), 'Duplicate headings should receive unique ids');
-  assert.ok(html.includes('href="./Meeting%20Notes.md#action-items"'), 'Rendered markdown should keep rewritten wiki links');
-  assert.ok(html.includes('data-wiki-link="[[Meeting Notes#Action Items|Actions]]"'), 'Rendered markdown should preserve original wiki-link syntax for editing');
+  assert.deepStrictEqual(
+    outline.map((item) => ({ id: item.id, text: item.text, level: item.level })),
+    [
+      { id: 'title', text: 'Title', level: 1 },
+      { id: 'details', text: 'Details', level: 2 },
+      { id: 'details-2', text: 'Details', level: 2 },
+      { id: 'linked-section', text: 'Linked Section', level: 3 },
+    ],
+  );
 
-  console.log('✓ markdown rendering uses preview heading ids and rewritten wiki links');
+  console.log('✓ outline text strips inline markdown and dedupes heading slugs');
 }
 
 async function testFailedSaveResyncsEditBaseline() {
@@ -274,7 +260,6 @@ async function testFailedSaveResyncsEditBaseline() {
       'omega',
       '',
     ].join('\n'), 'The simulated disk should keep the partial save');
-    assert.strictEqual(state.sourceContent, diskContent, 'Source content should match the latest disk contents');
     assert.strictEqual(state.fullDocumentContent, diskContent, 'The full document baseline should match the latest disk contents');
     assert.strictEqual(state.draftContent, [
       'alpha updated',
@@ -370,6 +355,80 @@ async function testSuccessfulSaveResetsUndoBaseline() {
   console.log('✓ successful saves clear undo state against the latest saved content');
 }
 
+async function testInFlightSaveKeepsNewerDraftDirty() {
+  console.log('\n--- Test 13: in-flight saves keep newer drafts dirty ---');
+
+  const payload = {
+    fileName: 'notes.md',
+    filePath: '/Users/tester/docs/notes.md',
+    fileType: 'markdown',
+    content: 'alpha\n',
+  };
+
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  globalThis.window = { setTimeout: globalThis.setTimeout };
+  globalThis.document = {
+    getElementById: () => null,
+    querySelector: () => null,
+  };
+
+  let resolveEditBlock;
+  let savedString = null;
+
+  const controller = createMarkdownController({
+    callTool: async (name, args) => {
+      if (name !== 'edit_block') {
+        throw new Error(`Unexpected tool call: ${name}`);
+      }
+      savedString = args.new_string;
+      await new Promise((resolve) => {
+        resolveEditBlock = resolve;
+      });
+      return {
+        content: [{ type: 'text', text: 'Successfully applied 1 edit(s) to notes.md' }],
+        structuredContent: {
+          fileName: payload.fileName,
+          filePath: payload.filePath,
+          fileType: payload.fileType,
+        },
+      };
+    },
+    getAvailableDisplayModes: () => ['inline', 'fullscreen'],
+    getCurrentDisplayMode: () => 'inline',
+    getCurrentPayload: () => payload,
+    setExpanded: () => {},
+    storePayloadOverride: () => {},
+    rerender: () => {},
+    updateSaveStatus: () => {},
+  });
+
+  try {
+    const state = controller.getState(payload);
+    state.draftContent = 'beta\n';
+    state.dirty = true;
+
+    const savePromise = controller.saveDocument();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    state.draftContent = 'gamma\n';
+    state.dirty = true;
+    resolveEditBlock();
+    await savePromise;
+
+    assert.strictEqual(savedString, 'beta\n', 'The in-flight save should write the original save snapshot');
+    assert.strictEqual(state.fullDocumentContent, 'beta\n', 'The saved snapshot should become the disk baseline');
+    assert.strictEqual(state.draftContent, 'gamma\n', 'Newer local edits should remain in the draft');
+    assert.strictEqual(state.dirty, true, 'Newer local edits should stay dirty after the older save completes');
+  } finally {
+    controller.disposeHandles();
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
+  }
+
+  console.log('✓ in-flight saves keep newer local edits dirty');
+}
+
 async function testFullscreenWorkspaceHelpers() {
   console.log('\n--- Test 6: fullscreen document helpers ---');
 
@@ -399,10 +458,22 @@ async function testFullscreenWorkspaceHelpers() {
 async function testCopyFormatsAndEditorShell() {
   console.log('\n--- Test 8: copy formats and editor shell ---');
 
-  const renderedCopy = getRenderedMarkdownCopyText('# Title\n\n- First\n- Second\n\n**Bold** text');
-  assert.ok(renderedCopy.includes('Title'), 'Rendered copy should preserve heading text');
-  assert.ok(renderedCopy.includes('- First'), 'Rendered copy should preserve list text');
-  assert.ok(renderedCopy.includes('Bold text'), 'Rendered copy should flatten formatted inline text');
+  const copySource = '# Title\n\n- First\n- Second\n\n**Bold** text';
+  const controller = createMarkdownController({
+    getAvailableDisplayModes: () => ['inline', 'fullscreen'],
+    getCurrentDisplayMode: () => 'inline',
+    getCurrentPayload: () => undefined,
+    setExpanded: () => {},
+    storePayloadOverride: () => {},
+    rerender: () => {},
+    updateSaveStatus: () => {},
+  });
+  assert.strictEqual(controller.getCopyText({
+    fileName: 'notes.md',
+    filePath: '/Users/tester/docs/notes.md',
+    fileType: 'markdown',
+    content: copySource,
+  }), copySource, 'Copy should preserve markdown source exactly');
 
   const markdownShell = renderMarkdownEditorShell({
     view: 'markdown',
@@ -424,7 +495,7 @@ async function testCopyFormatsAndEditorShell() {
   assert.ok(!rawShell.includes('markdown-editor-context-menu'), 'Raw mode should not include markdown formatting context controls');
   assert.ok(!rawShell.includes('data-format="bold"'), 'Raw mode should not include formatting buttons');
 
-  console.log('✓ raw/rendered copy support and mode-specific editor shell are wired');
+  console.log('✓ source copy support and mode-specific editor shell are wired');
 }
 
 async function testPartialDocumentBecomesNewEditBaseline() {
@@ -468,7 +539,6 @@ async function testPartialDocumentBecomesNewEditBaseline() {
   await controller.requestEditMode(partialPayload);
 
   const nextState = controller.getState(currentPayload);
-  assert.strictEqual(nextState.mode, 'edit');
   assert.strictEqual(nextState.fullDocumentContent, fullContent, 'The full document should replace the truncated edit baseline');
   assert.strictEqual(nextState.draftContent, fullContent, 'Draft content should start from the full document');
   assert.strictEqual(controller.isUndoAvailable(nextState), false, 'Undo should stay disabled until the user edits the full document');
@@ -525,13 +595,14 @@ export default async function runTests() {
     await testSlugGeneration();
     await testOutlineExtraction();
     await testLinkResolution();
-    await testWikiRewriteAndRendering();
+    await testOutlineFromMarkdownSource();
     await testFullscreenWorkspaceHelpers();
     await testCopyFormatsAndEditorShell();
     await testPartialDocumentBecomesNewEditBaseline();
     await testRefreshDoesNotMisclassifyMarkdownContentAsDeletion();
     await testFailedSaveResyncsEditBaseline();
     await testSuccessfulSaveResetsUndoBaseline();
+    await testInFlightSaveKeepsNewerDraftDirty();
     console.log('\n✅ Markdown preview tests passed!');
     return true;
   } catch (error) {
