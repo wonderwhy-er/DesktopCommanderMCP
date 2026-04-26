@@ -32,6 +32,7 @@ function formatLocalTimestamp(isoTimestamp: string): string {
 class ToolHistory {
   private history: ToolCallRecord[] = [];
   private readonly MAX_ENTRIES = 1000;
+  private readonly MAX_HISTORY_FILE_SIZE_BYTES = 5 * 1024 * 1024;
   private readonly historyFile: string;
   private writeQueue: ToolCallRecord[] = [];
   private isWriting = false;
@@ -65,6 +66,11 @@ class ToolHistory {
         return;
       }
 
+      if (this.clearHistoryFileIfTooLarge()) {
+        this.history = [];
+        return;
+      }
+
       const content = fs.readFileSync(this.historyFile, 'utf-8');
       const lines = content.trim().split('\n').filter(line => line.trim());
 
@@ -91,6 +97,32 @@ class ToolHistory {
   }
 
   /**
+   * Clear history file when it exceeds the maximum size.
+   */
+  private clearHistoryFileIfTooLarge(): boolean {
+    try {
+      if (!fs.existsSync(this.historyFile)) {
+        return false;
+      }
+
+      const stats = fs.statSync(this.historyFile);
+      if (stats.size <= this.MAX_HISTORY_FILE_SIZE_BYTES) {
+        return false;
+      }
+    } catch (error) {
+      return false;
+    }
+
+    try {
+      fs.writeFileSync(this.historyFile, '', 'utf-8');
+    } catch (error) {
+      // Still treat the file as too large so callers can continue with empty memory.
+    }
+
+    return true;
+  }
+
+  /**
    * Trim history file to prevent it from growing indefinitely
    */
   private trimHistoryFile(): void {
@@ -101,6 +133,10 @@ class ToolHistory {
       // Write them back
       const lines = keepEntries.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.writeFileSync(this.historyFile, lines, 'utf-8');
+
+      if (this.clearHistoryFileIfTooLarge()) {
+        this.history = [];
+      }
     } catch (error) {
       // Silently fail
     }
@@ -131,9 +167,18 @@ class ToolHistory {
     this.writeQueue = [];
     
     try {
+      const clearedLargeFile = this.clearHistoryFileIfTooLarge();
+      if (clearedLargeFile) {
+        this.history = toWrite.slice(-this.MAX_ENTRIES);
+      }
+
       // Append to file (atomic append operation)
       const lines = toWrite.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.appendFileSync(this.historyFile, lines, 'utf-8');
+
+      if (this.clearHistoryFileIfTooLarge()) {
+        this.history = [];
+      }
     } catch (error) {
       // Put back in queue on failure
       this.writeQueue.unshift(...toWrite);
