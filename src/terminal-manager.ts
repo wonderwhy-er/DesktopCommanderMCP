@@ -160,9 +160,10 @@ export class TerminalManager {
         env: {
           ...process.env,
           TERM: 'xterm-256color'  // Better terminal compatibility
-        }
+        },
+        windowsHide: true  // Prevent visible console windows on Windows
       };
-      
+
       // Add shell option if needed (for unknown shells)
       if (spawnConfig.useShellOption) {
         spawnOptions.shell = spawnConfig.useShellOption;
@@ -179,7 +180,8 @@ export class TerminalManager {
         env: {
           ...process.env,
           TERM: 'xterm-256color'
-        }
+        },
+        windowsHide: true  // Prevent visible console windows on Windows
       };
     }
 
