@@ -74,10 +74,6 @@ function computeDiffHunks(oldLines: string[], newLines: string[]): DiffHunk[] {
     const oldLength = oldLines.length;
     const newLength = newLines.length;
 
-    if (oldLength * newLength > 1_000_000) {
-        return [{ oldStart: 0, oldEnd: oldLength, newStart: 0, newEnd: newLength }];
-    }
-
     const dp: number[][] = Array.from({ length: oldLength + 1 }, () => Array(newLength + 1).fill(0) as number[]);
     for (let i = 1; i <= oldLength; i += 1) {
         for (let j = 1; j <= newLength; j += 1) {
@@ -138,6 +134,34 @@ function mergeCloseHunks(hunks: DiffHunk[], minGap: number): DiffHunk[] {
     return merged;
 }
 
+function computeLineByLineHunks(oldLines: string[], newLines: string[]): DiffHunk[] {
+    const hunks: DiffHunk[] = [];
+    const maxLength = Math.max(oldLines.length, newLines.length);
+    let oldStart: number | null = null;
+    let newStart: number | null = null;
+
+    for (let index = 0; index < maxLength; index += 1) {
+        const same = index < oldLines.length && index < newLines.length && oldLines[index] === newLines[index];
+        if (!same && oldStart === null) {
+            oldStart = Math.min(index, oldLines.length);
+            newStart = Math.min(index, newLines.length);
+        }
+        if ((same || index === maxLength - 1) && oldStart !== null && newStart !== null) {
+            const endIndex = same ? index : index + 1;
+            hunks.push({
+                oldStart,
+                oldEnd: Math.min(endIndex, oldLines.length),
+                newStart,
+                newEnd: Math.min(endIndex, newLines.length),
+            });
+            oldStart = null;
+            newStart = null;
+        }
+    }
+
+    return hunks;
+}
+
 function computeEditBlocks(oldText: string, newText: string): Array<{ old_string: string; new_string: string }> {
     if (oldText === newText) {
         return [];
@@ -145,17 +169,15 @@ function computeEditBlocks(oldText: string, newText: string): Array<{ old_string
 
     const oldLines = oldText.split('\n');
     const newLines = newText.split('\n');
-    const hunks = computeDiffHunks(oldLines, newLines);
+    const hunks = oldLines.length * newLines.length > 1_000_000
+        ? computeLineByLineHunks(oldLines, newLines)
+        : computeDiffHunks(oldLines, newLines);
     if (hunks.length === 0) {
         return [];
     }
 
     const context = 3;
     const merged = mergeCloseHunks(hunks, context * 2 + 1);
-    const totalChanged = merged.reduce((sum, hunk) => sum + (hunk.oldEnd - hunk.oldStart), 0);
-    if (totalChanged > oldLines.length * 0.7) {
-        return [{ old_string: oldText, new_string: newText }];
-    }
 
     return merged.map((hunk) => {
         const contextBefore = Math.max(0, hunk.oldStart - context);
@@ -920,6 +942,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                     searchLinks: (query) => searchLinkTargets(payload.filePath, query),
                     loadHeadings: (targetPath) => loadLinkHeadings(payload.filePath, targetPath),
                     onChange: (value) => {
+                        if (value === state.draftContent) {
+                            return;
+                        }
                         state.draftContent = value;
                         state.dirty = value !== state.fullDocumentContent;
                         if (state.dirty && !editStartedFired) {
@@ -949,6 +974,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         }
                     },
                     onBlur: () => {
+                        if (!state.dirty) {
+                            return;
+                        }
                         cancelAutosave();
                         void saveDocument();
                     },
