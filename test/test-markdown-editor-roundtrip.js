@@ -374,6 +374,30 @@ async function testStarBulletMarkerPreserved() {
   console.log('OK star bullet marker preserved');
 }
 
+async function testRelativePathLinksSurvive() {
+  console.log('\n--- Test: links to relative paths survive (skill-files batch) ---');
+  // From SKILL.md files in ~/.desktop-commander/skills/. Tiptap's link
+  // extension validates URLs against a scheme/relative-prefix list and
+  // SILENTLY DROPS links whose URL is a bare relative path with `/`
+  // (`scripts/foo.mjs`). Single-segment paths (`foo.md`) survive, but
+  // anything in a subdirectory does not.
+  //
+  // This is the most common corruption mode in real skill files because
+  // they routinely link to scripts/ and references/ from SKILL.md.
+  const input =
+    '- [init-skill.mjs](scripts/init-skill.mjs) — Scaffold new skills\n' +
+    '- [validate-skill.mjs](scripts/validate-skill.mjs) — Validate structure\n' +
+    '- [Output Format](references/output-format.md) — Final structure\n' +
+    '- [Section](references/output-format.md#anchor) — With fragment\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'links to relative paths in subdirectories must keep their URL on round-trip'
+  );
+  console.log('OK relative-path links preserved');
+}
+
 async function runAllTests() {
   const tests = [
     testPipeTableSurvivesRoundTrip,
@@ -394,6 +418,7 @@ async function runAllTests() {
     testEmojiPrefixedSoftBreaksRestored,
     testLinkInTableCellSurvivesRoundTrip,
     testStarBulletMarkerPreserved,
+    testRelativePathLinksSurvive,
   ];
   let passed = 0;
   let failed = 0;

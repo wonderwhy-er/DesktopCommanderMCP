@@ -55,12 +55,41 @@ export interface RoundTripContext {
 
 const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
 
-// Link with inline-code text: `[\`anything\`](url)`. tiptap-markdown
-// loses the surrounding `[...](url)` wrapping when it parses a link whose
-// text is purely inline code, leaving just the backticked text and erasing
-// the URL. We replace these with ASCII placeholders before mounting and
-// restore them in post-process.
-const CODE_LINK_RE = /\[`([^`]+)`\]\(([^)]+)\)/g;
+// Match any markdown inline link: `[text](url)`. We don't restrict the
+// text or URL further at the regex level — instead, isFragileLink()
+// inspects each match to decide whether Tiptap would mangle it.
+const INLINE_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+/**
+ * Decide whether a markdown inline link will be mangled by Tiptap, in
+ * which case we should placeholder it during preprocess.
+ *
+ * Two failure modes are known:
+ *
+ *   1. Link text is purely inline code (`[\`x\`](url)`). tiptap-markdown
+ *      drops the surrounding `[...](url)` and leaves just `\`x\``.
+ *
+ *   2. URL is a relative path with subdirectory but no leading prefix
+ *      (`scripts/foo.mjs`, `references/output.md`). The Link extension's
+ *      URL validator rejects these as non-URLs; the link is silently
+ *      dropped on parse and the text alone survives.
+ *
+ * URLs Tiptap accepts and we leave alone:
+ *   - Absolute URLs (`https://`, `http://`, `mailto:`, `tel:`, `ftp:`)
+ *   - Anchors (`#section`)
+ *   - Single-segment relative paths (`file.md`, `file.md#section`)
+ *   - Explicitly-relative paths (`./foo`, `../foo`, `/foo`)
+ */
+function isFragileLink(text: string, url: string): boolean {
+    // Code-text link: text is exactly `` `...` `` with nothing else.
+    if (/^`[^`]+`$/.test(text)) return true;
+    // URL has no scheme prefix and no leading-slash / relative-prefix
+    // and contains at least one path separator → Tiptap rejects it.
+    const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(url);
+    const hasRelativePrefix = url.startsWith('./') || url.startsWith('../') || url.startsWith('/') || url.startsWith('#');
+    if (!hasScheme && !hasRelativePrefix && url.includes('/')) return true;
+    return false;
+}
 
 /**
  * Pre-process a document before handing it to Tiptap. Returns a context
@@ -83,14 +112,16 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
 
     const trailingNewline = afterFront.endsWith('\n') ? '\n' : '';
 
-    // tiptap-markdown drops the URL when a link's text is purely inline
-    // code (`[\`x\`](url)` -> `\`x\``). Replace those with ASCII
-    // placeholders that survive the parse-and-serialize round-trip
-    // unchanged; we restore them in applyPostProcess.
+    // tiptap-markdown drops the URL on certain link shapes (see
+    // isFragileLink — currently code-text links and bare-relative-subpath
+    // links). Replace those with ASCII placeholders that survive the
+    // parse-and-serialize round-trip unchanged; we restore them in
+    // applyPostProcess.
     const codeLinks: Array<{ placeholder: string; original: string }> = [];
     let withPlaceholders = afterFront;
     let codeLinkIndex = 0;
-    withPlaceholders = withPlaceholders.replace(CODE_LINK_RE, (match) => {
+    withPlaceholders = withPlaceholders.replace(INLINE_LINK_RE, (match, text, url) => {
+        if (!isFragileLink(text, url)) return match;
         const placeholder = `TIPTAPCODELINK${String(codeLinkIndex).padStart(4, '0')}`;
         codeLinks.push({ placeholder, original: match });
         codeLinkIndex += 1;
