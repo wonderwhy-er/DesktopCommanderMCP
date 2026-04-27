@@ -695,6 +695,10 @@ export function mountMarkdownEditor(options: {
 
     if (options.view === 'markdown') {
         options.target.replaceChildren();
+        let hasUserEdited = false;
+        const markUserEdit = (): void => {
+            hasUserEdited = true;
+        };
 
         // Pre-process the input once at mount; the captured context is
         // mirrored back into output by getTiptapMarkdown so trailing
@@ -720,6 +724,9 @@ export function mountMarkdownEditor(options: {
             },
             onUpdate: ({ editor }) => {
                 syncHeadingIds(editor.view.dom as HTMLElement);
+                if (!hasUserEdited) {
+                    return;
+                }
                 options.onChange(getTiptapMarkdown());
             },
             onSelectionUpdate: () => {
@@ -926,6 +933,7 @@ export function mountMarkdownEditor(options: {
         };
 
         const handleLinkApply = (): void => {
+            markUserEdit();
             if (linkMode === 'url') {
                 const href = linkInput?.value?.trim();
                 if (!href) {
@@ -985,6 +993,7 @@ export function mountMarkdownEditor(options: {
             if (!format) {
                 return;
             }
+            markUserEdit();
             switch (format) {
                 case 'bold':
                     tiptap.chain().focus().toggleBold().run();
@@ -1016,11 +1025,13 @@ export function mountMarkdownEditor(options: {
                 return;
             }
             if (value === 'p') {
+                markUserEdit();
                 tiptap.chain().focus().setParagraph().run();
                 return;
             }
             const match = /^h([1-6])$/.exec(value);
             if (match) {
+                markUserEdit();
                 const level = Number.parseInt(match[1], 10) as 1 | 2 | 3 | 4 | 5 | 6;
                 tiptap.chain().focus().toggleHeading({ level }).run();
             }
@@ -1116,6 +1127,10 @@ export function mountMarkdownEditor(options: {
             }
         };
 
+        editorDom.addEventListener('beforeinput', markUserEdit);
+        editorDom.addEventListener('paste', markUserEdit);
+        editorDom.addEventListener('cut', markUserEdit);
+        editorDom.addEventListener('drop', markUserEdit);
         editorDom.addEventListener('mouseover', handleMouseOver);
         editorDom.addEventListener('mouseout', handleMouseOut);
         linkPopover.addEventListener('mouseenter', handlePopoverEnter);
@@ -1136,6 +1151,10 @@ export function mountMarkdownEditor(options: {
 
         return {
             destroy: () => {
+                editorDom.removeEventListener('beforeinput', markUserEdit);
+                editorDom.removeEventListener('paste', markUserEdit);
+                editorDom.removeEventListener('cut', markUserEdit);
+                editorDom.removeEventListener('drop', markUserEdit);
                 editorDom.removeEventListener('mouseover', handleMouseOver);
                 editorDom.removeEventListener('mouseout', handleMouseOut);
                 linkPopover.removeEventListener('mouseenter', handlePopoverEnter);
