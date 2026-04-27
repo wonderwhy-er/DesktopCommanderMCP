@@ -792,6 +792,114 @@ export interface MarkdownEditorHandle {
     setScrollTop: (scrollTop: number) => void;
 }
 
+export interface MarkdownEditRange {
+    fromLine: number;
+    toLine: number;
+}
+
+function computeSerializedEditRanges(before: string, after: string): MarkdownEditRange[] {
+    if (before === after) {
+        return [];
+    }
+
+    const beforeLines = before.split('\n');
+    const afterLines = after.split('\n');
+    const beforeLength = beforeLines.length;
+    const afterLength = afterLines.length;
+    const ranges: MarkdownEditRange[] = [];
+
+    if (beforeLength * afterLength > 1_000_000) {
+        return computeAnchoredSerializedEditRanges(beforeLines, afterLines, 0, beforeLength, 0, afterLength);
+    }
+
+    const dp: number[][] = Array.from({ length: beforeLength + 1 }, () => Array(afterLength + 1).fill(0) as number[]);
+    for (let beforeIndex = 1; beforeIndex <= beforeLength; beforeIndex += 1) {
+        for (let afterIndex = 1; afterIndex <= afterLength; afterIndex += 1) {
+            dp[beforeIndex][afterIndex] = beforeLines[beforeIndex - 1] === afterLines[afterIndex - 1]
+                ? dp[beforeIndex - 1][afterIndex - 1] + 1
+                : Math.max(dp[beforeIndex - 1][afterIndex], dp[beforeIndex][afterIndex - 1]);
+        }
+    }
+
+    const matches: Array<[number, number]> = [];
+    let beforeIndex = beforeLength;
+    let afterIndex = afterLength;
+    while (beforeIndex > 0 && afterIndex > 0) {
+        if (beforeLines[beforeIndex - 1] === afterLines[afterIndex - 1]) {
+            matches.unshift([beforeIndex - 1, afterIndex - 1]);
+            beforeIndex -= 1;
+            afterIndex -= 1;
+        } else if (dp[beforeIndex - 1][afterIndex] >= dp[beforeIndex][afterIndex - 1]) {
+            beforeIndex -= 1;
+        } else {
+            afterIndex -= 1;
+        }
+    }
+
+    let previousBefore = 0;
+    let previousAfter = 0;
+    for (const [matchBefore, matchAfter] of matches) {
+        if (matchBefore > previousBefore || matchAfter > previousAfter) {
+            ranges.push({ fromLine: Math.max(1, previousAfter - 3), toLine: Math.max(previousAfter + 1, matchAfter + 3) });
+        }
+        previousBefore = matchBefore + 1;
+        previousAfter = matchAfter + 1;
+    }
+    if (previousBefore < beforeLength || previousAfter < afterLength) {
+        ranges.push({ fromLine: Math.max(1, previousAfter - 3), toLine: Math.max(previousAfter + 1, afterLength + 3) });
+    }
+
+    return ranges;
+}
+
+function computeAnchoredSerializedEditRanges(
+    beforeLines: string[],
+    afterLines: string[],
+    beforeStart: number,
+    beforeEnd: number,
+    afterStart: number,
+    afterEnd: number
+): MarkdownEditRange[] {
+    while (beforeStart < beforeEnd && afterStart < afterEnd && beforeLines[beforeStart] === afterLines[afterStart]) {
+        beforeStart++;
+        afterStart++;
+    }
+    while (beforeStart < beforeEnd && afterStart < afterEnd && beforeLines[beforeEnd - 1] === afterLines[afterEnd - 1]) {
+        beforeEnd--;
+        afterEnd--;
+    }
+    if (beforeStart === beforeEnd && afterStart === afterEnd) {
+        return [];
+    }
+
+    const beforeLineCounts = new Map<string, { count: number; index: number }>();
+    const afterLineCounts = new Map<string, { count: number; index: number }>();
+    for (let index = beforeStart; index < beforeEnd; index += 1) {
+        const current = beforeLineCounts.get(beforeLines[index]);
+        beforeLineCounts.set(beforeLines[index], { count: (current?.count ?? 0) + 1, index });
+    }
+    for (let index = afterStart; index < afterEnd; index += 1) {
+        const current = afterLineCounts.get(afterLines[index]);
+        afterLineCounts.set(afterLines[index], { count: (current?.count ?? 0) + 1, index });
+    }
+
+    for (let beforeIndex = beforeStart; beforeIndex < beforeEnd; beforeIndex += 1) {
+        const beforeEntry = beforeLineCounts.get(beforeLines[beforeIndex]);
+        const afterEntry = afterLineCounts.get(beforeLines[beforeIndex]);
+        if (beforeEntry?.count === 1 && afterEntry?.count === 1) {
+            return [
+                ...computeAnchoredSerializedEditRanges(beforeLines, afterLines, beforeStart, beforeIndex, afterStart, afterEntry.index),
+                ...computeAnchoredSerializedEditRanges(beforeLines, afterLines, beforeIndex + 1, beforeEnd, afterEntry.index + 1, afterEnd),
+            ];
+        }
+    }
+
+    return [{
+        fromLine: Math.max(1, afterStart - 3),
+        toLine: Math.max(afterStart + 1, afterEnd + 3),
+    }];
+}
+
 function shouldIgnoreBlur(shell: Element | null | undefined, event: FocusEvent): boolean {
     const nextTarget = event.relatedTarget as Node | null;
     const widgetShell = shell?.closest('.tool-shell');
@@ -912,7 +1020,7 @@ export function mountMarkdownEditor(options: {
     currentFilePath: string;
     searchLinks?: (query: string) => Promise<MarkdownLinkSearchItem[]>;
     loadHeadings?: (filePath: string) => Promise<MarkdownLinkHeading[]>;
-    onChange: (value: string) => void;
+    onChange: (value: string, editRanges?: MarkdownEditRange[]) => void;
     onBlur?: () => void;
 }): MarkdownEditorHandle {
     const shell = options.target.closest('.markdown-editor-shell');
@@ -941,6 +1049,10 @@ export function mountMarkdownEditor(options: {
 
     if (options.view === 'markdown') {
         options.target.replaceChildren();
+        let hasUserEdited = false;
+        const markUserEdit = (): void => {
+            hasUserEdited = true;
+        };
 
         // Pre-process the input once at mount; the captured context is
         // mirrored back into output by getTiptapMarkdown so trailing
@@ -952,6 +1064,7 @@ export function mountMarkdownEditor(options: {
             const serialized = storage.markdown?.getMarkdown() ?? '';
             return applyPostProcess(serialized, context);
         };
+        let previousSerializedValue = '';
 
         const tiptap = new Editor({
             element: options.target,
@@ -966,7 +1079,13 @@ export function mountMarkdownEditor(options: {
             },
             onUpdate: ({ editor }) => {
                 syncHeadingIds(editor.view.dom as HTMLElement);
-                options.onChange(getTiptapMarkdown());
+                if (!hasUserEdited) {
+                    return;
+                }
+                const value = getTiptapMarkdown();
+                const editRanges = computeSerializedEditRanges(previousSerializedValue, value);
+                previousSerializedValue = value;
+                options.onChange(value, editRanges);
             },
             onSelectionUpdate: () => {
                 updateContextMenu();
@@ -981,6 +1100,7 @@ export function mountMarkdownEditor(options: {
                 options.onBlur?.();
             },
         });
+        previousSerializedValue = getTiptapMarkdown();
 
         const editorDom = tiptap.view.dom as HTMLElement;
         syncHeadingIds(editorDom);
@@ -1172,6 +1292,7 @@ export function mountMarkdownEditor(options: {
         };
 
         const handleLinkApply = (): void => {
+            markUserEdit();
             if (linkMode === 'url') {
                 const href = linkInput?.value?.trim();
                 if (!href) {
@@ -1231,6 +1352,7 @@ export function mountMarkdownEditor(options: {
             if (!format) {
                 return;
             }
+            markUserEdit();
             switch (format) {
                 case 'bold':
                     tiptap.chain().focus().toggleBold().run();
@@ -1262,11 +1384,13 @@ export function mountMarkdownEditor(options: {
                 return;
             }
             if (value === 'p') {
+                markUserEdit();
                 tiptap.chain().focus().setParagraph().run();
                 return;
             }
             const match = /^h([1-6])$/.exec(value);
             if (match) {
+                markUserEdit();
                 const level = Number.parseInt(match[1], 10) as 1 | 2 | 3 | 4 | 5 | 6;
                 tiptap.chain().focus().toggleHeading({ level }).run();
             }
@@ -1362,6 +1486,10 @@ export function mountMarkdownEditor(options: {
             }
         };
 
+        editorDom.addEventListener('beforeinput', markUserEdit);
+        editorDom.addEventListener('paste', markUserEdit);
+        editorDom.addEventListener('cut', markUserEdit);
+        editorDom.addEventListener('drop', markUserEdit);
         editorDom.addEventListener('mouseover', handleMouseOver);
         editorDom.addEventListener('mouseout', handleMouseOut);
         linkPopover.addEventListener('mouseenter', handlePopoverEnter);
@@ -1382,6 +1510,10 @@ export function mountMarkdownEditor(options: {
 
         return {
             destroy: () => {
+                editorDom.removeEventListener('beforeinput', markUserEdit);
+                editorDom.removeEventListener('paste', markUserEdit);
+                editorDom.removeEventListener('cut', markUserEdit);
+                editorDom.removeEventListener('drop', markUserEdit);
                 editorDom.removeEventListener('mouseover', handleMouseOver);
                 editorDom.removeEventListener('mouseout', handleMouseOut);
                 linkPopover.removeEventListener('mouseenter', handlePopoverEnter);
@@ -1405,6 +1537,7 @@ export function mountMarkdownEditor(options: {
             getValue: () => getTiptapMarkdown(),
             setValue: (value: string) => {
                 tiptap.commands.setContent(rewriteWikiLinks(value), { emitUpdate: false });
+                previousSerializedValue = getTiptapMarkdown();
                 syncHeadingIds(editorDom);
             },
             revealLine: (_lineNumber: number, headingId?: string) => {
@@ -1434,6 +1567,7 @@ export function mountMarkdownEditor(options: {
     textarea.setAttribute('autocapitalize', 'off');
     textarea.placeholder = 'Edit raw markdown...';
     textarea.value = options.value;
+    let previousTextareaValue = textarea.value;
     options.target.replaceChildren(textarea);
 
     const autosize = (): void => {
@@ -1441,9 +1575,16 @@ export function mountMarkdownEditor(options: {
         textarea.style.height = `${Math.max(textarea.scrollHeight, 640)}px`;
     };
 
+    const emitRawChange = (): void => {
+        const value = textarea.value;
+        const editRanges = computeSerializedEditRanges(previousTextareaValue, value);
+        previousTextareaValue = value;
+        options.onChange(value, editRanges);
+    };
+
     const handleInput = (): void => {
         autosize();
-        options.onChange(textarea.value);
+        emitRawChange();
     };
 
     const handleFocusOut = (event: FocusEvent): void => {
@@ -1461,7 +1602,7 @@ export function mountMarkdownEditor(options: {
         event.preventDefault();
         applyRawTab(textarea);
         autosize();
-        options.onChange(textarea.value);
+        emitRawChange();
     };
 
     textarea.addEventListener('input', handleInput);
@@ -1485,6 +1626,7 @@ export function mountMarkdownEditor(options: {
         getValue: () => textarea.value,
         setValue: (value: string) => {
             textarea.value = value;
+            previousTextareaValue = value;
             autosize();
         },
         revealLine: (lineNumber: number) => {
