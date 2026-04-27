@@ -36,55 +36,18 @@ const { Editor } = await import('@tiptap/core');
 const StarterKit = (await import('@tiptap/starter-kit')).default;
 const Image = (await import('@tiptap/extension-image')).default;
 const { Markdown } = await import('tiptap-markdown');
+const editorMod = await import('../dist/ui/file-preview/src/markdown/editor.js');
 const { rewriteWikiLinks, restoreWikiLinks } = await import(
   '../dist/ui/file-preview/src/markdown/linking.js'
 );
 
 /**
- * Mount a Tiptap editor with the same extensions and config that
- * mountMarkdownEditor uses for `view: 'markdown'`.
+ * Use the production round-trip path. Any wrapper / extension / serializer
+ * change in editor.ts is automatically exercised here, so this test stays
+ * a faithful regression suite as the implementation evolves.
  */
-function mountEditor(value) {
-  const target = document.getElementById('root');
-  target.innerHTML = '';
-  return new Editor({
-    element: target,
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4, 5, 6] },
-        codeBlock: { HTMLAttributes: { class: 'code-viewer' } },
-        link: {
-          openOnClick: false,
-          autolink: true,
-          HTMLAttributes: { 'data-markdown-link': 'true' },
-        },
-      }),
-      Image.configure({ allowBase64: true, inline: true }),
-      Markdown.configure({
-        html: true,
-        tightLists: true,
-        bulletListMarker: '-',
-        linkify: true,
-        breaks: false,
-        transformPastedText: true,
-        transformCopiedText: false,
-      }),
-    ],
-    content: rewriteWikiLinks(value),
-  });
-}
-
-/** Mirrors editor.ts:181-184 getTiptapMarkdown */
-function getTiptapMarkdown(editor) {
-  const storage = editor.storage;
-  return restoreWikiLinks(storage.markdown?.getMarkdown() ?? '');
-}
-
 function roundTrip(input) {
-  const editor = mountEditor(input);
-  const out = getTiptapMarkdown(editor);
-  editor.destroy();
-  return out;
+  return editorMod.roundTripMarkdown(input);
 }
 
 async function testPipeTableSurvivesRoundTrip() {

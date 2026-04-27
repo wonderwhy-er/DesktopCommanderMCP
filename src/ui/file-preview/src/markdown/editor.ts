@@ -1,11 +1,391 @@
 import { Editor } from '@tiptap/core';
+import type { Extensions } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
+import { Table } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TableHeader } from '@tiptap/extension-table-header';
+import { TableCell } from '@tiptap/extension-table-cell';
 import { Markdown } from 'tiptap-markdown';
 import { restoreWikiLinks, rewriteWikiLinks } from './linking.js';
 import { createSlugTracker } from './slugify.js';
 
 export type MarkdownEditorView = 'raw' | 'markdown';
+
+/**
+ * Round-trip safety wrapper around Tiptap.
+ *
+ * Tiptap parses markdown into ProseMirror nodes and serializes back via
+ * tiptap-markdown. Both steps are inherently lossy — features like GFM
+ * tables, wikilinks, YAML frontmatter, escapable characters and exact
+ * whitespace can't be recovered exactly from the parsed tree. The wrappers
+ * below preserve those features by:
+ *
+ *   1. Stripping content the editor can't safely round-trip (YAML
+ *      frontmatter, CRLF line endings) BEFORE handing markdown to Tiptap,
+ *      and re-attaching it after serialization.
+ *   2. Calling existing helpers (rewriteWikiLinks / restoreWikiLinks) that
+ *      replace `[[Page]]` with placeholder syntax Tiptap understands,
+ *      then put it back on the way out.
+ *   3. Preserving a trailing newline if the original document ended with
+ *      one — Tiptap's serializer always strips it.
+ *
+ * The shape of the safe region we save is captured in a `RoundTripContext`
+ * so post-processing can mirror it back. The test suite imports these
+ * helpers directly so the regression suite tests the EXACT same code path
+ * that production runs at autosave time.
+ */
+export interface RoundTripContext {
+    /** Original document text, retained for any final repair pass. */
+    originalInput: string;
+    /** YAML frontmatter prefix (`---\n…\n---\n`) stripped before editing. */
+    frontmatter: string;
+    /** Newlines between frontmatter end and first body line. Tiptap strips
+     *  these; we put them back exactly. */
+    frontmatterGap: string;
+    /** Trailing newline that was on the original; restored after serialize. */
+    trailingNewline: string;
+    /** EOL convention of the original (`'\r\n'` or `'\n'`). */
+    eol: '\r\n' | '\n';
+}
+
+const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
+
+/**
+ * Pre-process a document before handing it to Tiptap. Returns a context
+ * object that `applyPostProcess` uses to restore stripped portions.
+ */
+export function preprocessForEditor(input: string): { editorInput: string; context: RoundTripContext } {
+    const eol: '\r\n' | '\n' = input.includes('\r\n') ? '\r\n' : '\n';
+    // Normalise to LF for the editor — Tiptap's parser doesn't reliably
+    // preserve CRLF, and we'll re-introduce it on output.
+    const lf = eol === '\r\n' ? input.replace(/\r\n/g, '\n') : input;
+
+    const frontMatch = lf.match(FRONTMATTER_RE);
+    const frontmatter = frontMatch ? frontMatch[0] : '';
+    let afterFront = frontmatter ? lf.slice(frontmatter.length) : lf;
+
+    // Capture leading blank lines that appeared AFTER the frontmatter so
+    // we can put them back. Tiptap's parser strips them.
+    const gap = afterFront.match(/^\n*/)?.[0] ?? '';
+    afterFront = afterFront.slice(gap.length);
+
+    const trailingNewline = afterFront.endsWith('\n') ? '\n' : '';
+
+    // Tiptap mutates trailing newlines — we trim and put it back. Wikilinks
+    // are rewritten to a placeholder shape that survives Tiptap.
+    const editorInput = rewriteWikiLinks(afterFront);
+
+    return {
+        editorInput,
+        context: {
+            originalInput: input,
+            frontmatter,
+            frontmatterGap: gap,
+            trailingNewline,
+            eol,
+        },
+    };
+}
+
+/**
+ * Post-process the markdown Tiptap emits back into the user's expected
+ * form: re-attach frontmatter, restore wikilink syntax, restore trailing
+ * newline, undo unnecessary character escapes, and re-apply the original
+ * EOL convention.
+ */
+export function applyPostProcess(serialized: string, context: RoundTripContext): string {
+    let out = restoreWikiLinks(serialized);
+
+    // Tiptap's serializer over-escapes characters that have no syntactic
+    // meaning in the position they appear. We selectively unescape:
+    //   - `\[` and `\]` outside link constructs (so `- [x] task` stays `- [x] task`)
+    //   - `\~` (we already disabled strike, but tiptap-markdown's
+    //     escape pass can still emit `\~` for any `~` it wasn't sure
+    //     about — reverse it).
+    // We do this with conservative regexes that don't touch valid escapes
+    // inside fenced code blocks or inline code.
+    out = unescapeSafeChars(out);
+
+    // Tiptap normalises GFM table separator rows to a spaced form
+    // (`| --- | --- |`) regardless of input shape. If the original used
+    // a more compact form (`|---|---|`), restore it line-by-line.
+    out = restoreTableSeparatorStyle(out, context.originalInput);
+
+    // Tiptap inserts a leading blank line when the document starts with
+    // a block element. Strip it so we can re-attach the original
+    // post-frontmatter spacing exactly.
+    out = out.replace(/^\n+/, '');
+
+    // Tiptap (with `breaks: false`) joins consecutive non-blank lines
+    // inside a paragraph with a space — that's CommonMark's soft-break
+    // semantics. The user's source had them as separate lines, so the
+    // file has been "modified" even though the visible content is the
+    // same. Restore the original line breaks where Tiptap collapsed them.
+    // This MUST run before collapseBlockSeparators because the latter
+    // matches the surrounding lines against pairs from the original — and
+    // those pairs are line-wise, not paragraph-wise.
+    out = restoreSoftBreaks(out, context.originalInput);
+
+    // Tiptap normalises block separators to a blank line. If the user
+    // authored adjacent blocks with single-line separators, restore the
+    // original single-line spacing.
+    out = collapseBlockSeparators(out, context.originalInput);
+
+    // Tiptap's serializer can leave its own trailing newline; normalise to
+    // exactly the trailing-newline state the original had.
+    out = out.replace(/\n+$/, '') + context.trailingNewline;
+
+    // Re-attach frontmatter at the very top, with the original gap.
+    if (context.frontmatter) {
+        out = context.frontmatter + context.frontmatterGap + out;
+    }
+
+    // Apply original EOL convention.
+    if (context.eol === '\r\n') {
+        out = out.replace(/\n/g, '\r\n');
+    }
+    return out;
+}
+
+/**
+ * Tiptap's table serializer always outputs separator rows in the spaced
+ * form `| --- | --- |`. If the source document used a more compact form
+ * (`|---|---|`), or any other consistent form, restore that style by
+ * collecting the separator rows from the original and matching them
+ * positionally to the separators in the output. Both forms are valid GFM
+ * and parse identically — this is purely cosmetic and keeps autosave from
+ * emitting one-line edit_block calls just because of whitespace.
+ */
+function restoreTableSeparatorStyle(serialized: string, originalInput: string): string {
+    // Identify separator rows. A separator row matches /^\|([:\-\s|]+)\|$/
+    // — only `:`, `-`, `|`, and whitespace.
+    const SEP_RE = /^\|[\s:\-|]+\|$/;
+    const origSeparators = originalInput
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .filter((line) => SEP_RE.test(line));
+    if (origSeparators.length === 0) return serialized;
+
+    const outLines = serialized.split('\n');
+    let sepIndex = 0;
+    for (let i = 0; i < outLines.length; i += 1) {
+        if (SEP_RE.test(outLines[i]) && sepIndex < origSeparators.length) {
+            // Confirm the column count matches before substituting; if it
+            // doesn't, the table has been edited and we leave the new
+            // form alone (otherwise we'd corrupt the user's structural
+            // changes).
+            const origCols = origSeparators[sepIndex].split('|').length;
+            const outCols = outLines[i].split('|').length;
+            if (origCols === outCols) {
+                outLines[i] = origSeparators[sepIndex];
+            }
+            sepIndex += 1;
+        }
+    }
+    return outLines.join('\n');
+}
+
+/**
+ * Restore soft line-breaks Tiptap collapsed.
+ *
+ * tiptap-markdown is configured with `breaks: false`, which matches
+ * CommonMark's default: a single newline inside a paragraph is treated as
+ * a soft break and rendered/serialised as a single space. So an input of
+ *
+ *   First line.
+ *   Second line.
+ *
+ * comes back as `First line. Second line.` — same visible content, but
+ * the file on disk now differs from what the user authored. This function
+ * walks pairs of adjacent non-blank lines from the original and, where
+ * Tiptap joined them with a space, restores the original line break.
+ *
+ * Limitations: if the user actually had `First line. Second line.` on a
+ * single line in the source, we won't break it (we only re-introduce
+ * breaks that existed in the source). If the same `A` line appears
+ * multiple times in the source followed by different `B` lines, we
+ * conservatively only repair the FIRST match — the rest are left as
+ * Tiptap emitted them (rare in practice).
+ */
+function restoreSoftBreaks(serialized: string, originalInput: string): string {
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+    let out = serialized;
+    for (let i = 0; i < origLines.length - 1; i += 1) {
+        const a = origLines[i];
+        const b = origLines[i + 1];
+        // Only consider pairs where BOTH lines are non-blank prose. A
+        // blank line means the pair was paragraph-separated, which Tiptap
+        // already serialises as `\n\n` — handled elsewhere.
+        if (!a || !b) continue;
+        // Skip lines that look like markdown structure: list markers,
+        // headings, fences, table rows, blockquotes. Tiptap handles those
+        // as their own block kinds; we don't want to break list items in
+        // half.
+        if (looksStructural(a) || looksStructural(b)) continue;
+        const joined = `${a} ${b}`;
+        const broken = `${a}\n${b}`;
+        // If the output has the joined form but not the broken form, it
+        // was Tiptap that collapsed the soft break — repair it (only the
+        // first occurrence; see docstring).
+        const idx = out.indexOf(joined);
+        if (idx === -1) continue;
+        if (out.indexOf(broken) !== -1) continue;
+        out = out.slice(0, idx) + broken + out.slice(idx + joined.length);
+    }
+    return out;
+}
+
+/**
+ * Heuristic: does this line look like markdown structure (heading, list,
+ * fence, table, blockquote) rather than plain prose? Used by
+ * restoreSoftBreaks to avoid mangling structural content.
+ */
+function looksStructural(line: string): boolean {
+    return /^\s*(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|\|.*\|\s*$|---|\s*$)/.test(line);
+}
+
+/**
+ * Unescape characters that tiptap-markdown's serializer over-escapes.
+ * We only undo escapes for characters that are NEVER syntactically active
+ * in plain prose: brackets in body text, tildes outside strikethrough,
+ * etc. Code fences are skipped so language-internal escapes survive.
+ */
+function unescapeSafeChars(md: string): string {
+    // Walk lines, tracking whether we're inside a fenced code block.
+    let insideFence = false;
+    const lines = md.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\s*```/.test(line)) {
+            insideFence = !insideFence;
+            continue;
+        }
+        if (insideFence) continue;
+        // Now apply selective unescapes for this prose line.
+        lines[i] = line
+            // `\[` and `\]` — never have syntactic meaning by themselves.
+            // (Real link / image syntax is `[label](url)` and `![alt](url)`,
+            // neither of which contains a backslash before the bracket.)
+            .replace(/\\(\[|\])/g, '$1')
+            // `\~` — tildes have no syntactic role with strike disabled.
+            .replace(/\\~/g, '~');
+    }
+    return lines.join('\n');
+}
+
+/**
+ * If the user's original document used single-line separators between
+ * adjacent block elements (e.g. `### A\nBody.\n### B\n`), Tiptap will
+ * normalise those to blank-line separators (`\n\n`). Compare structure
+ * pairwise and put back the original spacing wherever Tiptap diverged.
+ *
+ * This is a "best effort" fixup: it doesn't try to rewrite content, only
+ * to remove spurious blank lines that Tiptap injected between block
+ * elements that were adjacent in the source.
+ */
+function collapseBlockSeparators(serialized: string, originalInput: string): string {
+    // Tokenise both into "block" units separated by blank-line vs single-
+    // newline boundaries. If the original had no blank line between two
+    // adjacent block lines that match (heading -> body, body -> heading,
+    // etc.), strip the blank line Tiptap inserted between the same pair.
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+    const adjacentPairs = new Set<string>();
+    for (let i = 0; i < origLines.length - 1; i += 1) {
+        const a = origLines[i];
+        const b = origLines[i + 1];
+        if (a && b) {
+            // Both non-empty consecutive lines — adjacent in the original.
+            adjacentPairs.add(`${a}\u0001${b}`);
+        }
+    }
+
+    const outLines = serialized.split('\n');
+    const result: string[] = [];
+    for (let i = 0; i < outLines.length; i += 1) {
+        const cur = outLines[i];
+        // If this is a blank line and the lines around it were adjacent
+        // in the original, drop the blank.
+        if (cur === '' && i > 0 && i < outLines.length - 1) {
+            const prev = outLines[i - 1];
+            const next = outLines[i + 1];
+            if (prev && next && adjacentPairs.has(`${prev}\u0001${next}`)) {
+                continue;
+            }
+        }
+        result.push(cur);
+    }
+    return result.join('\n');
+}
+
+/**
+ * Build the Tiptap extension array used by both production and the test
+ * suite. Centralising this means the regression tests exercise the exact
+ * configuration that ships, so any fix here flows through to autosave too.
+ *
+ * Notable choices:
+ *   - StarterKit's strike extension is DISABLED. The default behaviour
+ *     escapes literal `~` to `\~` (and breaks `~/path`) on serialize,
+ *     because tiptap-markdown configures markdown-it with the strike
+ *     plugin enabled, which in turn enables `~` as an escape target.
+ *     Disabling strike costs us nothing visible (the editor never offered
+ *     a strike button) and unblocks two #440 corruption modes.
+ */
+export function buildTiptapExtensions(): Extensions {
+    return [
+        StarterKit.configure({
+            heading: { levels: [1, 2, 3, 4, 5, 6] },
+            codeBlock: { HTMLAttributes: { class: 'code-viewer' } },
+            link: {
+                openOnClick: false,
+                autolink: true,
+                HTMLAttributes: { 'data-markdown-link': 'true' },
+            },
+            // Disable strikethrough — see comment above. The serializer
+            // would otherwise treat `~` as a strike delimiter character
+            // and emit `\~` to escape it.
+            strike: false,
+        }),
+        Image.configure({ allowBase64: true, inline: true }),
+        // GFM pipe table support. Without these four extensions Tiptap's
+        // parser sees `| A | B |` rows as plain paragraphs and concatenates
+        // the cell text — the canonical #437 corruption pattern. With them,
+        // tiptap-markdown round-trips tables correctly.
+        Table.configure({ resizable: false, HTMLAttributes: { class: 'markdown-table' } }),
+        TableRow,
+        TableHeader,
+        TableCell,
+        Markdown.configure({
+            html: true,
+            tightLists: true,
+            bulletListMarker: '-',
+            linkify: true,
+            breaks: false,
+            transformPastedText: true,
+            transformCopiedText: false,
+        }),
+    ];
+}
+
+/**
+ * Convenience wrapper for tests and tools that want to mount the editor,
+ * call getMarkdown(), tear down, all in one shot. Production uses the
+ * pieces individually (preprocessForEditor at mount time, getMarkdown
+ * during autosave, applyPostProcess before writing to disk).
+ */
+export function roundTripMarkdown(input: string): string {
+    const { editorInput, context } = preprocessForEditor(input);
+    const target = document.createElement('div');
+    const editor = new Editor({
+        element: target,
+        extensions: buildTiptapExtensions(),
+        content: editorInput,
+    });
+    const storage = editor.storage as { markdown?: { getMarkdown: () => string } };
+    const serialized = storage.markdown?.getMarkdown() ?? '';
+    editor.destroy();
+    return applyPostProcess(serialized, context);
+}
 
 export interface MarkdownLinkSearchItem {
     path: string;
@@ -178,35 +558,21 @@ export function mountMarkdownEditor(options: {
     if (options.view === 'markdown') {
         options.target.replaceChildren();
 
+        // Pre-process the input once at mount; the captured context is
+        // mirrored back into output by getTiptapMarkdown so trailing
+        // newline / frontmatter / EOL are preserved.
+        const { editorInput, context } = preprocessForEditor(options.value);
+
         const getTiptapMarkdown = (): string => {
             const storage = tiptap.storage as { markdown?: { getMarkdown: () => string } };
-            return restoreWikiLinks(storage.markdown?.getMarkdown() ?? '');
+            const serialized = storage.markdown?.getMarkdown() ?? '';
+            return applyPostProcess(serialized, context);
         };
 
         const tiptap = new Editor({
             element: options.target,
-            extensions: [
-                StarterKit.configure({
-                    heading: { levels: [1, 2, 3, 4, 5, 6] },
-                    codeBlock: { HTMLAttributes: { class: 'code-viewer' } },
-                    link: {
-                        openOnClick: false,
-                        autolink: true,
-                        HTMLAttributes: { 'data-markdown-link': 'true' },
-                    },
-                }),
-                Image.configure({ allowBase64: true, inline: true }),
-                Markdown.configure({
-                    html: true,
-                    tightLists: true,
-                    bulletListMarker: '-',
-                    linkify: true,
-                    breaks: false,
-                    transformPastedText: true,
-                    transformCopiedText: false,
-                }),
-            ],
-            content: rewriteWikiLinks(options.value),
+            extensions: buildTiptapExtensions(),
+            content: editorInput,
             editorProps: {
                 attributes: {
                     class: 'markdown-editor-surface markdown-editor-surface--markdown markdown markdown-doc',

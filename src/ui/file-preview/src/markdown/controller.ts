@@ -138,7 +138,7 @@ function mergeCloseHunks(hunks: DiffHunk[], minGap: number): DiffHunk[] {
     return merged;
 }
 
-function computeEditBlocks(oldText: string, newText: string): Array<{ old_string: string; new_string: string }> {
+export function computeEditBlocks(oldText: string, newText: string): Array<{ old_string: string; new_string: string }> {
     if (oldText === newText) {
         return [];
     }
