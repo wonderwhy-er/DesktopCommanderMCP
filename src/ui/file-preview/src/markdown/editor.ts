@@ -47,9 +47,20 @@ export interface RoundTripContext {
     trailingNewline: string;
     /** EOL convention of the original (`'\r\n'` or `'\n'`). */
     eol: '\r\n' | '\n';
+    /** Code-text links (`[\`x\`](url)`) replaced with placeholders during
+     *  preprocessing, restored after serialization. tiptap-markdown drops
+     *  the URL when a link's text is purely inline code. */
+    codeLinks: Array<{ placeholder: string; original: string }>;
 }
 
 const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
+
+// Link with inline-code text: `[\`anything\`](url)`. tiptap-markdown
+// loses the surrounding `[...](url)` wrapping when it parses a link whose
+// text is purely inline code, leaving just the backticked text and erasing
+// the URL. We replace these with ASCII placeholders before mounting and
+// restore them in post-process.
+const CODE_LINK_RE = /\[`([^`]+)`\]\(([^)]+)\)/g;
 
 /**
  * Pre-process a document before handing it to Tiptap. Returns a context
@@ -72,9 +83,23 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
 
     const trailingNewline = afterFront.endsWith('\n') ? '\n' : '';
 
+    // tiptap-markdown drops the URL when a link's text is purely inline
+    // code (`[\`x\`](url)` -> `\`x\``). Replace those with ASCII
+    // placeholders that survive the parse-and-serialize round-trip
+    // unchanged; we restore them in applyPostProcess.
+    const codeLinks: Array<{ placeholder: string; original: string }> = [];
+    let withPlaceholders = afterFront;
+    let codeLinkIndex = 0;
+    withPlaceholders = withPlaceholders.replace(CODE_LINK_RE, (match) => {
+        const placeholder = `TIPTAPCODELINK${String(codeLinkIndex).padStart(4, '0')}`;
+        codeLinks.push({ placeholder, original: match });
+        codeLinkIndex += 1;
+        return placeholder;
+    });
+
     // Tiptap mutates trailing newlines — we trim and put it back. Wikilinks
     // are rewritten to a placeholder shape that survives Tiptap.
-    const editorInput = rewriteWikiLinks(afterFront);
+    const editorInput = rewriteWikiLinks(withPlaceholders);
 
     return {
         editorInput,
@@ -84,6 +109,7 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
             frontmatterGap: gap,
             trailingNewline,
             eol,
+            codeLinks,
         },
     };
 }
@@ -97,6 +123,12 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
 export function applyPostProcess(serialized: string, context: RoundTripContext): string {
     let out = restoreWikiLinks(serialized);
 
+    // Restore code-text links replaced with placeholders during preprocess.
+    // Done before any other repair so subsequent text-shape fixups operate
+    // on the original markdown form.
+    for (const { placeholder, original } of context.codeLinks) {
+        out = out.split(placeholder).join(original);
+    }
     // Tiptap's serializer over-escapes characters that have no syntactic
     // meaning in the position they appear. We selectively unescape:
     //   - `\[` and `\]` outside link constructs (so `- [x] task` stays `- [x] task`)
@@ -105,12 +137,19 @@ export function applyPostProcess(serialized: string, context: RoundTripContext):
     //     about — reverse it).
     // We do this with conservative regexes that don't touch valid escapes
     // inside fenced code blocks or inline code.
-    out = unescapeSafeChars(out);
+    out = unescapeSafeChars(out, context.originalInput);
 
     // Tiptap normalises GFM table separator rows to a spaced form
     // (`| --- | --- |`) regardless of input shape. If the original used
     // a more compact form (`|---|---|`), restore it line-by-line.
     out = restoreTableSeparatorStyle(out, context.originalInput);
+
+    // tiptap-markdown is configured with `bulletListMarker: '-'` so every
+    // bullet is emitted as `- `. If the source used `*` (or a mix), we'd
+    // overwrite the user's preference on every save. Restore the original
+    // marker by mapping output bullet lines onto their corresponding
+    // source bullet lines positionally.
+    out = restoreBulletMarkers(out, context.originalInput);
 
     // Tiptap inserts a leading blank line when the document starts with
     // a block element. Strip it so we can re-attach the original
@@ -187,6 +226,48 @@ function restoreTableSeparatorStyle(serialized: string, originalInput: string): 
 }
 
 /**
+ * Restore the user's original bullet-list marker style.
+ *
+ * tiptap-markdown's serializer has a single `bulletListMarker` config
+ * (we set it to `-`). That means a source file written with `*` bullets
+ * comes back with `-` bullets — no data loss, but the file diff is full
+ * of one-character changes the user didn't make.
+ *
+ * Strategy: collect every "bullet line" from the original (lines starting
+ * with optional indent + `*`/`-`/`+` + space), in order. Walk the output;
+ * for each bullet line, restore the marker style at the same ordinal
+ * position. If the structure shifted (the user added a bullet that wasn't
+ * in the source), trailing extra bullets keep the editor's `-` style —
+ * that's correct for new content.
+ */
+function restoreBulletMarkers(serialized: string, originalInput: string): string {
+    const BULLET_RE = /^(\s*)([*\-+])(\s)/;
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+    // Collect markers in source order. We index purely by position in
+    // the bullet sequence — no attempt to match by content, so re-ordered
+    // bullets still get sensible markers.
+    const origMarkers: string[] = [];
+    for (const line of origLines) {
+        const m = line.match(BULLET_RE);
+        if (m) origMarkers.push(m[2]);
+    }
+    if (origMarkers.length === 0) return serialized;
+
+    const outLines = serialized.split('\n');
+    let bulletIdx = 0;
+    for (let i = 0; i < outLines.length; i += 1) {
+        const m = outLines[i].match(BULLET_RE);
+        if (!m) continue;
+        const wanted = origMarkers[bulletIdx];
+        if (wanted && wanted !== m[2]) {
+            outLines[i] = m[1] + wanted + m[3] + outLines[i].slice(m[0].length);
+        }
+        bulletIdx += 1;
+    }
+    return outLines.join('\n');
+}
+
+/**
  * Restore soft line-breaks Tiptap collapsed.
  *
  * tiptap-markdown is configured with `breaks: false`, which matches
@@ -223,15 +304,19 @@ function restoreSoftBreaks(serialized: string, originalInput: string): string {
         // as their own block kinds; we don't want to break list items in
         // half.
         if (looksStructural(a) || looksStructural(b)) continue;
-        const joined = `${a} ${b}`;
         const broken = `${a}\n${b}`;
-        // If the output has the joined form but not the broken form, it
-        // was Tiptap that collapsed the soft break — repair it (only the
-        // first occurrence; see docstring).
-        const idx = out.indexOf(joined);
-        if (idx === -1) continue;
         if (out.indexOf(broken) !== -1) continue;
-        out = out.slice(0, idx) + broken + out.slice(idx + joined.length);
+        // Tiptap joins paragraph-internal lines with EITHER a space (the
+        // common case for prose) OR no separator at all (when the
+        // boundary is between punctuation like `)` and a non-letter
+        // character like an emoji). Try both, in that order.
+        for (const joiner of [' ', '']) {
+            const joined = `${a}${joiner}${b}`;
+            const idx = out.indexOf(joined);
+            if (idx === -1) continue;
+            out = out.slice(0, idx) + broken + out.slice(idx + joined.length);
+            break;
+        }
     }
     return out;
 }
@@ -249,10 +334,27 @@ function looksStructural(line: string): boolean {
  * Unescape characters that tiptap-markdown's serializer over-escapes.
  * We only undo escapes for characters that are NEVER syntactically active
  * in plain prose: brackets in body text, tildes outside strikethrough,
- * etc. Code fences are skipped so language-internal escapes survive.
+ * etc.
+ *
+ * Round-trip safety: only undo an escape if the SAME escape was not
+ * already present in the original source. If the user's file had `\~190M`
+ * literally (e.g. left over from a previous Tiptap save before we
+ * disabled strike), we leave it alone. If the editor introduced a NEW
+ * escape that wasn't in the source, we remove it. This preserves the
+ * file-on-disk vs. cleaning-up tension on the safe side.
+ *
+ * Code fences are skipped so language-internal escapes survive.
  */
-function unescapeSafeChars(md: string): string {
-    // Walk lines, tracking whether we're inside a fenced code block.
+function unescapeSafeChars(md: string, originalInput: string): string {
+    // The fix is per-line, not per-document. For each output line, find a
+    // matching source line by stripping all `\X` escapes from candidates;
+    // if a stripped source line equals the output line (after also
+    // stripping the same escapes), the user did NOT author those escapes
+    // in this region and we may safely remove them. If no source line
+    // matches even after stripping, we err on the safe side and keep the
+    // escapes (they may be intentional).
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+
     let insideFence = false;
     const lines = md.split('\n');
     for (let i = 0; i < lines.length; i += 1) {
@@ -262,16 +364,45 @@ function unescapeSafeChars(md: string): string {
             continue;
         }
         if (insideFence) continue;
-        // Now apply selective unescapes for this prose line.
-        lines[i] = line
-            // `\[` and `\]` — never have syntactic meaning by themselves.
-            // (Real link / image syntax is `[label](url)` and `![alt](url)`,
-            // neither of which contains a backslash before the bracket.)
-            .replace(/\\(\[|\])/g, '$1')
-            // `\~` — tildes have no syntactic role with strike disabled.
-            .replace(/\\~/g, '~');
+
+        // Quick check: if no candidate escapes are even present in this
+        // output line, nothing to do.
+        if (!/\\[\[\]~]/.test(line)) continue;
+
+        const stripped = stripSafeEscapes(line);
+        // Does ANY source line match this output line, with both sides
+        // stripped of safe escapes? If yes, the source had this content
+        // without those escapes, so Tiptap added them — strip them.
+        const sourceHasEquivalent = origLines.some((origLine) => stripSafeEscapes(origLine) === stripped);
+        if (sourceHasEquivalent) {
+            // Look for an exact source line match (escapes intact). If
+            // there's an exact match, use it to know which escapes were
+            // authored vs added.
+            const exact = origLines.find((origLine) => origLine === line);
+            if (exact !== undefined) {
+                // Source had this exact line including escapes — preserve.
+                continue;
+            }
+            // Source had the equivalent without authoring these escapes —
+            // strip them.
+            lines[i] = stripped;
+        }
+        // Otherwise: source line is genuinely different from output. Could
+        // be an edit, could be a region we don't have a per-line match
+        // for. Leave the escapes alone — round-trip safety wins over
+        // cleanup.
     }
     return lines.join('\n');
+}
+
+/**
+ * Remove the safe-escape prefixes (`\[`, `\]`, `\~`) from a line. Used to
+ * compare an output line against source lines after both have been
+ * normalised — if they then match, neither side had user-authored escapes
+ * for these specific characters.
+ */
+function stripSafeEscapes(line: string): string {
+    return line.replace(/\\([\[\]~])/g, '$1');
 }
 
 /**
@@ -359,7 +490,14 @@ export function buildTiptapExtensions(): Extensions {
             html: true,
             tightLists: true,
             bulletListMarker: '-',
-            linkify: true,
+            // `linkify: true` made tiptap-markdown auto-wrap bare URLs in
+            // <…> autolink brackets on serialize, even when the source had
+            // them as bare URLs. The editor still recognises pasted URLs
+            // as clickable via Tiptap's link extension; this only affects
+            // the parser's "treat any URL-shaped string as a Link node"
+            // behaviour, which is what was rewriting `https://...` to
+            // `<https://...>` on round-trip.
+            linkify: false,
             breaks: false,
             transformPastedText: true,
             transformCopiedText: false,

@@ -303,6 +303,77 @@ async function testTableInsideRealisticDoc() {
   console.log('OK realistic doc preserved');
 }
 
+async function testBareUrlNotAutoLinked() {
+  console.log('\n--- Test: bare URL not wrapped in autolink brackets (best-value-ai #1) ---');
+  // Captured from /Users/eduardsruzga/work/best-value-ai/README.md.
+  // Tiptap with `linkify: true` autolinks bare URLs and the serializer
+  // emits them as `<https://...>` even when the source had no brackets.
+  const input = '🔗 **Live tool:** https://desktopcommander.app/best-value-ai/\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'a bare URL in prose should NOT be wrapped in <…> autolink brackets on round-trip'
+  );
+  console.log('OK bare URL preserved');
+}
+
+async function testEmojiPrefixedSoftBreaksRestored() {
+  console.log('\n--- Test: 3 consecutive emoji-prefixed lines stay separate (best-value-ai #2) ---');
+  // Captured from the same README. Three lines, each ending with a soft
+  // break, each starting with an emoji. Tiptap-with-`breaks:false` parses
+  // them as one paragraph and serializes them concatenated. restoreSoftBreaks
+  // currently only repairs pairs; this is a triple.
+  const input =
+    '🔗 **Live tool:** desktopcommander.app/best-value-ai/\n' +
+    '📖 **Article:** [Local LLMs Beat Cloud](https://example.com/x)\n' +
+    '🏠 **Supported by:** [Desktop Commander](https://desktopcommander.app)\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'three consecutive prose lines must stay on three lines, not collapse into one'
+  );
+  console.log('OK emoji-prefixed soft breaks preserved');
+}
+
+async function testLinkInTableCellSurvivesRoundTrip() {
+  console.log('\n--- Test: backtick-text link inside a table cell (best-value-ai #3) ---');
+  // From the same README's "data files" table. tiptap-markdown drops the
+  // surrounding `[…](url)` wrapping when the link text is inline code
+  // (backticks) and the link sits inside a table cell — leaving just the
+  // backticked text and erasing the URL.
+  const input =
+    '| File | URL |\n' +
+    '|------|-----|\n' +
+    '| Models | [`models.json`](https://example.com/models.json) |\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'a [\\`code\\`](url) link inside a table cell must NOT lose its URL on round-trip'
+  );
+  console.log('OK link-in-cell preserved');
+}
+
+async function testStarBulletMarkerPreserved() {
+  console.log('\n--- Test: `*` bullet marker preserved (best-value-ai #4) ---');
+  // tiptap-markdown's `bulletListMarker: '-'` config rewrites every
+  // bullet to `- ` regardless of what the source used. `*` is equally
+  // valid CommonMark and should be preserved.
+  const input =
+    '* First item\n' +
+    '* Second item\n' +
+    '* Third item\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    '`*` bullet markers should be preserved when the source used them'
+  );
+  console.log('OK star bullet marker preserved');
+}
+
 async function runAllTests() {
   const tests = [
     testPipeTableSurvivesRoundTrip,
@@ -319,6 +390,10 @@ async function runAllTests() {
     testCrlfPreserved,
     testReadmeStyleFileNotCollapsed,
     testTableInsideRealisticDoc,
+    testBareUrlNotAutoLinked,
+    testEmojiPrefixedSoftBreaksRestored,
+    testLinkInTableCellSurvivesRoundTrip,
+    testStarBulletMarkerPreserved,
   ];
   let passed = 0;
   let failed = 0;
