@@ -32,6 +32,11 @@ function formatLocalTimestamp(isoTimestamp: string): string {
 class ToolHistory {
   private history: ToolCallRecord[] = [];
   private readonly MAX_ENTRIES = 1000;
+  private readonly MAX_HISTORY_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+  // When the file exceeds the cap we trim it down to this target instead of
+  // all the way to zero, so a single overflow doesn't cause every subsequent
+  // flush to re-trim.
+  private readonly HISTORY_FILE_TRIM_TARGET_BYTES = 4 * 1024 * 1024;
   private readonly historyFile: string;
   private writeQueue: ToolCallRecord[] = [];
   private isWriting = false;
@@ -65,6 +70,10 @@ class ToolHistory {
         return;
       }
 
+      // If the file is over the cap, trim it down before reading so we
+      // load a bounded amount.
+      this.trimHistoryFileIfTooLarge();
+
       const content = fs.readFileSync(this.historyFile, 'utf-8');
       const lines = content.trim().split('\n').filter(line => line.trim());
 
@@ -87,6 +96,60 @@ class ToolHistory {
       }
     } catch (error) {
       // Silently fail
+    }
+  }
+
+  /**
+   * Trim the on-disk history file to stay under the size cap by dropping the
+   * oldest entries (lines) until the kept tail fits within the trim target.
+   * Returns true only when the file was actually rewritten with a smaller
+   * tail, so callers can fall through to their normal path on failure or
+   * no-op rather than mutating in-memory state.
+   *
+   * Always keeps at least the most recent entry, even if a single record
+   * exceeds the trim target — there is no useful state below that.
+   */
+  private trimHistoryFileIfTooLarge(): boolean {
+    let stats: fs.Stats;
+    try {
+      if (!fs.existsSync(this.historyFile)) {
+        return false;
+      }
+      stats = fs.statSync(this.historyFile);
+      if (stats.size <= this.MAX_HISTORY_FILE_SIZE_BYTES) {
+        return false;
+      }
+    } catch (error) {
+      return false;
+    }
+
+    try {
+      const content = fs.readFileSync(this.historyFile, 'utf-8');
+      const lines = content.split('\n').filter(line => line.length > 0);
+      if (lines.length === 0) {
+        return false;
+      }
+
+      // Walk lines from newest to oldest, accumulating bytes (line + '\n'),
+      // and keep as many as fit within the trim target. Always keep at
+      // least the last line.
+      const kept: string[] = [];
+      let bytes = 0;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const lineBytes = Buffer.byteLength(lines[i], 'utf-8') + 1; // +1 for '\n'
+        if (kept.length > 0 && bytes + lineBytes > this.HISTORY_FILE_TRIM_TARGET_BYTES) {
+          break;
+        }
+        kept.push(lines[i]);
+        bytes += lineBytes;
+      }
+      kept.reverse();
+
+      fs.writeFileSync(this.historyFile, kept.join('\n') + '\n', 'utf-8');
+      return true;
+    } catch (error) {
+      // Trim failed; do not claim the file was changed.
+      return false;
     }
   }
 
@@ -125,12 +188,18 @@ class ToolHistory {
    */
   private async flushToDisk(): Promise<void> {
     if (this.isWriting || this.writeQueue.length === 0) return;
-    
+
     this.isWriting = true;
     const toWrite = [...this.writeQueue];
     this.writeQueue = [];
-    
+
     try {
+      // If the on-disk file has grown past the cap, trim it down to the
+      // target size (keeping the most recent entries) before appending.
+      // The in-memory cache is unaffected — it is already bounded by
+      // MAX_ENTRIES via addCall.
+      this.trimHistoryFileIfTooLarge();
+
       // Append to file (atomic append operation)
       const lines = toWrite.map(entry => JSON.stringify(entry)).join('\n') + '\n';
       fs.appendFileSync(this.historyFile, lines, 'utf-8');
