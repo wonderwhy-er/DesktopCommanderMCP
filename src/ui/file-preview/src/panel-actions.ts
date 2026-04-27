@@ -160,7 +160,6 @@ export function attachPanelActions(options: {
         return;
     }
 
-    const currentContent = stripReadStatusLine(options.payload.content);
     const loadLines = async (button: HTMLButtonElement, direction: 'before' | 'after'): Promise<void> => {
         const originalText = button.textContent;
         button.textContent = 'Loading…';
@@ -180,24 +179,11 @@ export function attachPanelActions(options: {
             const newText = extractToolText(result);
 
             if (newText && typeof newText === 'string') {
-                const cleanNew = stripReadStatusLine(newText);
-                const merged = direction === 'before'
-                    ? `${cleanNew}${cleanNew.endsWith('\n') ? '' : '\n'}${currentContent}`
-                    : `${currentContent}${currentContent.endsWith('\n') ? '' : '\n'}${cleanNew}`;
-
-                const newFrom = direction === 'before' ? 1 : range.fromLine;
-                const newTo = direction === 'after' ? range.totalLines : range.toLine;
-                const lineCount = newTo - newFrom + 1;
-                const remaining = range.totalLines - newTo;
-                const isStillPartial = newFrom > 1 || newTo < range.totalLines;
-                const statusLine = isStillPartial
-                    ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
-                    : '';
-
-                options.render({
-                    ...options.payload,
-                    content: statusLine + merged,
-                }, options.htmlMode, options.getIsExpanded());
+                options.render(
+                    options.markdownController.expandPartialPayload(options.payload, direction, newText),
+                    options.htmlMode,
+                    options.getIsExpanded()
+                );
                 return;
             }
         } catch {

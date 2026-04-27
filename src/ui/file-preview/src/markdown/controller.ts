@@ -150,10 +150,6 @@ function computeEditBlocks(oldText: string, newText: string): Array<{ old_string
 
     const context = 3;
     const merged = mergeCloseHunks(hunks, context * 2 + 1);
-    const totalChanged = merged.reduce((sum, hunk) => sum + (hunk.oldEnd - hunk.oldStart), 0);
-    if (totalChanged > oldLines.length * 0.7) {
-        return [{ old_string: oldText, new_string: newText }];
-    }
 
     return merged.map((hunk) => {
         const contextBefore = Math.max(0, hunk.oldStart - context);
@@ -168,6 +164,16 @@ function computeEditBlocks(oldText: string, newText: string): Array<{ old_string
 
         return { old_string: oldBlock, new_string: newBlock };
     }).filter((block) => block.old_string !== block.new_string);
+}
+
+function joinDocumentChunks(first: string, second: string): string {
+    if (!first) {
+        return second;
+    }
+    if (!second) {
+        return first;
+    }
+    return `${first}${first.endsWith('\n') ? '' : '\n'}${second}`;
 }
 
 function isToolErrorResult(value: unknown): value is ToolErrorResult {
@@ -437,7 +443,17 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         return extractMarkdownOutline(readPayloadContent(payload)).map((item) => ({ id: item.id, text: item.text }));
     }
 
-    function findHeading(anchor: string): HTMLElement | null {
+    function resolveOutlineHeading(anchor: string): MarkdownWorkspaceState['outline'][number] | null {
+        const trimmedAnchor = anchor.trim();
+        if (!workspaceState || !trimmedAnchor) {
+            return null;
+        }
+
+        const slug = slugifyMarkdownHeading(trimmedAnchor);
+        return workspaceState.outline.find((item) => item.id === trimmedAnchor || item.id === slug) ?? null;
+    }
+
+    function findDomHeading(anchor: string): HTMLElement | null {
         const trimmedAnchor = anchor.trim();
         if (!trimmedAnchor) {
             return null;
@@ -447,7 +463,16 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
     }
 
     function scrollHeadingIntoView(anchor: string): boolean {
-        const heading = findHeading(anchor);
+        const outlineHeading = resolveOutlineHeading(anchor);
+        if (outlineHeading && typeof outlineHeading.line === 'number') {
+            markdownEditorHandle?.revealLine(outlineHeading.line, outlineHeading.id);
+            if (workspaceState) {
+                workspaceState.activeHeadingId = outlineHeading.id;
+            }
+            return true;
+        }
+
+        const heading = findDomHeading(anchor);
         if (!heading) {
             return false;
         }
@@ -1036,6 +1061,40 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         return state.draftContent;
     }
 
+    function expandPartialPayload(payload: RenderPayload, direction: 'before' | 'after', loadedContent: string): RenderPayload {
+        const state = getState(payload);
+        const range = parseReadRange(payload.content);
+        if (!range?.isPartial) {
+            return payload;
+        }
+
+        const cleanLoaded = stripReadStatusLine(loadedContent);
+        const nextBaseline = direction === 'before'
+            ? joinDocumentChunks(cleanLoaded, state.fullDocumentContent)
+            : joinDocumentChunks(state.fullDocumentContent, cleanLoaded);
+        const nextDraft = direction === 'before'
+            ? joinDocumentChunks(cleanLoaded, state.draftContent)
+            : joinDocumentChunks(state.draftContent, cleanLoaded);
+        const newFrom = direction === 'before' ? 1 : range.fromLine;
+        const newTo = direction === 'after' ? range.totalLines : range.toLine;
+        const lineCount = newTo - newFrom + 1;
+        const remaining = range.totalLines - newTo;
+        const isStillPartial = newFrom > 1 || newTo < range.totalLines;
+        const statusLine = isStillPartial
+            ? `[Reading ${lineCount} lines from ${newFrom === 1 ? 'start' : `line ${newFrom}`} (total: ${range.totalLines} lines, ${remaining} remaining)]\n`
+            : '';
+
+        state.fullDocumentContent = nextBaseline;
+        state.draftContent = nextDraft;
+        state.outline = extractMarkdownOutline(nextDraft);
+        state.dirty = nextDraft !== nextBaseline;
+        if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
+            state.activeHeadingId = state.outline[0]?.id ?? null;
+        }
+
+        return { ...payload, content: statusLine + nextBaseline };
+    }
+
     async function handleInlineExitFromFullscreen(originalPayload?: RenderPayload): Promise<RenderPayload | undefined> {
         const wasDirty = workspaceState?.saveIndicator === 'saved' || workspaceState?.dirty;
         if (workspaceState) {
@@ -1059,6 +1118,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         buildBody,
         clear,
         disposeHandles,
+        expandPartialPayload,
         getCopyText,
         getState,
         handleInlineExitFromFullscreen,

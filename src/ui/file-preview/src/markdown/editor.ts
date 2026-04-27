@@ -27,6 +27,94 @@ interface MarkdownLinkRange {
     kind: 'markdown' | 'wiki';
 }
 
+function isEscaped(text: string, index: number): boolean {
+    let slashCount = 0;
+    for (let current = index - 1; current >= 0 && text[current] === '\\'; current -= 1) {
+        slashCount += 1;
+    }
+    return slashCount % 2 === 1;
+}
+
+function readBareMarkdownHref(value: string): string {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('<')) {
+        const closeIndex = trimmed.indexOf('>');
+        return closeIndex >= 0 ? trimmed.slice(1, closeIndex).trim() : trimmed;
+    }
+
+    let depth = 0;
+    for (let index = 0; index < trimmed.length; index += 1) {
+        const char = trimmed[index];
+        if (char === '(' && !isEscaped(trimmed, index)) {
+            depth += 1;
+        } else if (char === ')' && depth > 0 && !isEscaped(trimmed, index)) {
+            depth -= 1;
+        } else if (/\s/.test(char) && depth === 0) {
+            return trimmed.slice(0, index);
+        }
+    }
+
+    return trimmed;
+}
+
+function findMarkdownLinksInLine(text: string): Array<{ start: number; end: number; label: string; href: string }> {
+    const links: Array<{ start: number; end: number; label: string; href: string }> = [];
+    let index = 0;
+
+    while (index < text.length) {
+        const start = text.indexOf('[', index);
+        if (start < 0) {
+            break;
+        }
+        if (text[start - 1] === '!' || isEscaped(text, start)) {
+            index = start + 1;
+            continue;
+        }
+
+        let labelEnd = start + 1;
+        while (labelEnd < text.length && (text[labelEnd] !== ']' || isEscaped(text, labelEnd))) {
+            if (text[labelEnd] === '\n') {
+                break;
+            }
+            labelEnd += 1;
+        }
+        if (text[labelEnd] !== ']' || text[labelEnd + 1] !== '(') {
+            index = start + 1;
+            continue;
+        }
+
+        let depth = 1;
+        let hrefEnd = labelEnd + 2;
+        while (hrefEnd < text.length && depth > 0) {
+            const char = text[hrefEnd];
+            if (char === '\n') {
+                break;
+            }
+            if (char === '(' && !isEscaped(text, hrefEnd)) {
+                depth += 1;
+            } else if (char === ')' && !isEscaped(text, hrefEnd)) {
+                depth -= 1;
+            }
+            hrefEnd += 1;
+        }
+        if (depth !== 0) {
+            index = start + 1;
+            continue;
+        }
+
+        const hrefContent = text.slice(labelEnd + 2, hrefEnd - 1);
+        links.push({
+            start,
+            end: hrefEnd,
+            label: text.slice(start + 1, labelEnd),
+            href: readBareMarkdownHref(hrefContent),
+        });
+        index = hrefEnd;
+    }
+
+    return links;
+}
+
 export interface MarkdownEditorHandle {
     destroy: () => void;
     focus: () => void;
@@ -847,15 +935,9 @@ export function mountMarkdownEditor(options: {
         };
 
         const findMarkdownLinkInLine = (line: { from: number; text: string }, relativeFrom: number, relativeTo: number = relativeFrom): MarkdownLinkRange | null => {
-            for (const match of line.text.matchAll(/\[([^\]\n]+)\]\(([^)\n]+)\)/g)) {
-                const start = match.index ?? 0;
-                const label = match[1] ?? '';
-                if (line.text[start - 1] === '!' || label.startsWith('![')) {
-                    continue;
-                }
-                const end = start + match[0].length;
+            for (const link of findMarkdownLinksInLine(line.text)) {
+                const { start, end, label, href } = link;
                 if (start <= relativeFrom && relativeTo <= end) {
-                    const href = (match[2] ?? '').trim();
                     return {
                         from: line.from + start,
                         labelFrom: line.from + start + 1,
@@ -1338,9 +1420,6 @@ export function mountMarkdownEditor(options: {
     textarea.addEventListener('keydown', handleKeyDown);
     textarea.addEventListener('focusout', handleFocusOut);
     autosize();
-    if (typeof options.initialScrollTop === 'number') {
-        textarea.scrollTop = options.initialScrollTop;
-    }
 
     return {
         destroy: () => {
