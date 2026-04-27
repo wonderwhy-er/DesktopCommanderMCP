@@ -1,0 +1,378 @@
+/**
+ * Regression test for #437: markdown preview auto-save corrupts table/wikilink/tilde
+ * content because the Tiptap+tiptap-markdown round-trip is lossy.
+ *
+ * The auto-save loop in src/ui/file-preview/src/markdown/controller.ts (line ~922,
+ * onChange -> scheduleAutosave) reads `getTiptapMarkdown()` from the editor and
+ * diffs it against `state.fullDocumentContent`. Any drift introduced by the
+ * parse-and-reserialize round trip becomes an `edit_block` call that silently
+ * overwrites the user's file.
+ *
+ * This test mounts the *exact* editor configuration used in
+ * src/ui/file-preview/src/markdown/editor.ts (mountMarkdownEditor) and verifies
+ * that round-tripping common markdown features through it is stable. It fails on
+ * the current implementation because:
+ *   - GFM pipe tables collapse (no Table node in StarterKit) -> "AB12"
+ *   - `~` is escaped to `\~` (prosemirror-markdown strikethrough escaping)
+ *   - Adjacent block-level elements gain blank-line separators
+ *   - Trailing newline is stripped
+ *
+ * Requires `jsdom` as a devDependency (added to package.json by this PR).
+ */
+
+import assert from 'assert';
+import { JSDOM } from 'jsdom';
+
+// Bootstrap a DOM that Tiptap can mount into. Must run before importing tiptap.
+const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+globalThis.HTMLElement = dom.window.HTMLElement;
+globalThis.Node = dom.window.Node;
+globalThis.DOMParser = dom.window.DOMParser;
+globalThis.getComputedStyle = dom.window.getComputedStyle;
+
+const { Editor } = await import('@tiptap/core');
+const StarterKit = (await import('@tiptap/starter-kit')).default;
+const Image = (await import('@tiptap/extension-image')).default;
+const { Markdown } = await import('tiptap-markdown');
+const { rewriteWikiLinks, restoreWikiLinks } = await import(
+  '../dist/ui/file-preview/src/markdown/linking.js'
+);
+
+/**
+ * Mount a Tiptap editor with the same extensions and config that
+ * mountMarkdownEditor uses for `view: 'markdown'`.
+ */
+function mountEditor(value) {
+  const target = document.getElementById('root');
+  target.innerHTML = '';
+  return new Editor({
+    element: target,
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3, 4, 5, 6] },
+        codeBlock: { HTMLAttributes: { class: 'code-viewer' } },
+        link: {
+          openOnClick: false,
+          autolink: true,
+          HTMLAttributes: { 'data-markdown-link': 'true' },
+        },
+      }),
+      Image.configure({ allowBase64: true, inline: true }),
+      Markdown.configure({
+        html: true,
+        tightLists: true,
+        bulletListMarker: '-',
+        linkify: true,
+        breaks: false,
+        transformPastedText: true,
+        transformCopiedText: false,
+      }),
+    ],
+    content: rewriteWikiLinks(value),
+  });
+}
+
+/** Mirrors editor.ts:181-184 getTiptapMarkdown */
+function getTiptapMarkdown(editor) {
+  const storage = editor.storage;
+  return restoreWikiLinks(storage.markdown?.getMarkdown() ?? '');
+}
+
+function roundTrip(input) {
+  const editor = mountEditor(input);
+  const out = getTiptapMarkdown(editor);
+  editor.destroy();
+  return out;
+}
+
+async function testPipeTableSurvivesRoundTrip() {
+  console.log('\n--- Test: GFM pipe table survives editor round-trip ---');
+  const input = '# Test\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'pipe table should not collapse into "AB12" — auto-save would write that to disk'
+  );
+  console.log('OK pipe table preserved');
+}
+
+async function testTildeIsNotEscaped() {
+  console.log('\n--- Test: literal "~" is not escaped to "\\~" ---');
+  const input = 'Use ~ to negate.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'tilde should not gain a backslash escape on round-trip'
+  );
+  console.log('OK tilde preserved');
+}
+
+async function testAdjacentHeadingsKeepOriginalSpacing() {
+  console.log('\n--- Test: adjacent block-level elements keep original spacing ---');
+  const input = '### Heading One\nBody.\n### Heading Two\nMore.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'serializer should not insert blank lines between blocks the user did not author'
+  );
+  console.log('OK block spacing preserved');
+}
+
+async function testWikilinkSurvivesRoundTrip() {
+  console.log('\n--- Test: wikilink round-trips through editor ---');
+  const input = '# Test\nSee [[Other Note]].\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'wikilink + heading + body should round-trip identically'
+  );
+  console.log('OK wikilink preserved');
+}
+
+async function testTrailingNewlineSurvives() {
+  console.log('\n--- Test: trailing newline is preserved ---');
+  const input = 'A single paragraph.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'trailing newline must not be stripped — POSIX text files are expected to end with one'
+  );
+  console.log('OK trailing newline preserved');
+}
+
+async function testCombinedBugReportFile() {
+  console.log('\n--- Test: bug-report combined fixture ---');
+  const input = '# Test\nSee [[Other Note]].\n\n| A | B |\n|---|---|\n| 1 | 2 |\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'the exact fixture from issue #437 should not drift on round-trip'
+  );
+  console.log('OK combined fixture preserved');
+}
+
+
+async function testYamlFrontmatterSurvives() {
+  console.log('\n--- Test: YAML frontmatter survives round-trip (#437 LevionLaurion, #440) ---');
+  const input = '---\ntitle: My Note\ntags: [a, b]\ndescription: A test file\n---\n\n# Body\n\nContent here.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'YAML frontmatter delimited by --- must not be parsed as a Setext heading'
+  );
+  console.log('OK frontmatter preserved');
+}
+
+async function testSquareBracketsNotEscaped() {
+  console.log('\n--- Test: square brackets not escaped (#440) ---');
+  const input = '- [x] task done\n- [ ] task todo\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'GFM task list brackets [x] [ ] should not be escaped to \\[x\\]'
+  );
+  console.log('OK brackets preserved');
+}
+
+async function testUnderscoresNotEscaped() {
+  console.log('\n--- Test: underscores in identifiers not escaped (#440) ---');
+  const input = 'Use the my_variable_name in code, plus snake_case_func().\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'Bare underscores in identifiers must not be escaped to \\_'
+  );
+  console.log('OK underscores preserved');
+}
+
+async function testTildePathNotEscaped() {
+  console.log('\n--- Test: tilde paths (~/foo) not escaped (#440) ---');
+  const input = 'Open ~/Documents/notes.md to continue.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'Path-style ~/path must not be escaped to \\~/path'
+  );
+  console.log('OK tilde-path preserved');
+}
+
+async function testFrontmatterListItem() {
+  console.log('\n--- Test: list with blank lines between items (#440) ---');
+  const input = '- first item\n\n- second item\n\n- third item\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'Blank lines between list items (loose list) must not be stripped'
+  );
+  console.log('OK loose list preserved');
+}
+
+
+async function testCrlfPreserved() {
+  console.log('\n--- Test: CRLF line endings preserved (related to #97/#438) ---');
+  // The Tiptap pipeline operates on strings; the file-preview UI seeds itself
+  // with content from read_file's text response, which is already LF-normalized
+  // by TextFileHandler (PR #438 fixes that upstream). But if a CRLF file
+  // somehow reaches this layer with CRLF intact, the round-trip should not
+  // silently downgrade to LF.
+  const input = '# Heading\r\nFirst line.\r\nSecond line.\r\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'CRLF line endings must not be silently converted to LF on round-trip'
+  );
+  console.log('OK CRLF preserved');
+}
+
+
+async function testReadmeStyleFileNotCollapsed() {
+  console.log('\n--- Test: README-style file not collapsed by Tiptap (issue #437 in-the-wild reproduction) ---');
+  // This mirrors a real corruption captured by another Claude session: a 200+ line
+  // README with mixed markdown (headings, tables, code blocks, lists) was reduced
+  // to ~22 lines after a single edit_block call. The file-preview UI mounts on
+  // edit_block (server.ts:788), the editor parses the file via tiptap-markdown,
+  // and the lossy reserialization combined with computeEditBlocks' >70% threshold
+  // (controller.ts:155-158) emits a single edit_block that replaces the entire
+  // file with the structurally-degraded version.
+  const input = [
+    '# My Project',
+    '',
+    'A short intro paragraph explaining what the project does.',
+    '',
+    '## Installation',
+    '',
+    '```bash',
+    'npm install my-project',
+    '```',
+    '',
+    '## Configuration',
+    '',
+    '| Variable | Default | Description |',
+    '|---|---|---|',
+    '| FOO | `bar` | The foo setting |',
+    '| BAZ | `qux` | The baz setting |',
+    '',
+    '## Usage',
+    '',
+    '- First, run `npm start`',
+    '- Then, open `http://localhost:3000`',
+    '- Finally, press `Ctrl+C` to stop',
+    '',
+    'See [the docs](https://example.com) for more.',
+    '',
+  ].join('\n');
+  const output = roundTrip(input);
+  // We are asserting two things: structure-preservation AND non-collapse.
+  // If output is dramatically shorter than input, the >70% threshold in
+  // computeEditBlocks would write a single full-file replacement.
+  const inputLines = input.split('\n').length;
+  const outputLines = output.split('\n').length;
+  const ratio = outputLines / inputLines;
+  if (ratio < 0.5) {
+    throw new Error(
+      'output collapsed from ' + inputLines + ' to ' + outputLines +
+      ' lines (ratio ' + ratio.toFixed(2) + '). The >70% threshold in ' +
+      'computeEditBlocks would emit a single edit_block that replaces the entire file ' +
+      'with this degraded version.'
+    );
+  }
+  assert.strictEqual(
+    output,
+    input,
+    'README-style file with table+code+lists must round-trip unchanged'
+  );
+  console.log('OK README-style file preserved');
+}
+
+async function testTableInsideRealisticDoc() {
+  console.log('\n--- Test: pipe table embedded in realistic doc does not erase neighbors ---');
+  // Captures the specific failure mode: a table in the middle of a document
+  // collapses, and the collapse takes adjacent prose with it because the >70%
+  // line-change threshold trips on a single bad block.
+  const input = [
+    '# Section A',
+    '',
+    'Prose paragraph one with content.',
+    'A second line of prose.',
+    '',
+    '## Comparison',
+    '',
+    '| Feature | A | B |',
+    '|---|---|---|',
+    '| Speed | fast | slow |',
+    '| Cost | low | high |',
+    '| Quality | good | bad |',
+    '',
+    '## Section B',
+    '',
+    'More prose after the table that must not be deleted.',
+    'Final line of the document.',
+    '',
+  ].join('\n');
+  const output = roundTrip(input);
+  // Specific assertion: text outside the table must survive
+  if (!output.includes('Section A') || !output.includes('Section B') ||
+      !output.includes('Final line of the document') ||
+      !output.includes('Prose paragraph one')) {
+    throw new Error(
+      'lost prose around the table. Output was:\n' + output
+    );
+  }
+  assert.strictEqual(
+    output,
+    input,
+    'realistic doc with table+prose must round-trip unchanged'
+  );
+  console.log('OK realistic doc preserved');
+}
+
+async function runAllTests() {
+  const tests = [
+    testPipeTableSurvivesRoundTrip,
+    testTildeIsNotEscaped,
+    testAdjacentHeadingsKeepOriginalSpacing,
+    testWikilinkSurvivesRoundTrip,
+    testTrailingNewlineSurvives,
+    testCombinedBugReportFile,
+    testYamlFrontmatterSurvives,
+    testSquareBracketsNotEscaped,
+    testUnderscoresNotEscaped,
+    testTildePathNotEscaped,
+    testFrontmatterListItem,
+    testCrlfPreserved,
+    testReadmeStyleFileNotCollapsed,
+    testTableInsideRealisticDoc,
+  ];
+  let passed = 0;
+  let failed = 0;
+  for (const t of tests) {
+    try {
+      await t();
+      passed++;
+    } catch (err) {
+      failed++;
+      console.error('FAIL ' + t.name);
+      console.error('  ' + err.message);
+    }
+  }
+  console.log('\n' + passed + ' passed, ' + failed + ' failed');
+  if (failed > 0) {
+    process.exit(1);
+  }
+}
+
+runAllTests();
