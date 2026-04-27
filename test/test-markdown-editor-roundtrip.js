@@ -398,6 +398,121 @@ async function testRelativePathLinksSurvive() {
   console.log('OK relative-path links preserved');
 }
 
+async function testLessThanInProseNotEscaped() {
+  console.log('\n--- Test: literal `<` in prose not converted to &lt; (skill-files batch) ---');
+  // From bigquery-cli.md and skill-creator.md. Tiptap's HTML output path
+  // HTML-escapes bare `<` in prose because the character could in theory
+  // open a tag. tiptap-markdown then serialises the entity literally so
+  // `< $0.01` round-trips as `&lt; $0.01`.
+  //
+  // CommonMark's rule is that `<` only opens a tag when followed by an
+  // ASCII letter, slash, `?` or `!`. Followed by space / digit / dollar
+  // it's just a less-than sign. We can safely undo the escape in those
+  // positions on output.
+  const input =
+    '| Cost | Verdict |\n' +
+    '|---|---|\n' +
+    '| < $0.01 (< 2 GB) | Safe |\n' +
+    '\n' +
+    'Use this when <2k tokens are expected.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    '`<` followed by space / digit / `$` in prose must NOT become `&lt;` on round-trip'
+  );
+  console.log('OK literal `<` preserved');
+}
+
+async function testTrailingHardBreakWhitespacePreserved() {
+  console.log('\n--- Test: trailing two-space hard break preserved (skill-files batch) ---');
+  // From replicate-api.md. Two trailing spaces at the end of a line is
+  // CommonMark hard-break syntax. Tiptap's serializer drops the trailing
+  // whitespace entirely.
+  //
+  // Round-trip wants the source bytes back unchanged regardless of
+  // whether the user intended a hard break or just had stray spaces.
+  const input =
+    '- `right` - Original on right, expand left  \n' +
+    '- `left` - Original on left, expand right\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'trailing two-space hard-break syntax must survive round-trip'
+  );
+  console.log('OK trailing hard-break whitespace preserved');
+}
+
+async function testBoldAroundInlineCodePreserved() {
+  console.log('\n--- Test: **bold around `code`** preserved (skill-files batch) ---');
+  // From sentry-posthog-replay-triage.md. ProseMirror's flat-mark schema
+  // can't represent a single bold span that wraps inline code; Tiptap
+  // re-shapes the construct in non-obvious ways:
+  //
+  //   `**`x`**`                  → `\`x\``  (bold dropped)
+  //   `**\`x\` + \`y\`**`        → `\`x\` **+** \`y\``  (bold around `+`)
+  //   `**Key in \`x\`:**`        → `**Key in** \`x\`**:**`  (bold split)
+  //
+  // The cleanest fix is the placeholder trick: detect bold-around-code
+  // patterns at preprocess and substitute an opaque placeholder.
+  const input =
+    '- **`tags.app_version`** — DC app version\n' +
+    '- **`contexts.os.name` + `contexts.os.version`** — OS\n' +
+    '- **Key columns in `chat_message`:** `role`, `parts`\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    '`**…`code`…**` constructs must round-trip without bold being shifted'
+  );
+  console.log('OK bold-around-code preserved');
+}
+
+async function testEscapedPipeInTableCellPreserved() {
+  console.log('\n--- Test: \\| inside a table cell is preserved (skill-files batch) ---');
+  // From skill-creator.md. Users manually escape `|` as `\|` inside
+  // table cells when the cell content (e.g. a Mermaid edge label or a
+  // shell pipeline in inline code) needs literal pipes — the bare `|`
+  // would otherwise split the cell.
+  //
+  // Tiptap's serializer unescapes them, so the source `\|` round-trips
+  // as `|`, which then changes the table structure on the next parse.
+  const input =
+    '| Issue | Example |\n' +
+    '|---|---|\n' +
+    '| Quotes in labels | `A -->\\|Click "Sign in"\\| B` |\n' +
+    '| Literal newline | `A -->\\|Line1\\nLine2\\| B` |\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    '`\\|` inside a table cell must NOT become a bare `|` on round-trip'
+  );
+  console.log('OK escaped pipe preserved');
+}
+
+async function testListItemWithContinuationLine() {
+  console.log('\n--- Test: list item with two-space indented continuation line preserved ---');
+  // From sentry-posthog-replay-triage.md. List items with continuation
+  // prose on the next line (2-space indent) get the continuation
+  // absorbed into the bullet on round-trip. The continuation line is
+  // CommonMark "lazy continuation" — same paragraph as the list item,
+  // but the source convention is to keep them on separate lines.
+  const input =
+    '- First item with explanation\n' +
+    '  continuation line.\n' +
+    '- Second item with explanation\n' +
+    '  another continuation.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'list items with 2-space indented continuation lines must keep the line break'
+  );
+  console.log('OK list item continuation preserved');
+}
+
 async function runAllTests() {
   const tests = [
     testPipeTableSurvivesRoundTrip,
@@ -419,6 +534,11 @@ async function runAllTests() {
     testLinkInTableCellSurvivesRoundTrip,
     testStarBulletMarkerPreserved,
     testRelativePathLinksSurvive,
+    testLessThanInProseNotEscaped,
+    testTrailingHardBreakWhitespacePreserved,
+    testBoldAroundInlineCodePreserved,
+    testEscapedPipeInTableCellPreserved,
+    testListItemWithContinuationLine,
   ];
   let passed = 0;
   let failed = 0;

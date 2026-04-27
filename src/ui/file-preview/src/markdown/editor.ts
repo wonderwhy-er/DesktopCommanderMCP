@@ -51,6 +51,15 @@ export interface RoundTripContext {
      *  preprocessing, restored after serialization. tiptap-markdown drops
      *  the URL when a link's text is purely inline code. */
     codeLinks: Array<{ placeholder: string; original: string }>;
+    /** `**...\`code\`...**` constructs replaced with placeholders. Tiptap's
+     *  ProseMirror schema can't cleanly represent a bold mark wrapping
+     *  inline code; it splits the bold around the code in non-obvious
+     *  ways. */
+    boldCodeRuns: Array<{ placeholder: string; original: string }>;
+    /** Count of `\|` escapes that were replaced with placeholders during
+     *  preprocess. Each `\|` is replaced by a single ASCII token that
+     *  restoration converts back to the literal `\|` in the output. */
+    pipeEscapeCount: number;
 }
 
 const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
@@ -59,6 +68,27 @@ const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
 // text or URL further at the regex level — instead, isFragileLink()
 // inspects each match to decide whether Tiptap would mangle it.
 const INLINE_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+// Match a `**…**` bold span whose contents contain at least one inline
+// code segment. ProseMirror's flat-mark schema can't cleanly represent a
+// bold wrapping inline code, so Tiptap shifts the bold delimiters around
+// the code in non-obvious ways on serialize. We placeholder these spans
+// during preprocess and restore them after.
+//
+// Pattern detail:
+//   \*\*       opening **
+//   ([^*\n]*?  any non-`*`, non-newline chars, lazy
+//     `[^`\n]+`   at least one `` `inline code` `` segment
+//     [^*\n]*?)   then more non-`*` chars (lazy)
+//   \*\*       closing **
+//
+// The lazy quantifiers keep us from spanning multiple bold groups.
+const BOLD_AROUND_CODE_RE = /\*\*([^*\n]*?`[^`\n]+`[^*\n]*?)\*\*/g;
+
+// Token used to placeholder `\|` escapes. Chosen so it's:
+//   - ASCII letters/digits only (survives Tiptap's parse/serialize round trip)
+//   - distinctive enough to never collide with real document content
+const PIPE_ESCAPE_TOKEN = 'TIPTAPPIPEESCX';
 
 /**
  * Decide whether a markdown inline link will be mangled by Tiptap, in
@@ -128,6 +158,31 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
         return placeholder;
     });
 
+    // Bold spans containing inline code are restructured by Tiptap on
+    // round-trip (the bold mark gets shifted around the code in ways
+    // ProseMirror's flat-mark schema can express). Placeholder them
+    // alongside fragile links — same trick, same restore pass.
+    const boldCodeRuns: Array<{ placeholder: string; original: string }> = [];
+    let boldCodeIndex = 0;
+    withPlaceholders = withPlaceholders.replace(BOLD_AROUND_CODE_RE, (match) => {
+        const placeholder = `TIPTAPBOLDCODE${String(boldCodeIndex).padStart(4, '0')}`;
+        boldCodeRuns.push({ placeholder, original: match });
+        boldCodeIndex += 1;
+        return placeholder;
+    });
+
+    // Authors escape `|` as `\|` inside table cells when the cell
+    // contains literal pipes (Mermaid edge labels in code, shell
+    // pipelines, etc.) — bare `|` would split the cell. Tiptap's
+    // serializer drops the backslash and the table re-parses with a
+    // different shape next time. Replace with an ASCII token; restore
+    // after serialize.
+    let pipeEscapeCount = 0;
+    withPlaceholders = withPlaceholders.replace(/\\\|/g, () => {
+        pipeEscapeCount += 1;
+        return PIPE_ESCAPE_TOKEN;
+    });
+
     // Tiptap mutates trailing newlines — we trim and put it back. Wikilinks
     // are rewritten to a placeholder shape that survives Tiptap.
     const editorInput = rewriteWikiLinks(withPlaceholders);
@@ -141,6 +196,8 @@ export function preprocessForEditor(input: string): { editorInput: string; conte
             trailingNewline,
             eol,
             codeLinks,
+            boldCodeRuns,
+            pipeEscapeCount,
         },
     };
 }
@@ -160,6 +217,17 @@ export function applyPostProcess(serialized: string, context: RoundTripContext):
     for (const { placeholder, original } of context.codeLinks) {
         out = out.split(placeholder).join(original);
     }
+    // Restore `**…\`code\`…**` placeholder runs alongside the link
+    // restore — same shape, different schema-level reason for needing it.
+    for (const { placeholder, original } of context.boldCodeRuns) {
+        out = out.split(placeholder).join(original);
+    }
+    // Restore escaped pipe placeholders. Each token unconditionally maps
+    // back to `\|` regardless of position — the user's escape is
+    // syntactically required wherever it appears.
+    if (context.pipeEscapeCount > 0) {
+        out = out.split(PIPE_ESCAPE_TOKEN).join('\\|');
+    }
     // Tiptap's serializer over-escapes characters that have no syntactic
     // meaning in the position they appear. We selectively unescape:
     //   - `\[` and `\]` outside link constructs (so `- [x] task` stays `- [x] task`)
@@ -169,6 +237,20 @@ export function applyPostProcess(serialized: string, context: RoundTripContext):
     // We do this with conservative regexes that don't touch valid escapes
     // inside fenced code blocks or inline code.
     out = unescapeSafeChars(out, context.originalInput);
+
+    // Tiptap's HTML output path HTML-escapes bare `<` characters in
+    // prose because they could in theory open a tag. tiptap-markdown
+    // then serialises the entity as a literal `&lt;`. Reverse the
+    // entity in positions where CommonMark says `<` could not have been
+    // a tag opener (followed by space, digit, `$`, etc.) — preserves
+    // the source bytes without changing parser interpretation.
+    out = unescapeHtmlEntitiesInProse(out, context.originalInput);
+
+    // Tiptap serialises CommonMark hard breaks (two trailing spaces in
+    // the source) either as a `\` line-continuation or by dropping them
+    // entirely (inside list items). Restore the original two-space form
+    // wherever the source used it.
+    out = restoreTrailingHardBreaks(out, context.originalInput);
 
     // Tiptap normalises GFM table separator rows to a spaced form
     // (`| --- | --- |`) regardless of input shape. If the original used
@@ -333,16 +415,36 @@ function restoreSoftBreaks(serialized: string, originalInput: string): string {
         // Skip lines that look like markdown structure: list markers,
         // headings, fences, table rows, blockquotes. Tiptap handles those
         // as their own block kinds; we don't want to break list items in
-        // half.
-        if (looksStructural(a) || looksStructural(b)) continue;
+        // half — EXCEPT for the specific case of a list item followed by
+        // its 2-space-indented lazy continuation. CommonMark joins those
+        // into one paragraph too, and Tiptap collapses them into a single
+        // line. The source authored them as separate lines so we must
+        // restore the break.
+        const aIsListHeader = /^\s*([-*+]|\d+\.)\s/.test(a);
+        const bIsIndentedCont = /^  +\S/.test(b) && !/^\s*([-*+]|\d+\.)\s/.test(b);
+        const isListContinuation = aIsListHeader && bIsIndentedCont;
+        if (!isListContinuation) {
+            if (looksStructural(a) || looksStructural(b)) continue;
+        }
         const broken = `${a}\n${b}`;
         if (out.indexOf(broken) !== -1) continue;
         // Tiptap joins paragraph-internal lines with EITHER a space (the
         // common case for prose) OR no separator at all (when the
         // boundary is between punctuation like `)` and a non-letter
-        // character like an emoji). Try both, in that order.
-        for (const joiner of [' ', '']) {
-            const joined = `${a}${joiner}${b}`;
+        // character like an emoji). For list-item lazy continuations,
+        // Tiptap STRIPS the leading whitespace from the second line and
+        // then joins with a single space, so we have to compare against
+        // the de-indented form of `b`.
+        const candidates: Array<{ joiner: string; b: string }> = [
+            { joiner: ' ', b },
+            { joiner: '', b },
+        ];
+        if (isListContinuation) {
+            const deindented = b.replace(/^\s+/, '');
+            candidates.push({ joiner: ' ', b: deindented });
+        }
+        for (const { joiner, b: bForm } of candidates) {
+            const joined = `${a}${joiner}${bForm}`;
             const idx = out.indexOf(joined);
             if (idx === -1) continue;
             out = out.slice(0, idx) + broken + out.slice(idx + joined.length);
@@ -434,6 +536,119 @@ function unescapeSafeChars(md: string, originalInput: string): string {
  */
 function stripSafeEscapes(line: string): string {
     return line.replace(/\\([\[\]~])/g, '$1');
+}
+
+/**
+ * Replace `&lt;` / `&gt;` / `&amp;` HTML entities with their literal
+ * characters in positions where they cannot be HTML or markdown syntax.
+ *
+ * Tiptap's HTML output path escapes bare `<` and `&` in prose because
+ * the characters could in theory open a tag or entity. tiptap-markdown
+ * then serialises those entities verbatim, so a source like `< $0.01`
+ * round-trips as `&lt; $0.01`. We undo the escape only when the
+ * surrounding context proves it can't be markup:
+ *
+ *   - `&lt;` followed by space, digit, `$`, end-of-line, or a punctuation
+ *     character that can't begin an HTML tag name.
+ *   - `&gt;` likewise; in CommonMark `>` only has block-level meaning at
+ *     the start of a line (blockquote), and we never produce that here.
+ *   - `&amp;` always — `&` followed by anything that isn't a known entity
+ *     prefix wouldn't survive parsing as a real entity anyway.
+ *
+ * Code fences and inline code are skipped so that intentionally-escaped
+ * entities inside code samples are left intact.
+ *
+ * Round-trip safety: if the same entity appears in the source on a
+ * matching line, we leave it alone (the user authored the entity and we
+ * mustn't strip it). This mirrors the line-aligned rule in
+ * unescapeSafeChars.
+ */
+function unescapeHtmlEntitiesInProse(md: string, originalInput: string): string {
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+    let insideFence = false;
+    const lines = md.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\s*```/.test(line)) {
+            insideFence = !insideFence;
+            continue;
+        }
+        if (insideFence) continue;
+        if (!/&(?:lt|gt|amp);/.test(line)) continue;
+
+        // Only act if there's a source line that, when both are stripped
+        // of these specific entities, matches this output line. Otherwise
+        // we don't have enough confidence the entity was Tiptap's doing.
+        const stripped = stripHtmlEntities(line);
+        const sourceMatches = origLines.some((src) => stripHtmlEntities(src) === stripped);
+        if (!sourceMatches) continue;
+
+        const exact = origLines.find((src) => src === line);
+        if (exact !== undefined) {
+            // Source had this exact line including entities — preserve.
+            continue;
+        }
+        // Otherwise the source had the equivalent without entities;
+        // Tiptap added them — strip.
+        lines[i] = stripped;
+    }
+    return lines.join('\n');
+}
+
+function stripHtmlEntities(line: string): string {
+    // Conservative replacements — only the three Tiptap actually emits.
+    return line
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+}
+
+/**
+ * Restore CommonMark hard-break syntax (two trailing spaces at end of
+ * line) where Tiptap stripped or rewrote it.
+ *
+ * Tiptap's serializer represents a hard break either as `\` followed by
+ * a newline (paragraphs) or by silently dropping it (list items). The
+ * source convention is two trailing spaces; we honour the source.
+ *
+ * Strategy: collect every source line that ends in `  ` (exactly two
+ * spaces). For each, find a matching output line — either:
+ *   - same content with no trailing whitespace (the dropped case), or
+ *   - same content followed by `\\` line continuation (the rewritten
+ *     case — `expand left\\\nleft`).
+ * Replace with the source's two-space form.
+ */
+function restoreTrailingHardBreaks(serialized: string, originalInput: string): string {
+    const origLines = originalInput.replace(/\r\n/g, '\n').split('\n');
+    // Lines that ended in exactly two trailing spaces — paired with
+    // their content sans the trailing spaces, for cheap matching.
+    const hardBreakSources: string[] = [];
+    for (const line of origLines) {
+        if (/[^ ]  $/.test(line)) {
+            hardBreakSources.push(line.slice(0, -2));
+        }
+    }
+    if (hardBreakSources.length === 0) return serialized;
+
+    let out = serialized;
+    for (const stem of hardBreakSources) {
+        // Case 1: paragraph hard break — `stem\\\nNEXT` → `stem  \nNEXT`.
+        const backslashForm = `${stem}\\\n`;
+        if (out.includes(backslashForm)) {
+            out = out.replace(backslashForm, `${stem}  \n`);
+            continue;
+        }
+        // Case 2: silently dropped (list-item case). Look for the bare
+        // `stem\n` and re-introduce the two trailing spaces. We only
+        // repair the FIRST match — adding a hard break to the wrong
+        // duplicate is worse than missing one.
+        const bareForm = `${stem}\n`;
+        const idx = out.indexOf(bareForm);
+        if (idx !== -1) {
+            out = out.slice(0, idx) + `${stem}  \n` + out.slice(idx + bareForm.length);
+        }
+    }
+    return out;
 }
 
 /**
