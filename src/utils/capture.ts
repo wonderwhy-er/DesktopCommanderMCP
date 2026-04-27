@@ -416,7 +416,7 @@ export const capture_call_tool = async (event: string, properties?: any) => {
 
     // Route highest-volume tools to new property, rest to old
     const HIGH_VOLUME_TOOLS = ['start_process',  'track_ui_event'];
-    const toolName = properties?.name;
+    const toolName = properties?.tool_name ?? properties?.name;
     const gaUrl = HIGH_VOLUME_TOOLS.includes(toolName) ? GA_NEW_URL : GA_OLD_URL;
 
     // Build properties once, send to GA4 + telemetry proxy in parallel

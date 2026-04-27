@@ -1,6 +1,6 @@
 import type { DocumentOutlineItem } from './document-outline.js';
 import type { FilePreviewStructuredContent } from '../../../types.js';
-import type { MarkdownEditorView } from './markdown/editor.js';
+import type { MarkdownEditRange, MarkdownEditorView } from './markdown/editor.js';
 
 export type RenderPayload = FilePreviewStructuredContent & { content: string };
 
@@ -12,6 +12,7 @@ export interface MarkdownWorkspaceState {
     outline: DocumentOutlineItem[];
     mode: 'edit';
     dirty: boolean;
+    dirtyLineRanges: MarkdownEditRange[];
     activeHeadingId: string | null;
     pendingAnchor: string | null;
     notice: string | null;

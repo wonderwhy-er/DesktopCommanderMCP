@@ -1175,7 +1175,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
     try {
         // Prepare telemetry data - add config key for set_config_value
-        const telemetryData: any = { name };
+        const telemetryData: any = { tool_name: name };
         // Extract metadata from _meta field if present
         const metadata = request.params._meta as any;
         if (metadata && typeof metadata === 'object') {

@@ -3,7 +3,7 @@ import { getDocumentFullscreenAvailability, parseReadRange, shouldAutoLoadDocume
 import type { MarkdownWorkspaceState, RenderBodyResult, RenderPayload } from '../model.js';
 import { assertSuccessfulEditBlockResult, extractRenderPayload, extractToolText } from '../payload-utils.js';
 import { getAncestorDirectories, getParentDirectory, toPosixRelativePath } from '../path-utils.js';
-import { mountMarkdownEditor, renderMarkdownEditorShell, type MarkdownEditorHandle, type MarkdownEditorView, type MarkdownLinkHeading, type MarkdownLinkSearchItem } from './editor.js';
+import { mountMarkdownEditor, renderMarkdownEditorShell, type MarkdownEditRange, type MarkdownEditorHandle, type MarkdownEditorView, type MarkdownLinkHeading, type MarkdownLinkSearchItem } from './editor.js';
 import type { OpenConflictDialogOptions } from './conflict-dialog.js';
 import { resolveMarkdownLink } from './linking.js';
 import { extractMarkdownOutline } from './outline.js';
@@ -37,6 +37,13 @@ interface DiffHunk {
     newStart: number;
     newEnd: number;
 }
+
+interface EditBlock {
+    old_string: string;
+    new_string: string;
+}
+
+const MAX_EDIT_BLOCK_LINES = 40;
 
 function areOutlineItemsEqual(
     left: MarkdownWorkspaceState['outline'],
@@ -73,10 +80,6 @@ function stripMarkdownExtension(filePath: string): string {
 function computeDiffHunks(oldLines: string[], newLines: string[]): DiffHunk[] {
     const oldLength = oldLines.length;
     const newLength = newLines.length;
-
-    if (oldLength * newLength > 1_000_000) {
-        return [{ oldStart: 0, oldEnd: oldLength, newStart: 0, newEnd: newLength }];
-    }
 
     const dp: number[][] = Array.from({ length: oldLength + 1 }, () => Array(newLength + 1).fill(0) as number[]);
     for (let i = 1; i <= oldLength; i += 1) {
@@ -138,26 +141,135 @@ function mergeCloseHunks(hunks: DiffHunk[], minGap: number): DiffHunk[] {
     return merged;
 }
 
-function computeEditBlocks(oldText: string, newText: string): Array<{ old_string: string; new_string: string }> {
+function mergeLineRanges(ranges: MarkdownEditRange[]): MarkdownEditRange[] {
+    const sorted = ranges
+        .map((range) => ({ fromLine: Math.max(1, Math.floor(range.fromLine)), toLine: Math.max(1, Math.floor(range.toLine)) }))
+        .sort((left, right) => left.fromLine - right.fromLine || left.toLine - right.toLine);
+    const merged: MarkdownEditRange[] = [];
+
+    for (const range of sorted) {
+        const normalized = {
+            fromLine: Math.min(range.fromLine, range.toLine),
+            toLine: Math.max(range.fromLine, range.toLine),
+        };
+        const previous = merged[merged.length - 1];
+        if (previous && normalized.fromLine <= previous.toLine + 1) {
+            previous.toLine = Math.max(previous.toLine, normalized.toLine);
+        } else {
+            merged.push(normalized);
+        }
+    }
+
+    return merged;
+}
+
+function hunkIntersectsRanges(hunk: DiffHunk, ranges: MarkdownEditRange[]): boolean {
+    if (ranges.length === 0) {
+        return true;
+    }
+    const fromLine = Math.min(hunk.oldStart, hunk.newStart) + 1;
+    const toLine = Math.max(hunk.oldEnd, hunk.newEnd) + 1;
+    return ranges.some((range) => fromLine <= range.toLine && toLine >= range.fromLine);
+}
+
+function computeLineByLineHunks(oldLines: string[], newLines: string[]): DiffHunk[] {
+    return computeAnchoredDiffHunks(oldLines, newLines, 0, oldLines.length, 0, newLines.length);
+}
+
+function computeAnchoredDiffHunks(
+    oldLines: string[],
+    newLines: string[],
+    oldStart: number,
+    oldEnd: number,
+    newStart: number,
+    newEnd: number
+): DiffHunk[] {
+    while (oldStart < oldEnd && newStart < newEnd && oldLines[oldStart] === newLines[newStart]) {
+        oldStart++;
+        newStart++;
+    }
+    while (oldStart < oldEnd && newStart < newEnd && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
+        oldEnd--;
+        newEnd--;
+    }
+    if (oldStart === oldEnd && newStart === newEnd) {
+        return [];
+    }
+
+    const oldLineCounts = new Map<string, { count: number; index: number }>();
+    const newLineCounts = new Map<string, { count: number; index: number }>();
+    for (let index = oldStart; index < oldEnd; index += 1) {
+        const current = oldLineCounts.get(oldLines[index]);
+        oldLineCounts.set(oldLines[index], { count: (current?.count ?? 0) + 1, index });
+    }
+    for (let index = newStart; index < newEnd; index += 1) {
+        const current = newLineCounts.get(newLines[index]);
+        newLineCounts.set(newLines[index], { count: (current?.count ?? 0) + 1, index });
+    }
+
+    for (let oldIndex = oldStart; oldIndex < oldEnd; oldIndex += 1) {
+        const oldEntry = oldLineCounts.get(oldLines[oldIndex]);
+        const newEntry = newLineCounts.get(oldLines[oldIndex]);
+        if (oldEntry?.count === 1 && newEntry?.count === 1) {
+            return [
+                ...computeAnchoredDiffHunks(oldLines, newLines, oldStart, oldIndex, newStart, newEntry.index),
+                ...computeAnchoredDiffHunks(oldLines, newLines, oldIndex + 1, oldEnd, newEntry.index + 1, newEnd),
+            ];
+        }
+    }
+
+    return [{ oldStart, oldEnd, newStart, newEnd }];
+}
+
+function splitOversizedEditBlock(oldText: string, newText: string): EditBlock[] {
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    const blockCount = Math.ceil(Math.max(oldLines.length, newLines.length) / MAX_EDIT_BLOCK_LINES);
+    const blocks: EditBlock[] = [];
+
+    for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
+        const oldStart = Math.floor((blockIndex * oldLines.length) / blockCount);
+        const oldEnd = Math.floor(((blockIndex + 1) * oldLines.length) / blockCount);
+        const newStart = Math.floor((blockIndex * newLines.length) / blockCount);
+        const newEnd = Math.floor(((blockIndex + 1) * newLines.length) / blockCount);
+        const old_string = oldLines.slice(oldStart, oldEnd).join('\n');
+        const new_string = newLines.slice(newStart, newEnd).join('\n');
+        if (old_string !== new_string) {
+            blocks.push({ old_string, new_string });
+        }
+    }
+
+    return blocks;
+}
+
+function splitOversizedEditBlocks(blocks: EditBlock[]): EditBlock[] {
+    return blocks.flatMap((block) => {
+        const lineCount = Math.max(block.old_string.split('\n').length, block.new_string.split('\n').length);
+        return lineCount > MAX_EDIT_BLOCK_LINES
+            ? splitOversizedEditBlock(block.old_string, block.new_string)
+            : [block];
+    });
+}
+
+export function computeEditBlocks(oldText: string, newText: string, changedRanges: MarkdownEditRange[] = []): EditBlock[] {
     if (oldText === newText) {
         return [];
     }
 
     const oldLines = oldText.split('\n');
     const newLines = newText.split('\n');
-    const hunks = computeDiffHunks(oldLines, newLines);
+    const hunks = oldLines.length * newLines.length > 1_000_000
+        ? computeLineByLineHunks(oldLines, newLines)
+        : computeDiffHunks(oldLines, newLines);
     if (hunks.length === 0) {
         return [];
     }
 
     const context = 3;
-    const merged = mergeCloseHunks(hunks, context * 2 + 1);
-    const totalChanged = merged.reduce((sum, hunk) => sum + (hunk.oldEnd - hunk.oldStart), 0);
-    if (totalChanged > oldLines.length * 0.7) {
-        return [{ old_string: oldText, new_string: newText }];
-    }
+    const normalizedRanges = mergeLineRanges(changedRanges);
+    const merged = mergeCloseHunks(hunks, context * 2 + 1).filter((hunk) => hunkIntersectsRanges(hunk, normalizedRanges));
 
-    return merged.map((hunk) => {
+    const blocks = merged.map((hunk) => {
         const contextBefore = Math.max(0, hunk.oldStart - context);
         const contextAfter = Math.min(oldLines.length, hunk.oldEnd + context);
 
@@ -170,6 +282,16 @@ function computeEditBlocks(oldText: string, newText: string): Array<{ old_string
 
         return { old_string: oldBlock, new_string: newBlock };
     }).filter((block) => block.old_string !== block.new_string);
+
+    if (blocks.length === 1 && blocks[0].old_string === oldText && blocks[0].new_string === newText) {
+        return splitOversizedEditBlock(oldText, newText);
+    }
+
+    return splitOversizedEditBlocks(blocks);
+}
+
+function applyEditBlocksToText(text: string, blocks: EditBlock[]): string {
+    return blocks.reduce((current, block) => current.replace(block.old_string, block.new_string), text);
 }
 
 function isToolErrorResult(value: unknown): value is ToolErrorResult {
@@ -240,6 +362,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         state.draftContent = nextDraftContent;
         state.outline = extractMarkdownOutline(content);
         state.dirty = nextDraftContent !== content;
+        state.dirtyLineRanges = [];
         state.fileDeleted = false;
         if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
             state.activeHeadingId = state.outline[0]?.id ?? null;
@@ -289,6 +412,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 outline,
                 mode: 'edit',
                 dirty: false,
+                dirtyLineRanges: [],
                 activeHeadingId: outline[0]?.id ?? null,
                 pendingAnchor: null,
                 notice: null,
@@ -657,6 +781,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const filePath = workspaceState.filePath;
         workspaceState.draftContent = workspaceState.fullDocumentContent;
         workspaceState.dirty = false;
+        workspaceState.dirtyLineRanges = [];
         workspaceState.error = null;
         workspaceState.notice = null;
         dependencies.rerender();
@@ -678,11 +803,12 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         state.notice = null;
 
         try {
-            const blocks = computeEditBlocks(state.fullDocumentContent, state.draftContent);
+            const blocks = computeEditBlocks(state.fullDocumentContent, state.draftContent, state.dirtyLineRanges);
             if (blocks.length === 0) {
                 state.saving = false;
                 state.saveIndicator = 'idle';
                 state.dirty = false;
+                state.dirtyLineRanges = [];
                 return;
             }
 
@@ -728,17 +854,19 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                 throw err;
             }
 
-            state.fullDocumentContent = state.draftContent;
-            state.sourceContent = state.draftContent;
+            const savedContent = applyEditBlocksToText(state.fullDocumentContent, blocks);
+            state.fullDocumentContent = savedContent;
+            state.sourceContent = savedContent;
+            state.draftContent = savedContent;
             state.outline = extractMarkdownOutline(state.sourceContent);
             state.dirty = false;
+            state.dirtyLineRanges = [];
             state.saving = false;
             state.saveIndicator = 'saved';
             if (!state.outline.some((item) => item.id === state.activeHeadingId)) {
                 state.activeHeadingId = state.outline[0]?.id ?? null;
             }
 
-            const savedContent = state.draftContent;
             const currentPayload = dependencies.getCurrentPayload();
             if (currentPayload) {
                 const statusLineMatch = currentPayload.content.match(/^(\[Reading [^\]]+\]\r?\n(?:\r?\n)?)/);
@@ -919,9 +1047,23 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                     currentFilePath: payload.filePath,
                     searchLinks: (query) => searchLinkTargets(payload.filePath, query),
                     loadHeadings: (targetPath) => loadLinkHeadings(payload.filePath, targetPath),
-                    onChange: (value) => {
+                    onChange: (value, editRanges) => {
+                        if (value === state.draftContent) {
+                            return;
+                        }
                         state.draftContent = value;
                         state.dirty = value !== state.fullDocumentContent;
+                        if (state.dirty) {
+                            const nextRanges = editRanges && editRanges.length > 0
+                                ? editRanges
+                                : [{ fromLine: 1, toLine: value.split('\n').length }];
+                            state.dirtyLineRanges = mergeLineRanges([
+                                ...state.dirtyLineRanges,
+                                ...nextRanges,
+                            ]);
+                        } else {
+                            state.dirtyLineRanges = [];
+                        }
                         if (state.dirty && !editStartedFired) {
                             editStartedFired = true;
                             dependencies.trackUiEvent?.('markdown_edit_started', {
@@ -949,6 +1091,9 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         }
                     },
                     onBlur: () => {
+                        if (!state.dirty) {
+                            return;
+                        }
                         cancelAutosave();
                         void saveDocument();
                     },
