@@ -6,22 +6,22 @@ import path from 'path';
 import { configManager } from '../dist/config-manager.js';
 import { listDirectory } from '../dist/tools/filesystem.js';
 
-const TEST_ROOT = path.join(os.tmpdir(), 'desktop-commander-list-directory-errors');
+const TEST_ROOT_PREFIX = path.join(os.tmpdir(), 'desktop-commander-list-directory-errors-');
 
 async function setup() {
   const originalConfig = await configManager.getConfig();
-  await fs.mkdir(TEST_ROOT, { recursive: true });
-  await configManager.setValue('allowedDirectories', [TEST_ROOT]);
-  return originalConfig;
+  const testRoot = await fs.mkdtemp(TEST_ROOT_PREFIX);
+  await configManager.setValue('allowedDirectories', [testRoot]);
+  return { originalConfig, testRoot };
 }
 
-async function teardown(originalConfig) {
+async function teardown(originalConfig, testRoot) {
   await configManager.updateConfig(originalConfig);
-  await fs.rm(TEST_ROOT, { recursive: true, force: true });
+  await fs.rm(testRoot, { recursive: true, force: true });
 }
 
-async function testMissingDirectoryReturnsNotFound() {
-  const missingDir = path.join(TEST_ROOT, 'missing-dir');
+async function testMissingDirectoryReturnsNotFound(testRoot) {
+  const missingDir = path.join(testRoot, 'missing-dir');
 
   await assert.rejects(
     listDirectory(missingDir, 1),
@@ -39,17 +39,18 @@ async function testMissingDirectoryReturnsNotFound() {
 
 export default async function runTests() {
   let originalConfig;
+  let testRoot;
   try {
-    originalConfig = await setup();
-    await testMissingDirectoryReturnsNotFound();
+    ({ originalConfig, testRoot } = await setup());
+    await testMissingDirectoryReturnsNotFound(testRoot);
     console.log('\n✅ list_directory error tests passed!');
     return true;
   } catch (error) {
     console.error('❌ list_directory error test failed:', error instanceof Error ? error.message : String(error));
     return false;
   } finally {
-    if (originalConfig) {
-      await teardown(originalConfig);
+    if (originalConfig && testRoot) {
+      await teardown(originalConfig, testRoot);
     }
   }
 }
