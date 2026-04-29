@@ -1,0 +1,19 @@
+{
+  "name": "desktop-commander",
+  "owner": {
+    "name": "Desktop Commander",
+    "email": "support@desktopcommander.app"
+  },
+  "metadata": {
+    "description": "Desktop Commander — terminal control, file work, and document handling on the user's actual machine.",
+    "version": "0.1.0",
+    "pluginRoot": "plugins"
+  },
+  "plugins": [
+    {
+      "name": "desktop-commander",
+      "source": "cursor",
+      "description": "Desktop Commander gives Cursor agents reach across the user's actual computer — files, folders, terminals, documents, and connected apps — beyond the IDE sandbox."
+    }
+  ]
+}
