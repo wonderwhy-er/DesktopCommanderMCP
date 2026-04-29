@@ -3,7 +3,7 @@ description: Require Desktop Commander MCP by default for local filesystem, term
 alwaysApply: true
 ---
 
-For local filesystem, terminal, process, search, and workspace operations, use Desktop Commander MCP by default.
+For local filesystem, terminal, process, search, and workspace operations, prefer Desktop Commander MCP by default.
 
 If Desktop Commander MCP is not used for a local operation, do not proceed silently. You must explicitly state why Desktop Commander MCP is not suitable for that specific operation.
 
