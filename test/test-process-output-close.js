@@ -2,6 +2,7 @@ import assert from 'assert';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 
 import { terminalManager } from '../dist/terminal-manager.js';
 
@@ -14,17 +15,22 @@ function quoteForShell(value) {
 async function setup() {
   const testDir = await fs.mkdtemp(TEST_DIR_PREFIX);
   const scriptPath = path.join(testDir, 'fast-stderr.mjs');
-  await fs.writeFile(
-    scriptPath,
-    [
-      "import fs from 'fs';",
-      "fs.writeSync(2, 'FAST_STDERR_START\\n');",
-      "fs.writeSync(2, 'x'.repeat(256 * 1024));",
-      "fs.writeSync(2, '\\nFAST_STDERR_END\\n');",
-      'process.exit(1);',
-    ].join('\n'),
-  );
-  return { testDir, scriptPath };
+  try {
+    await fs.writeFile(
+      scriptPath,
+      [
+        "import fs from 'fs';",
+        "fs.writeSync(2, 'FAST_STDERR_START\\n');",
+        "fs.writeSync(2, 'x'.repeat(256 * 1024));",
+        "fs.writeSync(2, '\\nFAST_STDERR_END\\n');",
+        'process.exit(1);',
+      ].join('\n'),
+    );
+    return { testDir, scriptPath };
+  } catch (error) {
+    await fs.rm(testDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function teardown(testDir) {
@@ -66,7 +72,7 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runTests().then((ok) => {
     process.exit(ok ? 0 : 1);
   });
