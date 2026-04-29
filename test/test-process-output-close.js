@@ -5,17 +5,17 @@ import path from 'path';
 
 import { terminalManager } from '../dist/terminal-manager.js';
 
-const TEST_DIR = path.join(os.tmpdir(), 'desktop-commander-process-output-close');
-const SCRIPT_PATH = path.join(TEST_DIR, 'fast-stderr.js');
+const TEST_DIR_PREFIX = path.join(os.tmpdir(), 'desktop-commander-process-output-close-');
 
 function quoteForShell(value) {
   return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 async function setup() {
-  await fs.mkdir(TEST_DIR, { recursive: true });
+  const testDir = await fs.mkdtemp(TEST_DIR_PREFIX);
+  const scriptPath = path.join(testDir, 'fast-stderr.mjs');
   await fs.writeFile(
-    SCRIPT_PATH,
+    scriptPath,
     [
       "import fs from 'fs';",
       "fs.writeSync(2, 'FAST_STDERR_START\\n');",
@@ -24,14 +24,15 @@ async function setup() {
       'process.exit(1);',
     ].join('\n'),
   );
+  return { testDir, scriptPath };
 }
 
-async function teardown() {
-  await fs.rm(TEST_DIR, { recursive: true, force: true });
+async function teardown(testDir) {
+  await fs.rm(testDir, { recursive: true, force: true });
 }
 
-async function testFastExitStderrIsFlushed() {
-  const command = `${quoteForShell(process.execPath)} ${quoteForShell(SCRIPT_PATH)}`;
+async function testFastExitStderrIsFlushed(scriptPath) {
+  const command = `${quoteForShell(process.execPath)} ${quoteForShell(scriptPath)}`;
   const result = await terminalManager.executeCommand(command, 2000);
 
   assert.strictEqual(result.isBlocked, false, 'Fast-failing process should be marked complete');
@@ -48,16 +49,20 @@ async function testFastExitStderrIsFlushed() {
 }
 
 export default async function runTests() {
+  let testDir;
   try {
-    await setup();
-    await testFastExitStderrIsFlushed();
+    const fixture = await setup();
+    testDir = fixture.testDir;
+    await testFastExitStderrIsFlushed(fixture.scriptPath);
     console.log('\n✅ process output close tests passed!');
     return true;
   } catch (error) {
     console.error('❌ process output close test failed:', error instanceof Error ? error.message : String(error));
     return false;
   } finally {
-    await teardown();
+    if (testDir) {
+      await teardown(testDir);
+    }
   }
 }
 
