@@ -1,0 +1,29 @@
+{
+  "name": "desktop-commander",
+  "version": "0.1.0",
+  "description": "Desktop Commander gives Claude Code access to a local MCP server for terminal sessions, filesystem work, structured documents, search, process management, and SSH workflows.",
+  "author": {
+    "name": "Desktop Commander",
+    "email": "support@desktopcommander.app"
+  },
+  "homepage": "https://desktopcommander.app",
+  "repository": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "license": "MIT",
+  "keywords": [
+    "shell",
+    "terminal",
+    "filesystem",
+    "process",
+    "documents",
+    "pdf",
+    "spreadsheet",
+    "desktop-commander"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "desktop-commander": {
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander@latest"]
+    }
+  }
+}
