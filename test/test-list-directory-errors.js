@@ -2,6 +2,7 @@ import assert from 'assert';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { pathToFileURL } from 'url';
 
 import { configManager } from '../dist/config-manager.js';
 import { listDirectory } from '../dist/tools/filesystem.js';
@@ -53,13 +54,29 @@ async function testTopLevelStatAccessDeniedReturnsDeniedEntry(testRoot) {
 
   try {
     const entries = await listDirectory(deniedDir, 1);
-    assert.strictEqual(entries.length, 1);
-    assert(entries[0].startsWith('[DENIED] stat-denied'), 'Top-level stat access errors should keep [DENIED] output');
-    assert(entries[0].includes('not accessible'), 'Permission-like stat errors should include the access hint');
+    assert.deepStrictEqual(entries, ['[DENIED] stat-denied']);
     console.log('✓ top-level stat access error returns denied entry');
   } finally {
     fs.stat = originalStat;
   }
+}
+
+async function testFilePathReturnsNotFound(testRoot) {
+  const filePath = path.join(testRoot, 'not-a-directory.txt');
+  await fs.writeFile(filePath, 'not a directory');
+
+  await assert.rejects(
+    listDirectory(filePath, 1),
+    (error) => {
+      assert(error instanceof Error);
+      assert(error.message.includes(`Directory not found: ${filePath}`));
+      assert(!error.message.includes('Path is not a directory'));
+      return true;
+    },
+    'File paths should use the same not-found contract as missing directories',
+  );
+
+  console.log('✓ file path returns not-found error');
 }
 
 export default async function runTests() {
@@ -69,6 +86,7 @@ export default async function runTests() {
     ({ originalConfig, testRoot } = await setup());
     await testMissingDirectoryReturnsNotFound(testRoot);
     await testTopLevelStatAccessDeniedReturnsDeniedEntry(testRoot);
+    await testFilePathReturnsNotFound(testRoot);
     console.log('\n✅ list_directory error tests passed!');
     return true;
   } catch (error) {
@@ -81,7 +99,7 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runTests().then((ok) => {
     process.exit(ok ? 0 : 1);
   });

@@ -679,20 +679,17 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
     const isAccessDeniedError = (err: NodeJS.ErrnoException) =>
         err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT';
 
-    function addDeniedEntry(displayPath: string, err: NodeJS.ErrnoException): void {
-        // Keep [DENIED] prefix so UI parser regex still matches.
-        // Append a hint for permission/timeout errors so user gets context.
-        if (isAccessDeniedError(err)) {
-            results.push(`[DENIED] ${displayPath} — not accessible (permission denied, cloud-only file, or Full Disk Access not granted)`);
-        } else {
-            results.push(`[DENIED] ${displayPath}`);
-        }
+    const getDisplayPath = (targetPath: string): string => path.basename(targetPath) || targetPath;
+
+    function addDeniedEntry(displayPath: string): void {
+        // Keep the payload path-only so the UI can parse denied entries reliably.
+        results.push(`[DENIED] ${displayPath}`);
     }
 
     try {
         const stats = await fs.stat(validPath);
         if (!stats.isDirectory()) {
-            throw new Error(`Path is not a directory: ${dirPath}`);
+            throw new Error(`Directory not found: ${dirPath}`);
         }
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
@@ -700,7 +697,7 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             throw new Error(`Directory not found: ${dirPath}`);
         }
         if (isAccessDeniedError(err)) {
-            addDeniedEntry(path.basename(validPath), err);
+            addDeniedEntry(getDisplayPath(validPath));
             return results;
         }
         throw error;
@@ -717,8 +714,8 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             if (isTopLevel && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
                 throw new Error(`Directory not found: ${dirPath}`);
             }
-            const displayPath = relativePath || path.basename(currentPath);
-            addDeniedEntry(displayPath, err);
+            const displayPath = relativePath || getDisplayPath(currentPath);
+            addDeniedEntry(displayPath);
             return;
         }
 
