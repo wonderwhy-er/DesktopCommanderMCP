@@ -677,6 +677,19 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
 
     const MAX_NESTED_ITEMS = 100; // Maximum items to show per nested directory
 
+    try {
+        const stats = await fs.stat(validPath);
+        if (!stats.isDirectory()) {
+            throw new Error(`Path is not a directory: ${dirPath}`);
+        }
+    } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+            throw new Error(`Directory not found: ${dirPath}`);
+        }
+        throw error;
+    }
+
     async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = '', isTopLevel: boolean = true): Promise<void> {
         if (currentDepth <= 0) return;
 
@@ -685,6 +698,9 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
             const err = error as NodeJS.ErrnoException;
+            if (isTopLevel && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+                throw new Error(`Directory not found: ${dirPath}`);
+            }
             const displayPath = relativePath || path.basename(currentPath);
             // Keep [DENIED] prefix so UI parser regex still matches.
             // Append a hint for permission/timeout errors so user gets context.
