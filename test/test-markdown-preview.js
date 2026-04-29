@@ -145,6 +145,29 @@ async function testWikiRewriteAndRendering() {
   assert.ok(fencedRewrite.includes('[[Inside Code]]'), 'Long code fences should remain open until a matching-length close fence appears');
   assert.ok(fencedRewrite.includes('[Outside Code](./Outside%20Code.md "mcp-wiki:'), 'Wiki links outside closed fences should still rewrite');
 
+  const frontmatterRewrite = rewriteWikiLinks([
+    '---',
+    'title: My Note',
+    'source_talk: "[[Other Note]]"',
+    'tags: [example]',
+    '---',
+    '',
+    'Body text with a [[Body Link]] for comparison.',
+  ].join('\n'));
+  assert.strictEqual(
+    frontmatterRewrite,
+    [
+      '---',
+      'title: My Note',
+      'source_talk: "[[Other Note]]"',
+      'tags: [example]',
+      '---',
+      '',
+      'Body text with a [Body Link](./Body%20Link.md "mcp-wiki:%5B%5BBody%20Link%5D%5D") for comparison.',
+    ].join('\n'),
+    'YAML frontmatter wikilinks should stay literal while body wikilinks still render',
+  );
+
   const html = renderMarkdown([
     '# Title',
     '## Details',
