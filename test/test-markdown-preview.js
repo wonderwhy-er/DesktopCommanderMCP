@@ -168,6 +168,31 @@ async function testWikiRewriteAndRendering() {
     'YAML frontmatter wikilinks should stay literal while body wikilinks still render',
   );
 
+  const frontmatterBlockScalarRewrite = rewriteWikiLinks([
+    '---',
+    'title: |',
+    '  intro text',
+    '  ---',
+    'source_talk: "[[Frontmatter Link]]"',
+    '---',
+    '',
+    'Body text with a [[Body Link]] for comparison.',
+  ].join('\n'));
+  assert.strictEqual(
+    frontmatterBlockScalarRewrite,
+    [
+      '---',
+      'title: |',
+      '  intro text',
+      '  ---',
+      'source_talk: "[[Frontmatter Link]]"',
+      '---',
+      '',
+      'Body text with a [Body Link](./Body%20Link.md "mcp-wiki:%5B%5BBody%20Link%5D%5D") for comparison.',
+    ].join('\n'),
+    'Indented --- inside YAML block scalars should not close frontmatter early',
+  );
+
   const html = renderMarkdown([
     '# Title',
     '## Details',
