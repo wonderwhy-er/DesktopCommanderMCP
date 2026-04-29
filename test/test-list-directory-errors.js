@@ -10,7 +10,7 @@ const TEST_ROOT_PREFIX = path.join(os.tmpdir(), 'desktop-commander-list-director
 
 async function setup() {
   const originalConfig = await configManager.getConfig();
-  const testRoot = await fs.mkdtemp(TEST_ROOT_PREFIX);
+  const testRoot = await fs.realpath(await fs.mkdtemp(TEST_ROOT_PREFIX));
   await configManager.setValue('allowedDirectories', [testRoot]);
   return { originalConfig, testRoot };
 }
@@ -37,12 +37,38 @@ async function testMissingDirectoryReturnsNotFound(testRoot) {
   console.log('✓ missing directory returns not-found error');
 }
 
+async function testTopLevelStatAccessDeniedReturnsDeniedEntry(testRoot) {
+  const deniedDir = path.join(testRoot, 'stat-denied');
+  await fs.mkdir(deniedDir);
+
+  const originalStat = fs.stat;
+  fs.stat = async (target, ...args) => {
+    if (path.resolve(String(target)) === deniedDir) {
+      const error = new Error(`EACCES: permission denied, stat '${deniedDir}'`);
+      error.code = 'EACCES';
+      throw error;
+    }
+    return originalStat.call(fs, target, ...args);
+  };
+
+  try {
+    const entries = await listDirectory(deniedDir, 1);
+    assert.strictEqual(entries.length, 1);
+    assert(entries[0].startsWith('[DENIED] stat-denied'), 'Top-level stat access errors should keep [DENIED] output');
+    assert(entries[0].includes('not accessible'), 'Permission-like stat errors should include the access hint');
+    console.log('✓ top-level stat access error returns denied entry');
+  } finally {
+    fs.stat = originalStat;
+  }
+}
+
 export default async function runTests() {
   let originalConfig;
   let testRoot;
   try {
     ({ originalConfig, testRoot } = await setup());
     await testMissingDirectoryReturnsNotFound(testRoot);
+    await testTopLevelStatAccessDeniedReturnsDeniedEntry(testRoot);
     console.log('\n✅ list_directory error tests passed!');
     return true;
   } catch (error) {
