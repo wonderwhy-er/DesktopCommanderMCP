@@ -1,0 +1,41 @@
+{
+  "name": "desktop-commander",
+  "displayName": "Desktop Commander",
+  "version": "0.1.0",
+  "description": "MCP server for terminal commands, process management, and file operations across text, code, PDF, DOCX, Excel, images, and structured data",
+  "author": {
+    "name": "Desktop Commander",
+    "email": "es@desktopcommander.app"
+  },
+  "publisher": "Desktop Commander",
+  "homepage": "https://desktopcommander.app",
+  "repository": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "license": "MIT",
+  "logo": "https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/logo.png",
+  "keywords": [
+    "shell",
+    "terminal",
+    "filesystem",
+    "process",
+    "documents",
+    "pdf",
+    "spreadsheet",
+    "knowledge-base",
+    "desktop-commander"
+  ],
+  "category": "developer-tools",
+  "tags": [
+    "shell",
+    "filesystem",
+    "documents",
+    "ops"
+  ],
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "mcpServers": {
+    "desktop-commander": {
+      "command": "npx",
+      "args": ["-y", "@wonderwhy-er/desktop-commander@latest"]
+    }
+  }
+}
