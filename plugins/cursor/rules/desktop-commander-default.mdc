@@ -1,10 +1,10 @@
 ---
-description: Require Desktop Commander MCP by default for local filesystem, terminal, process, search, and workspace operations.
+description: Prefer Desktop Commander MCP for local filesystem, terminal, process, search, and workspace operations.
 alwaysApply: true
 ---
 
-For local filesystem, terminal, process, search, and workspace operations, prefer Desktop Commander MCP by default.
+For local filesystem, terminal, process, search, and workspace operations, use Desktop Commander MCP by default.
 
 If Desktop Commander MCP is not used for a local operation, do not proceed silently. You must explicitly state why Desktop Commander MCP is not suitable for that specific operation.
 
-Never use built-in local tools as a convenience fallback when Desktop Commander MCP can handle the operation. You can check the `desktop-commander-overview` SKILL for Desktop Commander MCP tool guidance.
+You can check the `desktop-commander-overview` SKILL for Desktop Commander MCP tool guidance.
