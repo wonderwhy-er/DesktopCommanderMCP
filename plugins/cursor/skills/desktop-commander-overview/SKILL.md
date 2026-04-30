@@ -33,9 +33,13 @@ Each example names the actual tool sequence. Calls below are written in pseudoco
 
 ### "Debug this production issue"
 
+Before running production-impacting SSH commands, explain the intended action and get user confirmation when the risk is non-trivial.
+
 `start_process("ssh user@prod.example.com", timeout_ms=...)` opens a long-lived SSH session and returns a PID. `interact_with_process(pid, "tail -f /var/log/app.log\n")` starts streaming logs. Subsequent turns: `read_process_output(pid, offset=-50)` to see the last 50 lines as they arrive, `interact_with_process(pid, "...")` to run diagnostic commands in the same session. `force_terminate(pid)` to close the session when done — for sessions opened by `start_process`, `force_terminate` is the correct cleanup tool; `kill_process` is for arbitrary OS PIDs found via `list_processes`.
 
 ### "Deploy this to staging"
+
+Before deploys, restarts, migrations, or other environment-changing commands, summarize the action and confirm with the user unless they already explicitly asked for that exact operation.
 
 `start_process` for the deploy command (could be a script, an SSH-piped command, or `kubectl`/`gh` etc.). `read_process_output` to track output and surface errors. If the deploy needs an interactive confirmation, `interact_with_process(pid, "yes\n")`. The session stays alive while the agent watches for completion or rollback.
 
