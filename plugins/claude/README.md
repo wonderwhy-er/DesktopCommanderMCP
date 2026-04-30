@@ -9,6 +9,6 @@ Desktop Commander gives Claude Code access to a local MCP server for terminal se
 
 ## Usage
 
-Install the plugin in Claude Code, then ask Claude to use Desktop Commander when it needs persistent shells, long-running processes, local files outside the workspace, Excel/DOCX/PDF handling, large CSV analysis, or remote SSH sessions.
+Install the plugin in Claude Code, then ask Claude to use Desktop Commander when it needs persistent shells, long-running processes, local file reads, Excel/DOCX/PDF handling, large CSV analysis, or remote SSH sessions.
 
 For full project documentation, see the repository README.

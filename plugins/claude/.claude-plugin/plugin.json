@@ -1,7 +1,6 @@
 {
   "name": "desktop-commander",
-  "version": "0.1.0",
-  "description": "Desktop Commander gives Claude Code access to a local MCP server for terminal sessions, filesystem work, structured documents, search, process management, and SSH workflows.",
+  "description": "MCP server for terminal commands, process management, and file operations across text, code, PDF, DOCX, Excel, images, and structured data",
   "author": {
     "name": "Desktop Commander",
     "email": "support@desktopcommander.app"
