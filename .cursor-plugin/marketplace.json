@@ -5,7 +5,7 @@
     "email": "es@desktopcommander.app"
   },
   "metadata": {
-    "description": "Desktop Commander — terminal control, file work, and document handling on the user's actual machine.",
+    "description": "MCP server for terminal commands, process management, and file operations across text, code, PDF, DOCX, Excel, images, and structured data",
     "version": "0.1.0",
     "pluginRoot": "plugins"
   },
