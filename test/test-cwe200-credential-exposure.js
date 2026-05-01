@@ -41,16 +41,25 @@ console.log('Testing CWE-200: Credential exposure via process.argv\n');
 // Test 1: blocking-offline-update.js should NOT read tokens from process.argv
 test('blocking-offline-update.js should not read access_token/refresh_token from process.argv', () => {
     const content = readFileSync(SCRIPT_PATH, 'utf-8');
-    const lines = content.split('\n');
 
-    // Check every line that references process.argv — none should destructure token variables
-    for (const line of lines) {
-        if (line.includes('process.argv')) {
-            assert.ok(
-                !/accessToken|refreshToken|access_token|refresh_token/i.test(line),
-                `Line reads tokens from process.argv: ${line.trim()}`
-            );
-        }
+    // Strip comments so the test isn't fooled by docs that mention argv + token names.
+    const noComments = content
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    // Split into statements and look at any statement containing `process.argv`.
+    // Statements are conservatively split on `;` and `\n\n`; this captures
+    // multi-line destructures while still bounding the search to the actual
+    // assignment that uses argv.
+    const statements = noComments.split(/;|\n\s*\n/);
+    const tokenRe = /\b(accessToken|refreshToken|access[_-]?token|refresh[_-]?token)\b/i;
+
+    for (const stmt of statements) {
+        if (!/process\.argv\b/.test(stmt)) continue;
+        assert.ok(
+            !tokenRe.test(stmt),
+            `Statement appears to read a token from process.argv: ${stmt.replace(/\s+/g, ' ').trim()}`
+        );
     }
 });
 
@@ -83,8 +92,8 @@ test('remote-channel.ts should pass tokens via env option in spawnSync, not as a
     const argsContent = argsArrayMatch[1];
     // The args array should NOT contain access_token or refresh_token
     assert.ok(
-        !argsContent.includes('access_token') && !argsContent.includes('refresh_token'),
-        `Tokens should not be in command args: ${argsContent.trim()}`
+        !/(accessToken|refreshToken|access_token|refresh_token)/i.test(argsContent),
+        `Tokens should not be in command args (any case/style): ${argsContent.trim()}`
     );
 
     // The options object should include env with the tokens
