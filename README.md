@@ -335,9 +335,9 @@ Desktop Commander works with any MCP-compatible client. The standard JSON config
 Add this to your client's MCP configuration file at the locations below:
 
 <details>
-<summary><b>Cursor</b></summary>
+<summary><b>Cursor</b></summary><br>
 
-[Install MCP Server in Cursor](cursor://anysphere.cursor-deeplink/mcp/install?name=desktop-commander&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkB3b25kZXJ3aHktZXIvZGVza3RvcC1jb21tYW5kZXJAbGF0ZXN0Il19)
+[![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en-US/install-mcp?name=desktop-commander&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkB3b25kZXJ3aHktZXIvZGVza3RvcC1jb21tYW5kZXJAbGF0ZXN0Il19)
 
 [View MCP Server in Directory](https://cursor.directory/mcp/desktop-commander-mcp)
 
