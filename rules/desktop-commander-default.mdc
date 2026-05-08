@@ -1,0 +1,8 @@
+---
+description: Prefer Desktop Commander MCP for local filesystem, terminal, process, search, and workspace operations.
+alwaysApply: true
+---
+
+For local filesystem, terminal, process, search, and workspace operations, prefer Desktop Commander MCP, especially for persistent shells, long-running processes, file reads, structured documents, large local data files, SSH workflows, and process inspection.
+
+You can check the `desktop-commander-overview` SKILL for Desktop Commander MCP tool guidance.
