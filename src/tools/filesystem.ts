@@ -676,6 +676,32 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
     const results: string[] = [];
 
     const MAX_NESTED_ITEMS = 100; // Maximum items to show per nested directory
+    const isAccessDeniedError = (err: NodeJS.ErrnoException) =>
+        err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT';
+
+    const getDisplayPath = (targetPath: string): string => path.basename(targetPath) || targetPath;
+
+    function addDeniedEntry(displayPath: string): void {
+        // Keep the payload path-only so the UI can parse denied entries reliably.
+        results.push(`[DENIED] ${displayPath}`);
+    }
+
+    try {
+        const stats = await fs.stat(validPath);
+        if (!stats.isDirectory()) {
+            throw new Error(`Directory not found: ${dirPath}`);
+        }
+    } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
+            throw new Error(`Directory not found: ${dirPath}`);
+        }
+        if (isAccessDeniedError(err)) {
+            addDeniedEntry(getDisplayPath(validPath));
+            return results;
+        }
+        throw error;
+    }
 
     async function listRecursive(currentPath: string, currentDepth: number, relativePath: string = '', isTopLevel: boolean = true): Promise<void> {
         if (currentDepth <= 0) return;
@@ -685,14 +711,11 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             entries = await fs.readdir(currentPath, { withFileTypes: true });
         } catch (error) {
             const err = error as NodeJS.ErrnoException;
-            const displayPath = relativePath || path.basename(currentPath);
-            // Keep [DENIED] prefix so UI parser regex still matches.
-            // Append a hint for permission/timeout errors so user gets context.
-            if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
-                results.push(`[DENIED] ${displayPath} — not accessible (permission denied, cloud-only file, or Full Disk Access not granted)`);
-            } else {
-                results.push(`[DENIED] ${displayPath}`);
+            if (isTopLevel && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+                throw new Error(`Directory not found: ${dirPath}`);
             }
+            const displayPath = relativePath || getDisplayPath(currentPath);
+            addDeniedEntry(displayPath);
             return;
         }
 
