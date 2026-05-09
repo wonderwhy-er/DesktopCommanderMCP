@@ -520,6 +520,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         [FILE] src/tools/filesystem.ts
                         
                         If a directory cannot be accessed, it will show [DENIED] instead.
+                        If a path does not exist, it will show [NOT_FOUND] instead.
                         Only works within allowed directories.
                         
                         ${PATH_GUIDANCE}
