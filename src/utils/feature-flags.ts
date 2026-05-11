@@ -119,8 +119,17 @@ class FeatureFlagManager {
    */
   async waitForFreshFlags(): Promise<void> {
     if (this.freshFetchPromise) {
-      const safetyTimeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
-      await Promise.race([this.freshFetchPromise, safetyTimeout]);
+      let safetyTimeoutHandle: NodeJS.Timeout | undefined;
+      try {
+        const safetyTimeout = new Promise<void>((resolve) => {
+          safetyTimeoutHandle = setTimeout(resolve, 5000);
+        });
+        await Promise.race([this.freshFetchPromise, safetyTimeout]);
+      } finally {
+        if (safetyTimeoutHandle) {
+          clearTimeout(safetyTimeoutHandle);
+        }
+      }
     }
   }
 
@@ -154,13 +163,14 @@ class FeatureFlagManager {
    * Fetch flags from remote URL
    */
   private async fetchFlags(): Promise<void> {
+    const FETCH_TIMEOUT_MS = 3000;
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let hardTimeoutHandle: NodeJS.Timeout | undefined;
+
     try {
       // Don't log here - runs async and can interfere with MCP clients
-      
-      const FETCH_TIMEOUT_MS = 3000;
-      const controller = new AbortController();
-      const abortTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      
+
       // Use Promise.race as a hard timeout safety net.
       // On some platforms (Windows + Node 24 / undici 7.x), AbortController.abort()
       // fails to interrupt an in-progress TCP connect — the fetch hangs until the
@@ -174,13 +184,14 @@ class FeatureFlagManager {
         }
       });
       const hardTimeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Feature flags fetch timed out')), FETCH_TIMEOUT_MS)
+        hardTimeoutHandle = setTimeout(
+          () => reject(new Error('Feature flags fetch timed out')),
+          FETCH_TIMEOUT_MS
+        )
       );
-      
+
       const response = await Promise.race([fetchPromise, hardTimeout]);
-      
-      clearTimeout(abortTimeout);
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -199,6 +210,11 @@ class FeatureFlagManager {
     } catch (error: any) {
       logger.debug('Failed to fetch feature flags:', error.message);
       // Continue with cached values
+    } finally {
+      clearTimeout(abortTimeout);
+      if (hardTimeoutHandle) {
+        clearTimeout(hardTimeoutHandle);
+      }
     }
   }
 
