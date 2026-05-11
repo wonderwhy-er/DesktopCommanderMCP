@@ -6,6 +6,7 @@ interface DirEntry {
     name: string;
     isDir: boolean;
     isDenied: boolean;
+    isNotFound: boolean;
     isWarning: boolean;
     warningText: string;
     children: DirEntry[];
@@ -17,7 +18,7 @@ function parseDirectoryEntries(content: string): { hint: string; entries: DirEnt
     const hintLines: string[] = [];
     const entryLines: string[] = [];
     for (const line of lines) {
-        if (/^\[(DIR|FILE|DENIED|WARNING)\]/.test(line.trim())) {
+        if (/^\[(DIR|FILE|DENIED|NOT_FOUND|WARNING)\]/.test(line.trim())) {
             entryLines.push(line.trim());
         } else if (entryLines.length === 0) {
             hintLines.push(line);
@@ -29,6 +30,7 @@ function parseDirectoryEntries(content: string): { hint: string; entries: DirEnt
         fullPath: string;
         isDir: boolean;
         isDenied: boolean;
+        isNotFound: boolean;
         isWarning: boolean;
         warningText: string;
         depth: number;
@@ -45,6 +47,7 @@ function parseDirectoryEntries(content: string): { hint: string; entries: DirEnt
                 fullPath: dirName,
                 isDir: false,
                 isDenied: false,
+                isNotFound: false,
                 isWarning: true,
                 warningText: msg,
                 depth: parts.length,
@@ -54,13 +57,15 @@ function parseDirectoryEntries(content: string): { hint: string; entries: DirEnt
 
         const isDir = line.startsWith('[DIR]');
         const isDenied = line.startsWith('[DENIED]');
-        const name = line.replace(/^\[(DIR|FILE|DENIED)\]\s*/, '');
+        const isNotFound = line.startsWith('[NOT_FOUND]');
+        const name = line.replace(/^\[(DIR|FILE|DENIED|NOT_FOUND)\]\s*/, '');
         const parts = name.replace(/\\/g, '/').split('/');
         flat.push({
             name,
             fullPath: name,
             isDir,
             isDenied,
+            isNotFound,
             isWarning: false,
             warningText: '',
             depth: parts.length - 1,
@@ -76,6 +81,7 @@ function parseDirectoryEntries(content: string): { hint: string; entries: DirEnt
             name: baseName,
             isDir: item.isDir,
             isDenied: item.isDenied,
+            isNotFound: item.isNotFound,
             isWarning: item.isWarning,
             warningText: item.warningText,
             children: [],
@@ -115,6 +121,9 @@ function renderDirTree(entries: DirEntry[], rootPath: string): string {
             }
             if (item.isDenied) {
                 return `<div class="dir-entry"><span class="dir-icon">🚫</span> <span class="dir-name-denied">${escapeHtml(item.name)}</span></div>`;
+            }
+            if (item.isNotFound) {
+                return `<div class="dir-entry"><span class="dir-icon">❓</span> <span class="dir-name-denied">${escapeHtml(item.name)}</span></div>`;
             }
             if (item.isDir) {
                 const hasChildren = item.children.length > 0;
