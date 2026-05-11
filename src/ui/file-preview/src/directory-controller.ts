@@ -123,7 +123,7 @@ function renderDirTree(entries: DirEntry[], rootPath: string): string {
                 return `<div class="dir-entry"><span class="dir-icon">🚫</span> <span class="dir-name-denied">${escapeHtml(item.name)}</span></div>`;
             }
             if (item.isNotFound) {
-                return `<div class="dir-entry"><span class="dir-icon">❓</span> <span class="dir-name-denied">${escapeHtml(item.name)} — path does not exist</span></div>`;
+                return `<div class="dir-entry"><span class="dir-icon">❓</span> <span class="dir-name-denied">${escapeHtml(item.name)}</span></div>`;
             }
             if (item.isDir) {
                 const hasChildren = item.children.length > 0;
