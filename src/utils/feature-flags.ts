@@ -113,10 +113,23 @@ class FeatureFlagManager {
    * Wait for fresh flags to be fetched from network.
    * Use this when you need to ensure flags are loaded before making decisions
    * (e.g., A/B test assignments for new users who don't have a cache yet)
+   * 
+   * Has a hard timeout to prevent blocking MCP startup if the fetch hangs.
+   * See: https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/465
    */
   async waitForFreshFlags(): Promise<void> {
     if (this.freshFetchPromise) {
-      await this.freshFetchPromise;
+      let safetyTimeoutHandle: NodeJS.Timeout | undefined;
+      try {
+        const safetyTimeout = new Promise<void>((resolve) => {
+          safetyTimeoutHandle = setTimeout(resolve, 5000);
+        });
+        await Promise.race([this.freshFetchPromise, safetyTimeout]);
+      } finally {
+        if (safetyTimeoutHandle) {
+          clearTimeout(safetyTimeoutHandle);
+        }
+      }
     }
   }
 
@@ -150,21 +163,35 @@ class FeatureFlagManager {
    * Fetch flags from remote URL
    */
   private async fetchFlags(): Promise<void> {
+    const FETCH_TIMEOUT_MS = 3000;
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    let hardTimeoutHandle: NodeJS.Timeout | undefined;
+
     try {
       // Don't log here - runs async and can interfere with MCP clients
-      
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      
-      const response = await fetch(this.flagUrl, {
+
+      // Use Promise.race as a hard timeout safety net.
+      // On some platforms (Windows + Node 24 / undici 7.x), AbortController.abort()
+      // fails to interrupt an in-progress TCP connect — the fetch hangs until the
+      // OS-level TCP timeout (~30s on Windows). Promise.race guarantees we reject
+      // at the JS level regardless of AbortController behavior.
+      // See: https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/465
+      const fetchPromise = fetch(this.flagUrl, {
         signal: controller.signal,
         headers: {
           'Cache-Control': 'no-cache',
         }
       });
-      
-      clearTimeout(timeout);
-      
+      const hardTimeout = new Promise<never>((_, reject) =>
+        hardTimeoutHandle = setTimeout(
+          () => reject(new Error('Feature flags fetch timed out')),
+          FETCH_TIMEOUT_MS
+        )
+      );
+
+      const response = await Promise.race([fetchPromise, hardTimeout]);
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -183,6 +210,11 @@ class FeatureFlagManager {
     } catch (error: any) {
       logger.debug('Failed to fetch feature flags:', error.message);
       // Continue with cached values
+    } finally {
+      clearTimeout(abortTimeout);
+      if (hardTimeoutHandle) {
+        clearTimeout(hardTimeoutHandle);
+      }
     }
   }
 
