@@ -295,6 +295,54 @@ async function testAppendMode() {
 }
 
 /**
+ * Test 10: read_file range parity with edit_block (BUG_REPORT.md)
+ * Regression for issue where read_file rejected "SheetName!A1:B2" while edit_block accepted it,
+ * and additionally rejected the Excel-native quoted form "'My Sheet'!A1:B2".
+ */
+async function testRangeWithSheetPrefix() {
+  console.log('\n--- Test 10: Range with embedded sheet prefix (parity with edit_block) ---');
+
+  const SHEET = 'Copy of Original full list';
+  const FILE = path.join(TEST_DIR, 'sheet_prefix.xlsx');
+  const data = {};
+  data[SHEET] = [
+    ['Name', 'Stage', 'Notes'],
+    ['Acme', 'Seed', 'first'],
+    ['Bravo', 'A', 'second'],
+  ];
+  await writeFile(FILE, JSON.stringify(data));
+
+  // Unquoted sheet prefix, same form edit_block accepts
+  const r1 = await readFile(FILE, { range: `${SHEET}!A1:B2` });
+  const c1 = r1.content.toString();
+  assert.ok(c1.includes('Acme'), 'Unquoted sheet prefix should resolve to right sheet');
+  assert.ok(!c1.includes('Notes'), 'Range A1:B2 must not include column C ("Notes")');
+
+  // Single-cell shorthand with sheet prefix
+  const r2 = await readFile(FILE, { range: `${SHEET}!A2` });
+  assert.ok(r2.content.toString().includes('Acme'), 'Single cell with sheet prefix should work');
+
+  // Excel-native quoted form (sheet name with spaces)
+  const r3 = await readFile(FILE, { range: `'${SHEET}'!A1:B2` });
+  assert.ok(r3.content.toString().includes('Acme'), "Quoted 'Sheet Name'! prefix should work");
+
+  // Helpful error message for genuinely-invalid input
+  let threw = false;
+  try {
+    await readFile(FILE, { range: 'not a range' });
+  } catch (e) {
+    threw = true;
+    assert.ok(
+      /SheetName!A1/.test(e.message),
+      `Error should hint supported form, got: ${e.message}`
+    );
+  }
+  assert.ok(threw, 'Invalid range must throw');
+
+  console.log('✓ read_file accepts SheetName!A1:B2 and \'Sheet Name\'!A1:B2 (parity with edit_block)');
+}
+
+/**
  * Test 9: Negative offset (read from end)
  */
 async function testNegativeOffset() {
@@ -336,6 +384,7 @@ async function runAllTests() {
   await testGetFileInfo();
   await testAppendMode();
   await testNegativeOffset();
+  await testRangeWithSheetPrefix();
 
   console.log('\n✅ All Excel tests passed!');
 }
