@@ -57,8 +57,10 @@ export class ExcelFileHandler implements FileHandler {
             ? `\n[Showing rows ${(options?.offset || 0) + 1}-${(options?.offset || 0) + returnedRows} of ${totalRows} total. Use offset/length to paginate.]`
             : '';
 
+        const sheetHasSpace = /\s/.test(sheetName);
+        const exampleSheet = sheetHasSpace ? sheetName : 'Sheet1';
         const content = `[Sheet: '${sheetName}' from ${path}]${paginationInfo}
-[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, {range: "Sheet1!E5", content: [[newValue]]})]
+[To MODIFY cells: use edit_block with range param, e.g., edit_block(path, {range: "${exampleSheet}!E5", content: [[newValue]]}). read_file accepts the same range form, or pass sheet + range separately.]
 
 ${JSON.stringify(data)}`;
 
@@ -319,6 +321,18 @@ ${JSON.stringify(data)}`;
             return { sheetName: '', data: [], totalRows: 0, returnedRows: 0 };
         }
 
+        // Accept range with embedded sheet prefix (parity with edit_block).
+        // E.g. range:"Sheet1!A1:B2" or "'My Sheet'!A1" — strip the sheet
+        // prefix and, when the caller did not pass an explicit sheet, use it.
+        let cellRangeOnly: string | undefined = range;
+        if (range && range.includes('!')) {
+            const [sheetFromRange, cellsFromRange] = this.parseRange(range);
+            cellRangeOnly = cellsFromRange ?? undefined;
+            if (sheetRef === undefined && sheetFromRange) {
+                sheetRef = sheetFromRange;
+            }
+        }
+
         // Find target worksheet
         let worksheet: ExcelJS.Worksheet | undefined;
         let sheetName: string;
@@ -347,8 +361,8 @@ ${JSON.stringify(data)}`;
         let startCol = 1;
         let endCol = worksheet.actualColumnCount || 1;
 
-        if (range) {
-            const parsed = this.parseCellRange(range);
+        if (cellRangeOnly) {
+            const parsed = this.parseCellRange(cellRangeOnly);
             startRow = parsed.startRow;
             startCol = parsed.startCol;
             if (parsed.endRow) endRow = parsed.endRow;
@@ -450,7 +464,14 @@ ${JSON.stringify(data)}`;
 
     private parseRange(range: string): [string, string | null] {
         if (range.includes('!')) {
-            const [sheetName, cellRange] = range.split('!');
+            const idx = range.indexOf('!');
+            let sheetName = range.slice(0, idx);
+            const cellRange = range.slice(idx + 1);
+            // Strip Excel-native single quotes around sheet names with spaces:
+            // 'My Sheet'!A1 → My Sheet, A1
+            if (sheetName.length >= 2 && sheetName.startsWith("'") && sheetName.endsWith("'")) {
+                sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+            }
             return [sheetName, cellRange];
         }
         return [range, null];
@@ -460,7 +481,10 @@ ${JSON.stringify(data)}`;
         // Parse A1 or A1:C10 format
         const match = range.match(/^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/i);
         if (!match) {
-            throw new Error(`Invalid cell range: ${range}`);
+            throw new Error(
+                `Invalid cell range: "${range}". Expected forms: "A1", "A1:C10", or "SheetName!A1:C10" ` +
+                `(single-quote sheet names containing spaces: "'My Sheet'!A1:C10").`
+            );
         }
 
         const startCol = this.columnToNumber(match[1]);
