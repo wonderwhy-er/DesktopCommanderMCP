@@ -9,6 +9,8 @@ import { renderMarkdownEditorShell } from '../dist/ui/file-preview/src/markdown/
 import { createMarkdownController } from '../dist/ui/file-preview/src/markdown/controller.js';
 import { createSlugTracker, slugifyMarkdownHeading } from '../dist/ui/file-preview/src/markdown/slugify.js';
 import { getDocumentFullscreenAvailability, shouldAutoLoadDocumentOnEnterFullscreen } from '../dist/ui/file-preview/src/document-workspace.js';
+import { renderPayloadBody, getFileTypeCapabilities } from '../dist/ui/file-preview/src/file-type-handlers.js';
+import { extractRenderPayload } from '../dist/ui/file-preview/src/payload-utils.js';
 
 async function testSlugGeneration() {
   console.log('\n--- Test 1: heading slug generation ---');
@@ -520,6 +522,40 @@ async function testRefreshDoesNotMisclassifyMarkdownContentAsDeletion() {
   console.log('✓ refresh only treats actual tool errors as missing files');
 }
 
+async function testUnsupportedRawContentPreview() {
+  console.log('\n--- Test 11: unsupported files render raw structured content ---');
+
+  const payload = extractRenderPayload({
+    content: [{ type: 'text', text: 'PDF file: report.pdf (1 pages)\n' }],
+    structuredContent: {
+      fileName: 'report.pdf',
+      filePath: '/tmp/report.pdf',
+      fileType: 'unsupported',
+      content: '<!-- Page: 1 -->\nRaw PDF text',
+    },
+  });
+
+  assert.ok(payload, 'Unsupported payload should be extracted');
+  assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'Structured content text should be used as raw source');
+
+  const capabilities = getFileTypeCapabilities(payload);
+  assert.strictEqual(capabilities.supportsPreview, true, 'Unsupported payload with raw content should be displayable');
+  assert.strictEqual(capabilities.canCopy, true, 'Unsupported raw source should be copyable');
+
+  const body = renderPayloadBody({
+    payload,
+    htmlMode: 'rendered',
+    startLine: 1,
+    markdownController: {},
+  });
+
+  assert.strictEqual(body.notice, undefined, 'Raw source display should not show unavailable notice');
+  assert.ok(body.html.includes('Raw PDF text'), 'Raw content should be rendered');
+  assert.ok(body.html.includes('&lt;!-- Page: 1 --&gt;'), 'Raw content should be escaped');
+
+  console.log('✓ unsupported raw structured content renders as source');
+}
+
 export default async function runTests() {
   try {
     await testSlugGeneration();
@@ -530,6 +566,7 @@ export default async function runTests() {
     await testCopyFormatsAndEditorShell();
     await testPartialDocumentBecomesNewEditBaseline();
     await testRefreshDoesNotMisclassifyMarkdownContentAsDeletion();
+    await testUnsupportedRawContentPreview();
     await testFailedSaveResyncsEditBaseline();
     await testSuccessfulSaveResetsUndoBaseline();
     console.log('\n✅ Markdown preview tests passed!');

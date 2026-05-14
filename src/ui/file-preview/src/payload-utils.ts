@@ -55,6 +55,13 @@ export function extractToolText(value: unknown): string | undefined {
     return undefined;
 }
 
+function extractStructuredContentText(value: unknown): string | undefined {
+    if (!isObjectRecord(value)) {
+        return undefined;
+    }
+    return typeof value.content === 'string' ? value.content : undefined;
+}
+
 export function extractRenderPayload(value: unknown): RenderPayload | undefined {
     if (!isObjectRecord(value)) {
         return undefined;
@@ -65,7 +72,10 @@ export function extractRenderPayload(value: unknown): RenderPayload | undefined 
             ? value
             : null;
     if (!meta) return undefined;
-    const text = extractToolText(value) ?? extractToolText(value.structuredContent) ?? '';
+    const text = extractStructuredContentText(value.structuredContent)
+        ?? extractToolText(value)
+        ?? extractToolText(value.structuredContent)
+        ?? '';
     return buildRenderPayload(meta, text);
 }
 

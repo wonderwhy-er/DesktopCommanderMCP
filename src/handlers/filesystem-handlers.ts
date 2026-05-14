@@ -137,6 +137,10 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType: 'unsupported' as const,
+                    content: pdfContent
+                        .filter((item): item is { type: "text"; text: string } => item.type === "text")
+                        .map((item) => item.text)
+                        .join("\n"),
                 },
             };
         }
@@ -160,6 +164,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType: 'image',
+                    content: imageData,
                     imageData,
                     mimeType: fileResult.mimeType
                 }
@@ -178,6 +183,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType,
+                    content: textContent,
                 },
             };
         }
