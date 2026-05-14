@@ -92,15 +92,26 @@ const handlerRegistry: Partial<Record<RenderPayload['fileType'], FileTypeHandler
         },
     },
     unsupported: {
-        getCapabilities: () => ({
-            supportsPreview: false,
-            canCopy: false,
-            canOpenInFolder: true,
-        }),
-        renderBody: () => ({
-            notice: 'Preview is not available for this file type.',
-            html: '<div class="panel-content source-content"></div>',
-        }),
+        getCapabilities: (payload) => {
+            const hasRawContent = stripReadStatusLine(payload.content).trim().length > 0;
+            return {
+                supportsPreview: hasRawContent,
+                canCopy: hasRawContent,
+                canOpenInFolder: !isLikelyUrl(payload.filePath),
+            };
+        },
+        renderBody: ({ payload }) => {
+            const rawContent = stripReadStatusLine(payload.content);
+            if (rawContent.trim().length === 0) {
+                return {
+                    notice: 'Preview is not available for this file type.',
+                    html: '<div class="panel-content source-content"></div>',
+                };
+            }
+            return {
+                html: `<div class="panel-content source-content">${renderRawFallback(rawContent)}</div>`,
+            };
+        },
     },
 };
 

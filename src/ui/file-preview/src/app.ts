@@ -626,15 +626,6 @@ export function bootstrapApp(): void {
         onConnected: () => {
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
             pendingCachedPayload = widgetState.read() ?? undefined;
-
-            window.setTimeout(() => {
-                if (!initialStateResolved) {
-                    resolveInitialState(
-                        undefined,
-                        'Preview unavailable after page refresh. Switch threads or re-run the tool.'
-                    );
-                }
-            }, 8000);
         },
     }).catch(() => {
         renderStatusState(container, 'Failed to connect to host.');

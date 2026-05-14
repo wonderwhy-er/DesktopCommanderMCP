@@ -306,18 +306,21 @@ async function testReadFilePreviewMetadata() {
   assert.ok(markdownResult.structuredContent, 'Markdown should include structuredContent');
   assert.strictEqual(markdownResult.structuredContent.fileType, 'markdown', 'Markdown fileType should be markdown');
   assert.strictEqual(markdownResult.structuredContent.filePath, MD_FILE, 'Markdown file path should be present');
+  assert.strictEqual(markdownResult.structuredContent.content, markdownResult.content[0].text, 'Markdown structuredContent should include returned content');
 
   const textResult = await handleReadFile({ path: TEXT_FILE });
   assert.ok(Array.isArray(textResult.content), 'Result should include content array');
   assert.ok(textResult.content[0].text.includes(textContent), 'Legacy content should still include text body');
   assert.ok(textResult.structuredContent, 'Text should include structuredContent');
   assert.strictEqual(textResult.structuredContent.fileType, 'text', 'Text fileType should be text');
+  assert.strictEqual(textResult.structuredContent.content, textResult.content[0].text, 'Text structuredContent should include returned content');
 
   const htmlResult = await handleReadFile({ path: HTML_FILE });
   assert.ok(Array.isArray(htmlResult.content), 'Result should include content array');
   assert.ok(htmlResult.content[0].text.includes('<h1>Preview</h1>'), 'Legacy content should still include html body');
   assert.ok(htmlResult.structuredContent, 'HTML should include structuredContent');
   assert.strictEqual(htmlResult.structuredContent.fileType, 'html', 'HTML fileType should be html');
+  assert.strictEqual(htmlResult.structuredContent.content, htmlResult.content[0].text, 'HTML structuredContent should include returned content');
 
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
   assert.ok(Array.isArray(imageResult.content), 'Image result should include content array');
@@ -326,6 +329,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(imageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
   assert.strictEqual(typeof imageResult.structuredContent.imageData, 'string', 'Image structured payload should include imageData');
   assert.ok(imageResult.structuredContent.imageData.length > 0, 'Image structured payload should include non-empty imageData');
+  assert.strictEqual(imageResult.structuredContent.content, imageResult.structuredContent.imageData, 'Image structuredContent should include file content');
   assert.strictEqual(imageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
   assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
 
