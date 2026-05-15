@@ -126,6 +126,9 @@ export interface FileMetadata {
     /** For text files */
     lineCount?: number;
 
+    /** Whether the read reached the end of the file */
+    reachedEOF?: boolean;
+
     /** For PDF files */
     isPdf?: boolean;
     author?: string;
