@@ -336,9 +336,10 @@ export class TerminalManager {
         });
       }, timeoutMs);
 
-      childProcess.on('exit', (code: any) => {
+      childProcess.on('close', (code: any) => {
         if (childProcess.pid) {
-          // Store completed session before removing active session
+          // Store completed session only after stdio closes, so fast-exiting
+          // processes do not lose stdout/stderr that arrives after exit.
           this.completedSessions.set(childProcess.pid, {
             pid: childProcess.pid,
             outputLines: [...session.outputLines], // Copy line buffer
