@@ -279,26 +279,38 @@ async function trackEvent(eventName, additionalProps = {}) {
 async function postTelemetryPayload(postData, options) {
     for (const endpoint of [TELEMETRY_PROXY_URL, TELEMETRY_PROXY_FALLBACK_URL]) {
         const result = await new Promise((resolve) => {
+            let settled = false;
+            let timeoutId;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                resolve(result);
+            };
             const req = https.request(endpoint, options);
 
-            const timeoutId = setTimeout(() => {
+            timeoutId = setTimeout(() => {
                 req.destroy();
-                resolve({ success: false, data: '' });
+                finish({ success: false, data: '' });
             }, 5000);
 
             req.on('error', () => {
-                clearTimeout(timeoutId);
-                resolve({ success: false, data: '' });
+                finish({ success: false, data: '' });
             });
 
             req.on('response', (res) => {
-                clearTimeout(timeoutId);
                 let data = '';
                 res.on('data', (chunk) => {
                     data += chunk;
                 });
+                res.on('error', () => {
+                    finish({ success: false, data: '' });
+                });
                 res.on('end', () => {
-                    resolve({ success: res.statusCode >= 200 && res.statusCode < 300, data });
+                    finish({ success: res.statusCode >= 200 && res.statusCode < 300, data });
+                });
+                res.on('close', () => {
+                    finish({ success: false, data: '' });
                 });
             });
 

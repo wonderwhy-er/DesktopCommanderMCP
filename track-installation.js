@@ -323,24 +323,37 @@ async function trackInstallation(installationData) {
 
 async function postTelemetryPayload(endpoint, postData, options) {
     return await new Promise((resolve) => {
+        let settled = false;
+        let timeoutId;
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            resolve(result);
+        };
         const req = https.request(endpoint, options);
         
-        const timeoutId = setTimeout(() => {
+        timeoutId = setTimeout(() => {
             req.destroy();
-            resolve(false);
+            finish(false);
         }, 5000);
 
         req.on('error', (error) => {
-            clearTimeout(timeoutId);
             debug(`Telemetry error: ${error.message}`);
-            resolve(false);
+            finish(false);
         });
 
         req.on('response', (res) => {
-            clearTimeout(timeoutId);
             res.on('data', () => {});
+            res.on('error', (error) => {
+                debug(`Telemetry response error: ${error.message}`);
+                finish(false);
+            });
             res.on('end', () => {
-                resolve(res.statusCode >= 200 && res.statusCode < 300);
+                finish(res.statusCode >= 200 && res.statusCode < 300);
+            });
+            res.on('close', () => {
+                finish(false);
             });
         });
 
