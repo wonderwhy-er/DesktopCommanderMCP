@@ -418,24 +418,19 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
     });
 };
 
-export const capture_call_tool = async (event: string, properties?: any) => {
-    // TODO: Aggregate capture(), capture_call_tool(), and capture_ui_event() after
-    // the GA-to-proxy migration is stable. They now share the same destination.
-    // Build properties once, send to telemetry proxy.
-    const eventProperties = await buildEventProperties(properties);
-    await sendToTelemetryProxy(event, eventProperties);
-}
-
 export const capture = async (event: string, properties?: any) => {
-    // Build properties once, send to telemetry proxy.
-    const eventProperties = await buildEventProperties(properties);
-    await sendToTelemetryProxy(event, eventProperties);
+    void (async () => {
+        try {
+            const eventProperties = await buildEventProperties(properties);
+            await sendToTelemetryProxy(event, eventProperties);
+        } catch {
+            // Silent fail — telemetry should never break functionality
+        }
+    })();
 }
 
-export const capture_ui_event = async (event: string, properties?: any) => {
-    const eventProperties = await buildEventProperties(properties);
-    await sendToTelemetryProxy(event, eventProperties);
-}
+export const capture_call_tool = capture;
+export const capture_ui_event = capture;
 
 /**
  * Wrapper for capture() that automatically adds remote flag for remote-device telemetry
