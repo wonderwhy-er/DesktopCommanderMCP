@@ -10,10 +10,10 @@ import { version as nodeVersion } from 'process';
 import * as https from 'https';
 import { randomUUID } from 'crypto';
 
-// Google Analytics configuration
-const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L'; // Replace with your GA4 Measurement ID
-const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A';   // Replace with your GA4 API Secre
-const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
+// Telemetry proxy configuration
+const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
+const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
+const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
 
 // Generate a unique anonymous ID using UUID - consistent with privacy policy
 let uniqueUserId = 'unknown';
@@ -302,7 +302,7 @@ async function enhancedGetTrackingProperties(additionalProps = {}) {
 async function trackEvent(eventName, additionalProps = {}) {
     const trackingStep = addSetupStep(`track_event_${eventName}`);
 
-    if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
+    if (!TELEMETRY_PROXY_TOKEN) {
         updateSetupStep(trackingStep, 'skipped', new Error('GA not configured'));
         return;
     }
@@ -319,7 +319,7 @@ async function trackEvent(eventName, additionalProps = {}) {
             // Get enriched properties
             const eventProperties = await enhancedGetTrackingProperties(additionalProps);
 
-            // Prepare GA4 payload
+            // Prepare telemetry payload
             const payload = {
                 client_id: uniqueUserId,
                 non_personalized_ads: false,
@@ -330,55 +330,20 @@ async function trackEvent(eventName, additionalProps = {}) {
                 }]
             };
 
-            // Send to Google Analytics
+            // Send to telemetry proxy
             const postData = JSON.stringify(payload);
             
             const options = {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                     'Content-Length': Buffer.byteLength(postData)
                 }
             };
 
-            const result = await new Promise((resolve, reject) => {
-                const req = https.request(GA_BASE_URL, options);
-
-                // Set timeout to prevent blocking
-                const timeoutId = setTimeout(() => {
-                    req.destroy();
-                    reject(new Error('Request timeout'));
-                }, 5000); // Increased timeout to 5 seconds
-
-                req.on('error', (error) => {
-                    clearTimeout(timeoutId);
-                    reject(error);
-                });
-
-                req.on('response', (res) => {
-                    clearTimeout(timeoutId);
-                    let data = '';
-
-                    res.on('data', (chunk) => {
-                        data += chunk;
-                    });
-
-                    res.on('error', (error) => {
-                        reject(error);
-                    });
-
-                    res.on('end', () => {
-                        if (res.statusCode >= 200 && res.statusCode < 300) {
-                            resolve({ success: true, data });
-                        } else {
-                            reject(new Error(`HTTP error ${res.statusCode}: ${data}`));
-                        }
-                    });
-                });
-
-                req.write(postData);
-                req.end();
-            });
+            const result = await postTelemetryPayload(postData, options);
+            if (!result.success) throw new Error('Telemetry proxy request failed');
 
             updateSetupStep(trackingStep, 'completed');
             return result;
@@ -395,6 +360,42 @@ async function trackEvent(eventName, additionalProps = {}) {
     // All retries failed
     updateSetupStep(trackingStep, 'failed', lastError);
     return false;
+}
+
+async function postTelemetryPayload(postData, options) {
+    for (const endpoint of [TELEMETRY_PROXY_URL, TELEMETRY_PROXY_FALLBACK_URL]) {
+        const result = await new Promise((resolve) => {
+            const req = https.request(endpoint, options);
+
+            const timeoutId = setTimeout(() => {
+                req.destroy();
+                resolve({ success: false, data: '' });
+            }, 5000);
+
+            req.on('error', () => {
+                clearTimeout(timeoutId);
+                resolve({ success: false, data: '' });
+            });
+
+            req.on('response', (res) => {
+                clearTimeout(timeoutId);
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    resolve({ success: res.statusCode >= 200 && res.statusCode < 300, data });
+                });
+            });
+
+            req.write(postData);
+            req.end();
+        });
+
+        if (result.success) return result;
+    }
+
+    return { success: false, data: '' };
 }
 
 // Ensure tracking completes before process exits

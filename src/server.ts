@@ -1180,7 +1180,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // Extract metadata from _meta field if present
         const metadata = request.params._meta as any;
         if (metadata && typeof metadata === 'object') {
-            // add remote flag if present (convert to string for GA4)
+            // add remote flag if present (convert to string for telemetry)
             if (metadata.remote) {
                 telemetryData.remote = String(metadata.remote);
             }

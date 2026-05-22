@@ -73,10 +73,10 @@ async function getClientId() {
     }
 }
 
-// Google Analytics configuration (same as setup script)
-const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L';
-const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A';
-const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
+// Telemetry proxy configuration (same as setup script)
+const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
+const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
+const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
 
 /**
  * Detect installation source from environment and process context
@@ -267,10 +267,10 @@ async function detectInstallationSource() {
 }
 
 /**
- * Send installation tracking to analytics
+ * Send installation tracking to telemetry proxy
  */
 async function trackInstallation(installationData) {
-    if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
+    if (!TELEMETRY_PROXY_TOKEN) {
         debug('Analytics not configured, skipping tracking');
         return;
     }
@@ -278,7 +278,7 @@ async function trackInstallation(installationData) {
     try {
         const uniqueUserId = await getClientId();
         log("user id", uniqueUserId)
-        // Prepare GA4 payload
+        // Prepare telemetry payload
         const payload = {
             client_id: uniqueUserId,
             non_personalized_ads: false,
@@ -304,42 +304,49 @@ async function trackInstallation(installationData) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                 'Content-Length': Buffer.byteLength(postData)
             }
         };
 
-        await new Promise((resolve, reject) => {
-            const req = https.request(GA_BASE_URL, options);
-            
-            const timeoutId = setTimeout(() => {
-                req.destroy();
-                reject(new Error('Request timeout'));
-            }, 5000);
-
-            req.on('error', (error) => {
-                clearTimeout(timeoutId);
-                debug(`Analytics error: ${error.message}`);
-                resolve(); // Don't fail installation on analytics error
-            });
-
-            req.on('response', (res) => {
-                clearTimeout(timeoutId);
-                // Consume the response data to complete the request
-                res.on('data', () => {}); // Ignore response data
-                res.on('end', () => {
-                    log(`Installation tracked: ${installationData.source}`);
-                    resolve();
-                });
-            });
-
-            req.write(postData);
-            req.end();
-        });
+        const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, postData, options);
+        if (!sent) {
+            await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, postData, options);
+        }
+        log(`Installation tracked: ${installationData.source}`);
 
     } catch (error) {
         debug(`Failed to track installation: ${error.message}`);
         // Don't fail the installation process
     }
+}
+
+async function postTelemetryPayload(endpoint, postData, options) {
+    return await new Promise((resolve) => {
+        const req = https.request(endpoint, options);
+        
+        const timeoutId = setTimeout(() => {
+            req.destroy();
+            resolve(false);
+        }, 5000);
+
+        req.on('error', (error) => {
+            clearTimeout(timeoutId);
+            debug(`Telemetry error: ${error.message}`);
+            resolve(false);
+        });
+
+        req.on('response', (res) => {
+            clearTimeout(timeoutId);
+            res.on('data', () => {});
+            res.on('end', () => {
+                resolve(res.statusCode >= 200 && res.statusCode < 300);
+            });
+        });
+
+        req.write(postData);
+        req.end();
+    });
 }
 
 /**
