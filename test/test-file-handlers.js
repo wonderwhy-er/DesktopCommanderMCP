@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 import assert from 'assert';
 import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
-import { handleReadFile } from '../dist/handlers/filesystem-handlers.js';
+import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 
 // Get directory name
@@ -306,6 +306,7 @@ async function testReadFilePreviewMetadata() {
   assert.ok(markdownResult.structuredContent, 'Markdown should include structuredContent');
   assert.strictEqual(markdownResult.structuredContent.fileType, 'markdown', 'Markdown fileType should be markdown');
   assert.strictEqual(markdownResult.structuredContent.filePath, MD_FILE, 'Markdown file path should be present');
+  assert.strictEqual(markdownResult.structuredContent.sourceTool, 'read_file', 'Markdown preview should preserve source tool');
   assert.strictEqual(markdownResult.structuredContent.content, markdownResult.content[0].text, 'Markdown structuredContent should include returned content');
 
   const textResult = await handleReadFile({ path: TEXT_FILE });
@@ -313,6 +314,7 @@ async function testReadFilePreviewMetadata() {
   assert.ok(textResult.content[0].text.includes(textContent), 'Legacy content should still include text body');
   assert.ok(textResult.structuredContent, 'Text should include structuredContent');
   assert.strictEqual(textResult.structuredContent.fileType, 'text', 'Text fileType should be text');
+  assert.strictEqual(textResult.structuredContent.sourceTool, 'read_file', 'Text preview should preserve source tool');
   assert.strictEqual(textResult.structuredContent.content, textResult.content[0].text, 'Text structuredContent should include returned content');
 
   const htmlResult = await handleReadFile({ path: HTML_FILE });
@@ -320,6 +322,7 @@ async function testReadFilePreviewMetadata() {
   assert.ok(htmlResult.content[0].text.includes('<h1>Preview</h1>'), 'Legacy content should still include html body');
   assert.ok(htmlResult.structuredContent, 'HTML should include structuredContent');
   assert.strictEqual(htmlResult.structuredContent.fileType, 'html', 'HTML fileType should be html');
+  assert.strictEqual(htmlResult.structuredContent.sourceTool, 'read_file', 'HTML preview should preserve source tool');
   assert.strictEqual(htmlResult.structuredContent.content, htmlResult.content[0].text, 'HTML structuredContent should include returned content');
 
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
@@ -332,6 +335,7 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(imageResult.structuredContent.content, imageResult.structuredContent.imageData, 'Image structuredContent should include file content');
   assert.strictEqual(imageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
   assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
+  assert.strictEqual(imageResult.structuredContent.sourceTool, 'read_file', 'Image preview should preserve source tool');
 
   const svgResult = await handleReadFile({ path: SVG_FILE });
   assert.ok(Array.isArray(svgResult.content), 'SVG result should include content array');
@@ -341,6 +345,11 @@ async function testReadFilePreviewMetadata() {
   assert.strictEqual(svgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
   assert.strictEqual(typeof svgResult.structuredContent.imageData, 'string', 'SVG structured payload should include imageData');
   assert.ok(svgResult.structuredContent.imageData.length > 0, 'SVG structured payload should include non-empty imageData');
+  assert.strictEqual(svgResult.structuredContent.sourceTool, 'read_file', 'SVG preview should preserve source tool');
+
+  const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler' });
+  assert.ok(writeResult.structuredContent, 'write_file should include structuredContent');
+  assert.strictEqual(writeResult.structuredContent.sourceTool, 'write_file', 'write_file preview should preserve source tool');
 
   const nullArgsResult = await handleReadFile(null);
   assert.ok(Array.isArray(nullArgsResult.content), 'Null-args result should include content array');
@@ -375,6 +384,7 @@ async function testMarkdownExactMatchSave() {
   assert.strictEqual(result.content[0].type, 'text', 'edit_block result[0] should be text');
   assert.ok(result.structuredContent, 'edit_block should return structuredContent');
   assert.ok(result.structuredContent.filePath, 'edit_block structuredContent should include filePath');
+  assert.strictEqual(result.structuredContent.sourceTool, 'edit_block', 'edit_block preview should preserve source tool');
   assert.match(
     result.content[0].text,
     /\[Reading \d+ lines? from/,

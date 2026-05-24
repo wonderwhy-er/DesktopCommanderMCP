@@ -7,6 +7,7 @@ import {
     moveFile,
     getFileInfo,
     writePdf,
+    getDefaultEditorMetadata,
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
@@ -137,6 +138,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType: 'unsupported' as const,
+                    sourceTool: 'read_file',
+                    ...await getDefaultEditorMetadata(resolvedFilePath),
                     content: pdfContent
                         .filter((item): item is { type: "text"; text: string } => item.type === "text")
                         .map((item) => item.text)
@@ -164,6 +167,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType: 'image',
+                    sourceTool: 'read_file',
+                    ...await getDefaultEditorMetadata(resolvedFilePath),
                     content: imageData,
                     imageData,
                     mimeType: fileResult.mimeType
@@ -183,6 +188,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileName: path.basename(resolvedFilePath),
                     filePath: resolvedFilePath,
                     fileType,
+                    sourceTool: 'read_file',
+                    ...await getDefaultEditorMetadata(resolvedFilePath),
                     content: textContent,
                 },
             };
@@ -303,6 +310,8 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
                 fileName: path.basename(resolvedWritePath),
                 filePath: resolvedWritePath,
                 fileType: resolvePreviewFileType(resolvedWritePath),
+                sourceTool: 'write_file',
+                ...await getDefaultEditorMetadata(resolvedWritePath),
             },
         };
     } catch (error) {
