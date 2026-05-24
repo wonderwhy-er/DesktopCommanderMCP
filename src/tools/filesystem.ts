@@ -1046,25 +1046,32 @@ export async function writePdf(
 }
 
 const execFileAsync = promisify(execFile);
-const defaultEditorCache = new Map<string, { defaultEditorName: string; defaultEditorPath: string }>();
+type DefaultEditorMetadata = { defaultEditorName?: string; defaultEditorPath?: string };
+type DefaultEditorCacheEntry = { metadata: DefaultEditorMetadata; expiresAt?: number };
+const DEFAULT_EDITOR_NEGATIVE_CACHE_MS = 5 * 60 * 1000;
+const defaultEditorCache = new Map<string, DefaultEditorCacheEntry>();
 
 function escapeAppleScriptString(value: string): string {
     return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-export async function getDefaultEditorMetadata(filePath: string): Promise<{ defaultEditorName?: string; defaultEditorPath?: string }> {
+export async function getDefaultEditorMetadata(filePath: string): Promise<DefaultEditorMetadata> {
     if (os.platform() !== 'darwin') {
         return {};
     }
 
-    const extension = path.extname(filePath).toLowerCase();
-    const cacheKey = extension || path.basename(filePath).toLowerCase();
-    const cached = defaultEditorCache.get(cacheKey);
-    if (cached) {
-        return cached;
-    }
-
+    let cacheKey = '';
     try {
+        const extension = path.extname(filePath).toLowerCase();
+        cacheKey = extension || path.basename(filePath).toLowerCase();
+        const cached = defaultEditorCache.get(cacheKey);
+        if (cached) {
+            if (!cached.expiresAt || cached.expiresAt > Date.now()) {
+                return cached.metadata;
+            }
+            defaultEditorCache.delete(cacheKey);
+        }
+
         const script = `set appAlias to default application of (info for POSIX file "${escapeAppleScriptString(filePath)}")\nreturn (name of (info for appAlias)) & linefeed & POSIX path of appAlias`;
         const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 12000 });
         const lines = stdout.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -1073,10 +1080,15 @@ export async function getDefaultEditorMetadata(filePath: string): Promise<{ defa
 
         if (defaultEditorName && defaultEditorPath.startsWith('/')) {
             const metadata = { defaultEditorName, defaultEditorPath };
-            defaultEditorCache.set(cacheKey, metadata);
+            defaultEditorCache.set(cacheKey, { metadata });
             return metadata;
         }
+
+        defaultEditorCache.set(cacheKey, { metadata: {}, expiresAt: Date.now() + DEFAULT_EDITOR_NEGATIVE_CACHE_MS });
     } catch {
+        if (cacheKey) {
+            defaultEditorCache.set(cacheKey, { metadata: {}, expiresAt: Date.now() + DEFAULT_EDITOR_NEGATIVE_CACHE_MS });
+        }
         // Generic UI fallback is good enough if detection fails.
     }
 
