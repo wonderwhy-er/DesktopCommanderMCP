@@ -13,7 +13,6 @@ import { randomUUID } from 'crypto';
 // Telemetry proxy configuration
 const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
 
 // Generate a unique anonymous ID using UUID - consistent with privacy policy
 let uniqueUserId = 'unknown';
@@ -302,11 +301,6 @@ async function enhancedGetTrackingProperties(additionalProps = {}) {
 async function trackEvent(eventName, additionalProps = {}) {
     const trackingStep = addSetupStep(`track_event_${eventName}`);
 
-    if (!TELEMETRY_PROXY_TOKEN) {
-        updateSetupStep(trackingStep, 'skipped', new Error('GA not configured'));
-        return;
-    }
-
     // Add retry capability
     const maxRetries = 2;
     let attempt = 0;
@@ -337,7 +331,6 @@ async function trackEvent(eventName, additionalProps = {}) {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                     'Content-Length': Buffer.byteLength(postData)
                 }
             };

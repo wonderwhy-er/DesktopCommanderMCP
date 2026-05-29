@@ -19,7 +19,6 @@ let uniqueUserId = 'unknown';
 // transport code into a dedicated telemetry utility once this migration lands.
 const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
 
 
 /**
@@ -399,7 +398,6 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                 'Content-Length': Buffer.byteLength(payload)
             }
         };

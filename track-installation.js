@@ -76,7 +76,6 @@ async function getClientId() {
 // Telemetry proxy configuration (same as setup script)
 const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
 
 /**
  * Detect installation source from environment and process context
@@ -270,11 +269,6 @@ async function detectInstallationSource() {
  * Send installation tracking to telemetry proxy
  */
 async function trackInstallation(installationData) {
-    if (!TELEMETRY_PROXY_TOKEN) {
-        debug('Analytics not configured, skipping tracking');
-        return;
-    }
-
     try {
         const uniqueUserId = await getClientId();
         log("user id", uniqueUserId)
@@ -304,7 +298,6 @@ async function trackInstallation(installationData) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                 'Content-Length': Buffer.byteLength(postData)
             }
         };
