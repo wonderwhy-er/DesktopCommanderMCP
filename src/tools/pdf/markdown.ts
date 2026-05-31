@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { mdToPdf } from 'md-to-pdf';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
@@ -13,6 +13,10 @@ const isUrl = (source: string): boolean =>
 let cachedChromePath: string | undefined | null = null; // null = not checked yet
 let chromeCheckPromise: Promise<string | undefined> | null = null;
 
+interface CachedPuppeteerChrome {
+    executablePath: string;
+}
+
 /**
  * Get the puppeteer cache directory
  */
@@ -20,47 +24,101 @@ function getPuppeteerCacheDir(): string {
     return join(homedir(), '.cache', 'puppeteer');
 }
 
+function getPuppeteerChromeDir(cacheDir = getPuppeteerCacheDir()): string {
+    return join(cacheDir, 'chrome');
+}
+
+function getChromeExecutablePath(chromeDir: string, version: string): string | undefined {
+    const chromePath = process.platform === 'win32'
+        ? join(chromeDir, version, 'chrome-win64', 'chrome.exe')
+        : process.platform === 'darwin'
+        ? join(chromeDir, version, 'chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
+        : join(chromeDir, version, 'chrome-linux64', 'chrome');
+
+    if (existsSync(chromePath)) {
+        return chromePath;
+    }
+
+    // Also check for arm64 mac
+    if (process.platform === 'darwin') {
+        const armPath = join(chromeDir, version, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
+        if (existsSync(armPath)) {
+            return armPath;
+        }
+    }
+
+    return undefined;
+}
+
+function getCachedChromeBuildDir(chromeDir: string, executablePath: string): string | undefined {
+    const relativePath = relative(chromeDir, executablePath);
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+        return undefined;
+    }
+
+    const [buildDir] = relativePath.split(sep);
+    return buildDir ? join(chromeDir, buildDir) : undefined;
+}
+
 /**
  * Find Chrome in puppeteer's cache directory
  * Returns the executable path if found, undefined otherwise
  */
-function findPuppeteerChrome(): string | undefined {
-    const cacheDir = getPuppeteerCacheDir();
-    const chromeDir = join(cacheDir, 'chrome');
-    
+export function findPuppeteerChrome(cacheDir = getPuppeteerCacheDir()): CachedPuppeteerChrome | undefined {
+    const chromeDir = getPuppeteerChromeDir(cacheDir);
+
     if (!existsSync(chromeDir)) {
         return undefined;
     }
-    
+
     try {
         // Look for chrome directories (e.g., win64-143.0.7499.169)
-        const { readdirSync } = require('fs');
-        const versions = readdirSync(chromeDir);
+        const versions = readdirSync(chromeDir, { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => entry.name)
+            .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
         
         for (const version of versions) {
-            const chromePath = process.platform === 'win32'
-                ? join(chromeDir, version, 'chrome-win64', 'chrome.exe')
-                : process.platform === 'darwin'
-                ? join(chromeDir, version, 'chrome-mac-x64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing')
-                : join(chromeDir, version, 'chrome-linux64', 'chrome');
-            
-            if (existsSync(chromePath)) {
-                return chromePath;
-            }
-            
-            // Also check for arm64 mac
-            if (process.platform === 'darwin') {
-                const armPath = join(chromeDir, version, 'chrome-mac-arm64', 'Google Chrome for Testing.app', 'Contents', 'MacOS', 'Google Chrome for Testing');
-                if (existsSync(armPath)) {
-                    return armPath;
-                }
+            const executablePath = getChromeExecutablePath(chromeDir, version);
+            if (executablePath) {
+                return { executablePath };
             }
         }
     } catch {
         // Ignore errors reading cache directory
     }
-    
+
     return undefined;
+}
+
+export async function pruneOldPuppeteerChromeBuilds(activeExecutablePath: string, cacheDir = getPuppeteerCacheDir()): Promise<void> {
+    const chromeDir = getPuppeteerChromeDir(cacheDir);
+    const activeBuildDir = getCachedChromeBuildDir(chromeDir, activeExecutablePath);
+    if (!activeBuildDir) {
+        return;
+    }
+
+    let entries;
+    try {
+        entries = await fs.readdir(chromeDir, { withFileTypes: true });
+    } catch {
+        return;
+    }
+
+    await Promise.all(entries
+        .filter(entry => entry.isDirectory())
+        .map(async entry => {
+            const buildDir = join(chromeDir, entry.name);
+            if (resolve(buildDir) === resolve(activeBuildDir)) {
+                return;
+            }
+
+            try {
+                await fs.rm(buildDir, { recursive: true, force: true });
+            } catch (error) {
+                console.error(`Failed to remove old Chrome cache build at ${buildDir}:`, error);
+            }
+        }));
 }
 
 /**
@@ -98,7 +156,7 @@ function findSystemChrome(): string | undefined {
  * Download and install Chrome using @puppeteer/browsers
  * Returns the executable path after installation
  */
-async function installChrome(): Promise<string> {
+async function installChrome(): Promise<CachedPuppeteerChrome> {
     // Dynamic import to avoid loading if not needed
     const { install, Browser, detectBrowserPlatform, resolveBuildId } = await import('@puppeteer/browsers');
     
@@ -120,7 +178,9 @@ async function installChrome(): Promise<string> {
     
     console.error('\nChrome download complete.');
     
-    return installedBrowser.executablePath;
+    return {
+        executablePath: installedBrowser.executablePath,
+    };
 }
 
 /**
@@ -144,8 +204,9 @@ async function getChromePath(): Promise<string | undefined> {
         // 1. Check puppeteer cache first (exact compatible version)
         const cachedChrome = findPuppeteerChrome();
         if (cachedChrome) {
-            cachedChromePath = cachedChrome;
-            return cachedChrome;
+            await pruneOldPuppeteerChromeBuilds(cachedChrome.executablePath);
+            cachedChromePath = cachedChrome.executablePath;
+            return cachedChrome.executablePath;
         }
         
         // 2. Check system Chrome
@@ -158,8 +219,9 @@ async function getChromePath(): Promise<string | undefined> {
         // 3. Install Chrome as last resort
         try {
             const installedChrome = await installChrome();
-            cachedChromePath = installedChrome;
-            return installedChrome;
+            await pruneOldPuppeteerChromeBuilds(installedChrome.executablePath);
+            cachedChromePath = installedChrome.executablePath;
+            return installedChrome.executablePath;
         } catch (error) {
             console.error('Failed to install Chrome:', error);
             cachedChromePath = undefined;
