@@ -8,6 +8,7 @@ import assert from 'assert';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import {
     findPuppeteerChrome,
@@ -93,7 +94,9 @@ async function main() {
     console.log('Chrome cache pruning test passed');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+
+if (isDirectRun) {
     main().catch(error => {
         console.error(error);
         process.exit(1);

@@ -24,10 +24,16 @@ function getPuppeteerCacheDir(): string {
     return join(homedir(), '.cache', 'puppeteer');
 }
 
+/**
+ * Get the cache path where Puppeteer stores Chrome for Testing builds.
+ */
 function getPuppeteerChromeDir(cacheDir = getPuppeteerCacheDir()): string {
     return join(cacheDir, 'chrome');
 }
 
+/**
+ * Find the platform-specific executable within a cached Chrome build directory.
+ */
 function getChromeExecutablePath(chromeDir: string, version: string): string | undefined {
     const chromePath = process.platform === 'win32'
         ? join(chromeDir, version, 'chrome-win64', 'chrome.exe')
@@ -50,6 +56,9 @@ function getChromeExecutablePath(chromeDir: string, version: string): string | u
     return undefined;
 }
 
+/**
+ * Resolve the cached Chrome build directory that owns an executable path.
+ */
 function getCachedChromeBuildDir(chromeDir: string, executablePath: string): string | undefined {
     const relativePath = relative(chromeDir, executablePath);
     if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
@@ -91,6 +100,9 @@ export function findPuppeteerChrome(cacheDir = getPuppeteerCacheDir()): CachedPu
     return undefined;
 }
 
+/**
+ * Remove stale Puppeteer Chrome builds while preserving the active build.
+ */
 export async function pruneOldPuppeteerChromeBuilds(activeExecutablePath: string, cacheDir = getPuppeteerCacheDir()): Promise<void> {
     const chromeDir = getPuppeteerChromeDir(cacheDir);
     const activeBuildDir = getCachedChromeBuildDir(chromeDir, activeExecutablePath);
