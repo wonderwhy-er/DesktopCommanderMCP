@@ -1,13 +1,24 @@
-// Runtime platform detection wrapper for @vscode/ripgrep
-// This replaces the original index.js to support cross-platform MCPB bundles
+// Runtime platform detection wrapper for @vscode/ripgrep.
+// This replaces the package's index.js in MCPB bundles so a single bundle can
+// resolve the correct ripgrep binary at runtime across platforms.
+//
+// IMPORTANT: @vscode/ripgrep 1.18.0+ ships package.json with "type": "module",
+// so this wrapper MUST be ESM. The previous CommonJS version (require /
+// module.exports) threw "require is not defined in ES module scope" the moment
+// the dependency went ESM. That error was swallowed by the resolver's try/catch
+// and surfaced as a misleading "ripgrep binary not found", silently breaking
+// search on Windows even though the bundled binaries were present.
 
-const os = require('os');
-const path = require('path');
-const fs = require('fs');
+import os from 'os';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function getTarget() {
   const arch = process.env.npm_config_arch || os.arch();
-  
+
   switch (os.platform()) {
     case 'darwin':
       return arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
@@ -32,34 +43,25 @@ const target = getTarget();
 const isWindows = os.platform() === 'win32';
 const binaryName = isWindows ? `rg-${target}.exe` : `rg-${target}`;
 // __dirname is lib/, so go up one level to reach bin/
-const rgPath = path.join(__dirname, '..', 'bin', binaryName);
+let resolvedRgPath = path.join(__dirname, '..', 'bin', binaryName);
 
-// Verify binary exists and ensure executable permissions
-if (!fs.existsSync(rgPath)) {
-  // Try fallback to original rg location
+if (!fs.existsSync(resolvedRgPath)) {
+  // Fallback to a plain rg binary if the platform-specific one is missing
   const fallbackPath = path.join(__dirname, '..', 'bin', isWindows ? 'rg.exe' : 'rg');
-  if (fs.existsSync(fallbackPath)) {
-    // Ensure executable permissions on Unix systems
-    if (!isWindows) {
-      try {
-        fs.chmodSync(fallbackPath, 0o755);
-      } catch (err) {
-        // Ignore permission errors - might not have write access
-      }
-    }
-    module.exports.rgPath = fallbackPath;
-  } else {
-    throw new Error(`ripgrep binary not found for platform ${target}: ${rgPath}`);
+  if (!fs.existsSync(fallbackPath)) {
+    throw new Error(`ripgrep binary not found for platform ${target}: ${resolvedRgPath}`);
   }
-} else {
-  // Ensure executable permissions on Unix systems
-  // This fixes issues when extracting from zip archives that don't preserve permissions
-  if (!isWindows) {
-    try {
-      fs.chmodSync(rgPath, 0o755);
-    } catch (err) {
-      // Ignore permission errors - might not have write access
-    }
-  }
-  module.exports.rgPath = rgPath;
+  resolvedRgPath = fallbackPath;
 }
+
+// Ensure executable permissions on Unix systems.
+// Fixes issues when extracting from zip archives that don't preserve permissions.
+if (!isWindows) {
+  try {
+    fs.chmodSync(resolvedRgPath, 0o755);
+  } catch (err) {
+    // Ignore permission errors - might not have write access
+  }
+}
+
+export const rgPath = resolvedRgPath;
