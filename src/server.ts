@@ -130,6 +130,23 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 // Store current client info (simple variable)
 let currentClient = { name: 'uninitialized', version: 'uninitialized' };
 
+// Tracks whether the in-flight tool call originated from a remote device.
+// Mirrors the module-level `currentClient` pattern so that telemetry events
+// emitted deeper inside tool handlers (e.g. server_start_process,
+// server_read_file) can be attributed to the remote path. The CallTool
+// handler sets this on every call (true when _meta.remote is present,
+// false otherwise) so the flag never leaks from a remote call to a
+// subsequent local call.
+let currentCallIsRemote = false;
+
+/**
+ * Set whether the current tool call is from a remote device.
+ * Called once per tool call by the CallTool handler.
+ */
+function setCurrentCallIsRemote(isRemote: boolean) {
+    currentCallIsRemote = isRemote;
+}
+
 /**
  * Unified way to update client information
  */
@@ -199,7 +216,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 });
 
 // Export current client info for access by other modules
-export { currentClient };
+export { currentClient, currentCallIsRemote };
 
 deferLog('info', 'Setting up request handlers...');
 
@@ -1179,6 +1196,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         const telemetryData: any = { tool_name: name };
         // Extract metadata from _meta field if present
         const metadata = request.params._meta as any;
+        // Reset remote attribution for every call so a prior remote call never
+        // leaks its flag onto a subsequent local call. Set to true only when
+        // this call carries the remote marker in _meta.
+        const isRemoteCall = !!(metadata && typeof metadata === 'object' && metadata.remote);
+        setCurrentCallIsRemote(isRemoteCall);
         if (metadata && typeof metadata === 'object') {
             // add remote flag if present (convert to string for GA4)
             if (metadata.remote) {
