@@ -11,6 +11,7 @@
   "plugins": [
     {
       "name": "desktop-commander",
+      "displayName": "Desktop Commander",
       "source": "./plugins/claude",
       "description": "MCP server for terminal commands, process management, and file operations across text, code, PDF, DOCX, Excel, images, and structured data"
     }
