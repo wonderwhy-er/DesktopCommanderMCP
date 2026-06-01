@@ -1,10 +1,10 @@
 import fs from 'fs/promises';
 import { existsSync, readdirSync } from 'fs';
-import { homedir } from 'os';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { mdToPdf } from 'md-to-pdf';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
+import { CONFIG_FILE } from '../../config.js';
 
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
@@ -18,10 +18,10 @@ interface CachedPuppeteerChrome {
 }
 
 /**
- * Get the puppeteer cache directory
+ * Get Desktop Commander's private Puppeteer cache directory.
  */
 function getPuppeteerCacheDir(): string {
-    return join(homedir(), '.cache', 'puppeteer');
+    return join(dirname(CONFIG_FILE), 'puppeteer-cache');
 }
 
 /**
@@ -177,7 +177,8 @@ async function installChrome(): Promise<CachedPuppeteerChrome> {
     const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
     
     console.error('Downloading Chrome for PDF generation (this may take a few minutes)...');
-    
+    await fs.mkdir(cacheDir, { recursive: true });
+
     const installedBrowser = await install({
         browser: Browser.CHROME,
         buildId,
