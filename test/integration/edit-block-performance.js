@@ -1,11 +1,10 @@
 /**
  * Integration/performance test for MCP-style large-file edit workflows.
  *
- * The test simulates an AI client issuing tool calls in-process:
- * write_file -> read_file -> N edit_block calls on the same file -> read_file verification.
- * Four independent workflows (1, 10, 100, and 150 same-file edits) are scheduled
- * with Promise.all to exercise concurrent tool-call pressure without introducing
- * cross-workflow file races.
+ * The test starts the real MCP server over stdio through the MCP SDK and simulates
+ * concurrent AI/client workflows issuing entangled write_file/read_file/edit_block
+ * tool calls. It is intentionally long-running and is gated behind
+ * `npm run test:integration` rather than default `npm test`.
  */
 
 import assert from 'assert';
@@ -19,12 +18,13 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.dirname(__dirname);
+const PROJECT_ROOT = path.dirname(path.dirname(__dirname));
 const README_TEXT = await fs.readFile(path.join(PROJECT_ROOT, 'README.md'), 'utf8');
 const README_LINES = README_TEXT
   .split(/\r?\n/)
   .map((line) => line.trim())
   .filter((line) => line.length > 0 && !line.startsWith('!['));
+assert.ok(README_LINES.length > 0, 'README fixture source should contain usable text lines');
 
 const TEST_DIR = path.join(__dirname, 'test_edit_block_performance');
 const LARGE_FILE_LINES = 1500;
@@ -161,23 +161,6 @@ function fuzzyPythonReportLine(workflowId, state) {
   return `unique_report_anchor_${workflowId.replace(/[^a-zA-Z0-9_]/g, '_')} = "${state}: Desktop Commander MCP handles files, commands, and edit blocks"`;
 }
 
-function pythonGeneratedFunctionBlock(workflowId, index, state = 'original') {
-  const summary = sanitizePythonString(getReadmeLine(index, workflowId));
-  const detail = sanitizePythonString(getReadmeLine(index + 23, workflowId));
-  const suffix = state === 'original' ? '' : `  # ${state}`;
-  return [
-    `def generated_function_${String(index).padStart(4, '0')}():`,
-    `    summary = "${summary}"`,
-    `    detail = "${detail}"`,
-    `    return summarize_feature(summary[:48] or "feature_${index}", ${index % 2 === 0 ? 'True' : 'False'}) + " | " + detail[:80]${suffix}`,
-  ].join('\n');
-}
-
-function pythonGeneratedReturnLine(index, state = 'original') {
-  const suffix = state === 'original' ? '' : `  # ${state}`;
-  return `    return summarize_feature(summary[:48] or "feature_${index}", ${index % 2 === 0 ? 'True' : 'False'}) + " | " + detail[:80]${suffix}`;
-}
-
 function getReadmeLine(index, salt) {
   const saltValue = Array.from(String(salt)).reduce((sum, char) => sum + char.charCodeAt(0), 0);
   const mixedIndex = (index * 37 + saltValue * 13 + Math.floor(index / 11) * 17) % README_LINES.length;
@@ -197,6 +180,19 @@ function extractActualTextFromFuzzyDiff(resultText) {
   assert.ok(diffMatch, 'fuzzy response should include a Differences block');
 
   return diffMatch[1].replace(/\{-[\s\S]*?-\}\{\+([\s\S]*?)\+\}/g, '$1');
+}
+
+function markdownTargetOffset(editNumber) {
+  const headerLines = 6;
+  const headingsThroughTarget = Math.floor((editNumber - 1) / 40) + 1;
+  const markerLinesBeforeTarget = (editNumber - 1) * 3;
+  return headerLines + headingsThroughTarget + markerLinesBeforeTarget;
+}
+
+function pythonTargetOffset(editNumber) {
+  const headerLines = 8;
+  const markerLinesBeforeTarget = (editNumber - 1) * 7;
+  return headerLines + markerLinesBeforeTarget;
 }
 
 async function runSameFileEditWorkflow(client, editCount) {
@@ -230,14 +226,18 @@ async function runSameFileEditWorkflow(client, editCount) {
   for (let editNumber = 1; editNumber <= editCount; editNumber++) {
     const oldString = marker(workflowId, editNumber, 'original');
     const newString = marker(workflowId, editNumber, 'edited');
-    const readOffset = Math.max(0, editNumber + Math.floor((editNumber - 1) / 40) - 3);
+    const readOffset = markdownTargetOffset(editNumber);
 
     const beforeEditRead = await callTool(client, 'read_file', {
       path: filePath,
       offset: readOffset,
-      length: 8,
+      length: 6,
     });
     assertToolSuccess(beforeEditRead, `before-edit read_file workflow ${workflowId} edit ${editNumber}`);
+    assert.ok(
+      getText(beforeEditRead).includes(oldString),
+      `before-edit read_file workflow ${workflowId} edit ${editNumber}: should include original text`
+    );
     verifiedReads++;
 
     const editResult = await callTool(client, 'edit_block', {
@@ -258,9 +258,18 @@ async function runSameFileEditWorkflow(client, editCount) {
     const afterEditRead = await callTool(client, 'read_file', {
       path: filePath,
       offset: readOffset,
-      length: 8,
+      length: 6,
     });
     assertToolSuccess(afterEditRead, `after-edit read_file workflow ${workflowId} edit ${editNumber}`);
+    const afterEditText = getText(afterEditRead);
+    assert.ok(
+      afterEditText.includes(newString),
+      `after-edit read_file workflow ${workflowId} edit ${editNumber}: should include edited text`
+    );
+    assert.ok(
+      !afterEditText.includes(oldString),
+      `after-edit read_file workflow ${workflowId} edit ${editNumber}: should not include original text`
+    );
     verifiedReads++;
 
     if (editNumber % 25 === 0 || editNumber === editCount) {
@@ -359,14 +368,18 @@ async function runPythonExactEditWorkflow(client, editCount) {
   verifiedReads++;
 
   for (let editNumber = 1; editNumber <= editCount; editNumber++) {
-    const readOffset = Math.max(0, editNumber + 5);
+    const readOffset = pythonTargetOffset(editNumber);
 
     const beforeEditRead = await callTool(client, 'read_file', {
       path: filePath,
       offset: readOffset,
-      length: 6,
+      length: 9,
     });
     assertToolSuccess(beforeEditRead, `before-edit read_file workflow ${workflowId} edit ${editNumber}`);
+    assert.ok(
+      getText(beforeEditRead).includes(pythonMarker(workflowId, editNumber, 'original')),
+      `before-edit read_file workflow ${workflowId} edit ${editNumber}: should include original Python text`
+    );
     verifiedReads++;
 
     const editResult = await callTool(client, 'edit_block', {
@@ -380,9 +393,18 @@ async function runPythonExactEditWorkflow(client, editCount) {
     const afterEditRead = await callTool(client, 'read_file', {
       path: filePath,
       offset: readOffset,
-      length: 6,
+      length: 9,
     });
     assertToolSuccess(afterEditRead, `after-edit read_file workflow ${workflowId} edit ${editNumber}`);
+    const afterEditText = getText(afterEditRead);
+    assert.ok(
+      afterEditText.includes(pythonMarker(workflowId, editNumber, 'edited')),
+      `after-edit read_file workflow ${workflowId} edit ${editNumber}: should include edited Python text`
+    );
+    assert.ok(
+      !afterEditText.includes(pythonMarker(workflowId, editNumber, 'original')),
+      `after-edit read_file workflow ${workflowId} edit ${editNumber}: should not include original Python text`
+    );
     verifiedReads++;
 
     if (editNumber % 25 === 0 || editNumber === editCount) {
@@ -593,7 +615,7 @@ async function setup(client) {
   await fs.mkdir(TEST_DIR, { recursive: true });
 
   const tools = await client.listTools(undefined, { timeout: 30000 });
-  for (const toolName of ['set_config_value', 'write_file', 'read_file', 'edit_block']) {
+  for (const toolName of ['get_config', 'set_config_value', 'write_file', 'read_file', 'edit_block']) {
     assert.ok(
       tools.tools.some((tool) => tool.name === toolName),
       `MCP server should expose ${toolName}`
