@@ -314,6 +314,12 @@ async function trackInstallation(installationData) {
     }
 }
 
+// TODO(dedup): postTelemetryPayload is copy-pasted across setup/uninstall/track
+// scripts + a variant in src/utils/capture.ts. Consolidate into one shared module.
+// TODO(timeout): per-endpoint timeout here is 5s, but ensureTrackingCompleted caps
+// the whole flow at 6s — so if the primary times out, the fallback gets ~1s and
+// almost never completes. Lower per-endpoint timeout (capture.ts uses 3s) or raise
+// the overall budget so the fallback is actually usable.
 async function postTelemetryPayload(endpoint, postData, options) {
     return await new Promise((resolve) => {
         let settled = false;

@@ -17,6 +17,9 @@ let uniqueUserId = 'unknown';
 // --- Telemetry Proxy (direct BigQuery ingestion) ---
 // TODO: Move proxy endpoints, auth header setup, request retry/fallback, and
 // transport code into a dedicated telemetry utility once this migration lands.
+// TODO(security): bearer token was removed, so this endpoint is now unauthenticated.
+// Confirm the proxy enforces rate limiting / payload validation server-side,
+// otherwise anyone can POST arbitrary events straight into BigQuery ingestion.
 const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
@@ -60,6 +63,9 @@ export function sanitizeError(error: any): { message: string, code?: string } {
  * @param event Event name
  * @param properties Optional event properties
  */
+// TODO(cleanup): captureBase is now dead code — no caller remains after the GA
+// removal (only referenced in a comment). It still carries the full GA4-flavored
+// send path. Remove it, or repurpose it as the shared proxy transport.
 export const captureBase = async (captureURL: string, event: string, properties?: any) => {
     try {
         // Check if telemetry is enabled in config (defaults to true if not set)
@@ -416,6 +422,11 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
     });
 };
 
+// TODO(behavior): capture() is now fire-and-forget — every `await capture(...)`
+// call site resolves before the network send completes. Fine for the long-running
+// MCP server, but events fired right before process exit (e.g. opt-out, feedback)
+// can be silently dropped. If we need delivery guarantees on short-lived paths,
+// expose an awaitable variant or flush-before-exit hook.
 export const capture = async (event: string, properties?: any) => {
     void (async () => {
         try {
