@@ -10,10 +10,9 @@ import { version as nodeVersion } from 'process';
 import * as https from 'https';
 import { randomUUID } from 'crypto';
 
-// Google Analytics configuration
-const GA_MEASUREMENT_ID = 'G-NGGDNL0K4L'; // Replace with your GA4 Measurement ID
-const GA_API_SECRET = '5M0mC--2S_6t94m8WrI60A';   // Replace with your GA4 API Secret
-const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
+// Telemetry proxy configuration
+const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
+const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 // Read clientId and telemetry settings from existing config
 let uniqueUserId = 'unknown';
@@ -222,11 +221,6 @@ async function trackEvent(eventName, additionalProps = {}) {
         return true; // Return success since this is expected behavior
     }
 
-    if (!GA_MEASUREMENT_ID || !GA_API_SECRET) {
-        updateUninstallStep(trackingStep, 'skipped', new Error('GA not configured'));
-        return;
-    }
-
     const maxRetries = 2;
     let attempt = 0;
     let lastError = null;
@@ -257,43 +251,8 @@ async function trackEvent(eventName, additionalProps = {}) {
                 }
             };
 
-            const result = await new Promise((resolve, reject) => {
-                const req = https.request(GA_BASE_URL, options);
-
-                const timeoutId = setTimeout(() => {
-                    req.destroy();
-                    reject(new Error('Request timeout'));
-                }, 5000);
-
-                req.on('error', (error) => {
-                    clearTimeout(timeoutId);
-                    reject(error);
-                });
-
-                req.on('response', (res) => {
-                    clearTimeout(timeoutId);
-                    let data = '';
-
-                    res.on('data', (chunk) => {
-                        data += chunk;
-                    });
-
-                    res.on('error', (error) => {
-                        reject(error);
-                    });
-
-                    res.on('end', () => {
-                        if (res.statusCode >= 200 && res.statusCode < 300) {
-                            resolve({ success: true, data });
-                        } else {
-                            reject(new Error(`HTTP error ${res.statusCode}: ${data}`));
-                        }
-                    });
-                });
-
-                req.write(postData);
-                req.end();
-            });
+            const result = await postTelemetryPayload(postData, options);
+            if (!result.success) throw new Error('Telemetry proxy request failed');
 
             updateUninstallStep(trackingStep, 'completed');
             return result;
@@ -308,6 +267,54 @@ async function trackEvent(eventName, additionalProps = {}) {
 
     updateUninstallStep(trackingStep, 'failed', lastError);
     return false;
+}
+
+async function postTelemetryPayload(postData, options) {
+    for (const endpoint of [TELEMETRY_PROXY_URL, TELEMETRY_PROXY_FALLBACK_URL]) {
+        const result = await new Promise((resolve) => {
+            let settled = false;
+            let timeoutId;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                resolve(result);
+            };
+            const req = https.request(endpoint, options);
+
+            timeoutId = setTimeout(() => {
+                req.destroy();
+                finish({ success: false, data: '' });
+            }, 5000);
+
+            req.on('error', () => {
+                finish({ success: false, data: '' });
+            });
+
+            req.on('response', (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('error', () => {
+                    finish({ success: false, data: '' });
+                });
+                res.on('end', () => {
+                    finish({ success: res.statusCode >= 200 && res.statusCode < 300, data });
+                });
+                res.on('close', () => {
+                    finish({ success: false, data: '' });
+                });
+            });
+
+            req.write(postData);
+            req.end();
+        });
+
+        if (result.success) return result;
+    }
+
+    return { success: false, data: '' };
 }
 // Ensure tracking completes before process exits
 async function ensureTrackingCompleted(eventName, additionalProps = {}, timeoutMs = 6000) {

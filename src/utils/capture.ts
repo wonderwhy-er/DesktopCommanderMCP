@@ -15,8 +15,13 @@ try {
 let uniqueUserId = 'unknown';
 
 // --- Telemetry Proxy (direct BigQuery ingestion) ---
-const TELEMETRY_PROXY_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-const TELEMETRY_PROXY_TOKEN = 'Od44UB_fTrVfGPGRPLr5QdVgFhuKdiGaBmvazTdxVdQ';
+// TODO: Move proxy endpoints, auth header setup, request retry/fallback, and
+// transport code into a dedicated telemetry utility once this migration lands.
+// TODO(security): bearer token was removed, so this endpoint is now unauthenticated.
+// Confirm the proxy enforces rate limiting / payload validation server-side,
+// otherwise anyone can POST arbitrary events straight into BigQuery ingestion.
+const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
+const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 
 /**
@@ -54,10 +59,13 @@ export function sanitizeError(error: any): { message: string, code?: string } {
 }
 
 /**
- * Send an event to Google Analytics
+ * Send an event to telemetry
  * @param event Event name
  * @param properties Optional event properties
  */
+// TODO(cleanup): captureBase is now dead code — no caller remains after the GA
+// removal (only referenced in a comment). It still carries the full GA4-flavored
+// send path. Remove it, or repurpose it as the shared proxy transport.
 export const captureBase = async (captureURL: string, event: string, properties?: any) => {
     try {
         // Check if telemetry is enabled in config (defaults to true if not set)
@@ -199,7 +207,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             ...sanitizedProperties
         };
 
-        // Prepare GA4 payload
+        // Prepare telemetry payload
         const payload = {
             client_id: uniqueUserId,
             non_personalized_ads: false,
@@ -210,7 +218,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             }]
         };
 
-        // Send data to Google Analytics
+        // Send data to telemetry endpoint
         const postData = JSON.stringify(payload);
 
         const options = {
@@ -232,7 +240,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
                 const success = res.statusCode === 200 || res.statusCode === 204;
                 if (!success) {
                     // Optional debug logging
-                    // console.debug(`GA tracking error: ${res.statusCode} ${data}`);
+                    // console.debug(`Telemetry tracking error: ${res.statusCode} ${data}`);
                 }
             });
         });
@@ -256,7 +264,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
 };
 
 /**
- * Build the standard event properties used by both GA4 and the telemetry proxy.
+ * Build the standard event properties used by the telemetry proxy.
  * Extracted from captureBase so both paths get identical data.
  */
 const buildEventProperties = async (properties?: any) => {
@@ -361,8 +369,7 @@ const buildEventProperties = async (properties?: any) => {
 
 /**
  * Send event to the telemetry proxy (direct BigQuery ingestion).
- * Runs in parallel with GA4 — used for high-volume events to avoid
- * the 1M/day GA4 BigQuery export limit.
+ * Uses the custom domain first and retries the generated Cloud Run URL on failure.
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
@@ -378,7 +385,18 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
-        const url = new URL(TELEMETRY_PROXY_URL);
+        const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
+        if (!sent) {
+            await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
+        }
+    } catch {
+        // Silent fail — telemetry should never break functionality
+    }
+};
+
+const postTelemetryPayload = async (endpoint: string, payload: string): Promise<boolean> => {
+    return await new Promise((resolve) => {
+        const url = new URL(endpoint);
         const options = {
             hostname: url.hostname,
             port: 443,
@@ -386,66 +404,42 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${TELEMETRY_PROXY_TOKEN}`,
                 'Content-Length': Buffer.byteLength(payload)
             }
         };
 
         const req = https.request(options, (res) => {
-            res.resume(); // drain response
+            res.resume();
+            res.on('end', () => resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300));
         });
-        req.on('error', () => { }); // silent fail
-        req.setTimeout(3000, () => req.destroy());
+        req.on('error', () => resolve(false));
+        req.setTimeout(3000, () => {
+            req.destroy();
+            resolve(false);
+        });
         req.write(payload);
         req.end();
-    } catch {
-        // Silent fail — telemetry should never break functionality
-    }
+    });
 };
 
-export const capture_call_tool = async (event: string, properties?: any) => {
-    // Old property (G-8L163XZ1CE) — keeps lower-volume tool events
-    const GA_OLD_ID = 'G-8L163XZ1CE';
-    const GA_OLD_SECRET = 'hNxh4TK2TnSy4oLZn4RwTA';
-    const GA_OLD_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_OLD_ID}&api_secret=${GA_OLD_SECRET}`;
-
-    // New property (dc_high_volume) — receives highest-volume tool events to avoid 1M/day BQ export limit
-    const GA_NEW_ID = 'G-ZDF1M5403Z';
-    const GA_NEW_SECRET = 'cUEilpa0SpWfc2UjblDtKQ';
-    const GA_NEW_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_NEW_ID}&api_secret=${GA_NEW_SECRET}`;
-
-    // Route highest-volume tools to new property, rest to old
-    const HIGH_VOLUME_TOOLS = ['start_process',  'track_ui_event'];
-    const toolName = properties?.tool_name ?? properties?.name;
-    const gaUrl = HIGH_VOLUME_TOOLS.includes(toolName) ? GA_NEW_URL : GA_OLD_URL;
-
-    // Build properties once, send to GA4 + telemetry proxy in parallel
-    const eventProperties = await buildEventProperties(properties);
-    await Promise.all([
-        captureBase(gaUrl, event, properties),                 // GA4 (routed by tool name)
-        sendToTelemetryProxy(event, eventProperties),          // direct BigQuery (all events)
-    ]);
-}
-
+// TODO(behavior): capture() is now fire-and-forget — every `await capture(...)`
+// call site resolves before the network send completes. Fine for the long-running
+// MCP server, but events fired right before process exit (e.g. opt-out, feedback)
+// can be silently dropped. If we need delivery guarantees on short-lived paths,
+// expose an awaitable variant or flush-before-exit hook.
 export const capture = async (event: string, properties?: any) => {
-    const GA_MEASUREMENT_ID = 'G-F3GK01G39Y';
-    const GA_API_SECRET = 'SqdcIAweSQS1RQErURMdEA';
-    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-
-    // Build properties once, send to both GA4 and telemetry proxy in parallel
-    const eventProperties = await buildEventProperties(properties);
-    await Promise.all([
-        captureBase(GA_BASE_URL, event, properties),           // existing GA4
-        sendToTelemetryProxy(event, eventProperties),          // new: direct BigQuery
-    ]);
+    void (async () => {
+        try {
+            const eventProperties = await buildEventProperties(properties);
+            await sendToTelemetryProxy(event, eventProperties);
+        } catch {
+            // Silent fail — telemetry should never break functionality
+        }
+    })();
 }
 
-export const capture_ui_event = async (event: string, properties?: any) => {
-    const GA_MEASUREMENT_ID = 'G-MPFSWEGQ0T';
-    const GA_API_SECRET = 'BeK3uyAOQ6-TK6wnaDG2Ww';
-    const GA_BASE_URL = `https://www.google-analytics.com/mp/collect?measurement_id=${GA_MEASUREMENT_ID}&api_secret=${GA_API_SECRET}`;
-    return await captureBase(GA_BASE_URL, event, properties);
-}
+export const capture_call_tool = capture;
+export const capture_ui_event = capture;
 
 /**
  * Wrapper for capture() that automatically adds remote flag for remote-device telemetry
