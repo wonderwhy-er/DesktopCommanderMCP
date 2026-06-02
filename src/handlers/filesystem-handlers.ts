@@ -147,8 +147,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         // Handle image files
         if (fileResult.metadata?.isImage) {
-            // For image files, keep content payload text-only for broad host compatibility.
-            // The preview widget reads image bytes from structuredContent.
+            // Return the image bytes in the MCP content array so the host model can
+            // actually see the image. structuredContent additionally carries the bytes
+            // for the preview widget to render.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
@@ -158,6 +159,11 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     {
                         type: "text",
                         text: imageSummary
+                    },
+                    {
+                        type: "image",
+                        data: imageData,
+                        mimeType: fileResult.mimeType
                     }
                 ],
                 structuredContent: {
