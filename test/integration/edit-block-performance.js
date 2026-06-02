@@ -534,13 +534,18 @@ async function runParallelWorkflows(client, editCounts) {
   const stopProbe = { value: false };
   const responsivenessProbe = runResponsivenessProbe(client, stopProbe);
 
-  const workflowResults = await Promise.all([
-    ...editCounts.map((editCount) => runSameFileEditWorkflow(client, editCount)),
-    runPythonExactEditWorkflow(client, 150),
-    runPythonFuzzyFallbackWorkflow(client, 25),
-  ]);
-  stopProbe.value = true;
-  const responsiveness = await responsivenessProbe;
+  let workflowResults;
+  let responsiveness;
+  try {
+    workflowResults = await Promise.all([
+      ...editCounts.map((editCount) => runSameFileEditWorkflow(client, editCount)),
+      runPythonExactEditWorkflow(client, 150),
+      runPythonFuzzyFallbackWorkflow(client, 25),
+    ]);
+  } finally {
+    stopProbe.value = true;
+    responsiveness = await responsivenessProbe;
+  }
   const durationMs = performance.now() - startedAt;
 
   console.log(`PASS all same-file edit workflows completed in parallel in ${durationMs.toFixed(0)}ms`);
@@ -635,7 +640,7 @@ async function setup(client) {
   for (const [key, value] of [
     ['allowedDirectories', [TEST_DIR]],
     ['fileReadLineLimit', READ_LINE_LIMIT],
-    ['fileWriteLineLimit', 50],
+    ['fileWriteLineLimit', 10000],
   ]) {
     const result = await callTool(client, 'set_config_value', { key, value, origin: 'llm' });
     assertToolSuccess(result, `set_config_value ${key}`);
