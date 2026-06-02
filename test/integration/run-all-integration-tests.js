@@ -42,6 +42,10 @@ function runTestFile(testFile) {
   });
 }
 
+function formatDuration(duration) {
+  return `${duration}ms (${(duration / 1000).toFixed(1)}s)`;
+}
+
 async function main() {
   const files = (await fs.readdir(__dirname))
     .filter((file) => file.endsWith('.js') && file !== 'run-all-integration-tests.js')
@@ -65,7 +69,13 @@ async function main() {
   const failed = results.filter((result) => !result.success);
   const totalDuration = results.reduce((sum, result) => sum + result.duration, 0);
 
-  console.log(`\nIntegration test summary: ${results.length - failed.length}/${results.length} passed (${totalDuration}ms)`);
+  console.log('\nIntegration test timings:');
+  for (const result of results) {
+    const status = result.success ? 'PASS' : 'FAIL';
+    console.log(`  ${status} ${result.file}: ${formatDuration(result.duration)}`);
+  }
+
+  console.log(`\nIntegration test summary: ${results.length - failed.length}/${results.length} passed (${formatDuration(totalDuration)})`);
   if (failed.length > 0) {
     for (const result of failed) {
       console.error(`  - ${result.file}`);
