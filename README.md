@@ -17,8 +17,6 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />
 </a>
 
-## 👋 We’re hiring — come build with us: https://desktopcommander.app/careers/
-
 ## 🖥️ Try the Desktop Commander App (Beta)
 
 **Want a better experience?** The Desktop Commander App gives you everything the MCP server does, plus:
