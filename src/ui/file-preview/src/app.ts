@@ -11,7 +11,7 @@ import { attachDirectoryHandlers } from './directory-controller.js';
 import { buildDocumentLayout } from './document-layout.js';
 import { getDocumentFullscreenAvailability, parseReadRange, stripReadStatusLine } from './document-workspace.js';
 import { getFileTypeCapabilities, renderPayloadBody } from './file-type-handlers.js';
-import { buildOpenInEditorCommand, buildOpenInFolderCommand, detectDefaultMarkdownEditor, renderMarkdownEditorAppIcon } from './host/external-actions.js';
+import { buildOpenInEditorCommand, buildOpenInFolderCommand, renderMarkdownEditorAppIcon } from './host/external-actions.js';
 import { attachSelectionContext } from './host/selection-context.js';
 import { createMarkdownController } from './markdown/controller.js';
 import {
@@ -47,7 +47,10 @@ let inlinePayloadBeforeFullscreen: RenderPayload | undefined;
 let directoryBackPayload: RenderPayload | undefined;
 let selectionAbortController: AbortController | null = null;
 const markdownEditorAppCache = new Map<string, { appName: string; appPath?: string }>();
-const markdownEditorAppPending = new Set<string>();
+
+function getTelemetryToolName(payload: RenderPayload | undefined): string {
+    return typeof payload?.sourceTool === 'string' ? payload.sourceTool : 'read_file';
+}
 
 async function callToolIfReady(name: string, args: Record<string, unknown>): Promise<unknown | undefined> {
     return rpcCallTool ? rpcCallTool(name, args) : undefined;
@@ -168,7 +171,10 @@ async function readAndResolvePayload(
     try {
         const freshPayload = await markdownController.readPayload(payload.filePath);
         if (freshPayload) {
-            onReady(freshPayload);
+            onReady({
+                ...freshPayload,
+                sourceTool: payload.sourceTool ?? freshPayload.sourceTool,
+            });
             if (freshPayload.fileType === 'markdown') {
                 void markdownController.refreshFromDisk(freshPayload);
             }
@@ -244,21 +250,16 @@ export function renderApp(
         availableDisplayModes: getAvailableDisplayModes(),
     }).canFullscreen;
 
+    if (payload.fileType === 'markdown' && payload.defaultEditorName) {
+        markdownEditorAppCache.set(payload.filePath, {
+            appName: payload.defaultEditorName,
+            appPath: payload.defaultEditorPath,
+        });
+    }
+
     const defaultMarkdownEditor = payload.fileType === 'markdown'
         ? markdownEditorAppCache.get(payload.filePath)
         : undefined;
-    if (payload.fileType === 'markdown' && !defaultMarkdownEditor) {
-        void detectDefaultMarkdownEditor({
-            filePath: payload.filePath,
-            editorAppCache: markdownEditorAppCache,
-            editorAppPending: markdownEditorAppPending,
-            callTool: callToolIfReady,
-            extractToolText,
-            onDetected: () => {
-                rerenderCurrent?.();
-            },
-        });
-    }
 
     const layout = buildDocumentLayout({
         payload,
@@ -477,13 +478,16 @@ export function bootstrapApp(): void {
         const result = await app.requestDisplayMode({ mode });
         return typeof result.mode === 'string' ? result.mode : null;
     };
-    trackUiEvent = createUiEventTracker(
+    const filePreviewUiEvent = createUiEventTracker(
         (name, args) => app.callServerTool({ name, arguments: args }),
         {
             component: 'file_preview',
-            baseParams: { tool_name: 'read_file' },
         }
     );
+    trackUiEvent = (event, params = {}) => filePreviewUiEvent(event, {
+        tool_name: getTelemetryToolName(currentPayload ?? hostPayload),
+        ...params,
+    });
 
     app.ontoolinput = (params) => {
         const requestedPath = typeof params.arguments?.path === 'string' ? params.arguments.path : undefined;
