@@ -76,6 +76,9 @@ export interface FilePreviewStructuredContent {
   fileName: string;
   filePath: string;
   fileType: PreviewFileType;
+  sourceTool?: 'read_file' | 'write_file' | 'edit_block';
+  defaultEditorName?: string;
+  defaultEditorPath?: string;
   content?: string;
   imageData?: string;
   mimeType?: string;

@@ -2,6 +2,8 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { capture } from '../utils/capture.js';
 import { withTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
@@ -1041,4 +1043,54 @@ export async function writePdf(
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }
+}
+
+const execFileAsync = promisify(execFile);
+type DefaultEditorMetadata = { defaultEditorName?: string; defaultEditorPath?: string };
+type DefaultEditorCacheEntry = { metadata: DefaultEditorMetadata; expiresAt?: number };
+const DEFAULT_EDITOR_NEGATIVE_CACHE_MS = 5 * 60 * 1000;
+const defaultEditorCache = new Map<string, DefaultEditorCacheEntry>();
+
+function escapeAppleScriptString(value: string): string {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+export async function getDefaultEditorMetadata(filePath: string): Promise<DefaultEditorMetadata> {
+    if (os.platform() !== 'darwin') {
+        return {};
+    }
+
+    let cacheKey = '';
+    try {
+        const extension = path.extname(filePath).toLowerCase();
+        cacheKey = extension || path.basename(filePath).toLowerCase();
+        const cached = defaultEditorCache.get(cacheKey);
+        if (cached) {
+            if (!cached.expiresAt || cached.expiresAt > Date.now()) {
+                return cached.metadata;
+            }
+            defaultEditorCache.delete(cacheKey);
+        }
+
+        const script = `set appAlias to default application of (info for POSIX file "${escapeAppleScriptString(filePath)}")\nreturn (name of (info for appAlias)) & linefeed & POSIX path of appAlias`;
+        const { stdout } = await execFileAsync('osascript', ['-e', script], { timeout: 12000 });
+        const lines = stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+        const defaultEditorName = lines[lines.length - 2]?.replace(/\.app$/i, '') ?? '';
+        const defaultEditorPath = lines[lines.length - 1] ?? '';
+
+        if (defaultEditorName && defaultEditorPath.startsWith('/')) {
+            const metadata = { defaultEditorName, defaultEditorPath };
+            defaultEditorCache.set(cacheKey, { metadata });
+            return metadata;
+        }
+
+        defaultEditorCache.set(cacheKey, { metadata: {}, expiresAt: Date.now() + DEFAULT_EDITOR_NEGATIVE_CACHE_MS });
+    } catch {
+        if (cacheKey) {
+            defaultEditorCache.set(cacheKey, { metadata: {}, expiresAt: Date.now() + DEFAULT_EDITOR_NEGATIVE_CACHE_MS });
+        }
+        // Generic UI fallback is good enough if detection fails.
+    }
+
+    return {};
 }

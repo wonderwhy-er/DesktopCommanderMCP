@@ -15,7 +15,7 @@
  * 3. Unify the editRange() signature to handle both text search/replace and structured edits
  */
 
-import { readFile, writeFile, readFileInternal, validatePath } from './filesystem.js';
+import { getDefaultEditorMetadata, readFile, writeFile, readFileInternal, validatePath } from './filesystem.js';
 import fs from 'fs/promises';
 import { ServerResult } from '../types.js';
 import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
@@ -227,6 +227,8 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
                 fileName: path.basename(resolvedEditPath),
                 filePath: resolvedEditPath,
                 fileType: resolvePreviewFileType(resolvedEditPath),
+                sourceTool: 'edit_block',
+                ...await getDefaultEditorMetadata(resolvedEditPath),
             },
         };
     }
@@ -438,6 +440,8 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                         fileName: path.basename(resolvedRangePath),
                         filePath: resolvedRangePath,
                         fileType: resolvePreviewFileType(resolvedRangePath),
+                        sourceTool: 'edit_block',
+                        ...await getDefaultEditorMetadata(resolvedRangePath),
                     },
                 };
             } catch (error) {
@@ -476,6 +480,8 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                         fileName: path.basename(resolvedEditRangePath),
                         filePath: resolvedEditRangePath,
                         fileType: resolvePreviewFileType(resolvedEditRangePath),
+                        sourceTool: 'edit_block',
+                        ...await getDefaultEditorMetadata(resolvedEditRangePath),
                     },
                 };
             }
