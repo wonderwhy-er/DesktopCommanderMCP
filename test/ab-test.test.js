@@ -4,6 +4,12 @@
  */
 
 import assert from 'assert';
+import {
+  MCP_UI_EXPERIMENT_NAME,
+  MCP_UI_HIDE_VARIANT,
+  MCP_UI_SHOW_VARIANT,
+  resolveMcpUiPreviewDecision,
+} from '../dist/utils/mcp-ui-ab-test.js';
 
 // Mock the dependencies before importing ab-test
 let mockExperiments = {};
@@ -59,32 +65,15 @@ async function getVariant(experimentName) {
   const configKey = `abTest_${experimentName}`;
   const existing = await mockConfigManager.getValue(configKey);
   
-  const variantNames = experiment.variants.map(v => v.name);
-  if (existing && variantNames.includes(existing)) {
+  if (existing && experiment.variants.includes(existing)) {
     variantCache[experimentName] = existing;
     return existing;
   }
   
   const clientId = await mockConfigManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
-  const totalWeight = experiment.variants.reduce((sum, v) => sum + v.weight, 0);
-
-  let variant;
-  if (totalWeight > 0) {
-    const roll = hash % totalWeight;
-    let cumulative = 0;
-    variant = experiment.variants[0].name;
-    for (const v of experiment.variants) {
-      cumulative += v.weight;
-      if (roll < cumulative) {
-        variant = v.name;
-        break;
-      }
-    }
-  } else {
-    const index = hash % experiment.variants.length;
-    variant = experiment.variants[index].name;
-  }
+  const variantIndex = hash % experiment.variants.length;
+  const variant = experiment.variants[variantIndex];
   
   await mockConfigManager.setValue(configKey, variant);
   variantCache[experimentName] = variant;
@@ -96,8 +85,7 @@ async function hasFeature(featureName) {
   if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    const variantNames = experiment?.variants?.map(v => v.name) || [];
-    if (variantNames.includes(featureName)) {
+    if (experiment?.variants?.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
     }
@@ -105,15 +93,37 @@ async function hasFeature(featureName) {
   return false;
 }
 
-async function getABTestVariant(experimentName) {
-  return getVariant(experimentName);
-}
-
 // Clear state between tests
 function resetState() {
   mockExperiments = {};
   mockConfigValues = {};
   Object.keys(variantCache).forEach(k => delete variantCache[k]);
+}
+
+function createMcpUiDeps(overrides = {}) {
+  const calls = {
+    captured: [],
+    waitedForFreshFlags: 0,
+    variantRequests: [],
+  };
+
+  return {
+    calls,
+    deps: {
+      getExistingAssignment: async () => undefined,
+      isFirstRun: () => false,
+      wasLoadedFromCache: () => true,
+      waitForFreshFlags: async () => { calls.waitedForFreshFlags++; },
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return null;
+      },
+      capture: async (event, properties) => {
+        calls.captured.push({ event, properties });
+      },
+      ...overrides,
+    },
+  };
 }
 
 // Test runner
@@ -179,10 +189,7 @@ async function runTests() {
   await test('hasFeature returns false for unknown feature', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: [
-          { name: 'noOnboardingPage', weight: 20 },
-          { name: 'showOnboardingPage', weight: 80 }
-        ]
+        variants: ['noOnboardingPage', 'showOnboardingPage']
       }
     };
     const result = await hasFeature('unknownFeature');
@@ -193,10 +200,7 @@ async function runTests() {
   await test('hasFeature returns true when user is assigned to that variant', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: [
-          { name: 'noOnboardingPage', weight: 20 },
-          { name: 'showOnboardingPage', weight: 80 }
-        ]
+        variants: ['noOnboardingPage', 'showOnboardingPage']
       }
     };
     mockConfigValues = { 'abTest_OnboardingPreTool': 'showOnboardingPage' };
@@ -208,10 +212,7 @@ async function runTests() {
   await test('hasFeature returns false when user is assigned to different variant', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: [
-          { name: 'noOnboardingPage', weight: 20 },
-          { name: 'showOnboardingPage', weight: 80 }
-        ]
+        variants: ['noOnboardingPage', 'showOnboardingPage']
       }
     };
     mockConfigValues = { 'abTest_OnboardingPreTool': 'noOnboardingPage' };
@@ -223,10 +224,7 @@ async function runTests() {
   await test('new user gets deterministic variant assignment based on clientId', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: [
-          { name: 'noOnboardingPage', weight: 20 },
-          { name: 'showOnboardingPage', weight: 80 }
-        ]
+        variants: ['noOnboardingPage', 'showOnboardingPage']
       }
     };
     mockConfigValues = { clientId: 'test-client-123' };
@@ -248,8 +246,8 @@ async function runTests() {
     mockExperiments = {
       'BadExp1': null,
       'BadExp2': 'not an object',
-      'BadExp3': { variants: [] },
-      'GoodExp': { variants: [{ name: 'a', weight: 1 }, { name: 'b', weight: 1 }] }
+      'BadExp3': { variants: 'not an array' },
+      'GoodExp': { variants: ['a', 'b'] }
     };
     
     // Should not throw
@@ -258,19 +256,40 @@ async function runTests() {
     assert.ok(typeof result === 'boolean');
   });
 
-  await test('getABTestVariant returns the exact persisted variant', async () => {
-    mockExperiments = {
-      'McpUiPreviews': {
-        variants: [
-          { name: 'showMCPui', weight: 50 },
-          { name: 'notSHowMcpui', weight: 50 }
-        ]
-      }
-    };
-    mockConfigValues = { 'abTest_McpUiPreviews': 'notSHowMcpui' };
+  await test('MCP UI constants match remote experiment contract', async () => {
+    assert.strictEqual(MCP_UI_EXPERIMENT_NAME, 'McpUiPreviews');
+    assert.strictEqual(MCP_UI_SHOW_VARIANT, 'showMCPui');
+    assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notSHowMcpui');
+  });
 
-    const variant = await getABTestVariant('McpUiPreviews');
-    assert.strictEqual(variant, 'notSHowMcpui');
+  await test('MCP UI existing users without assignment are not enrolled', async () => {
+    const { deps, calls } = createMcpUiDeps({ isFirstRun: () => false });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, []);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI first-run hide assignment disables UI after fresh flag wait', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      isFirstRun: () => true,
+      wasLoadedFromCache: () => false,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_HIDE_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, false);
+    assert.strictEqual(calls.waitedForFreshFlags, 1);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.strictEqual(calls.captured.length, 1);
+    assert.strictEqual(calls.captured[0].properties.variant, MCP_UI_HIDE_VARIANT);
+    assert.strictEqual(calls.captured[0].properties.mcp_ui_enabled, false);
   });
 
   // Summary
