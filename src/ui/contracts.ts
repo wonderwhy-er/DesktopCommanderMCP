@@ -13,14 +13,8 @@ export interface UiToolMeta extends Record<string, unknown> {
   'openai/widgetAccessible'?: boolean;
 }
 
-let mcpUiToolMetaEnabled = true;
-
-export function setMcpUiToolMetaEnabled(enabled: boolean) {
-  mcpUiToolMetaEnabled = enabled;
-}
-
-export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): UiToolMeta | undefined {
-  if (!mcpUiToolMetaEnabled) {
+export function buildUiToolMeta(resourceUri: string, widgetAccessible = false, showMcpUiPreviews = true): UiToolMeta | undefined {
+  if (!showMcpUiPreviews) {
     return undefined;
   }
 
