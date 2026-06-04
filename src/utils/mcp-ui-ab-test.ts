@@ -4,8 +4,8 @@ import { capture } from './capture.js';
 import { featureFlagManager } from './feature-flags.js';
 
 export const MCP_UI_EXPERIMENT_NAME = 'McpUiPreviews';
-export const MCP_UI_SHOW_VARIANT = 'showMCPui';
-export const MCP_UI_HIDE_VARIANT = 'notSHowMcpui';
+export const MCP_UI_SHOW_VARIANT = 'showMCPUi';
+export const MCP_UI_HIDE_VARIANT = 'notShowMCPUi';
 
 export interface McpUiPreviewDecisionDeps {
   getExistingAssignment: () => Promise<unknown>;

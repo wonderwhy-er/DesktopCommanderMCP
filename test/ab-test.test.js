@@ -258,8 +258,8 @@ async function runTests() {
 
   await test('MCP UI constants match remote experiment contract', async () => {
     assert.strictEqual(MCP_UI_EXPERIMENT_NAME, 'McpUiPreviews');
-    assert.strictEqual(MCP_UI_SHOW_VARIANT, 'showMCPui');
-    assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notSHowMcpui');
+    assert.strictEqual(MCP_UI_SHOW_VARIANT, 'showMCPUi');
+    assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notShowMCPUi');
   });
 
   await test('MCP UI existing users without assignment are not enrolled', async () => {
