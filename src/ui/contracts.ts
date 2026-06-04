@@ -28,3 +28,13 @@ export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): 
 
   return meta;
 }
+
+export function buildOptionalUiToolMeta(enabled: boolean, resourceUri: string, widgetAccessible = false): { _meta?: UiToolMeta } {
+  if (!enabled) {
+    return {};
+  }
+
+  return {
+    _meta: buildUiToolMeta(resourceUri, widgetAccessible),
+  };
+}

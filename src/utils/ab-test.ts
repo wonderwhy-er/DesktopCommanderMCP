@@ -41,6 +41,18 @@ function getExperiments(): Record<string, Experiment> {
   return featureFlagManager.get('experiments', {});
 }
 
+function getValidVariants(experiment: Experiment | null | undefined): WeightedVariant[] {
+  if (!Array.isArray(experiment?.variants)) return [];
+
+  return experiment.variants.filter((variant): variant is WeightedVariant =>
+    typeof variant?.name === 'string' &&
+    variant.name.length > 0 &&
+    typeof variant.weight === 'number' &&
+    Number.isFinite(variant.weight) &&
+    variant.weight >= 0
+  );
+}
+
 /**
  * Get user's variant for an experiment (cached, deterministic)
  * Supports weighted variants for unequal splits
@@ -48,7 +60,8 @@ function getExperiments(): Record<string, Experiment> {
 async function getVariant(experimentName: string): Promise<string | null> {
   const experiments = getExperiments();
   const experiment = experiments[experimentName];
-  if (!experiment?.variants?.length) return null;
+  const variants = getValidVariants(experiment);
+  if (variants.length === 0) return null;
   
   // Check cache
   if (variantCache[experimentName]) {
@@ -60,7 +73,7 @@ async function getVariant(experimentName: string): Promise<string | null> {
   const existing = await configManager.getValue(configKey);
   
   // Validate existing assignment is still a valid variant
-  const variantNames = experiment.variants.map(v => v.name);
+  const variantNames = variants.map(v => v.name);
   if (existing && variantNames.includes(existing)) {
     variantCache[experimentName] = existing;
     return existing;
@@ -71,14 +84,14 @@ async function getVariant(experimentName: string): Promise<string | null> {
   const hash = hashCode(clientId + experimentName);
   
   // Calculate total weight and select variant
-  const totalWeight = experiment.variants.reduce((sum, v) => sum + v.weight, 0);
+  const totalWeight = variants.reduce((sum, v) => sum + v.weight, 0);
   
   let variant: string;
   if (totalWeight > 0) {
     const roll = hash % totalWeight;
     let cumulative = 0;
-    variant = experiment.variants[0].name; // fallback
-    for (const v of experiment.variants) {
+    variant = variants[0].name; // fallback
+    for (const v of variants) {
       cumulative += v.weight;
       if (roll < cumulative) {
         variant = v.name;
@@ -87,13 +100,20 @@ async function getVariant(experimentName: string): Promise<string | null> {
     }
   } else {
     // Fallback to equal split when weights are misconfigured (all zero)
-    const index = hash % experiment.variants.length;
-    variant = experiment.variants[index].name;
+    const index = hash % variants.length;
+    variant = variants[index].name;
   }
   
   await configManager.setValue(configKey, variant);
   variantCache[experimentName] = variant;
   return variant;
+}
+
+/**
+ * Get the exact assigned variant for a named experiment.
+ */
+export async function getABTestVariant(experimentName: string): Promise<string | null> {
+  return getVariant(experimentName);
 }
 
 /**
@@ -104,7 +124,10 @@ export async function hasFeature(featureName: string): Promise<boolean> {
   if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    const variantNames = experiment?.variants?.map(v => v.name) || [];
+    const variants = getValidVariants(experiment);
+    if (variants.length === 0) continue;
+
+    const variantNames = variants.map(v => v.name);
     if (variantNames.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;

@@ -4,6 +4,7 @@
  */
 
 import assert from 'assert';
+import fs from 'fs/promises';
 
 // Mock the dependencies before importing ab-test
 let mockExperiments = {};
@@ -50,7 +51,8 @@ const variantCache = {};
 async function getVariant(experimentName) {
   const experiments = getExperiments();
   const experiment = experiments[experimentName];
-  if (!experiment?.variants?.length) return null;
+  const variants = getValidVariants(experiment);
+  if (variants.length === 0) return null;
   
   if (variantCache[experimentName]) {
     return variantCache[experimentName];
@@ -59,19 +61,48 @@ async function getVariant(experimentName) {
   const configKey = `abTest_${experimentName}`;
   const existing = await mockConfigManager.getValue(configKey);
   
-  if (existing && experiment.variants.includes(existing)) {
+  const variantNames = variants.map(v => v.name);
+  if (existing && variantNames.includes(existing)) {
     variantCache[experimentName] = existing;
     return existing;
   }
   
   const clientId = await mockConfigManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
-  const variantIndex = hash % experiment.variants.length;
-  const variant = experiment.variants[variantIndex];
+  const totalWeight = variants.reduce((sum, v) => sum + v.weight, 0);
+
+  let variant;
+  if (totalWeight > 0) {
+    const roll = hash % totalWeight;
+    let cumulative = 0;
+    variant = variants[0].name;
+    for (const v of variants) {
+      cumulative += v.weight;
+      if (roll < cumulative) {
+        variant = v.name;
+        break;
+      }
+    }
+  } else {
+    const index = hash % variants.length;
+    variant = variants[index].name;
+  }
   
   await mockConfigManager.setValue(configKey, variant);
   variantCache[experimentName] = variant;
   return variant;
+}
+
+function getValidVariants(experiment) {
+  if (!Array.isArray(experiment?.variants)) return [];
+
+  return experiment.variants.filter(variant =>
+    typeof variant?.name === 'string' &&
+    variant.name.length > 0 &&
+    typeof variant.weight === 'number' &&
+    Number.isFinite(variant.weight) &&
+    variant.weight >= 0
+  );
 }
 
 async function hasFeature(featureName) {
@@ -79,12 +110,20 @@ async function hasFeature(featureName) {
   if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    if (experiment?.variants?.includes(featureName)) {
+    const variants = getValidVariants(experiment);
+    if (variants.length === 0) continue;
+
+    const variantNames = variants.map(v => v.name);
+    if (variantNames.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
     }
   }
   return false;
+}
+
+async function getABTestVariant(experimentName) {
+  return getVariant(experimentName);
 }
 
 // Clear state between tests
@@ -157,7 +196,10 @@ async function runTests() {
   await test('hasFeature returns false for unknown feature', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
+        variants: [
+          { name: 'noOnboardingPage', weight: 20 },
+          { name: 'showOnboardingPage', weight: 80 }
+        ]
       }
     };
     const result = await hasFeature('unknownFeature');
@@ -168,7 +210,10 @@ async function runTests() {
   await test('hasFeature returns true when user is assigned to that variant', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
+        variants: [
+          { name: 'noOnboardingPage', weight: 20 },
+          { name: 'showOnboardingPage', weight: 80 }
+        ]
       }
     };
     mockConfigValues = { 'abTest_OnboardingPreTool': 'showOnboardingPage' };
@@ -180,7 +225,10 @@ async function runTests() {
   await test('hasFeature returns false when user is assigned to different variant', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
+        variants: [
+          { name: 'noOnboardingPage', weight: 20 },
+          { name: 'showOnboardingPage', weight: 80 }
+        ]
       }
     };
     mockConfigValues = { 'abTest_OnboardingPreTool': 'noOnboardingPage' };
@@ -192,7 +240,10 @@ async function runTests() {
   await test('new user gets deterministic variant assignment based on clientId', async () => {
     mockExperiments = {
       'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
+        variants: [
+          { name: 'noOnboardingPage', weight: 20 },
+          { name: 'showOnboardingPage', weight: 80 }
+        ]
       }
     };
     mockConfigValues = { clientId: 'test-client-123' };
@@ -215,13 +266,34 @@ async function runTests() {
       'BadExp1': null,
       'BadExp2': 'not an object',
       'BadExp3': { variants: 'not an array' },
-      'GoodExp': { variants: ['a', 'b'] }
+      'BadExp4': { variants: [{ name: 'bad', weight: -1 }, { name: 42, weight: 1 }, { weight: 1 }] },
+      'GoodExp': { variants: [{ name: 'a', weight: 1 }, { name: 'b', weight: 1 }] }
     };
     
     // Should not throw
     const result = await hasFeature('a');
     // Result depends on assignment, but shouldn't crash
     assert.ok(typeof result === 'boolean');
+  });
+
+  await test('getABTestVariant returns the exact persisted variant', async () => {
+    mockExperiments = {
+      'McpUiPreviews': {
+        variants: [
+          { name: 'showMCPui', weight: 50 },
+          { name: 'notSHowMcpui', weight: 50 }
+        ]
+      }
+    };
+    mockConfigValues = { 'abTest_McpUiPreviews': 'notSHowMcpui' };
+
+    const variant = await getABTestVariant('McpUiPreviews');
+    assert.strictEqual(variant, 'notSHowMcpui');
+  });
+
+  await test('source exports getABTestVariant for feature-specific decisions', async () => {
+    const source = await fs.readFile(new URL('../src/utils/ab-test.ts', import.meta.url), 'utf8');
+    assert.match(source, /export\s+async\s+function\s+getABTestVariant/);
   });
 
   // Summary
