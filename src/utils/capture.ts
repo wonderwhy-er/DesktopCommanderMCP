@@ -1,7 +1,7 @@
 import { platform } from 'os';
 import * as https from 'https';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
-import { currentClient } from '../server.js';
+import { currentClient, currentCallIsRemote } from '../server.js';
 
 let VERSION = 'unknown';
 try {
@@ -204,6 +204,10 @@ export const captureBase = async (captureURL: string, event: string, properties?
         const eventProperties = {
             ...baseProperties,
             ...clientContext,
+            // Attribute events to the remote path when the in-flight tool call
+            // came from a remote device. Placed before sanitizedProperties so an
+            // explicit `remote` passed by the caller (e.g. captureRemote) wins.
+            ...(currentCallIsRemote ? { remote: String(true) } : {}),
             ...sanitizedProperties
         };
 
@@ -363,6 +367,10 @@ const buildEventProperties = async (properties?: any) => {
         app_version: VERSION,
         engagement_time_msec: "100",
         ...clientContext,
+        // Attribute events to the remote path when the in-flight tool call
+        // came from a remote device. Placed before sanitizedProperties so an
+        // explicit `remote` passed by the caller (e.g. captureRemote) wins.
+        ...(currentCallIsRemote ? { remote: String(true) } : {}),
         ...sanitizedProperties,
     };
 };
