@@ -36,6 +36,7 @@ const PERFORMANCE_LIMITS_MS = {
   150: 120000,
   python150: 120000,
   pythonFuzzy25: 60000,
+  docx40: 120000,
 };
 const RESPONSIVENESS_INTERVAL_MS = 1000;
 const RESPONSIVENESS_MAX_LATENCY_MS = 5000;
@@ -117,6 +118,20 @@ function createLargePythonFileContent(workflowId, editCount) {
   return lines.join('\n');
 }
 
+function createDocxFileContent(workflowId, editCount) {
+  // Plain text; DocxFileHandler turns each line into a paragraph and lines
+  // starting with # into headings. Marker text is kept alphanumeric so it is
+  // not altered by XML escaping and maps to a single <w:t> element per line.
+  const lines = ['# Desktop Commander MCP DOCX Edit Fixture'];
+  for (let index = 1; index <= editCount; index++) {
+    if (index % 10 === 1) {
+      lines.push(`## Section ${Math.ceil(index / 10)}`);
+    }
+    lines.push(docxMarkerText(workflowId, index, 'original'));
+  }
+  return lines.join('\n');
+}
+
 function createFuzzyPythonFileContent(workflowId, exactTarget) {
   const lines = [
     '# Generated Python fuzzy fixture using varied README-derived text',
@@ -155,6 +170,17 @@ function pythonMarker(workflowId, editNumber, state) {
     `    "next_context": "${sanitizePythonString(getReadmeLine(editNumber * 5 + 1, workflowId))}",`,
     `}`,
   ].join('\n');
+}
+
+function docxMarkerText(workflowId, editNumber, state) {
+  return `DOCX_TARGET_${workflowId}_${editNumber}: ${state} edit block paragraph ${editNumber} for workflow ${workflowId}`;
+}
+
+// DocxFileHandler writes body paragraphs as <w:t xml:space="preserve">...</w:t>,
+// and edit_block does find/replace on the pretty-printed document XML, so the
+// edit targets that exact element wrapper rather than raw text.
+function docxBodyElement(text) {
+  return `<w:t xml:space="preserve">${text}</w:t>`;
 }
 
 function fuzzyPythonReportLine(workflowId, state) {
@@ -461,6 +487,87 @@ async function runPythonExactEditWorkflow(client, editCount) {
   };
 }
 
+async function runDocxExactEditWorkflow(client, editCount) {
+  const workflowId = `docx-${editCount}-edits`;
+  const filePath = path.join(TEST_DIR, `large-workflow-${workflowId}.docx`);
+  const startedAt = performance.now();
+  let verifiedReads = 0;
+  let verifiedWrites = 0;
+
+  const writeResult = await callTool(client, 'write_file', {
+    path: filePath,
+    content: createDocxFileContent(workflowId, editCount),
+    mode: 'rewrite',
+  });
+  assertToolSuccess(writeResult, `write_file workflow ${workflowId}`);
+  verifiedWrites++;
+
+  // No offset -> DOCX outline (text-bearing), which we string-match against.
+  const initialRead = await callTool(client, 'read_file', { path: filePath });
+  assertToolSuccess(initialRead, `initial read_file workflow ${workflowId}`);
+  assert.ok(
+    getText(initialRead).includes(docxMarkerText(workflowId, 1, 'original')),
+    `initial read_file workflow ${workflowId}: should include original DOCX text`
+  );
+  verifiedReads++;
+
+  for (let editNumber = 1; editNumber <= editCount; editNumber++) {
+    const editResult = await callTool(client, 'edit_block', {
+      file_path: filePath,
+      old_string: docxBodyElement(docxMarkerText(workflowId, editNumber, 'original')),
+      new_string: docxBodyElement(docxMarkerText(workflowId, editNumber, 'edited')),
+      expected_replacements: 1,
+    });
+    assertToolSuccess(editResult, `edit_block workflow ${workflowId} edit ${editNumber}`);
+  }
+
+  const verificationRead = await callTool(client, 'read_file', { path: filePath });
+  assertToolSuccess(verificationRead, `verification read_file workflow ${workflowId}`);
+  verifiedReads++;
+  const verificationText = getText(verificationRead);
+
+  let verifiedEdits = 0;
+  let unmodifiedOriginals = 0;
+  for (let editNumber = 1; editNumber <= editCount; editNumber++) {
+    const hasEditedMarker = verificationText.includes(docxMarkerText(workflowId, editNumber, 'edited'));
+    const hasOriginalMarker = verificationText.includes(docxMarkerText(workflowId, editNumber, 'original'));
+    if (hasEditedMarker) {
+      verifiedEdits++;
+    }
+    if (hasOriginalMarker) {
+      unmodifiedOriginals++;
+    }
+
+    assert.ok(
+      hasEditedMarker,
+      `workflow ${workflowId}: edited DOCX marker ${editNumber} should be present`
+    );
+    assert.ok(
+      !hasOriginalMarker,
+      `workflow ${workflowId}: original DOCX marker ${editNumber} should be gone`
+    );
+  }
+
+  const durationMs = performance.now() - startedAt;
+  console.log(`PASS workflow ${workflowId} completed ${editCount} DOCX same-file edits in ${durationMs.toFixed(0)}ms`);
+  assert.ok(
+    durationMs < PERFORMANCE_LIMITS_MS.docx40,
+    `${workflowId} took ${durationMs.toFixed(0)}ms, expected under ${PERFORMANCE_LIMITS_MS.docx40}ms`
+  );
+
+  return {
+    label: `${editCount} DOCX same-file edits`,
+    plannedEdits: editCount,
+    verifiedEdits,
+    unmodifiedOriginals,
+    plannedReads: 2,
+    verifiedReads,
+    plannedWrites: 1,
+    verifiedWrites,
+    durationMs,
+  };
+}
+
 async function runPythonFuzzyFallbackWorkflow(client, attemptCount) {
   const workflowId = `python-fuzzy-${attemptCount}`;
   const filePath = path.join(TEST_DIR, `large-workflow-${workflowId}.py`);
@@ -540,6 +647,7 @@ async function runParallelWorkflows(client, editCounts) {
     workflowResults = await Promise.all([
       ...editCounts.map((editCount) => runSameFileEditWorkflow(client, editCount)),
       runPythonExactEditWorkflow(client, 150),
+      runDocxExactEditWorkflow(client, 40),
       runPythonFuzzyFallbackWorkflow(client, 25),
     ]);
   } finally {
