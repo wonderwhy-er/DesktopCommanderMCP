@@ -65,9 +65,10 @@ import { VERSION } from './version.js';
 import { capture, capture_call_tool } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
-    buildOptionalUiToolMeta,
+    buildUiToolMeta,
     CONFIG_EDITOR_RESOURCE_URI,
-    FILE_PREVIEW_RESOURCE_URI
+    FILE_PREVIEW_RESOURCE_URI,
+    setMcpUiToolMetaEnabled,
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
 import { shouldShowMcpUiPreviews } from './utils/mcp-ui-ab-test.js';
@@ -241,7 +242,7 @@ function shouldIncludeTool(toolName: string): boolean {
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
-        const mcpUiEnabled = await shouldShowMcpUiPreviews();
+        setMcpUiToolMetaEnabled(await shouldShowMcpUiPreviews());
 
         // Build complete tools array
         const allTools = [
@@ -262,7 +263,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - systemInfo (operating system and environment details)
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetConfigArgsSchema),
-                ...buildOptionalUiToolMeta(mcpUiEnabled, CONFIG_EDITOR_RESOURCE_URI, true),
+                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true),
                 annotations: {
                     title: "Get Configuration",
                     readOnlyHint: true,
@@ -356,7 +357,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
-                ...buildOptionalUiToolMeta(mcpUiEnabled, FILE_PREVIEW_RESOURCE_URI, true),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Read File or URL",
                     readOnlyHint: true,
@@ -424,7 +425,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(WriteFileArgsSchema),
-                ...buildOptionalUiToolMeta(mcpUiEnabled, FILE_PREVIEW_RESOURCE_URI, true),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Write File",
                     readOnlyHint: false,
@@ -545,7 +546,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
-                ...buildOptionalUiToolMeta(mcpUiEnabled, FILE_PREVIEW_RESOURCE_URI, true),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "List Directory Contents",
                     readOnlyHint: true,
@@ -805,7 +806,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(EditBlockArgsSchema),
-                ...buildOptionalUiToolMeta(mcpUiEnabled, FILE_PREVIEW_RESOURCE_URI, true),
+                _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true),
                 annotations: {
                     title: "Edit Block",
                     readOnlyHint: false,

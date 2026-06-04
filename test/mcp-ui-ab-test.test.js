@@ -118,7 +118,6 @@ async function runTests() {
     assert.strictEqual(calls.captured.length, 1);
     assert.strictEqual(calls.captured[0].properties.variant, MCP_UI_HIDE_VARIANT);
     assert.strictEqual(calls.captured[0].properties.mcp_ui_enabled, false);
-    assert.strictEqual(calls.captured[0].properties.loaded_from_cache, false);
   });
 
   await test('capture failure does not override first-run hide assignment', async () => {

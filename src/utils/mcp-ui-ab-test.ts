@@ -34,8 +34,7 @@ export async function resolveMcpUiPreviewDecision(deps: McpUiPreviewDecisionDeps
       return true;
     }
 
-    const loadedFromCache = deps.wasLoadedFromCache();
-    if (!loadedFromCache) {
+    if (!deps.wasLoadedFromCache()) {
       await deps.waitForFreshFlags();
     }
 
@@ -50,7 +49,6 @@ export async function resolveMcpUiPreviewDecision(deps: McpUiPreviewDecisionDeps
         experiment: MCP_UI_EXPERIMENT_NAME,
         variant,
         mcp_ui_enabled: decision,
-        loaded_from_cache: loadedFromCache,
       });
     } catch {
       // Telemetry must not change the assigned product experience.

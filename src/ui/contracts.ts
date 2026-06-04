@@ -13,7 +13,17 @@ export interface UiToolMeta extends Record<string, unknown> {
   'openai/widgetAccessible'?: boolean;
 }
 
-export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): UiToolMeta {
+let mcpUiToolMetaEnabled = true;
+
+export function setMcpUiToolMetaEnabled(enabled: boolean) {
+  mcpUiToolMetaEnabled = enabled;
+}
+
+export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): UiToolMeta | undefined {
+  if (!mcpUiToolMetaEnabled) {
+    return undefined;
+  }
+
   const meta: UiToolMeta = {
     'ui/resourceUri': resourceUri,
     'openai/outputTemplate': resourceUri,
@@ -27,14 +37,4 @@ export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): 
   }
 
   return meta;
-}
-
-export function buildOptionalUiToolMeta(enabled: boolean, resourceUri: string, widgetAccessible = false): { _meta?: UiToolMeta } {
-  if (!enabled) {
-    return {};
-  }
-
-  return {
-    _meta: buildUiToolMeta(resourceUri, widgetAccessible),
-  };
 }
