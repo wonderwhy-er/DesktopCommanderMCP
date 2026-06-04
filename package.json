@@ -41,6 +41,7 @@
     "prepare": "npm run build",
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
+    "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",

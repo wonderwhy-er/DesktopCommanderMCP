@@ -23,6 +23,19 @@ let uniqueUserId = 'unknown';
 const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
+/**
+ * Hard kill-switch for telemetry via environment variable.
+ *
+ * Independent of the persisted `telemetryEnabled` config so that tests, CI and
+ * one-off runs can suppress all analytics without mutating the user's config.
+ * Set DESKTOP_COMMANDER_DISABLE_TELEMETRY to 1/true/yes/on to disable.
+ */
+export function isTelemetryDisabledByEnv(): boolean {
+    const raw = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+    if (!raw) return false;
+    return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
 
 /**
  * Sanitizes error objects to remove potentially sensitive information like file paths
@@ -68,6 +81,11 @@ export function sanitizeError(error: any): { message: string, code?: string } {
 // send path. Remove it, or repurpose it as the shared proxy transport.
 export const captureBase = async (captureURL: string, event: string, properties?: any) => {
     try {
+        // Env kill-switch takes precedence over config (tests/CI).
+        if (isTelemetryDisabledByEnv()) {
+            return;
+        }
+
         // Check if telemetry is enabled in config (defaults to true if not set)
         const telemetryEnabled = await configManager.getValue('telemetryEnabled');
 
@@ -381,6 +399,7 @@ const buildEventProperties = async (properties?: any) => {
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
+        if (isTelemetryDisabledByEnv()) return;
         const telemetryEnabled = await configManager.getValue('telemetryEnabled');
         if (isTelemetryDisabledValue(telemetryEnabled)) return;
 
