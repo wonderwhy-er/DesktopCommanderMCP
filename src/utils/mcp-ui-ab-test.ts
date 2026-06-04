@@ -27,7 +27,12 @@ export async function resolveMcpUiPreviewDecision(deps: McpUiPreviewDecisionDeps
     const existingAssignment = await deps.getExistingAssignment();
     const existingDecision = variantEnablesMcpUi(existingAssignment);
     if (existingDecision !== null) {
-      return existingDecision;
+      if (!deps.wasLoadedFromCache()) {
+        await deps.waitForFreshFlags();
+      }
+
+      const currentVariant = await deps.getABTestVariant(MCP_UI_EXPERIMENT_NAME);
+      return variantEnablesMcpUi(currentVariant) ?? existingDecision;
     }
 
     if (!deps.isFirstRun()) {

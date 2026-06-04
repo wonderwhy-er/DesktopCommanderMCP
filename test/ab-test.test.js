@@ -272,6 +272,23 @@ async function runTests() {
     assert.deepStrictEqual(calls.captured, []);
   });
 
+  await test('MCP UI existing hide assignment can be moved to remote show variant', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getExistingAssignment: async () => MCP_UI_HIDE_VARIANT,
+      isFirstRun: () => false,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_SHOW_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
   await test('MCP UI first-run hide assignment disables UI after fresh flag wait', async () => {
     const { deps, calls } = createMcpUiDeps({
       isFirstRun: () => true,
