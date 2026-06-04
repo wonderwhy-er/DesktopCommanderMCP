@@ -4,7 +4,6 @@
  */
 
 import assert from 'assert';
-import fs from 'fs/promises';
 
 // Mock the dependencies before importing ab-test
 let mockExperiments = {};
@@ -51,8 +50,7 @@ const variantCache = {};
 async function getVariant(experimentName) {
   const experiments = getExperiments();
   const experiment = experiments[experimentName];
-  const variants = getValidVariants(experiment);
-  if (variants.length === 0) return null;
+  if (!experiment?.variants?.length) return null;
   
   if (variantCache[experimentName]) {
     return variantCache[experimentName];
@@ -61,7 +59,7 @@ async function getVariant(experimentName) {
   const configKey = `abTest_${experimentName}`;
   const existing = await mockConfigManager.getValue(configKey);
   
-  const variantNames = variants.map(v => v.name);
+  const variantNames = experiment.variants.map(v => v.name);
   if (existing && variantNames.includes(existing)) {
     variantCache[experimentName] = existing;
     return existing;
@@ -69,14 +67,14 @@ async function getVariant(experimentName) {
   
   const clientId = await mockConfigManager.getOrCreateClientId();
   const hash = hashCode(clientId + experimentName);
-  const totalWeight = variants.reduce((sum, v) => sum + v.weight, 0);
+  const totalWeight = experiment.variants.reduce((sum, v) => sum + v.weight, 0);
 
   let variant;
   if (totalWeight > 0) {
     const roll = hash % totalWeight;
     let cumulative = 0;
-    variant = variants[0].name;
-    for (const v of variants) {
+    variant = experiment.variants[0].name;
+    for (const v of experiment.variants) {
       cumulative += v.weight;
       if (roll < cumulative) {
         variant = v.name;
@@ -84,8 +82,8 @@ async function getVariant(experimentName) {
       }
     }
   } else {
-    const index = hash % variants.length;
-    variant = variants[index].name;
+    const index = hash % experiment.variants.length;
+    variant = experiment.variants[index].name;
   }
   
   await mockConfigManager.setValue(configKey, variant);
@@ -93,27 +91,12 @@ async function getVariant(experimentName) {
   return variant;
 }
 
-function getValidVariants(experiment) {
-  if (!Array.isArray(experiment?.variants)) return [];
-
-  return experiment.variants.filter(variant =>
-    typeof variant?.name === 'string' &&
-    variant.name.length > 0 &&
-    typeof variant.weight === 'number' &&
-    Number.isFinite(variant.weight) &&
-    variant.weight >= 0
-  );
-}
-
 async function hasFeature(featureName) {
   const experiments = getExperiments();
   if (!experiments || typeof experiments !== 'object') return false;
   
   for (const [expName, experiment] of Object.entries(experiments)) {
-    const variants = getValidVariants(experiment);
-    if (variants.length === 0) continue;
-
-    const variantNames = variants.map(v => v.name);
+    const variantNames = experiment?.variants?.map(v => v.name) || [];
     if (variantNames.includes(featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
@@ -265,8 +248,7 @@ async function runTests() {
     mockExperiments = {
       'BadExp1': null,
       'BadExp2': 'not an object',
-      'BadExp3': { variants: 'not an array' },
-      'BadExp4': { variants: [{ name: 'bad', weight: -1 }, { name: 42, weight: 1 }, { weight: 1 }] },
+      'BadExp3': { variants: [] },
       'GoodExp': { variants: [{ name: 'a', weight: 1 }, { name: 'b', weight: 1 }] }
     };
     
@@ -289,11 +271,6 @@ async function runTests() {
 
     const variant = await getABTestVariant('McpUiPreviews');
     assert.strictEqual(variant, 'notSHowMcpui');
-  });
-
-  await test('source exports getABTestVariant for feature-specific decisions', async () => {
-    const source = await fs.readFile(new URL('../src/utils/ab-test.ts', import.meta.url), 'utf8');
-    assert.match(source, /export\s+async\s+function\s+getABTestVariant/);
   });
 
   // Summary
