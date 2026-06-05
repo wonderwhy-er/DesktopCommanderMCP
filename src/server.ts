@@ -1190,11 +1190,14 @@ import { ServerResult } from './types.js';
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
+    // Hoisted above the try so the finally block can read them when emitting the
+    // server_call_tool completion event (duration + status), even on the crash path.
+    let telemetryData: any = { tool_name: name };
+    let result: ServerResult;
+    let isError = false;
 
     try {
-        // Prepare telemetry data - add config key for set_config_value
-        const telemetryData: any = { tool_name: name };
-        // Extract metadata from _meta field if present
+        // telemetryData declared above; extract metadata from _meta field if present
         const metadata = request.params._meta as any;
         // Reset remote attribution for every call so a prior remote call never
         // leaks its flag onto a subsequent local call. Set to true only when
@@ -1231,13 +1234,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             }
         }
 
-        capture_call_tool('server_call_tool', telemetryData);
-
         // Track tool call
         trackToolCall(name, args);
 
         // Using a more structured approach with dedicated handlers
-        let result: ServerResult;
+        // (result is declared above so the finally block can read execution status)
 
         switch (name) {
             // Config tools
@@ -1453,6 +1454,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
+        isError = !!result.isError;
         const EXCLUDED_TOOLS = [
             'get_recent_tool_calls',
             'track_ui_event'
@@ -1557,6 +1559,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
         return result;
     } catch (error) {
+        isError = true;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
         // Track the failure
@@ -1569,6 +1572,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             content: [{ type: "text", text: `Error: ${errorMessage}` }],
             isError: true,
         };
+    } finally {
+        // Single tool-call telemetry event, fired AFTER execution so it can carry
+        // timing. In a finally so it still fires on the hard-crash path (the catch
+        // above). Only missed if a tool never returns or throws (a true hang).
+        capture_call_tool('server_call_tool', {
+            ...telemetryData,
+            duration_ms: Date.now() - startTime,
+            is_error: String(isError),
+        });
     }
 });
 
