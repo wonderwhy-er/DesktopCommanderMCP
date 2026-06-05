@@ -13,7 +13,11 @@ export interface UiToolMeta extends Record<string, unknown> {
   'openai/widgetAccessible'?: boolean;
 }
 
-export function buildUiToolMeta(resourceUri: string, widgetAccessible = false): UiToolMeta {
+export function buildUiToolMeta(resourceUri: string, widgetAccessible = false, showMcpUiPreviews = true): UiToolMeta | undefined {
+  if (!showMcpUiPreviews) {
+    return undefined;
+  }
+
   const meta: UiToolMeta = {
     'ui/resourceUri': resourceUri,
     'openai/outputTemplate': resourceUri,
