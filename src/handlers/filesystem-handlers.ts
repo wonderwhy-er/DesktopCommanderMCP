@@ -361,6 +361,11 @@ export async function handleListDirectory(args: unknown): Promise<ServerResult> 
                 fileName: path.basename(resolvedPath),
                 filePath: resolvedPath,
                 fileType: 'directory' as const,
+                sourceTool: 'list_directory',
+                // Carry the listing in structuredContent too. Chat reads the text
+                // content array, but structuredContent-only consumers (e.g. Cowork)
+                // render from here and would otherwise show an empty directory.
+                content: resultText,
             },
         };
     } catch (error) {
