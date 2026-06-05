@@ -327,7 +327,10 @@ async function testReadFilePreviewMetadata() {
 
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
   assert.ok(Array.isArray(imageResult.content), 'Image result should include content array');
-  assert.ok(!imageResult.content.some((item) => item.type === 'image'), 'Image result should avoid image content item for host compatibility');
+  const imageContentItem = imageResult.content.find((item) => item.type === 'image');
+  assert.ok(imageContentItem, 'Image result should include an image content item so the host model can see the image');
+  assert.strictEqual(imageContentItem.mimeType, 'image/png', 'Image content item should carry the png mimeType');
+  assert.ok(typeof imageContentItem.data === 'string' && imageContentItem.data.length > 0, 'Image content item should carry non-empty base64 data');
   assert.ok(imageResult.structuredContent, 'Image should include structuredContent');
   assert.strictEqual(imageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
   assert.strictEqual(typeof imageResult.structuredContent.imageData, 'string', 'Image structured payload should include imageData');
@@ -339,7 +342,10 @@ async function testReadFilePreviewMetadata() {
 
   const svgResult = await handleReadFile({ path: SVG_FILE });
   assert.ok(Array.isArray(svgResult.content), 'SVG result should include content array');
-  assert.ok(!svgResult.content.some((item) => item.type === 'image'), 'SVG result should avoid image content item for host compatibility');
+  const svgContentItem = svgResult.content.find((item) => item.type === 'image');
+  assert.ok(svgContentItem, 'SVG result should include an image content item so the host model can see the image');
+  assert.strictEqual(svgContentItem.mimeType, 'image/svg+xml', 'SVG content item should carry the svg mimeType');
+  assert.ok(typeof svgContentItem.data === 'string' && svgContentItem.data.length > 0, 'SVG content item should carry non-empty base64 data');
   assert.ok(svgResult.structuredContent, 'SVG should include structuredContent');
   assert.strictEqual(svgResult.structuredContent.fileType, 'image', 'SVG should map to image preview state');
   assert.strictEqual(svgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
