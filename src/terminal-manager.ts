@@ -62,6 +62,9 @@ interface ShellSpawnConfig {
   executable: string;
   args: string[];
   useShellOption: string | boolean;
+  // When true, pass args verbatim on Windows (see executeCommand). Only cmd.exe
+  // needs this; its quote parsing conflicts with libuv's default \" escaping.
+  windowsVerbatim?: boolean;
 }
 
 /**
@@ -103,6 +106,7 @@ function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig
     return { 
       executable: shellPath, 
       args: ['/c', command],
+      windowsVerbatim: true,
       useShellOption: false 
     };
   }
@@ -220,6 +224,17 @@ export class TerminalManager {
     // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
     if (process.platform === 'win32' && spawnOptions.env) {
       spawnOptions.env.PATHEXT = getRepairedPathExt();
+    }
+
+    // On Windows, when we invoke cmd.exe directly and pass the user's command as a
+    // single argument, Node/libuv applies MSVCRT-style quoting that escapes embedded
+    // double quotes as \" . cmd.exe does not understand that escaping, so any command
+    // containing quotes (e.g. a quoted path with spaces like "C:\Program Files\app.exe")
+    // is corrupted before the shell ever parses it. Passing arguments verbatim lets
+    // cmd handle its own quoting. Scoped to shells that set windowsVerbatim (cmd only)
+    // because PowerShell/pwsh have different quote rules and must NOT use verbatim.
+    if (process.platform === 'win32' && spawnConfig.windowsVerbatim) {
+      spawnOptions.windowsVerbatimArguments = true;
     }
 
     // Spawn the process with appropriate arguments
