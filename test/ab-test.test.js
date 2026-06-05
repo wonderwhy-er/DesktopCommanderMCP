@@ -4,6 +4,12 @@
  */
 
 import assert from 'assert';
+import {
+  MCP_UI_EXPERIMENT_NAME,
+  MCP_UI_HIDE_VARIANT,
+  MCP_UI_SHOW_VARIANT,
+  resolveMcpUiPreviewDecision,
+} from '../dist/utils/mcp-ui-ab-test.js';
 
 // Mock the dependencies before importing ab-test
 let mockExperiments = {};
@@ -92,6 +98,32 @@ function resetState() {
   mockExperiments = {};
   mockConfigValues = {};
   Object.keys(variantCache).forEach(k => delete variantCache[k]);
+}
+
+function createMcpUiDeps(overrides = {}) {
+  const calls = {
+    captured: [],
+    waitedForFreshFlags: 0,
+    variantRequests: [],
+  };
+
+  return {
+    calls,
+    deps: {
+      getExistingAssignment: async () => undefined,
+      isFirstRun: () => false,
+      wasLoadedFromCache: () => true,
+      waitForFreshFlags: async () => { calls.waitedForFreshFlags++; },
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return null;
+      },
+      capture: async (event, properties) => {
+        calls.captured.push({ event, properties });
+      },
+      ...overrides,
+    },
+  };
 }
 
 // Test runner
@@ -222,6 +254,110 @@ async function runTests() {
     const result = await hasFeature('a');
     // Result depends on assignment, but shouldn't crash
     assert.ok(typeof result === 'boolean');
+  });
+
+  await test('MCP UI constants match remote experiment contract', async () => {
+    assert.strictEqual(MCP_UI_EXPERIMENT_NAME, 'McpUiPreviews');
+    assert.strictEqual(MCP_UI_SHOW_VARIANT, 'showMCPUi');
+    assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notShowMCPUi');
+  });
+
+  await test('MCP UI existing users without assignment are not enrolled', async () => {
+    const { deps, calls } = createMcpUiDeps({ isFirstRun: () => false });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, []);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI existing hide assignment can be moved to remote show variant', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getExistingAssignment: async () => MCP_UI_HIDE_VARIANT,
+      isFirstRun: () => false,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_SHOW_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI existing assignment falls back when remote variant is missing', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getExistingAssignment: async () => MCP_UI_HIDE_VARIANT,
+      isFirstRun: () => false,
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, false);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI first-run show assignment enables UI and captures decision', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      isFirstRun: () => true,
+      wasLoadedFromCache: () => true,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_SHOW_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.strictEqual(calls.waitedForFreshFlags, 0);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.strictEqual(calls.captured.length, 1);
+    assert.strictEqual(calls.captured[0].event, 'server_mcp_ui_ab_decision');
+    assert.strictEqual(calls.captured[0].properties.experiment, MCP_UI_EXPERIMENT_NAME);
+    assert.strictEqual(calls.captured[0].properties.variant, MCP_UI_SHOW_VARIANT);
+    assert.strictEqual(calls.captured[0].properties.mcp_ui_enabled, true);
+  });
+
+  await test('MCP UI first-run unknown variant defaults enabled without capture', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      isFirstRun: () => true,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return 'unknownVariant';
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI first-run hide assignment disables UI after fresh flag wait', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      isFirstRun: () => true,
+      wasLoadedFromCache: () => false,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_HIDE_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, false);
+    assert.strictEqual(calls.waitedForFreshFlags, 1);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
+    assert.strictEqual(calls.captured.length, 1);
+    assert.strictEqual(calls.captured[0].properties.variant, MCP_UI_HIDE_VARIANT);
+    assert.strictEqual(calls.captured[0].properties.mcp_ui_enabled, false);
   });
 
   // Summary
