@@ -110,6 +110,7 @@ function createMcpUiDeps(overrides = {}) {
   return {
     calls,
     deps: {
+      getUserOverride: async () => undefined,
       getExistingAssignment: async () => undefined,
       isFirstRun: () => false,
       wasLoadedFromCache: () => true,
@@ -260,6 +261,50 @@ async function runTests() {
     assert.strictEqual(MCP_UI_EXPERIMENT_NAME, 'McpUiPreviews');
     assert.strictEqual(MCP_UI_SHOW_VARIANT, 'showMCPUi');
     assert.strictEqual(MCP_UI_HIDE_VARIANT, 'notShowMCPUi');
+  });
+
+  await test('MCP UI user override false wins without consulting the experiment', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getUserOverride: async () => false,
+      getExistingAssignment: async () => MCP_UI_SHOW_VARIANT,
+      isFirstRun: () => true,
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, false);
+    assert.deepStrictEqual(calls.variantRequests, []);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI user override true wins over a hide assignment', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getUserOverride: async () => true,
+      getExistingAssignment: async () => MCP_UI_HIDE_VARIANT,
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, true);
+    assert.deepStrictEqual(calls.variantRequests, []);
+    assert.deepStrictEqual(calls.captured, []);
+  });
+
+  await test('MCP UI non-boolean override falls through to the experiment', async () => {
+    const { deps, calls } = createMcpUiDeps({
+      getUserOverride: async () => 'true', // stringly-typed values must NOT count as an override
+      getExistingAssignment: async () => MCP_UI_HIDE_VARIANT,
+      isFirstRun: () => false,
+      getABTestVariant: async (experimentName) => {
+        calls.variantRequests.push(experimentName);
+        return MCP_UI_HIDE_VARIANT;
+      },
+    });
+
+    const enabled = await resolveMcpUiPreviewDecision(deps);
+
+    assert.strictEqual(enabled, false);
+    assert.deepStrictEqual(calls.variantRequests, [MCP_UI_EXPERIMENT_NAME]);
   });
 
   await test('MCP UI existing users without assignment are not enrolled', async () => {

@@ -495,6 +495,10 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
 
             return {
                 ok: true,
+                tooltip: {
+                    message: 'Saved',
+                    tone: 'success',
+                },
             };
         } catch (error) {
             const errorMessage = `Failed to apply value: ${error instanceof Error ? error.message : String(error)}`;
@@ -586,7 +590,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
               ${description ? `<p>${escapeHtml(description)}</p>` : ''}
               <p class="setting-summary${summary ? '' : ' hidden'}" data-setting-summary-key="${escapeHtml(entry.key)}">${summary ? escapeHtml(summary) : ''}</p>
             </div>
-            <div class="setting-control">${controlHtml}</div>
+            <div class="setting-control"><span class="setting-save-status" data-save-status-key="${escapeHtml(entry.key)}" hidden></span>${controlHtml}</div>
           </section>
         `;
     }).join('');
@@ -633,10 +637,37 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         });
     };
 
-    const emitTooltip = (result: ApplyConfigResult): void => {
-        if (result.tooltip) {
-            hooks.onTooltip?.(result.tooltip);
+    const rowStatusTimers = new Map<string, number>();
+    const showRowSavedStatus = (key: string, message: string): void => {
+        const chip = container.querySelector(`[data-save-status-key="${key}"]`) as HTMLElement | null;
+        if (!chip) {
+            hooks.onTooltip?.({ message, tone: 'success' });
+            return;
         }
+        const existingTimer = rowStatusTimers.get(key);
+        if (existingTimer !== undefined) {
+            window.clearTimeout(existingTimer);
+        }
+        chip.textContent = message;
+        chip.hidden = false;
+        rowStatusTimers.set(key, window.setTimeout(() => {
+            chip.hidden = true;
+            chip.textContent = '';
+            rowStatusTimers.delete(key);
+        }, 2200));
+    };
+
+    const emitTooltip = (result: ApplyConfigResult, key?: string): void => {
+        if (!result.tooltip) {
+            return;
+        }
+        // Success confirmations render inline next to the changed setting;
+        // errors carry longer messages and keep the floating tooltip.
+        if (result.tooltip.tone === 'success' && key) {
+            showRowSavedStatus(key, result.tooltip.message);
+            return;
+        }
+        hooks.onTooltip?.(result.tooltip);
     };
 
     const arrayModal = createArrayModalController({
@@ -647,7 +678,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
             controller.setSelection(changedKey);
             controller.setDraftValue(items.join('\n'));
             const result = await controller.apply();
-            emitTooltip(result);
+            emitTooltip(result, changedKey);
             if (result.ok) {
                 emitConfigChanged(changedKey, items);
             }
@@ -670,7 +701,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 controller.setSelection(entry.key);
                 controller.setDraftValue(input.checked ? 'true' : 'false');
                 const result = await controller.apply();
-                emitTooltip(result);
+                emitTooltip(result, entry.key);
                 const updatedEntry = getUpdatedEntryByKey(entry.key);
                 if (updatedEntry && typeof updatedEntry.value === 'boolean') {
                     input.checked = updatedEntry.value;
@@ -690,7 +721,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 controller.setSelection(entry.key);
                 controller.setDraftValue(input.value);
                 const result = await controller.apply();
-                emitTooltip(result);
+                emitTooltip(result, entry.key);
                 const updatedEntry = getUpdatedEntryByKey(entry.key);
                 input.value = String(updatedEntry?.value ?? controller.state.draftValue);
                 if (result.ok) {
@@ -714,7 +745,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 controller.setSelection(entry.key);
                 controller.setDraftValue(select.value);
                 const result = await controller.apply();
-                emitTooltip(result);
+                emitTooltip(result, entry.key);
                 const updatedEntry = getUpdatedEntryByKey(entry.key);
                 const shellValue = String(updatedEntry?.value ?? select.value);
                 const shellCustomInput = container.querySelector(`input[data-action="shell-custom"][data-key-index="${keyIndex}"]`) as HTMLInputElement | null;
@@ -737,7 +768,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 controller.setSelection(entry.key);
                 controller.setDraftValue(input.value.trim());
                 const result = await controller.apply();
-                emitTooltip(result);
+                emitTooltip(result, entry.key);
                 const updatedEntry = getUpdatedEntryByKey(entry.key);
                 input.value = String(updatedEntry?.value ?? controller.state.draftValue);
                 if (result.ok) {
@@ -769,7 +800,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 controller.setSelection(entry.key);
                 controller.setDraftValue(input.value.replace(/\r?\n/g, ' '));
                 const result = await controller.apply();
-                emitTooltip(result);
+                emitTooltip(result, entry.key);
                 const updatedEntry = getUpdatedEntryByKey(entry.key);
                 input.value = String(updatedEntry?.value ?? controller.state.draftValue);
                 if (result.ok) {

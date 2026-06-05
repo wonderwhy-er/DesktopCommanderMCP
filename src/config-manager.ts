@@ -11,6 +11,7 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
+  showMcpUI?: boolean; // Explicit user override for MCP UI widgets; unset = automatic (A/B test decides)
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
