@@ -6,6 +6,10 @@
   "license": "MIT",
   "author": "Eduards Ruzga",
   "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+  },
   "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
   "engines": {
