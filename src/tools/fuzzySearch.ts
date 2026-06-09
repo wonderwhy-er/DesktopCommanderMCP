@@ -1,5 +1,9 @@
 import { distance } from 'fastest-levenshtein';
 import { capture } from '../utils/capture.js';
+import { Worker } from 'worker_threads';
+
+/** Abort fuzzy search in the worker after this many ms to avoid unbounded CPU burn. */
+export const FUZZY_SEARCH_TIMEOUT_MS = 30000;
 
 /**
  * Recursively finds the closest match to a query string within text using fuzzy matching
@@ -134,7 +138,60 @@ function iterativeReduction(text: string, query: string, start: number, end: num
 export function getSimilarityRatio(a: string, b: string): number {
     const maxLength = Math.max(a.length, b.length);
     if (maxLength === 0) return 1; // Both strings are empty
-    
+
     const levenshteinDistance = distance(a, b);
     return 1 - (levenshteinDistance / maxLength);
+}
+
+/**
+ * Inline worker entry: imports this very module (passed as moduleUrl) and runs
+ * recursiveFuzzyIndexOf off the main thread. Kept as an eval'd snippet so the
+ * worker needs no separate file to ship alongside the compiled output.
+ */
+const WORKER_CODE = `
+const { workerData, parentPort } = require('worker_threads');
+import(workerData.moduleUrl).then((m) => {
+    parentPort.postMessage(m.recursiveFuzzyIndexOf(workerData.text, workerData.query));
+});
+`;
+
+/**
+ * Runs recursiveFuzzyIndexOf in a Worker thread so the main MCP event loop
+ * stays responsive to pings and other tool calls during heavy fuzzy scans.
+ * Rejects if the scan exceeds timeoutMs, terminating the worker so it
+ * doesn't linger in the background.
+ */
+export function runFuzzySearchInWorker(
+    text: string,
+    query: string,
+    timeoutMs: number = FUZZY_SEARCH_TIMEOUT_MS
+): Promise<{ start: number; end: number; value: string; distance: number }> {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(WORKER_CODE, { eval: true, workerData: { moduleUrl: import.meta.url, text, query } });
+        // Never let a scan keep the server process alive during shutdown.
+        worker.unref();
+
+        const timer = setTimeout(() => {
+            worker.terminate();
+            reject(new Error(`Fuzzy search timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timer.unref();
+
+        worker.on('message', (result) => {
+            clearTimeout(timer);
+            resolve(result);
+        });
+
+        worker.on('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+        });
+
+        worker.on('exit', (code) => {
+            clearTimeout(timer);
+            if (code !== 0) {
+                reject(new Error(`Fuzzy search worker exited with code ${code}`));
+            }
+        });
+    });
 }
