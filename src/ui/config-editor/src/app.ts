@@ -590,7 +590,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
               ${description ? `<p>${escapeHtml(description)}</p>` : ''}
               <p class="setting-summary${summary ? '' : ' hidden'}" data-setting-summary-key="${escapeHtml(entry.key)}">${summary ? escapeHtml(summary) : ''}</p>
             </div>
-            <div class="setting-control"><span class="setting-save-status" data-save-status-key="${escapeHtml(entry.key)}" hidden></span>${controlHtml}</div>
+            <div class="setting-control"><span class="setting-save-status" data-save-status-key="${escapeHtml(entry.key)}" role="status" aria-live="polite" aria-atomic="true" hidden></span>${controlHtml}</div>
           </section>
         `;
     }).join('');
