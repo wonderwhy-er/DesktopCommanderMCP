@@ -639,7 +639,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
 
     const rowStatusTimers = new Map<string, number>();
     const showRowSavedStatus = (key: string, message: string): void => {
-        const chip = container.querySelector(`[data-save-status-key="${key}"]`) as HTMLElement | null;
+        const chip = container.querySelector(`[data-save-status-key="${CSS.escape(key)}"]`) as HTMLElement | null;
         if (!chip) {
             hooks.onTooltip?.({ message, tone: 'success' });
             return;
