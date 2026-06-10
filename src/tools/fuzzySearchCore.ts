@@ -109,7 +109,11 @@ function iterativeReduction(text: string, query: string, start: number, end: num
     const startTime = performance.now();
     let iterations = 0;
 
-    let bestDistance = parentDistance;
+    // Seed with the measured distance of this slice. For recursive callers
+    // this equals parentDistance (the parent measured exactly this slice), but
+    // a top-level call on text <= 2x query length arrives with Infinity, which
+    // made the first shrink unconditional and a position-0 match unreachable.
+    let bestDistance = distance(text.substring(start, end), query);
     let bestStart = start;
     let bestEnd = end;
 
