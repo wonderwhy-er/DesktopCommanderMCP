@@ -67,6 +67,7 @@ export interface PaginatedOutputResult {
   isComplete: boolean;         // Whether process has finished
   exitCode?: number | null;    // Exit code if completed
   runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
+  evictedLines?: number;       // Lines dropped by the buffer cap; when > 0, line numbers are relative to the retained buffer
 }
 
 /**
@@ -514,7 +515,7 @@ export class TerminalManager {
     // First check active sessions
     const session = this.sessions.get(pid);
     if (session) {
-      return this.readFromLineBuffer(
+      const result = this.readFromLineBuffer(
         session.outputLines,
         offset,
         length,
@@ -523,13 +524,15 @@ export class TerminalManager {
         false,
         undefined
       );
+      result.evictedLines = session.evictedLines;
+      return result;
     }
 
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
       const runtimeMs = completedSession.endTime.getTime() - completedSession.startTime.getTime();
-      return this.readFromLineBuffer(
+      const result = this.readFromLineBuffer(
         completedSession.outputLines,
         offset,
         length,
@@ -539,6 +542,8 @@ export class TerminalManager {
         completedSession.exitCode,
         runtimeMs
       );
+      result.evictedLines = completedSession.evictedLines;
+      return result;
     }
 
     return null;

@@ -86,9 +86,11 @@ async function main() {
   }
   assert.notStrictEqual(exitCode, null, `flood should finish within ${FLOOD_DEADLINE_MS}ms`);
 
-  // 1. Buffer bounded + eviction happened (the fix at work).
+  // 1. Buffer bounded + eviction happened (the fix at work). Eviction must be
+  //    reported so read_process_output can surface it to the model.
   const completedTail = terminalManager.readOutputPaginated(result.pid, -5, 5);
   assert.ok(completedTail, 'should be able to read output after completion');
+  assert.ok(completedTail.evictedLines > 0, 'paginated reads should report evicted line count');
   const joinedLength = completedTail.totalLines <= 0 ? 0
     : terminalManager.getOutputSinceSnapshot(result.pid, { totalChars: 0, lineCount: 0 })?.length ?? 0;
   assert.ok(
