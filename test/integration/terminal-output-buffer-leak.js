@@ -34,11 +34,10 @@ import { performance } from 'perf_hooks';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = 'true';
 
-const { terminalManager } = await import('../../dist/terminal-manager.js');
+const { terminalManager, MAX_BUFFERED_OUTPUT_CHARS } = await import('../../dist/terminal-manager.js');
 
-// Must match MAX_BUFFERED_OUTPUT_CHARS in terminal-manager.ts, with slack for
-// one in-flight chunk and force-split separators.
-const BUFFER_CAP_CHARS = 50 * 1024 * 1024;
+// Slack on top of the cap for one in-flight chunk and force-split separators.
+const BUFFER_CAP_CHARS = MAX_BUFFERED_OUTPUT_CHARS;
 const BUFFER_CAP_SLACK = 2 * 1024 * 1024;
 
 // 8MB x 72 = ~604MB on one line — past V8's ~536M char limit that used to
@@ -60,20 +59,27 @@ async function main() {
   // output nobody is reading, accumulating inside the long-lived server.
   const result = await terminalManager.executeCommand(floodCmd, 500);
   assert.ok(result.pid > 0, 'executeCommand should return a valid pid');
-  const session = terminalManager.getSession(result.pid);
-  assert.ok(session, 'session should still exist after the call returned');
 
   // Take a snapshot now; eviction will discard most output between snapshot
   // and the read below — the read must degrade gracefully, not throw.
-  const snapshot = terminalManager.captureOutputSnapshot(result.pid);
-  assert.ok(snapshot, 'snapshot should be available');
+  // On a machine fast enough to finish the flood within the 500ms wait the
+  // session has already moved to completedSessions (no snapshot available);
+  // a since-start snapshot exercises the same read path.
+  const snapshot = terminalManager.captureOutputSnapshot(result.pid)
+    ?? { totalChars: 0, lineCount: 0 };
 
-  // Watch the flood stream in, sampling event-loop lag.
+  // Watch the flood stream in, sampling event-loop lag. Poll completion via
+  // readOutputPaginated (covers active and completed sessions) instead of an
+  // 'exit' listener, which races if the process exits before it's attached.
   let maxStallMs = 0;
   const startedAt = performance.now();
   let exitCode = null;
-  session.process.on('exit', (code) => { exitCode = code ?? 0; });
-  while (exitCode === null && performance.now() - startedAt < FLOOD_DEADLINE_MS) {
+  while (performance.now() - startedAt < FLOOD_DEADLINE_MS) {
+    const tail = terminalManager.readOutputPaginated(result.pid, -1, 1);
+    if (tail?.isComplete) {
+      exitCode = tail.exitCode ?? 0;
+      break;
+    }
     const t = performance.now();
     await sleep(50);
     maxStallMs = Math.max(maxStallMs, performance.now() - t - 50);
