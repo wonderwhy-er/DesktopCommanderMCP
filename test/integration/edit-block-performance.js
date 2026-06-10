@@ -670,7 +670,9 @@ async function runFuzzyEventLoopResponsivenessWorkflow(client) {
     new_string: 'replacement',
     expected_replacements: 1,
   });
-  editPromise.finally(() => { editDone = true; });
+  // Swallow rejections on this detached chain only; errors still surface via
+  // the awaited editPromise below.
+  editPromise.finally(() => { editDone = true; }).catch(() => {});
 
   // Ping on a tight interval while the fuzzy scan is running.
   const pingLatencies = [];
