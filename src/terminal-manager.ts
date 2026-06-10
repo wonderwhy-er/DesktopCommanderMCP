@@ -41,7 +41,21 @@ interface CompletedSession {
   exitCode: number | null;
   startTime: Date;
   endTime: Date;
+  evictedLines: number;        // Carried over from the active session (see TerminalSession)
+  evictedChars: number;
 }
+
+/**
+ * Output buffering caps. Without a cap, a process emitting enough output makes
+ * string concatenation throw "RangeError: Invalid string length" at V8's max
+ * string size (~536M chars) inside a stdout 'data' handler — an uncaught
+ * exception that kills the whole server (index.ts exits on uncaughtException).
+ * The cap also bounds the join() cost in snapshot reads and the periodic
+ * process-state scan, both of which are O(total output).
+ */
+const MAX_BUFFERED_OUTPUT_CHARS = 50 * 1024 * 1024;  // per session; oldest lines evicted first
+const MAX_LINE_CHARS = 1024 * 1024;                  // force-split longer lines so eviction can work
+const MAX_WAIT_OUTPUT_CHARS = 2 * 1024 * 1024;       // start_process wait buffer (prompt/state detection)
 
 // Result type for paginated output reading
 export interface PaginatedOutputResult {
@@ -257,7 +271,10 @@ export class TerminalManager {
       outputLines: [],           // Line-based buffer
       lastReadIndex: 0,          // Track where "new" output starts
       isBlocked: false,
-      startTime: new Date()
+      startTime: new Date(),
+      bufferedChars: 0,
+      evictedLines: 0,
+      evictedChars: 0
     };
 
     this.sessions.set(childProcess.pid, session);
@@ -306,7 +323,14 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        output += text;
+        // `output` only feeds the wait-phase result and prompt/state detection,
+        // so stop growing it once resolved and keep only a bounded tail.
+        if (!resolved) {
+          output += text;
+          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
+            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+          }
+        }
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
@@ -345,7 +369,12 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        output += text;
+        if (!resolved) {
+          output += text;
+          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
+            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+          }
+        }
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
@@ -396,7 +425,9 @@ export class TerminalManager {
             outputLines: [...session.outputLines], // Copy line buffer
             exitCode: code,
             startTime: session.startTime,
-            endTime: new Date()
+            endTime: new Date(),
+            evictedLines: session.evictedLines,
+            evictedChars: session.evictedChars
           });
 
           // Keep only last 100 completed sessions
@@ -423,15 +454,15 @@ export class TerminalManager {
    */
   private appendToLineBuffer(session: TerminalSession, text: string): void {
     if (!text) return;
-    
+
     // Split text into lines, keeping track of whether text ends with newline
     const lines = text.split('\n');
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const isLastFragment = i === lines.length - 1;
       const endsWithNewline = text.endsWith('\n');
-      
+
       if (session.outputLines.length === 0) {
         // First line ever
         session.outputLines.push(line);
@@ -442,6 +473,33 @@ export class TerminalManager {
         // Subsequent lines - add as new lines
         session.outputLines.push(line);
       }
+    }
+    // Appended text contributes exactly its length to the joined buffer
+    // (its newlines become the join separators).
+    session.bufferedChars += text.length;
+
+    // A process printing without newlines grows a single line forever, which
+    // eviction can't bound — force-split so no line exceeds MAX_LINE_CHARS.
+    // Each inserted break adds one separator to the joined length.
+    let lastIndex = session.outputLines.length - 1;
+    while (session.outputLines[lastIndex].length > MAX_LINE_CHARS) {
+      const overlong = session.outputLines[lastIndex];
+      session.outputLines[lastIndex] = overlong.slice(0, MAX_LINE_CHARS);
+      session.outputLines.push(overlong.slice(MAX_LINE_CHARS));
+      session.bufferedChars += 1;
+      lastIndex++;
+    }
+
+    // Enforce the per-session cap by evicting the oldest lines. Keeps the
+    // buffer far below V8's max string length so concatenation and join()
+    // can never throw "Invalid string length" and kill the server.
+    while (session.bufferedChars > MAX_BUFFERED_OUTPUT_CHARS && session.outputLines.length > 1) {
+      const dropped = session.outputLines.shift()!;
+      const droppedJoinedChars = dropped.length + 1; // +1 for its join separator
+      session.bufferedChars -= droppedJoinedChars;
+      session.evictedChars += droppedJoinedChars;
+      session.evictedLines++;
+      if (session.lastReadIndex > 0) session.lastReadIndex--;
     }
   }
 
@@ -597,8 +655,11 @@ export class TerminalManager {
     if (session) {
       const fullOutput = session.outputLines.join('\n');
       return {
-        totalChars: fullOutput.length,
-        lineCount: session.outputLines.length
+        // Absolute since process start (includes evicted output), so the
+        // offset stays valid even if the cap evicts lines between
+        // snapshot and read.
+        totalChars: session.evictedChars + fullOutput.length,
+        lineCount: session.evictedLines + session.outputLines.length
       };
     }
     return null;
@@ -613,24 +674,30 @@ export class TerminalManager {
     // Check active session first
     const session = this.sessions.get(pid);
     if (session) {
-      const fullOutput = session.outputLines.join('\n');
-      if (fullOutput.length <= snapshot.totalChars) {
-        return ''; // No new output
-      }
-      return fullOutput.substring(snapshot.totalChars);
+      return TerminalManager.outputSinceSnapshot(session.outputLines, session.evictedChars, snapshot.totalChars);
     }
-    
+
     // Fallback to completed sessions - process may have finished between snapshot and poll
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      const fullOutput = completedSession.outputLines.join('\n');
-      if (fullOutput.length <= snapshot.totalChars) {
-        return ''; // No new output
-      }
-      return fullOutput.substring(snapshot.totalChars);
+      return TerminalManager.outputSinceSnapshot(completedSession.outputLines, completedSession.evictedChars, snapshot.totalChars);
     }
-    
+
     return null;
+  }
+
+  /**
+   * New output since a snapshot, in absolute (since process start) offsets.
+   * If eviction dropped part of the unseen output, returns what the buffer
+   * still holds — the oldest unseen chars are lost to the cap.
+   */
+  private static outputSinceSnapshot(outputLines: string[], evictedChars: number, snapshotTotalChars: number): string {
+    const fullOutput = outputLines.join('\n');
+    const newChars = evictedChars + fullOutput.length - snapshotTotalChars;
+    if (newChars <= 0) {
+      return ''; // No new output
+    }
+    return fullOutput.substring(Math.max(0, fullOutput.length - newChars));
   }
 
     /**
