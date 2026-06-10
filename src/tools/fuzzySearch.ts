@@ -180,6 +180,11 @@ export function runFuzzySearchInWorker(
         worker.on('message', (result) => {
             clearTimeout(timer);
             resolve(result);
+            // Don't let the worker wind down on its own — in-worker telemetry
+            // can hold it (and its copy of the file text) open for seconds.
+            // The promise is already resolved, so the exit-code rejection
+            // below is a no-op.
+            worker.terminate();
         });
 
         worker.on('error', (err) => {
