@@ -101,7 +101,6 @@
     "exceljs": "^4.4.0",
     "fastest-levenshtein": "^1.0.16",
     "file-type": "^21.1.1",
-    "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
     "isbinaryfile": "^5.0.4",
     "markdown-it": "^14.1.0",
