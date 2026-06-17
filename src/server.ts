@@ -1225,6 +1225,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
             telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
+            // Capture the value only for showMcpUI so we can tell on vs off
+            // (boolean key, no path/PII concern). Other config keys may hold
+            // paths or free text, so we keep tracking key-name only for those.
+            if ((args as any).key === 'showMcpUI') {
+                telemetryData.set_config_value_bool = String((args as any).value);
+            }
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
