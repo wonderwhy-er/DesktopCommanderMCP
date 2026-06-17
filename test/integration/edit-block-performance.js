@@ -41,6 +41,17 @@ const PERFORMANCE_LIMITS_MS = {
 const RESPONSIVENESS_INTERVAL_MS = 1000;
 const RESPONSIVENESS_MAX_LATENCY_MS = 5000;
 
+// Fuzzy-scan event-loop regression: a deliberately slow fuzzy fallback (large
+// file, large absent old_string) must not block concurrent pings. The general
+// responsiveness probe above is too loose for this (5s limit); a synchronous
+// scan blocks for ~3-4s and would slip under it, so this scenario pings on a
+// tight interval with a strict latency ceiling.
+const FUZZY_SCAN_FILE_MB = 2;
+const FUZZY_SCAN_QUERY_KB = 8;
+const FUZZY_SCAN_PING_INTERVAL_MS = 200;
+const FUZZY_SCAN_MIN_PING_COUNT = 5;
+const FUZZY_SCAN_MAX_PING_LATENCY_MS = 500;
+
 function assertToolSuccess(result, message) {
   assert.strictEqual(result.content?.[0]?.type, 'text', `${message}: expected text response`);
   assert.ok(!result.isError, `${message}: should not be marked as an error`);
@@ -636,6 +647,63 @@ async function runPythonFuzzyFallbackWorkflow(client, attemptCount) {
   };
 }
 
+// Regression test for the edit_block fuzzy-fallback hang: performSearchReplace()
+// used to run recursiveFuzzyIndexOf() synchronously on the main thread, freezing
+// every concurrent tool call and ping for the duration of the scan (seconds).
+// The scan now runs in a worker thread (runFuzzySearchInWorker); this asserts
+// the event loop stays responsive while a slow scan is in progress.
+async function runFuzzyEventLoopResponsivenessWorkflow(client) {
+  const filePath = path.join(TEST_DIR, 'fuzzy-event-loop-regression.txt');
+  const line = 'the quick brown fox jumps over the lazy dog and then keeps on running\n';
+  const startedAt = performance.now();
+
+  // Written directly (not via write_file) — the fixture exceeds fileWriteLineLimit.
+  await fs.writeFile(filePath, line.repeat(Math.ceil((FUZZY_SCAN_FILE_MB * 1024 * 1024) / line.length)), 'utf8');
+
+  // old_string deliberately absent from the file -> forces a full fuzzy scan.
+  const oldString = 'NO_SUCH_MARKER_' + 'z'.repeat(FUZZY_SCAN_QUERY_KB * 1024);
+
+  let editDone = false;
+  const editPromise = callTool(client, 'edit_block', {
+    file_path: filePath,
+    old_string: oldString,
+    new_string: 'replacement',
+    expected_replacements: 1,
+  });
+  // Swallow rejections on this detached chain only; errors still surface via
+  // the awaited editPromise below.
+  editPromise.finally(() => { editDone = true; }).catch(() => {});
+
+  // Ping on a tight interval while the fuzzy scan is running.
+  const pingLatencies = [];
+  while (!editDone) {
+    const pingStartedAt = performance.now();
+    await client.ping({ timeout: 30000 });
+    pingLatencies.push(performance.now() - pingStartedAt);
+    if (!editDone) await sleep(FUZZY_SCAN_PING_INTERVAL_MS);
+  }
+
+  const editResult = await editPromise;
+  assertToolSuccess(editResult, 'fuzzy event-loop regression edit_block');
+
+  const durationMs = performance.now() - startedAt;
+  const maxPingLatencyMs = pingLatencies.length > 0 ? Math.max(...pingLatencies) : Infinity;
+  console.log(
+    `PASS fuzzy event-loop regression: ${pingLatencies.length} pings during scan, max latency ${maxPingLatencyMs.toFixed(0)}ms (scan ${durationMs.toFixed(0)}ms)`
+  );
+
+  assert.ok(
+    pingLatencies.length >= FUZZY_SCAN_MIN_PING_COUNT,
+    `event loop blocked during fuzzy scan: only ${pingLatencies.length} ping(s) completed, expected >= ${FUZZY_SCAN_MIN_PING_COUNT}`
+  );
+  assert.ok(
+    maxPingLatencyMs < FUZZY_SCAN_MAX_PING_LATENCY_MS,
+    `event loop blocked during fuzzy scan: max ping latency ${maxPingLatencyMs.toFixed(0)}ms, expected under ${FUZZY_SCAN_MAX_PING_LATENCY_MS}ms`
+  );
+
+  return { pingCount: pingLatencies.length, maxPingLatencyMs, durationMs };
+}
+
 async function runParallelWorkflows(client, editCounts) {
   const startedAt = performance.now();
   const stopProbe = { value: false };
@@ -773,6 +841,10 @@ async function main() {
   try {
     const results = await runParallelWorkflows(mcp.client, [1, 10, 100, 150]);
 
+    // Run sequentially: its strict ping-latency ceiling would be flaky under
+    // the parallel workflows' load.
+    const fuzzyResponsiveness = await runFuzzyEventLoopResponsivenessWorkflow(mcp.client);
+
     console.log('\nPerformance summary:');
     for (const result of results.workflowResults) {
       console.log(`  ${result.label}: ${result.durationMs.toFixed(0)}ms`);
@@ -780,6 +852,9 @@ async function main() {
     console.log(`  parallel total: ${results.durationMs.toFixed(0)}ms`);
     console.log(
       `  responsiveness pings: ${results.responsiveness.count}, max ${results.responsiveness.maxLatencyMs.toFixed(0)}ms, avg ${results.responsiveness.averageLatencyMs.toFixed(0)}ms`
+    );
+    console.log(
+      `  fuzzy-scan responsiveness: ${fuzzyResponsiveness.pingCount} pings, max ${fuzzyResponsiveness.maxPingLatencyMs.toFixed(0)}ms over a ${fuzzyResponsiveness.durationMs.toFixed(0)}ms scan`
     );
 
     console.log('\nEdit verification summary:');
