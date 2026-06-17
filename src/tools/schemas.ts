@@ -50,6 +50,10 @@ export const ReadFileArgsSchema = z.object({
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
   length: z.number().optional().default(1000),
+  // Optional [startLine, endLine] convenience alias, 1-based and inclusive
+  // (matches the text-editor view_range convention). Normalized to offset/length
+  // in the handler. endLine of -1 means "to end of file".
+  view_range: z.array(z.number()).length(2).optional(),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional()

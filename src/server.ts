@@ -313,12 +313,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000)
                           * Used with positive offsets for range reading
                           * Ignored when offset is negative (reads all requested tail lines)
+                        - 'view_range' ([startLine, endLine], 1-based and inclusive) — convenient
+                          alternative to offset/length for reading a specific span of lines.
+                          Use endLine -1 to read from startLine to the end of the file.
                         
                         Examples:
                         - offset: 0, length: 10     → First 10 lines
                         - offset: 100, length: 5    → Lines 100-104
                         - offset: -20               → Last 20 lines  
                         - offset: -5, length: 10    → Last 5 lines (length ignored)
+                        - view_range: [100, 150]    → Lines 100-150 (1-based, inclusive)
+                        - view_range: [100, -1]     → Line 100 to end of file
                         
                         Performance optimizations:
                         - Large files with negative offsets use reverse reading for efficiency

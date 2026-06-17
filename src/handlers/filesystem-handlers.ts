@@ -87,6 +87,19 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const defaultLimit = config.fileReadLineLimit ?? 1000;
 
+        // Normalize view_range ([startLine, endLine], 1-based inclusive) into the
+        // offset/length the readers use (offset is 0-based). This lets clients that
+        // reach for the text-editor style view_range "just work".
+        let effectiveOffset = parsed.offset ?? 0;
+        let effectiveLength = parsed.length ?? defaultLimit;
+        if (parsed.view_range) {
+            const [start, end] = parsed.view_range;
+            effectiveOffset = Math.max(0, Math.floor(start) - 1);
+            effectiveLength = end < 0
+                ? defaultLimit                       // endLine -1 => "to end", capped by config
+                : Math.max(1, Math.floor(end) - Math.floor(start) + 1);
+        }
+
         // Convert sheet parameter: numeric strings become numbers for Excel index access
         let sheetParam: string | number | undefined = parsed.sheet;
         if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
@@ -95,8 +108,8 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
-            offset: parsed.offset ?? 0,
-            length: parsed.length ?? defaultLimit,
+            offset: effectiveOffset,
+            length: effectiveLength,
             sheet: sheetParam,
             range: parsed.range
         };
