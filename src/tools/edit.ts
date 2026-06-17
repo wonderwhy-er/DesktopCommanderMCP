@@ -18,7 +18,7 @@
 import { getDefaultEditorMetadata, readFile, writeFile, readFileInternal, validatePath } from './filesystem.js';
 import fs from 'fs/promises';
 import { ServerResult } from '../types.js';
-import { recursiveFuzzyIndexOf, getSimilarityRatio } from './fuzzySearch.js';
+import { runFuzzySearchInWorker, getSimilarityRatio } from './fuzzySearch.js';
 import { capture } from '../utils/capture.js';
 import { createErrorResponse } from '../error-handlers.js';
 import { EditBlockArgsSchema } from "./schemas.js";
@@ -251,9 +251,10 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
     if (count === 0) {
         // Track fuzzy search time
         const startTime = performance.now();
-        
-        // Perform fuzzy search
-        const fuzzyResult = recursiveFuzzyIndexOf(content, block.search);
+
+        // Perform fuzzy search in a worker thread so the main event loop stays
+        // responsive to pings and parallel tool calls during the scan
+        const fuzzyResult = await runFuzzySearchInWorker(content, block.search);
         const similarity = getSimilarityRatio(block.search, fuzzyResult.value);
         
         // Calculate execution time in milliseconds
