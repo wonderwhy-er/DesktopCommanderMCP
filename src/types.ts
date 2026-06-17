@@ -17,10 +17,13 @@ export interface ProcessInfo {
 export interface TerminalSession {
   pid: number;
   process: ChildProcess;
-  outputLines: string[];      // Line-based buffer (persistent)
+  outputLines: string[];      // Line-based buffer (persistent, capped — oldest lines evicted)
   lastReadIndex: number;      // Track where "new" output starts for default reads
   isBlocked: boolean;
   startTime: Date;
+  bufferedChars: number;      // Joined length of outputLines (content + separators)
+  evictedLines: number;       // Lines dropped from the front to enforce the buffer cap
+  evictedChars: number;       // Joined length of evicted lines (keeps snapshot offsets absolute)
 }
 
 export interface CommandExecutionResult {
