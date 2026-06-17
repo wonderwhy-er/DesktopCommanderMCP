@@ -5,12 +5,11 @@
  * Drives the real MCP server over stdio (exactly like an LLM client), so every
  * assertion is against the actual CallToolResult the model receives.
  *
- * Documents CURRENT behavior on main:
- *   1. Unknown/unaccepted params (e.g. view_range, foo_bar) are SILENTLY stripped.
- *      The read succeeds, isError is falsy, and NOTHING tells the model its param
- *      was ignored. <-- This is the gap. The intended future behavior is to keep
- *      returning the normal response but APPEND a warning that params were stripped.
- *      When that lands, assertion (1c) flips and is the regression anchor.
+ * Documents and validates behavior:
+ *   1. Unsupported params (e.g. view_range, foo_bar) are stripped, the read still
+ *      succeeds (isError falsy), and a corrective warning is PREPENDED as the
+ *      first content block, naming the ignored params and listing the supported
+ *      ones. This is the unsupported-parameter warning feature.
  *   2. Wrong type on a known param -> dispatcher-shaped isError: true.
  *   3. Missing required param (path) -> dispatcher-shaped isError: true.
  */
@@ -87,28 +86,40 @@ async function main() {
   const originalConfig = await setup(client);
 
   try {
-    // --- Case 1: unknown/unaccepted parameters are silently stripped ---
+    // --- Case 0: a clean call gets NO warning (guards against over-firing) ---
+    const clean = await callTool(client, 'read_file', { path: TEST_FILE, offset: 0, length: 3 });
+    const cleanFirst = (clean.content || []).find((c) => c.type === 'text')?.text || '';
+    assert.ok(!clean.isError, 'Case 0: valid call should succeed');
+    assert.ok(!/not supported|ignored/i.test(cleanFirst),
+      'Case 0: valid call should NOT get an unsupported-params warning');
+    assert.ok(/line-1\b/.test(cleanFirst), 'Case 0: valid call returns file content first');
+    console.log('[Case 0] PASS - clean call has no warning');
+
+    // --- Case 1: unsupported parameters are stripped, with a corrective warning ---
     const unknown = await callTool(client, 'read_file', {
       path: TEST_FILE,
-      view_range: [5, 10],   // not a real param on main
+      view_range: [5, 10],   // not a supported param
       foo_bar: true,         // clearly bogus
     });
-    const unknownText = textOf(unknown);
-    console.log('\n[Case 1] unknown params -> isError:', !!unknown.isError);
+    const blocks = (unknown.content || []).filter((c) => c.type === 'text').map((c) => c.text);
+    const firstBlock = blocks[0] || '';
+    const joined = blocks.join('\n');
+    console.log('\n[Case 1] unsupported params -> isError:', !!unknown.isError);
 
-    // 1a. The call is NOT rejected.
-    assert.ok(!unknown.isError, 'Case 1: unknown params should NOT cause isError (they are stripped)');
-    // 1b. Because the params were ignored, it falls back to defaults: a read from
-    //     the START of the file, not lines 5-10 the caller asked for.
-    assert.ok(/line-1\b/.test(unknownText), 'Case 1: should read from the start (params ignored)');
-    assert.ok(!/^line-5$/m.test(unknownText) || /line-1\b/.test(unknownText),
-      'Case 1: did not honor the requested range');
-    // 1c. THE GAP: nothing in the response tells the model a param was stripped.
-    //     When the future "append a warning" behavior lands, flip this assertion.
-    const mentionsStripped = /strip|ignored|unknown param|unrecognized|not a valid/i.test(unknownText);
-    assert.ok(!mentionsStripped,
-      'Case 1 (current behavior): response contains NO warning about stripped params');
-    console.log('[Case 1] PASS - params silently stripped, no warning returned (documented gap)');
+    // 1a. The call is NOT rejected; unsupported params don't fail the read.
+    assert.ok(!unknown.isError, 'Case 1: unsupported params should NOT cause isError');
+    // 1b. A corrective warning is PREPENDED as the first content block.
+    assert.ok(/not supported|ignored/i.test(firstBlock),
+      'Case 1: first content block should be the unsupported-params warning');
+    // 1c. The warning names exactly the params that were ignored.
+    assert.ok(/view_range/.test(firstBlock) && /foo_bar/.test(firstBlock),
+      'Case 1: warning should name the ignored params (view_range, foo_bar)');
+    // 1d. The warning lists the supported params (the corrective part).
+    assert.ok(/path/.test(firstBlock) && /offset/.test(firstBlock) && /length/.test(firstBlock),
+      'Case 1: warning should list the supported params');
+    // 1e. The read still happened (from the start, since the params were ignored).
+    assert.ok(/line-1\b/.test(joined), 'Case 1: file content still returned (read from start)');
+    console.log('[Case 1] PASS - ignored params named + supported list returned, read still served');
 
     // --- Case 2: wrong type on a known param -> shaped isError ---
     const badType = await callTool(client, 'read_file', { path: TEST_FILE, offset: 'not-a-number' });
