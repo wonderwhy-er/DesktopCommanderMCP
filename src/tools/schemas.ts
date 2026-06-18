@@ -216,3 +216,38 @@ export const TrackUiEventArgsSchema = z.object({
   component: z.string().optional().default('file_preview'),
   params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
+
+/**
+ * Map of tool name -> argument schema, used by the dispatcher to detect and warn
+ * about parameters a caller sent that the tool does not support. Keep in sync
+ * with the tool definitions in server.ts.
+ */
+export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+  get_config: GetConfigArgsSchema,
+  set_config_value: SetConfigValueArgsSchema,
+  read_file: ReadFileArgsSchema,
+  read_multiple_files: ReadMultipleFilesArgsSchema,
+  write_file: WriteFileArgsSchema,
+  write_pdf: WritePdfArgsSchema,
+  create_directory: CreateDirectoryArgsSchema,
+  list_directory: ListDirectoryArgsSchema,
+  move_file: MoveFileArgsSchema,
+  start_search: StartSearchArgsSchema,
+  get_more_search_results: GetMoreSearchResultsArgsSchema,
+  stop_search: StopSearchArgsSchema,
+  list_searches: ListSearchesArgsSchema,
+  get_file_info: GetFileInfoArgsSchema,
+  edit_block: EditBlockArgsSchema,
+  start_process: StartProcessArgsSchema,
+  read_process_output: ReadProcessOutputArgsSchema,
+  interact_with_process: InteractWithProcessArgsSchema,
+  force_terminate: ForceTerminateArgsSchema,
+  list_sessions: ListSessionsArgsSchema,
+  list_processes: ListProcessesArgsSchema,
+  kill_process: KillProcessArgsSchema,
+  get_usage_stats: GetUsageStatsArgsSchema,
+  get_recent_tool_calls: GetRecentToolCallsArgsSchema,
+  give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
+  get_prompts: GetPromptsArgsSchema,
+  track_ui_event: TrackUiEventArgsSchema,
+};

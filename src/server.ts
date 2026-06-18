@@ -50,7 +50,13 @@ import {
     GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
+    toolArgSchemas,
 } from './tools/schemas.js';
+import {
+    detectUnsupportedParams,
+    getSupportedParams,
+    buildUnsupportedParamsWarning,
+} from './utils/unsupportedParams.js';
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
@@ -1557,6 +1563,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
             // Check if should prompt about Docker environment
             result = await processDockerPrompt(result, name);
+        }
+
+        // If the caller sent parameters this tool does not support, Zod silently
+        // strips them. Prepend a corrective warning so the model knows they were
+        // ignored and which parameters are actually supported.
+        try {
+            const argSchema = toolArgSchemas[name];
+            if (argSchema && result && Array.isArray((result as any).content)) {
+                const unsupported = detectUnsupportedParams(args, argSchema);
+                if (unsupported.length > 0) {
+                    const warning = buildUnsupportedParamsWarning(
+                        name, unsupported, getSupportedParams(argSchema)
+                    );
+                    (result as any).content = [
+                        { type: "text", text: warning },
+                        ...(result as any).content,
+                    ];
+                }
+            }
+        } catch {
+            // Never let the advisory warning break an otherwise-successful call.
         }
 
         return result;
