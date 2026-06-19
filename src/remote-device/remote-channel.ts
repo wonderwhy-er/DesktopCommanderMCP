@@ -17,6 +17,9 @@ interface DeviceData {
 }
 
 const HEARTBEAT_INTERVAL = 15000;
+// Cap a single channel recreate so a hung await can't pin the re-entrancy guard
+// true (which would silently disable the connection watchdog).
+const RECREATE_TIMEOUT_MS = 30000;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -235,7 +238,12 @@ export class RemoteChannel {
                         captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
                         reject(new Error('Tool call channel subscription timed out'));
                     } else if (status === 'CLOSED') {
+                        // Settle the promise so an in-flight recreateChannel() can't await
+                        // forever (which would wedge the re-entrancy guard / watchdog), and
+                        // mark the device offline like the other degraded states.
                         console.warn(`⚠️ Channel closed — ${this.connState()}`);
+                        this.setOnlineStatus(this.deviceId!, 'offline');
+                        reject(new Error('Tool call channel closed during subscribe'));
                     }
                 });
         });
@@ -283,6 +291,25 @@ export class RemoteChannel {
     }
 
     /**
+     * Run an async op but reject if it doesn't settle within `ms`, so a hung await
+     * can't leave isRecreatingChannel stuck true and disable the watchdog. Mirrors
+     * closeWithTimeout() in desktop-commander-integration.ts.
+     */
+    private async withTimeout<T>(op: () => Promise<T>, ms: number, name: string): Promise<T> {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            return await Promise.race([
+                op(),
+                new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(`${name} timed out after ${ms}ms`)), ms);
+                }),
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    /**
      * Recreate the channel by destroying old one and creating fresh instance.
      */
     private async recreateChannel(): Promise<void> {
@@ -305,22 +332,27 @@ export class RemoteChannel {
         console.log(`🔄 Recreating channel... (attempt ${this.reconnectAttempt}) — ${this.connState()}`);
 
         try {
-            // Destroy old channel — AWAIT it so the channel registry empties before we
-            // rebuild. (The un-awaited version raced the synchronous new-channel push, so
-            // realtime-js never tore the socket down and a half-open one got reused.)
-            if (this.channel) {
-                console.debug('[DEBUG] Destroying old channel');
-                await this.client.removeChannel(this.channel);
-                this.channel = null;
-            }
+            // Cap the whole recreate: a never-settling await (e.g. a subscribe that only
+            // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
+            // the 10s watchdog. On timeout we reject -> catch -> finally clears the guard.
+            await this.withTimeout(async () => {
+                // Destroy old channel — AWAIT it so the channel registry empties before we
+                // rebuild. (The un-awaited version raced the synchronous new-channel push, so
+                // realtime-js never tore the socket down and a half-open one got reused.)
+                if (this.channel) {
+                    console.debug('[DEBUG] Destroying old channel');
+                    await this.client!.removeChannel(this.channel);
+                    this.channel = null;
+                }
 
-            // FIX (core): force a brand-new WebSocket. After idle / wifi-loss the socket can
-            // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
-            // forever. disconnect() drops it so the next subscribe() dials a fresh one.
-            try { await (this.client as any).realtime?.disconnect?.(); } catch { /* best effort */ }
+                // FIX (core): force a brand-new WebSocket. After idle / wifi-loss the socket can
+                // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
+                // forever. disconnect() drops it so the next subscribe() dials a fresh one.
+                try { await (this.client as any).realtime?.disconnect?.(); } catch { /* best effort */ }
 
-            console.debug('[DEBUG] Calling createChannel() for recreation');
-            await this.createChannel();
+                console.debug('[DEBUG] Calling createChannel() for recreation');
+                await this.createChannel();
+            }, RECREATE_TIMEOUT_MS, 'recreateChannel');
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
             console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);

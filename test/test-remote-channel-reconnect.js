@@ -13,16 +13,18 @@
  *     only tears the socket down once the registry is empty
  *   - `realtime.disconnect()` rebuilds a healthy socket
  *
- * Two cases:
+ * Three cases:
  *   - control: when the dead socket is torn down before recreate, it recovers —
- *     this proves the harness can actually observe recovery.
+ *     proves the harness can actually observe recovery.
  *   - recovery: driving the health-check / recreate path after the socket goes
  *     half-open must end in a working subscription.
+ *   - joining is treated as healthy (no recreate).
  *
- * Run standalone:  npx tsx test/remote-channel-reconnect.test.ts
+ * Runs as part of `npm test` (needs `npm run build` first, which `npm test` does),
+ * or standalone: `node test/test-remote-channel-reconnect.js`.
  */
 import assert from 'node:assert';
-import { RemoteChannel } from '../src/remote-device/remote-channel.js';
+import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
 
 // Keep telemetry from touching the network during the test.
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -32,19 +34,17 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 // ---------------------------------------------------------------------------
 
 class FakeChannel {
-  topic: string;
-  client: FakeClient;
   state = 'joining';
   joinedOnce = false;
   rejoinTimer = { tries: 0 };
-  constructor(topic: string, client: FakeClient) {
+  constructor(topic, client) {
     this.topic = topic;
     this.client = client;
   }
   on() {
     return this;
   }
-  subscribe(cb: (status: string, err?: any) => void) {
+  subscribe(cb) {
     this.joinedOnce = true;
     // realtime invokes the subscribe callback asynchronously
     Promise.resolve().then(() => {
@@ -70,10 +70,10 @@ class FakeRealtime {
   conn = { readyState: 1 }; // 1 = OPEN; stays OPEN even when half-open/dead
   socketDead = false; // true = half-open: reads OPEN but joins TIME_OUT
   reconnectTimer = { tries: 0 };
-  pendingHeartbeatRef: any = null;
-  _heartbeatSentAt: number | null = null;
+  pendingHeartbeatRef = null;
+  _heartbeatSentAt = null;
   _manuallySetToken = true;
-  accessTokenValue: string | null = null;
+  accessTokenValue = null;
   rebuilds = 0;
 
   connectionState() {
@@ -97,10 +97,10 @@ class FakeRealtime {
 
 class FakeClient {
   realtime = new FakeRealtime();
-  channels: FakeChannel[] = [];
-  statusLog: string[] = [];
+  channels = [];
+  statusLog = [];
 
-  channel(topic: string) {
+  channel(topic) {
     const ch = new FakeChannel(topic, this);
     this.channels.push(ch);
     return ch;
@@ -111,7 +111,7 @@ class FakeClient {
    * is only torn down once the registry is empty. The deferral is what races
    * with the synchronous new-channel push in recreateChannel().
    */
-  removeChannel(ch: FakeChannel) {
+  removeChannel(ch) {
     return Promise.resolve().then(() => {
       const i = this.channels.indexOf(ch);
       if (i !== -1) this.channels.splice(i, 1);
@@ -129,8 +129,8 @@ class FakeClient {
 
   // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
   from() {
-    const result: any = Promise.resolve({ error: null });
-    const chain: any = {
+    const result = Promise.resolve({ error: null });
+    const chain = {
       update: () => chain,
       insert: () => chain,
       delete: () => chain,
@@ -148,7 +148,7 @@ class FakeClient {
 const flush = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
 function makeRemoteChannel() {
-  const rc: any = new RemoteChannel();
+  const rc = new RemoteChannel();
   const client = new FakeClient();
   rc.client = client; // private at TS level; plain property at runtime
   rc._user = { id: 'user-1', email: 'tester@example.com' };
@@ -158,7 +158,7 @@ function makeRemoteChannel() {
 }
 
 /** Bring the channel up healthy, then knock the socket into a half-open state. */
-async function goHalfOpen(rc: any, client: FakeClient) {
+async function goHalfOpen(rc, client) {
   await rc.createChannel(); // healthy subscribe -> 'joined'
   assert.strictEqual(rc.channel.state, 'joined', 'precondition: channel should be joined');
   client.realtime.socketDead = true; // dead peer, but readyState stays 1 (OPEN)
@@ -167,7 +167,7 @@ async function goHalfOpen(rc: any, client: FakeClient) {
 }
 
 /** Simulate the periodic 10s health checks driving recreate, up to N times. */
-async function driveHealthChecks(rc: any, maxAttempts: number): Promise<boolean> {
+async function driveHealthChecks(rc, maxAttempts) {
   for (let i = 0; i < maxAttempts; i++) {
     if (rc.channel && rc.channel.state === 'joined') return true;
     rc.checkConnectionHealth(); // -> recreateChannel() when unhealthy
@@ -180,7 +180,7 @@ async function driveHealthChecks(rc: any, maxAttempts: number): Promise<boolean>
 // Silence the (intentionally verbose) diagnostic logging during the drive so
 // the test output stays readable; we summarise via the fake's statusLog instead.
 // Must await so console is restored only after the async callbacks have fired.
-async function withQuietLogs<T>(fn: () => Promise<T>): Promise<T> {
+async function withQuietLogs(fn) {
   const { debug, log, warn, error } = console;
   console.debug = () => {};
   console.log = () => {};
@@ -197,11 +197,11 @@ async function withQuietLogs<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 let failures = 0;
-async function test(name: string, fn: () => Promise<void>) {
+async function test(name, fn) {
   try {
     await fn();
     console.log(`✅ PASS  ${name}`);
-  } catch (e: any) {
+  } catch (e) {
     failures++;
     console.error(`🔴 FAIL  ${name}\n   ${e.message}`);
   }
@@ -210,6 +210,11 @@ async function test(name: string, fn: () => Promise<void>) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+async function goHalfOpenThenDrive(rc, client) {
+  await goHalfOpen(rc, client);
+  return driveHealthChecks(rc, 8);
+}
 
 async function main() {
   // CONTROL: prove the harness CAN observe recovery — when the dead socket is
@@ -242,10 +247,22 @@ async function main() {
     );
   });
 
-  async function goHalfOpenThenDrive(rc: any, client: FakeClient) {
-    await goHalfOpen(rc, client);
-    return driveHealthChecks(rc, 8);
-  }
+  // 'joining' is transitional — the health check must treat it as healthy and NOT
+  // tear the channel down mid-join (otherwise it amputates realtime-js's own rejoin).
+  await test('joining is treated as healthy (no recreate)', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(async () => {
+      await rc.createChannel(); // -> joined
+      const attemptsBefore = rc.reconnectAttempt;
+      const rebuildsBefore = client.realtime.rebuilds;
+      rc.channel.state = 'joining'; // transitional, not yet joined
+      rc.checkConnectionHealth();
+      await flush();
+      await flush();
+      assert.strictEqual(rc.reconnectAttempt, attemptsBefore, 'joining must not trigger a recreate');
+      assert.strictEqual(client.realtime.rebuilds, rebuildsBefore, 'joining must not rebuild the socket');
+    });
+  });
 
   console.log(
     `\n${failures ? '🔴' : '✅'} remote-channel reconnect: ${failures} failing test(s).`
