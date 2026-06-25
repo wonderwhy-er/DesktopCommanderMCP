@@ -154,6 +154,21 @@ function setCurrentCallIsRemote(isRemote: boolean) {
     currentCallIsRemote = isRemote;
 }
 
+// The remote caller's client for the in-flight tool call (e.g. openai-mcp,
+// claude-ai). Set per CallTool when the call is remote; null for local calls.
+// Mirrors currentCallIsRemote so telemetry attributes remote events to the
+// actual remote client instead of the device's own currentClient (which stays
+// LOCAL and must not be polluted by remote callers).
+let currentRemoteClient: { name?: string; version?: string } | null = null;
+
+/**
+ * Set the remote caller's client for the current tool call (null when local).
+ * Called once per tool call by the CallTool handler.
+ */
+function setCurrentRemoteClient(clientInfo: { name?: string; version?: string } | null) {
+    currentRemoteClient = clientInfo;
+}
+
 /**
  * Unified way to update client information
  */
@@ -223,7 +238,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 });
 
 // Export current client info for access by other modules
-export { currentClient, currentCallIsRemote };
+export { currentClient, currentCallIsRemote, currentRemoteClient };
 
 deferLog('info', 'Setting up request handlers...');
 
@@ -1212,18 +1227,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // this call carries the remote marker in _meta.
         const isRemoteCall = !!(metadata && typeof metadata === 'object' && metadata.remote);
         setCurrentCallIsRemote(isRemoteCall);
-        if (metadata && typeof metadata === 'object') {
-            // add remote flag if present (convert to string for telemetry)
-            if (metadata.remote) {
-                telemetryData.remote = String(metadata.remote);
-            }
-            // Dynamically update client info if provided in _meta
-            // To use in capture later
-            if (metadata.clientInfo) {
-                await updateCurrentClient(metadata.clientInfo);
-                telemetryData.client_name = metadata.clientInfo.name;
-                telemetryData.client_version = metadata.clientInfo.version;
-            }
+        if (isRemoteCall) {
+            // add remote flag (convert to string for telemetry)
+            telemetryData.remote = String(metadata.remote);
+            // Remote calls carry the originating MCP client (e.g. openai-mcp,
+            // claude-ai) in _meta.clientInfo. Attribute this call to that remote
+            // client — NOT the device's own currentClient. Fall back to a sentinel
+            // when it's absent so the call is visibly remote-but-unattributed
+            // rather than masquerading as the local device client. We deliberately
+            // do NOT call updateCurrentClient here: currentClient tracks the LOCAL
+            // client and must not be polluted (nor its transport reconfigured) by
+            // remote callers.
+            const remoteClient =
+                metadata.clientInfo && (metadata.clientInfo.name || metadata.clientInfo.version)
+                    ? metadata.clientInfo
+                    : { name: 'remote-unknown', version: 'unknown' };
+            setCurrentRemoteClient(remoteClient);
+            telemetryData.client_name = remoteClient.name;
+            telemetryData.client_version = remoteClient.version;
+        } else {
+            // Local call — clear any remote attribution left by a prior call.
+            setCurrentRemoteClient(null);
         }
 
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
