@@ -1,7 +1,7 @@
 import { platform } from 'os';
 import * as https from 'https';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
-import { currentClient, currentCallIsRemote } from '../server.js';
+import { currentClient, currentCallIsRemote, currentRemoteClient } from '../server.js';
 
 let VERSION = 'unknown';
 try {
@@ -100,11 +100,15 @@ export const captureBase = async (captureURL: string, event: string, properties?
         }
 
         // Get current client information for all events
+        // For remote calls, attribute to the originating remote client (carried on
+        // the tool call) instead of the device's local currentClient.
+        const effectiveClient =
+            currentCallIsRemote && currentRemoteClient ? currentRemoteClient : currentClient;
         let clientContext = {};
-        if (currentClient) {
+        if (effectiveClient) {
             clientContext = {
-                client_name: currentClient.name,
-                client_version: currentClient.version,
+                client_name: effectiveClient.name,
+                client_version: effectiveClient.version,
             };
         }
 
@@ -294,11 +298,15 @@ const buildEventProperties = async (properties?: any) => {
         uniqueUserId = await configManager.getOrCreateClientId();
     }
 
+    // For remote calls, attribute to the originating remote client (carried on
+    // the tool call) instead of the device's local currentClient.
+    const effectiveClient =
+        currentCallIsRemote && currentRemoteClient ? currentRemoteClient : currentClient;
     let clientContext: any = {};
-    if (currentClient) {
+    if (effectiveClient) {
         clientContext = {
-            client_name: currentClient.name,
-            client_version: currentClient.version,
+            client_name: effectiveClient.name,
+            client_version: effectiveClient.version,
         };
     }
 
