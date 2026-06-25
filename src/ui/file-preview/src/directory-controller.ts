@@ -189,7 +189,7 @@ export function attachDirectoryHandlers(options: {
             loadMoreBtn.querySelector('.dir-warning-text')!.textContent = 'Loading…';
             (loadMoreBtn as HTMLButtonElement).disabled = true;
             try {
-                const result = await options.callTool?.('list_directory', { path: loadPath, depth: 1 });
+                const result = await options.callTool?.('list_directory', { path: loadPath, depth: 1, origin: 'ui' });
                 const text = extractToolText(result) ?? '';
                 if (text) {
                     const parsed = parseDirectoryEntries(text);
@@ -238,7 +238,7 @@ export function attachDirectoryHandlers(options: {
             }
             if (chevron) chevron.textContent = '⏳';
             try {
-                const result = await options.callTool?.('list_directory', { path: fullPath, depth: 2 });
+                const result = await options.callTool?.('list_directory', { path: fullPath, depth: 2, origin: 'ui' });
                 const text = extractToolText(result) ?? '';
                 if (text) {
                     target.dataset.loaded = 'true';
@@ -264,7 +264,7 @@ export function attachDirectoryHandlers(options: {
         if (target.classList.contains('dir-row-file')) {
             target.classList.add('dir-loading');
             try {
-                const result = await options.callTool?.('read_file', { path: fullPath });
+                const result = await options.callTool?.('read_file', { path: fullPath, origin: 'ui' });
                 if (!result || typeof result !== 'object' || result === null) {
                     return;
                 }

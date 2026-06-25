@@ -173,8 +173,8 @@ export function attachPanelActions(options: {
 
         try {
             const readArgs = direction === 'before'
-                ? { path: options.payload.filePath, offset: 0, length: range.fromLine - 1 }
-                : { path: options.payload.filePath, offset: range.toLine };
+                ? { path: options.payload.filePath, offset: 0, length: range.fromLine - 1, origin: 'ui' }
+                : { path: options.payload.filePath, offset: range.toLine, origin: 'ui' };
 
             const result = await options.callTool?.('read_file', readArgs);
             const newText = extractToolText(result);
