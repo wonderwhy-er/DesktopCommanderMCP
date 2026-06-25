@@ -17,6 +17,9 @@ interface DeviceData {
 }
 
 const HEARTBEAT_INTERVAL = 15000;
+// Cap a single channel recreate so a hung await can't pin the re-entrancy guard
+// true (which would silently disable the connection watchdog).
+const RECREATE_TIMEOUT_MS = 30000;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -34,6 +37,10 @@ export class RemoteChannel {
 
     // Track last channel state for debug logging
     private lastChannelState: string | null = null;
+
+    // Reconnect diagnostics + guard (see connState() / recreateChannel())
+    private reconnectAttempt = 0;        // recreateChannel() attempts since last success
+    private isRecreatingChannel = false; // a recreate is in flight (re-entrancy guard)
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -166,7 +173,7 @@ export class RemoteChannel {
 
             // ! Ignore silently in Initialization to reconnect after
             await this.createChannel().catch((error) => {
-                console.debug('[DEBUG] Failed to create channel, will retry after socket reconnect', error);
+                console.debug(`[DEBUG] Failed to create channel, will retry after socket reconnect: ${error?.message || error} — ${this.connState()}`);
             });
 
         } else {
@@ -206,10 +213,12 @@ export class RemoteChannel {
                 )
                 .subscribe((status: string, err: any) => {
                     // Debug: Log all subscription status events
-                    console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + err + ')' : ''}`);
+                    console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + (err?.message || err) + ')' : ''} — ${this.connState()}`);
 
                     if (status === 'SUBSCRIBED') {
-                        console.log('✅ Channel subscribed');
+                        const recovered = this.reconnectAttempt;
+                        this.reconnectAttempt = 0;
+                        console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection
                         if (this.deviceId) {
                             this.setOnlineStatus(this.deviceId, 'online').catch(e => {
@@ -218,18 +227,40 @@ export class RemoteChannel {
                         }
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
-                        // console.error('❌ Channel subscription failed:', err);
+                        // CHANNEL_ERROR is the only status carrying a real error message.
+                        console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
                         this.setOnlineStatus(this.deviceId!, 'offline');
-                        captureRemote('remote_channel_subscription_error', { error: err || 'Channel error' }).catch(() => { });
+                        captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
-                        console.error('⏱️ Channel subscription timed out, Reconnecting...');
+                        console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
                         this.setOnlineStatus(this.deviceId!, 'offline');
-                        captureRemote('remote_channel_subscription_timeout', {}).catch(() => { });
+                        captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
                         reject(new Error('Tool call channel subscription timed out'));
+                    } else if (status === 'CLOSED') {
+                        // Settle the promise so an in-flight recreateChannel() can't await
+                        // forever (which would wedge the re-entrancy guard / watchdog), and
+                        // mark the device offline like the other degraded states.
+                        console.warn(`⚠️ Channel closed — ${this.connState()}`);
+                        this.setOnlineStatus(this.deviceId!, 'offline');
+                        reject(new Error('Tool call channel closed during subscribe'));
                     }
                 });
         });
+    }
+
+    /**
+     * Compact connection state for logs — e.g. "socket=open(1) ch=errored attempt=3".
+     * readyState 1=OPEN (a 1 while joins keep failing = a half-open socket being reused),
+     * 3=CLOSED, '-'=no socket. Reads realtime-js internals defensively; never throws.
+     */
+    private connState(): string {
+        let socket = '?';
+        try {
+            const rt: any = (this.client as any)?.realtime;
+            socket = `${rt?.connectionState?.() ?? '?'}(${rt?.conn?.readyState ?? '-'})`;
+        } catch { /* best effort */ }
+        return `socket=${socket} ch=${this.channel?.state ?? '-'} attempt=${this.reconnectAttempt}`;
     }
 
     /**
@@ -244,47 +275,90 @@ export class RemoteChannel {
 
         // Debug: Log current channel state (only if changed)
         if (!this.lastChannelState || this.lastChannelState !== state) {
-            console.debug(`[DEBUG] channel state: ${state}`);
+            console.debug(`[DEBUG] channel state: ${state} — ${this.connState()}`);
             this.lastChannelState = state;
         }
 
-        // Aggressive health check: Only 'joined' is considered healthy
-        // Any other state (joining, leaving, closed, errored, etc.) triggers recreation
-        if (state !== 'joined') {
-            captureRemote('remote_channel_state_health', { state });
+        // 'joined' = healthy, 'joining' = transitional — let realtime-js's own rejoin
+        // backoff converge instead of tearing the channel down mid-join. (FIX: previously
+        // recreated on every non-joined state, which amputated that backoff.)
+        if (state === 'joined' || state === 'joining') return;
 
-            console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating...`);
-            this.recreateChannel();
+        // Unhealthy: closed, errored, leaving — recreate
+        captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt });
+        console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating... — ${this.connState()}`);
+        this.recreateChannel();
+    }
+
+    /**
+     * Run an async op but reject if it doesn't settle within `ms`, so a hung await
+     * can't leave isRecreatingChannel stuck true and disable the watchdog. Mirrors
+     * closeWithTimeout() in desktop-commander-integration.ts.
+     */
+    private async withTimeout<T>(op: () => Promise<T>, ms: number, name: string): Promise<T> {
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            return await Promise.race([
+                op(),
+                new Promise<T>((_, reject) => {
+                    timer = setTimeout(() => reject(new Error(`${name} timed out after ${ms}ms`)), ms);
+                }),
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     }
 
     /**
      * Recreate the channel by destroying old one and creating fresh instance.
      */
-    private recreateChannel(): void {
+    private async recreateChannel(): Promise<void> {
         if (!this.client || !this.user?.id || !this.onToolCall) {
             console.warn('Cannot recreate channel - missing parameters');
             console.debug('[DEBUG] recreateChannel() aborted - missing prerequisites');
             return;
         }
 
-        // Destroy old channel
-        if (this.channel) {
-            console.debug('[DEBUG] Destroying old channel');
-            this.client.removeChannel(this.channel);
-            this.channel = null;
+        // FIX: re-entrancy guard so a 10s health tick can't stack a second recreate
+        // on top of an in-flight one.
+        if (this.isRecreatingChannel) {
+            console.debug('[DEBUG] recreateChannel() skipped - already in progress');
+            return;
         }
+        this.isRecreatingChannel = true;
+        this.reconnectAttempt++;
 
         // Create fresh channel
-        console.log('🔄 Recreating channel...');
-        console.debug('[DEBUG] Calling createChannel() for recreation');
-        this.createChannel().catch(err => {
-            captureRemote('remote_channel_recreate_error', { err });
-            console.debug('[DEBUG] Channel recreation failed:', err.message);
+        console.log(`🔄 Recreating channel... (attempt ${this.reconnectAttempt}) — ${this.connState()}`);
 
-            // TODO: enable only for debug mode
-            // console.error('Failed to recreate channel:', err);
-        });
+        try {
+            // Cap the whole recreate: a never-settling await (e.g. a subscribe that only
+            // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
+            // the 10s watchdog. On timeout we reject -> catch -> finally clears the guard.
+            await this.withTimeout(async () => {
+                // Destroy old channel — AWAIT it so the channel registry empties before we
+                // rebuild. (The un-awaited version raced the synchronous new-channel push, so
+                // realtime-js never tore the socket down and a half-open one got reused.)
+                if (this.channel) {
+                    console.debug('[DEBUG] Destroying old channel');
+                    await this.client!.removeChannel(this.channel);
+                    this.channel = null;
+                }
+
+                // FIX (core): force a brand-new WebSocket. After idle / wifi-loss the socket can
+                // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
+                // forever. disconnect() drops it so the next subscribe() dials a fresh one.
+                try { await (this.client as any).realtime?.disconnect?.(); } catch { /* best effort */ }
+
+                console.debug('[DEBUG] Calling createChannel() for recreation');
+                await this.createChannel();
+            }, RECREATE_TIMEOUT_MS, 'recreateChannel');
+        } catch (err: any) {
+            captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
+            console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);
+        } finally {
+            this.isRecreatingChannel = false;
+        }
     }
 
     async markCallExecuting(callId: string) {
