@@ -153,10 +153,16 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             // Return the image bytes in the MCP content array so the host model can
             // actually see the image. structuredContent additionally carries the bytes
             // for the preview widget to render.
+            //
+            // Setting DC_NO_IMAGE_STRUCTURED_BASE64=true suppresses the duplicate image
+            // base64 from structuredContent. This avoids context bloat in MCP clients
+            // that serialize structuredContent into the model's text input alongside
+            // the rendered image block. See #521.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
             const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
+            const omitStructuredBase64 = process.env.DC_NO_IMAGE_STRUCTURED_BASE64 === 'true';
             return {
                 content: [
                     {
@@ -175,8 +181,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileType: 'image',
                     sourceTool: 'read_file',
                     ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: imageData,
-                    imageData,
+                    ...(omitStructuredBase64
+                        ? {}
+                        : { content: imageData, imageData }),
                     mimeType: fileResult.mimeType
                 }
             };
