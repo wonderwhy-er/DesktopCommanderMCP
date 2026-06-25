@@ -1254,6 +1254,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             telemetryData.set_config_value_key_name = (args as any).key;
             telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
         }
+        // Attribute file-surface tool calls to the file-preview UI vs the LLM.
+        // The UI passes origin:'ui' when it fires these tools to refresh/navigate
+        // (pagination, folder expansion, link resolution, in-preview edits); the
+        // first read_file that opens a file comes from the LLM and is recorded as
+        // 'llm'. Lets us separate UI-refresh churn from genuine model-driven reads.
+        if (
+            (name === 'read_file' || name === 'write_file' || name === 'edit_block' || name === 'list_directory') &&
+            args && typeof args === 'object'
+        ) {
+            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
+        }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
             telemetryData.action = promptArgs.action;
