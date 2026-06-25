@@ -52,7 +52,10 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional()
+  options: z.record(z.any()).optional(),
+  // Whether the call came from the file-preview UI (refresh/navigation) or the
+  // LLM. Used only for telemetry attribution; see call_origin in server.ts.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -63,6 +66,8 @@ export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
+  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 // PDF modification schemas - exported for reuse
@@ -111,6 +116,8 @@ export const CreateDirectoryArgsSchema = z.object({
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
   depth: z.number().optional().default(2),
+  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const MoveFileArgsSchema = z.object({
@@ -136,7 +143,9 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional()
+  options: z.record(z.any()).optional(),
+  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  origin: z.enum(['ui', 'llm']).optional(),
 }).refine(
   data => {
     // Helper to check if value is actually provided (not undefined, not empty string)

@@ -373,6 +373,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
         const rawResult = await dependencies.callTool?.('read_file', {
             path: filePath,
             ...(typeof length === 'number' ? { offset: offset ?? 0, length } : {}),
+            origin: 'ui',
         });
         return { rawResult, payload: extractRenderPayload(rawResult) ?? null };
     }
@@ -466,7 +467,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
 
         for (const ancestor of ancestors) {
             try {
-                const result = await dependencies.callTool?.('list_directory', { path: ancestor, depth: 1 });
+                const result = await dependencies.callTool?.('list_directory', { path: ancestor, depth: 1, origin: 'ui' });
                 const text = extractToolText(result) ?? '';
                 const entries = splitListingLines(text);
                 if (entries.some((entry) => markers.has(entry))) {
@@ -827,6 +828,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
                         old_string: block.old_string,
                         new_string: block.new_string,
                         expected_replacements: 1,
+                        origin: 'ui',
                     });
                     assertSuccessfulEditBlockResult(editResult);
                     appliedCount++;
