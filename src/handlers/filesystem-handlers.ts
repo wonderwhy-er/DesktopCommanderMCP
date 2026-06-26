@@ -175,8 +175,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     fileType: 'image',
                     sourceTool: 'read_file',
                     ...await getDefaultEditorMetadata(resolvedFilePath),
+                    // Image bytes for the preview widget, carried once. Deduped from the
+                    // old `content` + `imageData` pair down to this single `content` field.
                     content: imageData,
-                    imageData,
                     mimeType: fileResult.mimeType
                 }
             };
