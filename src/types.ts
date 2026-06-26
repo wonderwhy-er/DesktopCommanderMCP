@@ -82,8 +82,9 @@ export interface FilePreviewStructuredContent {
   sourceTool?: 'read_file' | 'write_file' | 'edit_block';
   defaultEditorName?: string;
   defaultEditorPath?: string;
+  // For text/markdown this is the file text; for images it is the base64 image
+  // payload (single source — the preview UI renders the <img> from this).
   content?: string;
-  imageData?: string;
   mimeType?: string;
 }
 
