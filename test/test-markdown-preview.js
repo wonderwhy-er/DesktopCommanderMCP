@@ -219,7 +219,7 @@ async function testFailedSaveResyncsEditBaseline() {
         }
 
         if (name === 'read_file') {
-          assert.deepStrictEqual(args, { path: payload.filePath });
+          assert.deepStrictEqual(args, { path: payload.filePath, origin: 'ui' });
           return {
             structuredContent: {
               fileName: payload.fileName,
@@ -444,7 +444,7 @@ async function testPartialDocumentBecomesNewEditBaseline() {
   const controller = createMarkdownController({
     callTool: async (name, args) => {
       assert.strictEqual(name, 'read_file');
-      assert.deepStrictEqual(args, { path: partialPayload.filePath, offset: 0, length: 3 });
+      assert.deepStrictEqual(args, { path: partialPayload.filePath, offset: 0, length: 3, origin: 'ui' });
       return {
         structuredContent: {
           fileName: partialPayload.fileName,

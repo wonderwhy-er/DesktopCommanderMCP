@@ -333,9 +333,8 @@ async function testReadFilePreviewMetadata() {
   assert.ok(typeof imageContentItem.data === 'string' && imageContentItem.data.length > 0, 'Image content item should carry non-empty base64 data');
   assert.ok(imageResult.structuredContent, 'Image should include structuredContent');
   assert.strictEqual(imageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
-  assert.strictEqual(typeof imageResult.structuredContent.imageData, 'string', 'Image structured payload should include imageData');
-  assert.ok(imageResult.structuredContent.imageData.length > 0, 'Image structured payload should include non-empty imageData');
-  assert.strictEqual(imageResult.structuredContent.content, imageResult.structuredContent.imageData, 'Image structuredContent should include file content');
+  assert.strictEqual(typeof imageResult.structuredContent.content, 'string', 'Image structured payload should carry base64 in content');
+  assert.ok(imageResult.structuredContent.content.length > 0, 'Image structured payload should include non-empty content');
   assert.strictEqual(imageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
   assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
   assert.strictEqual(imageResult.structuredContent.sourceTool, 'read_file', 'Image preview should preserve source tool');
@@ -349,8 +348,8 @@ async function testReadFilePreviewMetadata() {
   assert.ok(svgResult.structuredContent, 'SVG should include structuredContent');
   assert.strictEqual(svgResult.structuredContent.fileType, 'image', 'SVG should map to image preview state');
   assert.strictEqual(svgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
-  assert.strictEqual(typeof svgResult.structuredContent.imageData, 'string', 'SVG structured payload should include imageData');
-  assert.ok(svgResult.structuredContent.imageData.length > 0, 'SVG structured payload should include non-empty imageData');
+  assert.strictEqual(typeof svgResult.structuredContent.content, 'string', 'SVG structured payload should carry base64 in content');
+  assert.ok(svgResult.structuredContent.content.length > 0, 'SVG structured payload should include non-empty content');
   assert.strictEqual(svgResult.structuredContent.sourceTool, 'read_file', 'SVG preview should preserve source tool');
 
   const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler' });
