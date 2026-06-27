@@ -20,6 +20,14 @@ const HEARTBEAT_INTERVAL = 15000;
 // Cap a single channel recreate so a hung await can't pin the re-entrancy guard
 // true (which would silently disable the connection watchdog).
 const RECREATE_TIMEOUT_MS = 30000;
+// Max time the channel may sit CONTINUOUSLY in 'joining' before we force a recreate.
+// 'joining' is normally healthy (we let realtime-js's rejoin backoff converge), but on a
+// HALF-OPEN socket (readyState OPEN yet dead) realtime-js parks the channel in 'joining'
+// forever and never reconnects the socket — the device then wedges offline silently with
+// no recreate firing. realtime-js's join push times out in ~10s, so a genuine join
+// resolves/errors well within this window; 3 health ticks of unbroken 'joining' means the
+// state machine has stalled and only a fresh socket (via recreate) recovers it.
+const JOINING_WEDGE_TIMEOUT_MS = 30000;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -41,6 +49,7 @@ export class RemoteChannel {
     // Reconnect diagnostics + guard (see connState() / recreateChannel())
     private reconnectAttempt = 0;        // recreateChannel() attempts since last success
     private isRecreatingChannel = false; // a recreate is in flight (re-entrancy guard)
+    private joiningSince: number | null = null; // ts the channel entered an unbroken 'joining' run; null when not joining
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -279,12 +288,33 @@ export class RemoteChannel {
             this.lastChannelState = state;
         }
 
-        // 'joined' = healthy, 'joining' = transitional — let realtime-js's own rejoin
-        // backoff converge instead of tearing the channel down mid-join. (FIX: previously
-        // recreated on every non-joined state, which amputated that backoff.)
-        if (state === 'joined' || state === 'joining') return;
+        // 'joined' = healthy. Clear the joining-overstay timer.
+        if (state === 'joined') {
+            this.joiningSince = null;
+            return;
+        }
+
+        // 'joining' = transitional — normally let realtime-js's own rejoin backoff converge
+        // instead of tearing the channel down mid-join (recreating on every non-joined state
+        // amputates that backoff). BUT bound it: on a half-open socket realtime-js can park
+        // the channel in 'joining' indefinitely without ever reconnecting the socket, so the
+        // recreate below would never fire and the device wedges offline silently. If 'joining'
+        // overstays JOINING_WEDGE_TIMEOUT_MS unbroken, force a recreate — the only path that
+        // disconnect()s the dead socket. (connState() in the log shows the half-open socket.)
+        if (state === 'joining') {
+            const now = Date.now();
+            if (this.joiningSince === null) this.joiningSince = now;
+            const stuckMs = now - this.joiningSince;
+            if (stuckMs < JOINING_WEDGE_TIMEOUT_MS) return;
+            console.debug(`[DEBUG] ⚠️ Channel stuck 'joining' ${Math.round(stuckMs / 1000)}s - forcing recreate — ${this.connState()}`);
+            captureRemote('remote_channel_joining_wedge', { stuckMs, attempt: this.reconnectAttempt });
+            this.joiningSince = null;
+            this.recreateChannel();
+            return;
+        }
 
         // Unhealthy: closed, errored, leaving — recreate
+        this.joiningSince = null;
         captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt });
         console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating... — ${this.connState()}`);
         this.recreateChannel();
