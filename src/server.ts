@@ -204,7 +204,8 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
 
             // Welcome page for new claude-ai users (A/B test controlled)
             // Also matches 'local-agent-mode-*' which is how Claude.ai connectors report themselves
-            if ((currentClient.name === 'claude-ai' || currentClient.name?.startsWith('local-agent-mode')) && !(global as any).disableOnboarding) {
+            // and 'claude-code' (the Claude Code CLI)
+            if ((currentClient.name === 'claude-ai' || currentClient.name === 'claude-code' || currentClient.name?.startsWith('local-agent-mode')) && !(global as any).disableOnboarding) {
                 await handleWelcomePageOnboarding();
             }
         }
