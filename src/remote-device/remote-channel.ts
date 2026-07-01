@@ -489,6 +489,16 @@ export class RemoteChannel {
                 return;
             }
 
+            if (!sessionData.session.refresh_token) {
+                // The subprocess requires both tokens to call setSession(); without a
+                // refresh token it would exit with code 1 and the device row would
+                // silently remain marked as online. Bail out explicitly so the failure
+                // is visible in logs rather than masked behind a generic exit code.
+                console.error('❌ No refresh token available for offline update; skipping subprocess');
+                console.debug('[DEBUG] sessionData.session.refresh_token is null/undefined');
+                return;
+            }
+
             // Get Supabase config from client
             const supabaseUrl = (this.client as any).supabaseUrl;
             const supabaseKey = (this.client as any).supabaseKey;
@@ -516,13 +526,16 @@ export class RemoteChannel {
                 scriptPath,
                 deviceId,
                 supabaseUrl,
-                supabaseKey,
-                sessionData.session.access_token,
-                sessionData.session.refresh_token || ''
+                supabaseKey
             ], {
                 timeout: 3000,
                 stdio: 'pipe', // Capture output to prevent blocking
-                encoding: 'utf-8'
+                encoding: 'utf-8',
+                env: {
+                    ...process.env,
+                    SUPABASE_ACCESS_TOKEN: sessionData.session.access_token,
+                    SUPABASE_REFRESH_TOKEN: sessionData.session.refresh_token
+                }
             });
 
             console.debug('[DEBUG] spawnSync completed, exit code:', result.status, 'signal:', result.signal);
