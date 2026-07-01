@@ -8,6 +8,7 @@ export const MCP_UI_SHOW_VARIANT = 'showMCPUi';
 export const MCP_UI_HIDE_VARIANT = 'notShowMCPUi';
 
 export interface McpUiPreviewDecisionDeps {
+  getUserOverride: () => Promise<unknown>;
   getExistingAssignment: () => Promise<unknown>;
   isFirstRun: () => boolean;
   wasLoadedFromCache: () => boolean;
@@ -24,6 +25,13 @@ function variantEnablesMcpUi(variant: unknown): boolean | null {
 
 export async function resolveMcpUiPreviewDecision(deps: McpUiPreviewDecisionDeps): Promise<boolean> {
   try {
+    // An explicit user choice (showMcpUI config) always wins over the A/B test.
+    // Unset (or any non-boolean) means "automatic": fall through to the experiment.
+    const userOverride = await deps.getUserOverride();
+    if (typeof userOverride === 'boolean') {
+      return userOverride;
+    }
+
     const existingAssignment = await deps.getExistingAssignment();
     const existingDecision = variantEnablesMcpUi(existingAssignment);
     if (existingDecision !== null) {
@@ -65,13 +73,23 @@ export async function resolveMcpUiPreviewDecision(deps: McpUiPreviewDecisionDeps
   }
 }
 
+// Decided once per server process: a session must render consistently. Flipping
+// tool UI _meta mid-session confuses hosts (open widgets / other threads sharing
+// this server see tools lose their UI), so config/flag changes made while the
+// server is running take effect on the next restart.
+let sessionDecision: Promise<boolean> | null = null;
+
 export async function shouldShowMcpUiPreviews(): Promise<boolean> {
-  return resolveMcpUiPreviewDecision({
-    getExistingAssignment: () => configManager.getValue(`abTest_${MCP_UI_EXPERIMENT_NAME}`),
-    isFirstRun: () => configManager.isFirstRun(),
-    wasLoadedFromCache: () => featureFlagManager.wasLoadedFromCache(),
-    waitForFreshFlags: () => featureFlagManager.waitForFreshFlags(),
-    getABTestVariant,
-    capture,
-  });
+  if (!sessionDecision) {
+    sessionDecision = resolveMcpUiPreviewDecision({
+      getUserOverride: () => configManager.getValue('showMcpUI'),
+      getExistingAssignment: () => configManager.getValue(`abTest_${MCP_UI_EXPERIMENT_NAME}`),
+      isFirstRun: () => configManager.isFirstRun(),
+      wasLoadedFromCache: () => featureFlagManager.wasLoadedFromCache(),
+      waitForFreshFlags: () => featureFlagManager.waitForFreshFlags(),
+      getABTestVariant,
+      capture,
+    });
+  }
+  return sessionDecision;
 }
