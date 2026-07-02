@@ -5,7 +5,7 @@ import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { capture } from '../utils/capture.js';
-import { withTimeout } from '../utils/withTimeout.js';
+import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
@@ -19,6 +19,14 @@ const FILE_OPERATION_TIMEOUTS = {
     URL_FETCH: 30000,          // 30 seconds
     FILE_READ: 30000,          // 30 seconds
 } as const;
+
+// Cap file read operations at 3 minutes. The MCP client's hard per-call limit
+// is ~4 minutes; timing out at 3m lets us abort the underlying fs op and return
+// a useful error (e.g. the cloud-storage guidance in buildPermissionError)
+// BEFORE the client gives up with an opaque "No result received after 4
+// minutes". Paired with runWithAbortableTimeout so the read is actually
+// cancelled (fd/thread released), not just abandoned.
+export const READ_OPERATION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
 const FILE_SIZE_LIMITS = {
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
@@ -495,8 +503,9 @@ export async function readFileFromDisk(
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
-    // Use withTimeout to handle potential hangs
-    const readOperation = async () => {
+    // Read under an abortable timeout so a hung/stalled read is cancelled
+    // (fd/thread freed) rather than leaked until the OS call returns.
+    const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
         const handler = await getFileHandler(validPath);
 
@@ -506,7 +515,8 @@ export async function readFileFromDisk(
             length,
             sheet,
             range,
-            includeStatusMessage: true
+            includeStatusMessage: true,
+            signal
         });
 
         // Return with content as string
@@ -529,14 +539,13 @@ export async function readFileFromDisk(
         };
     };
 
-    // Execute with timeout
+    // Execute with a 3-minute, cancellable timeout
     let result;
     try {
-        result = await withTimeout(
-            readOperation(),
-            FILE_OPERATION_TIMEOUTS.FILE_READ,
-            `Read file operation for ${filePath}`,
-            null
+        result = await runWithAbortableTimeout(
+            (signal) => readOperation(signal),
+            READ_OPERATION_TIMEOUT_MS,
+            `Read file operation for ${filePath}`
         );
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
@@ -602,8 +611,14 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     // preserve exact file content including original line endings.
     // We cannot use readline-based reading as it strips line endings.
 
-    // Read entire file content preserving line endings
-    const content = await fs.readFile(validPath, 'utf8');
+    // Read entire file content preserving line endings, under a 3-minute,
+    // cancellable timeout so an edit on a stalled/cloud path can't hang forever
+    // (previously this read had no timeout at all).
+    const content = await runWithAbortableTimeout(
+        (signal) => fs.readFile(validPath, { encoding: 'utf8', signal }),
+        READ_OPERATION_TIMEOUT_MS,
+        `Internal read for ${filePath}`
+    );
 
     // If we need to apply offset/length, do it while preserving line endings
     if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {

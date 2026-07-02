@@ -71,7 +71,12 @@ function getErrorFromPath(path: string): string {
  * Handle read_file command
  */
 export async function handleReadFile(args: unknown): Promise<ServerResult> {
-    const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
+    // Backstop for the whole handler operation. The real control is the
+    // 3-minute cancellable read timeout inside readFileFromDisk; this sits just
+    // above it (so that one fires first, with cleanup + a useful error) but
+    // still below the MCP client's ~4-minute hard cap, so we never leave the
+    // client hanging on an opaque timeout.
+    const HANDLER_TIMEOUT = 3.5 * 60 * 1000; // 3m30s
     // Add input validation
     if (args === null || args === undefined) {
         return createErrorResponse('No arguments provided for read_file command');
