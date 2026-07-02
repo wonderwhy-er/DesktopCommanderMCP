@@ -71,7 +71,11 @@ function getErrorFromPath(path: string): string {
  * Handle read_file command
  */
 export async function handleReadFile(args: unknown): Promise<ServerResult> {
-    const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
+    // Last-resort backstop for the whole handler operation. The real control is
+    // the size-aware, cancellable read timeout inside readFileFromDisk (capped
+    // at 10 min); this must sit above that cap so it never cuts a large-file
+    // read short — it only fires if something outside the read itself wedges.
+    const HANDLER_TIMEOUT = 15 * 60 * 1000; // 15 minutes
     // Add input validation
     if (args === null || args === undefined) {
         return createErrorResponse('No arguments provided for read_file command');

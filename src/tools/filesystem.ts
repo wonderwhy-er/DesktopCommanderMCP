@@ -5,7 +5,7 @@ import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { capture } from '../utils/capture.js';
-import { withTimeout } from '../utils/withTimeout.js';
+import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
@@ -19,6 +19,30 @@ const FILE_OPERATION_TIMEOUTS = {
     URL_FETCH: 30000,          // 30 seconds
     FILE_READ: 30000,          // 30 seconds
 } as const;
+
+// Reads are timed out on a SIZE-AWARE budget rather than a single fixed number.
+// A fixed wall-clock timeout can't distinguish "stalled" from "large file on
+// slow media": on local disks almost nothing legitimately takes >30s, but a
+// large binary/PDF/Excel, or any file on a network/cloud mount, scales with
+// size. So: a floor (stall detector for small files) + time proportional to
+// size at a conservatively low throughput + a hard cap. Paired with
+// runWithAbortableTimeout so a fired timeout actually cancels the read and
+// frees the fd/thread instead of leaking it.
+const READ_TIMEOUT = {
+    FLOOR_MS: 30_000,                               // small-file stall detector
+    MAX_MS: 10 * 60_000,                            // hard backstop (10 min)
+    MIN_THROUGHPUT_BYTES_PER_SEC: 4 * 1024 * 1024,  // assume >= 4 MB/s, even on slow/cloud media
+} as const;
+
+/**
+ * Size-aware read timeout: FLOOR + (size / assumed-throughput), capped at MAX.
+ * A 0-byte/unknown-size file gets FLOOR; a 1GB file gets ~4.8 min; anything
+ * that would exceed MAX is clamped so a truly wedged huge read still fails.
+ */
+export function computeReadTimeoutMs(sizeBytes: number): number {
+    const sizeAllowanceMs = (Math.max(0, sizeBytes) / READ_TIMEOUT.MIN_THROUGHPUT_BYTES_PER_SEC) * 1000;
+    return Math.min(READ_TIMEOUT.FLOOR_MS + Math.ceil(sizeAllowanceMs), READ_TIMEOUT.MAX_MS);
+}
 
 const FILE_SIZE_LIMITS = {
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
@@ -478,8 +502,10 @@ export async function readFileFromDisk(
     }
 
     // Check file size before attempting to read
+    let fileSizeBytes = 0;
     try {
         const stats = await fs.stat(validPath);
+        fileSizeBytes = stats.size;
 
         // Capture file extension in telemetry without capturing the file path
         capture('server_read_file', {
@@ -495,8 +521,9 @@ export async function readFileFromDisk(
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
-    // Use withTimeout to handle potential hangs
-    const readOperation = async () => {
+    // Read under a size-aware, abortable timeout so a hung/stalled read is
+    // cancelled (fd/thread freed) rather than leaked until the OS call returns.
+    const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
         const handler = await getFileHandler(validPath);
 
@@ -506,7 +533,8 @@ export async function readFileFromDisk(
             length,
             sheet,
             range,
-            includeStatusMessage: true
+            includeStatusMessage: true,
+            signal
         });
 
         // Return with content as string
@@ -529,14 +557,13 @@ export async function readFileFromDisk(
         };
     };
 
-    // Execute with timeout
+    // Execute with a size-aware, cancellable timeout
     let result;
     try {
-        result = await withTimeout(
-            readOperation(),
-            FILE_OPERATION_TIMEOUTS.FILE_READ,
-            `Read file operation for ${filePath}`,
-            null
+        result = await runWithAbortableTimeout(
+            (signal) => readOperation(signal),
+            computeReadTimeoutMs(fileSizeBytes),
+            `Read file operation for ${filePath}`
         );
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
@@ -602,8 +629,15 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     // preserve exact file content including original line endings.
     // We cannot use readline-based reading as it strips line endings.
 
-    // Read entire file content preserving line endings
-    const content = await fs.readFile(validPath, 'utf8');
+    // Read entire file content preserving line endings, under a size-aware,
+    // cancellable timeout so an edit on a stalled/cloud path can't hang forever
+    // (previously this read had no timeout at all).
+    const internalReadSize = await fs.stat(validPath).then(s => s.size).catch(() => 0);
+    const content = await runWithAbortableTimeout(
+        (signal) => fs.readFile(validPath, { encoding: 'utf8', signal }),
+        computeReadTimeoutMs(internalReadSize),
+        `Internal read for ${filePath}`
+    );
 
     // If we need to apply offset/length, do it while preserving line endings
     if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {
