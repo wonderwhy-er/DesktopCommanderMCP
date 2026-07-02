@@ -20,29 +20,13 @@ const FILE_OPERATION_TIMEOUTS = {
     FILE_READ: 30000,          // 30 seconds
 } as const;
 
-// Reads are timed out on a SIZE-AWARE budget rather than a single fixed number.
-// A fixed wall-clock timeout can't distinguish "stalled" from "large file on
-// slow media": on local disks almost nothing legitimately takes >30s, but a
-// large binary/PDF/Excel, or any file on a network/cloud mount, scales with
-// size. So: a floor (stall detector for small files) + time proportional to
-// size at a conservatively low throughput + a hard cap. Paired with
-// runWithAbortableTimeout so a fired timeout actually cancels the read and
-// frees the fd/thread instead of leaking it.
-const READ_TIMEOUT = {
-    FLOOR_MS: 30_000,                               // small-file stall detector
-    MAX_MS: 10 * 60_000,                            // hard backstop (10 min)
-    MIN_THROUGHPUT_BYTES_PER_SEC: 4 * 1024 * 1024,  // assume >= 4 MB/s, even on slow/cloud media
-} as const;
-
-/**
- * Size-aware read timeout: FLOOR + (size / assumed-throughput), capped at MAX.
- * A 0-byte/unknown-size file gets FLOOR; a 1GB file gets ~4.8 min; anything
- * that would exceed MAX is clamped so a truly wedged huge read still fails.
- */
-export function computeReadTimeoutMs(sizeBytes: number): number {
-    const sizeAllowanceMs = (Math.max(0, sizeBytes) / READ_TIMEOUT.MIN_THROUGHPUT_BYTES_PER_SEC) * 1000;
-    return Math.min(READ_TIMEOUT.FLOOR_MS + Math.ceil(sizeAllowanceMs), READ_TIMEOUT.MAX_MS);
-}
+// Cap file read operations at 3 minutes. The MCP client's hard per-call limit
+// is ~4 minutes; timing out at 3m lets us abort the underlying fs op and return
+// a useful error (e.g. the cloud-storage guidance in buildPermissionError)
+// BEFORE the client gives up with an opaque "No result received after 4
+// minutes". Paired with runWithAbortableTimeout so the read is actually
+// cancelled (fd/thread released), not just abandoned.
+export const READ_OPERATION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
 const FILE_SIZE_LIMITS = {
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
@@ -502,10 +486,8 @@ export async function readFileFromDisk(
     }
 
     // Check file size before attempting to read
-    let fileSizeBytes = 0;
     try {
         const stats = await fs.stat(validPath);
-        fileSizeBytes = stats.size;
 
         // Capture file extension in telemetry without capturing the file path
         capture('server_read_file', {
@@ -521,8 +503,8 @@ export async function readFileFromDisk(
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
-    // Read under a size-aware, abortable timeout so a hung/stalled read is
-    // cancelled (fd/thread freed) rather than leaked until the OS call returns.
+    // Read under an abortable timeout so a hung/stalled read is cancelled
+    // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
         const handler = await getFileHandler(validPath);
@@ -557,12 +539,12 @@ export async function readFileFromDisk(
         };
     };
 
-    // Execute with a size-aware, cancellable timeout
+    // Execute with a 3-minute, cancellable timeout
     let result;
     try {
         result = await runWithAbortableTimeout(
             (signal) => readOperation(signal),
-            computeReadTimeoutMs(fileSizeBytes),
+            READ_OPERATION_TIMEOUT_MS,
             `Read file operation for ${filePath}`
         );
     } catch (error) {
@@ -629,13 +611,12 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     // preserve exact file content including original line endings.
     // We cannot use readline-based reading as it strips line endings.
 
-    // Read entire file content preserving line endings, under a size-aware,
+    // Read entire file content preserving line endings, under a 3-minute,
     // cancellable timeout so an edit on a stalled/cloud path can't hang forever
     // (previously this read had no timeout at all).
-    const internalReadSize = await fs.stat(validPath).then(s => s.size).catch(() => 0);
     const content = await runWithAbortableTimeout(
         (signal) => fs.readFile(validPath, { encoding: 'utf8', signal }),
-        computeReadTimeoutMs(internalReadSize),
+        READ_OPERATION_TIMEOUT_MS,
         `Internal read for ${filePath}`
     );
 

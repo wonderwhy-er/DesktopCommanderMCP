@@ -2,17 +2,18 @@ import assert from 'assert';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { runWithAbortableTimeout } from '../dist/utils/withTimeout.js';
-import { computeReadTimeoutMs } from '../dist/tools/filesystem.js';
+import { READ_OPERATION_TIMEOUT_MS } from '../dist/tools/filesystem.js';
 import { readFile } from '../dist/tools/filesystem.js';
 
 /**
- * Regression tests for the abortable, size-aware read timeout.
+ * Regression tests for the abortable, 3-minute read timeout.
  *
  * Follow-up to the parallel-load hang fix: withTimeout() rejected on a timer
  * but left the underlying fs op running, holding its libuv thread until the OS
  * call returned. runWithAbortableTimeout() passes an AbortSignal into the op
- * and aborts it on timeout, and read timeouts are now size-aware instead of a
- * fixed 30s (which conflated "stalled" with "large file on slow media").
+ * and aborts it on timeout. The read timeout is a flat 3 minutes, chosen to sit
+ * below the MCP client's ~4-minute hard cap so we abort + return a useful error
+ * before the client reports an opaque timeout.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -54,19 +55,11 @@ async function run() {
     ok('slow operation rejects ETIMEDOUT and aborts the operation signal');
   }
 
-  // 3) Size-aware timeout: floor for small, scales with size, capped at max.
+  // 3) The read timeout is 3 minutes — safely below the client's ~4-min cap.
   {
-    const floor = computeReadTimeoutMs(0);
-    const small = computeReadTimeoutMs(1024);
-    const oneGB = computeReadTimeoutMs(1024 * 1024 * 1024);
-    const huge = computeReadTimeoutMs(1024 * 1024 * 1024 * 1024); // 1TB
-
-    assert.strictEqual(floor, 30_000, `floor should be 30s, got ${floor}`);
-    assert.ok(small <= 30_100, 'tiny file stays at ~floor');
-    assert.ok(oneGB > 200_000 && oneGB < 300_000, `1GB should be ~4-5min, got ${oneGB}ms`);
-    assert.strictEqual(huge, 10 * 60_000, `huge file must clamp to 10min cap, got ${huge}`);
-    assert.ok(oneGB > floor, 'a large file gets more time than a small one');
-    ok('size-aware timeout: floor for small, scales for large, clamps at cap');
+    assert.strictEqual(READ_OPERATION_TIMEOUT_MS, 3 * 60 * 1000, 'read timeout must be 3 minutes');
+    assert.ok(READ_OPERATION_TIMEOUT_MS < 4 * 60 * 1000, 'must stay below the ~4-min client cap');
+    ok('read timeout is 3 minutes, below the client hard cap');
   }
 
   // 4) Integration: a normal read still works end-to-end (signal threading did
