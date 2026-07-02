@@ -549,11 +549,10 @@ export async function readFileFromDisk(
         );
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
-        // withTimeout rejects with a plain string "__ERROR__: ... timed out after N seconds"
-        // when defaultValue is null — it has no .code property, so check for that too.
-        const isWithTimeoutString = typeof error === 'string' && (error as string).startsWith('__ERROR__:');
-        if (isWithTimeoutString || err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
-            throw buildPermissionError(filePath, isWithTimeoutString ? 'ETIMEDOUT' : err.code);
+        // runWithAbortableTimeout rejects with an Error whose .code is 'ETIMEDOUT'
+        // on timeout; fs rejects with EPERM/EACCES. Map all to the guidance error.
+        if (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'ETIMEDOUT') {
+            throw buildPermissionError(filePath, err.code);
         }
         throw error;
     }
