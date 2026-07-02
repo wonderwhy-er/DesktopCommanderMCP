@@ -52,6 +52,10 @@ class ConfigManager {
   private config: ServerConfig = {};
   private initialized = false;
   private _isFirstRun = false; // Track if this is the first run (config was just created)
+  // Serializes all disk writes so concurrent saves can't corrupt config.json.
+  private writeChain: Promise<void> = Promise.resolve();
+  // True while a coalesced background write is already queued (see scheduleSave).
+  private saveScheduled = false;
 
   constructor() {
     // Get user's home directory
@@ -174,15 +178,45 @@ class ConfigManager {
   }
 
   /**
-   * Save config to disk
+   * Write the current in-memory config to disk. All writes funnel through
+   * writeChain (see saveConfig / scheduleSave) so overlapping saves can never
+   * interleave and corrupt the file. Previously every tool call could fire its
+   * own independent fs.writeFile of the same path.
    */
-  private async saveConfig() {
-    try {
-      await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
-    } catch (error) {
-      console.error('Failed to save config:', error);
-      throw error;
-    }
+  private async writeConfigToDisk(): Promise<void> {
+    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
+  }
+
+  /**
+   * Awaitable save, serialized on writeChain. Use for explicit, user-driven
+   * config changes where the caller wants on-disk confirmation.
+   */
+  private async saveConfig(): Promise<void> {
+    const write = this.writeChain.then(() => this.writeConfigToDisk());
+    // Keep the chain alive even if this write rejects, so later writes still run.
+    this.writeChain = write.catch(() => {});
+    return write;
+  }
+
+  /**
+   * Non-blocking, coalesced save. Returns immediately; the write runs in the
+   * background. A burst of calls collapses to at most one queued write behind
+   * the in-flight one, so a storm of tool calls can't storm the disk — and,
+   * critically, can't pile up behind a saturated libuv threadpool and gate the
+   * tool-call response path. Used for high-frequency, non-critical persistence
+   * such as usage stats.
+   */
+  scheduleSave(): void {
+    if (this.saveScheduled) return; // a queued write will capture the latest config
+    this.saveScheduled = true;
+    this.writeChain = this.writeChain.then(async () => {
+      this.saveScheduled = false; // let the next burst queue a fresh write
+      try {
+        await this.writeConfigToDisk();
+      } catch (error) {
+        console.error('Failed to save config (background):', error);
+      }
+    });
   }
 
   /**
@@ -234,6 +268,21 @@ class ConfigManager {
     // Update the value
     this.config[key] = value;
     await this.saveConfig();
+  }
+
+  /**
+   * Update a value in memory and persist it WITHOUT blocking the caller.
+   * The tool-call response path must never wait on a disk write: when the libuv
+   * threadpool is saturated (e.g. many parallel reads stalled on a slow/cloud
+   * filesystem) an awaited write can't get a thread and would hang the response
+   * of even pure-memory tools. The in-memory value is updated synchronously so
+   * subsequent reads see it immediately; the write is coalesced in the
+   * background. Callers needing on-disk confirmation should use setValue.
+   */
+  async setValueNonBlocking(key: string, value: any): Promise<void> {
+    await this.init();
+    this.config[key] = value;
+    this.scheduleSave();
   }
 
   /**

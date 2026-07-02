@@ -92,10 +92,14 @@ class UsageTracker {
   }
 
   /**
-   * Save usage stats to config
+   * Save usage stats to config.
+   * Non-blocking: the tool-call return path must not wait on a disk write. The
+   * in-memory stats are already updated by the caller (getStats returns the live
+   * config object), so persistence is coalesced in the background. This is what
+   * keeps a saturated libuv threadpool from gating tool responses on every call.
    */
   private async saveStats(stats: ToolUsageStats): Promise<void> {
-    await configManager.setValue('usageStats', stats);
+    await configManager.setValueNonBlocking('usageStats', stats);
   }
 
   /**
