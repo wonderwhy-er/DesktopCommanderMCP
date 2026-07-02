@@ -1,9 +1,10 @@
 import assert from 'assert';
+import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import fsp from 'fs/promises';
 import { runWithAbortableTimeout } from '../dist/utils/withTimeout.js';
-import { READ_OPERATION_TIMEOUT_MS } from '../dist/tools/filesystem.js';
-import { readFile } from '../dist/tools/filesystem.js';
+import { READ_OPERATION_TIMEOUT_MS, readFile } from '../dist/tools/filesystem.js';
+import { configManager } from '../dist/config-manager.js';
 
 /**
  * Regression tests for the abortable, 3-minute read timeout.
@@ -16,7 +17,6 @@ import { readFile } from '../dist/tools/filesystem.js';
  * before the client reports an opaque timeout.
  */
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let passed = 0;
 const ok = (msg) => { passed++; console.log(`✓ ${msg}`); };
 
@@ -63,13 +63,27 @@ async function run() {
   }
 
   // 4) Integration: a normal read still works end-to-end (signal threading did
-  //    not break the happy path). Reads this test file itself.
+  //    not break the happy path). Hermetic: uses its own temp dir + allowed-dir
+  //    config so it doesn't depend on the ambient allowedDirectories, and
+  //    restores config afterward.
   {
-    const self = path.join(__dirname, 'test-read-abort-timeout.js');
-    const res = await readFile(self, { offset: 0, length: 5 });
-    const text = typeof res.content === 'string' ? res.content : res.content.toString('utf8');
-    assert.ok(text.includes('runWithAbortableTimeout'), 'normal read returns file content');
-    ok('normal read_file still works with the signal threaded through');
+    const original = await configManager.getConfig();
+    const originalAllowed = original.allowedDirectories;
+    // realpath so the allowed dir matches what validatePath resolves the file
+    // to (e.g. macOS /tmp -> /private/tmp), avoiding a symlink mismatch.
+    const tmpDir = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'dc-read-abort-')));
+    const tmpFile = path.join(tmpDir, 'sample.txt');
+    await fsp.writeFile(tmpFile, 'line1\nMARKER runWithAbortableTimeout\nline3\n');
+    try {
+      await configManager.setValue('allowedDirectories', [tmpDir]);
+      const res = await readFile(tmpFile, { offset: 0, length: 5 });
+      const text = typeof res.content === 'string' ? res.content : res.content.toString('utf8');
+      assert.ok(text.includes('MARKER runWithAbortableTimeout'), 'normal read returns file content');
+      ok('normal read_file still works with the signal threaded through');
+    } finally {
+      await configManager.setValue('allowedDirectories', originalAllowed);
+      await fsp.rm(tmpDir, { recursive: true, force: true });
+    }
   }
 }
 
