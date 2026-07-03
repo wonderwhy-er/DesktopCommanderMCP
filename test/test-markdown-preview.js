@@ -539,6 +539,32 @@ async function testUnsupportedRawContentPreview() {
   assert.ok(payload, 'Unsupported payload should be extracted');
   assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'content[] text should be used as raw source');
 
+  // A PDF ui-read returns multiple blocks: the summary text block first, then
+  // per-page image/text blocks. extractRenderPayload selects the first
+  // NON-EMPTY text block (whitespace-only blocks are skipped, image blocks
+  // are ignored) — so the summary line wins over later page text.
+  const multiBlockPayload = extractRenderPayload({
+    content: [
+      { type: 'text', text: '   ' },
+      { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+      { type: 'text', text: 'PDF file: report.pdf (2 pages)\n' },
+      { type: 'text', text: '<!-- Page: 1 -->\nPage one text' },
+      { type: 'text', text: '<!-- Page: 2 -->\nPage two text' },
+    ],
+    structuredContent: {
+      fileName: 'report.pdf',
+      filePath: '/tmp/report.pdf',
+      fileType: 'unsupported',
+    },
+  });
+
+  assert.ok(multiBlockPayload, 'Multi-block payload should be extracted');
+  assert.strictEqual(
+    multiBlockPayload.content,
+    'PDF file: report.pdf (2 pages)\n',
+    'First non-empty text block (the summary) should be selected, skipping whitespace-only and image blocks'
+  );
+
   const capabilities = getFileTypeCapabilities(payload);
   assert.strictEqual(capabilities.supportsPreview, true, 'Unsupported payload with raw content should be displayable');
   assert.strictEqual(capabilities.canCopy, true, 'Unsupported raw source should be copyable');
