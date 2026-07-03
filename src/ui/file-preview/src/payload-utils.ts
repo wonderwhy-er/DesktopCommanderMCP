@@ -55,6 +55,31 @@ export function extractToolText(value: unknown): string | undefined {
     return undefined;
 }
 
+// Join ALL non-empty text blocks, not just the first. Most reads return a
+// single text block, but PDF reads return a summary block followed by
+// per-page text blocks — taking only the first would drop the page text.
+function extractJoinedToolText(value: unknown): string | undefined {
+    if (!isObjectRecord(value)) {
+        return undefined;
+    }
+    const content = value.content;
+    if (!Array.isArray(content)) {
+        return undefined;
+    }
+    const texts: string[] = [];
+    for (const item of content) {
+        if (
+            isObjectRecord(item)
+            && item.type === 'text'
+            && typeof item.text === 'string'
+            && item.text.trim().length > 0
+        ) {
+            texts.push(item.text);
+        }
+    }
+    return texts.length > 0 ? texts.join('\n') : undefined;
+}
+
 export function extractRenderPayload(value: unknown): RenderPayload | undefined {
     if (!isObjectRecord(value)) {
         return undefined;
@@ -69,7 +94,7 @@ export function extractRenderPayload(value: unknown): RenderPayload | undefined 
     // structuredContent alongside it is metadata-only. Images arrive as a base64
     // text block too (origin:'ui' reads carry no image block, so the host won't
     // inline-render and stall the RPC).
-    return buildRenderPayload(meta, extractToolText(value) ?? '');
+    return buildRenderPayload(meta, extractJoinedToolText(value) ?? '');
 }
 
 export function assertSuccessfulEditBlockResult(result: unknown): void {

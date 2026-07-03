@@ -540,9 +540,9 @@ async function testUnsupportedRawContentPreview() {
   assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'content[] text should be used as raw source');
 
   // A PDF ui-read returns multiple blocks: the summary text block first, then
-  // per-page image/text blocks. extractRenderPayload selects the first
-  // NON-EMPTY text block (whitespace-only blocks are skipped, image blocks
-  // are ignored) — so the summary line wins over later page text.
+  // per-page image/text blocks. extractRenderPayload joins ALL non-empty text
+  // blocks (whitespace-only blocks are skipped, image blocks are ignored) so
+  // the page text is preserved, not just the summary line.
   const multiBlockPayload = extractRenderPayload({
     content: [
       { type: 'text', text: '   ' },
@@ -561,8 +561,8 @@ async function testUnsupportedRawContentPreview() {
   assert.ok(multiBlockPayload, 'Multi-block payload should be extracted');
   assert.strictEqual(
     multiBlockPayload.content,
-    'PDF file: report.pdf (2 pages)\n',
-    'First non-empty text block (the summary) should be selected, skipping whitespace-only and image blocks'
+    'PDF file: report.pdf (2 pages)\n\n<!-- Page: 1 -->\nPage one text\n<!-- Page: 2 -->\nPage two text',
+    'All non-empty text blocks should be joined so PDF page text is preserved'
   );
 
   const capabilities = getFileTypeCapabilities(payload);
