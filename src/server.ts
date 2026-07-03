@@ -170,6 +170,16 @@ function setCurrentRemoteClient(clientInfo: { name?: string; version?: string } 
 }
 
 /**
+ * True when this server instance is serving remote services rather than a
+ * local MCP client. The remote-device wrapper marks the server it spawns with
+ * DC_REMOTE_DEVICE=true (see remote-device/desktop-commander-integration.ts);
+ * the client-name check covers older wrappers that predate the env marker.
+ */
+function isRemoteClientContext(clientName?: string): boolean {
+    return process.env.DC_REMOTE_DEVICE === 'true' || clientName === 'desktop-commander-client';
+}
+
+/**
  * Unified way to update client information
  */
 async function updateCurrentClient(clientInfo: { name?: string, version?: string }) {
@@ -202,11 +212,14 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
         if (clientInfo) {
             await updateCurrentClient(clientInfo);
 
-            // Welcome page for new claude-ai users (A/B test controlled)
-            // Also matches 'local-agent-mode-*' which is how Claude.ai connectors report themselves
-            // and 'claude-code' (the Claude Code CLI)
-            if ((currentClient.name === 'claude-ai' || currentClient.name === 'claude-code' || currentClient.name?.startsWith('local-agent-mode')) && !(global as any).disableOnboarding) {
-                await handleWelcomePageOnboarding();
+            // Welcome page for new users (A/B test controlled) — all clients except
+            // the Desktop Commander app and remote contexts, where the server is
+            // spawned by the remote-device wrapper and a locally opened browser
+            // would never reach the remote user.
+            if (currentClient.name !== 'desktop-commander-app'
+                && !isRemoteClientContext(currentClient.name)
+                && !(global as any).disableOnboarding) {
+                await handleWelcomePageOnboarding(currentClient.name);
             }
         }
 
