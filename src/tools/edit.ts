@@ -113,7 +113,7 @@ function getCharacterCodeData(expected: string, actual: string): {
     };
 }
 
-export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1): Promise<ServerResult> {
+export async function performSearchReplace(filePath: string, block: SearchReplace, expectedReplacements: number = 1, origin?: 'ui' | 'llm'): Promise<ServerResult> {
     // Get file extension for telemetry using path module
     const fileExtension = path.extname(filePath).toLowerCase();
     
@@ -223,13 +223,18 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
                 type: "text",
                 text: `${statusLine}${previewContent}`
             }],
-            structuredContent: {
-                fileName: path.basename(resolvedEditPath),
-                filePath: resolvedEditPath,
-                fileType: resolvePreviewFileType(resolvedEditPath),
-                sourceTool: 'edit_block',
-                ...await getDefaultEditorMetadata(resolvedEditPath),
-            },
+            // structuredContent only travels on widget-initiated calls: it is the
+            // widget's save-success signal (assertSuccessfulEditBlockResult) and
+            // metadata source. LLM-facing responses don't need it — nothing there
+            // consumes it, and the widget re-reads by path instead.
+            ...(origin === 'ui' ? {
+                structuredContent: {
+                    fileName: path.basename(resolvedEditPath),
+                    filePath: resolvedEditPath,
+                    fileType: resolvePreviewFileType(resolvedEditPath),
+                    ...await getDefaultEditorMetadata(resolvedEditPath),
+                },
+            } : {}),
         };
     }
     
@@ -437,13 +442,14 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                         type: "text",
                         text: `Successfully updated range ${parsed.range} in ${parsed.file_path}`
                     }],
-                    structuredContent: {
-                        fileName: path.basename(resolvedRangePath),
-                        filePath: resolvedRangePath,
-                        fileType: resolvePreviewFileType(resolvedRangePath),
-                        sourceTool: 'edit_block',
-                        ...await getDefaultEditorMetadata(resolvedRangePath),
-                    },
+                    ...(parsed.origin === 'ui' ? {
+                        structuredContent: {
+                            fileName: path.basename(resolvedRangePath),
+                            filePath: resolvedRangePath,
+                            fileType: resolvePreviewFileType(resolvedRangePath),
+                            ...await getDefaultEditorMetadata(resolvedRangePath),
+                        },
+                    } : {}),
                 };
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -477,13 +483,14 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                         type: "text",
                         text: `Successfully applied ${result.editsApplied} edit(s) to ${parsed.file_path}`
                     }],
-                    structuredContent: {
-                        fileName: path.basename(resolvedEditRangePath),
-                        filePath: resolvedEditRangePath,
-                        fileType: resolvePreviewFileType(resolvedEditRangePath),
-                        sourceTool: 'edit_block',
-                        ...await getDefaultEditorMetadata(resolvedEditRangePath),
-                    },
+                    ...(parsed.origin === 'ui' ? {
+                        structuredContent: {
+                            fileName: path.basename(resolvedEditRangePath),
+                            filePath: resolvedEditRangePath,
+                            fileType: resolvePreviewFileType(resolvedEditRangePath),
+                            ...await getDefaultEditorMetadata(resolvedEditRangePath),
+                        },
+                    } : {}),
                 };
             }
 
@@ -498,5 +505,5 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     return performSearchReplace(parsed.file_path, {
         search: parsed.old_string,
         replace: parsed.new_string
-    }, parsed.expected_replacements);
+    }, parsed.expected_replacements, parsed.origin);
 }

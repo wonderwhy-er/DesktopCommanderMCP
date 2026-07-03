@@ -523,20 +523,21 @@ async function testRefreshDoesNotMisclassifyMarkdownContentAsDeletion() {
 }
 
 async function testUnsupportedRawContentPreview() {
-  console.log('\n--- Test 11: unsupported files render raw structured content ---');
+  console.log('\n--- Test 11: unsupported files render raw content ---');
 
+  // structuredContent is metadata-only; the raw text rides in content[]
+  // (the shape of an origin:'ui' read the widget pulls).
   const payload = extractRenderPayload({
-    content: [{ type: 'text', text: 'PDF file: report.pdf (1 pages)\n' }],
+    content: [{ type: 'text', text: '<!-- Page: 1 -->\nRaw PDF text' }],
     structuredContent: {
       fileName: 'report.pdf',
       filePath: '/tmp/report.pdf',
       fileType: 'unsupported',
-      content: '<!-- Page: 1 -->\nRaw PDF text',
     },
   });
 
   assert.ok(payload, 'Unsupported payload should be extracted');
-  assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'Structured content text should be used as raw source');
+  assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'content[] text should be used as raw source');
 
   const capabilities = getFileTypeCapabilities(payload);
   assert.strictEqual(capabilities.supportsPreview, true, 'Unsupported payload with raw content should be displayable');
