@@ -217,6 +217,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             // spawned by the remote-device wrapper and a locally opened browser
             // would never reach the remote user.
             if (currentClient.name !== 'desktop-commander-app'
+                && currentClient.name !== 'desktop-commander'
                 && !isRemoteClientContext(currentClient.name)
                 && !(global as any).disableOnboarding) {
                 await handleWelcomePageOnboarding(currentClient.name);
