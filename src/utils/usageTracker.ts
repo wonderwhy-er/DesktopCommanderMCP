@@ -419,7 +419,15 @@ class UsageTracker {
   async shouldShowOnboarding(): Promise<boolean> {
     // Check feature flag first (remote kill switch)
     const { featureFlagManager } = await import('./feature-flags.js');
-    const onboardingEnabled = featureFlagManager.get('onboarding_injection', true);
+
+    // Default false: on cold starts (no flag cache yet, e.g. ephemeral Docker
+    // containers) this can run before the background flag fetch completes.
+    // Treat an unknown flag as "off" so nothing is injected — flags load
+    // within seconds, so when the flag is ON onboarding still fires on a
+    // later call while the user is new. Deliberately no waiting here to keep
+    // tool calls latency-free.
+    // See: https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/538
+    const onboardingEnabled = featureFlagManager.get('onboarding_injection', false);
     if (!onboardingEnabled) {
       return false;
     }
