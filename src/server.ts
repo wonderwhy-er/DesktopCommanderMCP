@@ -217,11 +217,14 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
         // branching in code. Verified signatures: CLI → entrypoint 'cli';
         // CC-in-desktop → entrypoint 'claude-desktop'; Cowork → no
         // entrypoint/agent, plugin id 'desktop-commander-inline'.
+        // Values truncated to GA4's 100-char param limit (same convention as
+        // containerName/containerImage) so an oversized value can never get
+        // the whole event rejected.
         capture('run_server_mcp_initialized', {
-            host_entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT,
-            host_agent: process.env.AI_AGENT,
+            host_entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT?.substring(0, 100),
+            host_agent: process.env.AI_AGENT?.substring(0, 100),
             host_plugin_id: process.env.CLAUDE_PLUGIN_DATA
-                ? path.basename(process.env.CLAUDE_PLUGIN_DATA) : undefined
+                ? path.basename(process.env.CLAUDE_PLUGIN_DATA).substring(0, 100) : undefined
         });
 
         // Negotiate protocol version with client
