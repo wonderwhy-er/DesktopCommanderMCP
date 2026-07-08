@@ -1,3 +1,4 @@
+import path from 'path';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
     CallToolRequestSchema,
@@ -224,7 +225,22 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             }
         }
 
-        capture('run_server_mcp_initialized');
+        // Raw host environment signals (no PII, undefined when absent). Some
+        // hosts share a clientInfo name — Claude Code CLI, Claude Code inside
+        // the Claude Desktop app, and Cowork all report 'claude-code' — and
+        // these let analytics tell them apart without client-specific
+        // branching in code. Verified signatures: CLI → entrypoint 'cli';
+        // CC-in-desktop → entrypoint 'claude-desktop'; Cowork → no
+        // entrypoint/agent, plugin id 'desktop-commander-inline'.
+        // Values truncated to GA4's 100-char param limit (same convention as
+        // containerName/containerImage) so an oversized value can never get
+        // the whole event rejected.
+        capture('run_server_mcp_initialized', {
+            host_entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT?.substring(0, 100),
+            host_agent: process.env.AI_AGENT?.substring(0, 100),
+            host_plugin_id: process.env.CLAUDE_PLUGIN_DATA
+                ? path.basename(process.env.CLAUDE_PLUGIN_DATA).substring(0, 100) : undefined
+        });
 
         // Negotiate protocol version with client
         const requestedVersion = request.params?.protocolVersion;
