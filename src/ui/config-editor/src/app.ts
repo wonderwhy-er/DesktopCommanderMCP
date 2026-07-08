@@ -435,10 +435,16 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
         }
 
         try {
-            const setResult = await callTool('set_config_value', {
+            // Include the UI session token when the hosting app has injected it
+            // (window.__DC_UI_TOKEN).  The server validates this token when
+            // DESKTOP_COMMANDER_UI_TOKEN is set in its environment.
+            const uiToken = (typeof window !== 'undefined' && (window as any).__DC_UI_TOKEN)
+                ? String((window as any).__DC_UI_TOKEN)
+                : undefined;
+            const setResult = await callTool('_internal_set_config_value', {
                 key: selected.key,
                 value: parsed.value,
-                origin: 'ui',
+                ...(uiToken !== undefined ? { _uiToken: uiToken } : {}),
             });
 
             if (isToolErrorResult(setResult)) {
