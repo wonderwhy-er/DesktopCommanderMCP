@@ -88,6 +88,9 @@ export interface ReadOptions {
 
     /** Whether to include status messages (default: true) */
     includeStatusMessage?: boolean;
+
+    /** Optional AbortSignal to cancel an in-flight read (frees fd/thread on timeout). */
+    signal?: AbortSignal;
 }
 
 /**
