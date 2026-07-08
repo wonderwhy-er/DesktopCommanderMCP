@@ -496,6 +496,7 @@ export function createMarkdownController(dependencies: MarkdownControllerDepende
             maxResults: 20,
             earlyTermination: false,
             literalSearch: true,
+            origin: 'ui',
         });
         const text = extractToolText(result) ?? '';
         const filePaths = parseFileSearchResults(text);

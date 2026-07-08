@@ -26,7 +26,6 @@ import type { HtmlPreviewMode } from './types.js';
 
 let isExpanded = false;
 let hideSummaryRow = false;
-let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let conflictDialogController: ConflictDialogController | undefined;
@@ -443,13 +442,6 @@ export function renderApp(
         onRender,
     });
     onRender?.();
-    if (!previewShownFired) {
-        previewShownFired = true;
-        trackUiEvent?.('preview_shown', {
-            file_type: payload.fileType,
-            file_extension: fileExtension,
-        });
-    }
 }
 
 export function bootstrapApp(): void {

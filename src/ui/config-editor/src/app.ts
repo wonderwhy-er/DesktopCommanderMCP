@@ -470,7 +470,7 @@ export function createConfigEditorController(callTool: ToolCall, trackConfigUiEv
                 }),
             });
 
-            const refreshed = await callTool('get_config', {});
+            const refreshed = await callTool('get_config', { origin: 'ui' });
             if (isToolErrorResult(refreshed)) {
                 const errorMessage = extractToolText(refreshed) ?? 'Value was updated but config refresh failed.';
                 return {
@@ -827,8 +827,6 @@ export function bootstrapConfigEditorApp(): void {
         expanded: true,
     };
 
-    let configEditorShownEventSent = false;
-
     let quietContextSupported = true;
     let tooltipHideTimer: number | null = null;
 
@@ -924,20 +922,11 @@ export function bootstrapConfigEditorApp(): void {
         controller.setPayload(payload);
         widgetState.write(payload);
         scheduleRender();
-
-        if (!configEditorShownEventSent) {
-            configEditorShownEventSent = true;
-            // One-shot impression event for get_config UI card visibility.
-            trackConfigUiEvent('config_editor_shown', {
-                tool_name: GET_CONFIG_TOOL_NAME,
-                entry_count: payload.entries.length,
-            });
-        }
     };
 
     const refreshConfigFromServer = async (): Promise<void> => {
         try {
-            const result = await bridge.callTool('get_config', {});
+            const result = await bridge.callTool('get_config', { origin: 'ui' });
             const payload = controller.extractPayload(result);
             if (payload) {
                 applyPayload(payload);

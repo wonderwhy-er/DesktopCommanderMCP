@@ -68,7 +68,7 @@ import { toolHistory } from './utils/toolHistory.js';
 import { handleWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
-import { capture, capture_call_tool } from "./utils/capture.js";
+import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
@@ -1211,6 +1211,21 @@ import * as handlers from './handlers/index.js';
 import { ServerResult } from './types.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
+    const args = request.params.arguments;
+    // Calls fired programmatically by the widget UIs (file preview, config
+    // editor) carry origin:'ui'. They are real tool executions but not agent
+    // actions, so they must produce zero telemetry: running them inside the
+    // UI-origin capture context makes capture() drop every event they raise
+    // (server_call_tool, server_read_file, server_edit_block, ...). Deliberate
+    // UI interactions are tracked separately via mcp_ui_event.
+    const isUiOriginCall = !!(args && typeof args === 'object' && (args as any).origin === 'ui');
+    if (isUiOriginCall) {
+        return runInUiOriginCallContext(() => handleCallToolRequest(request));
+    }
+    return handleCallToolRequest(request);
+});
+
+async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
     // Hoisted above the try so the finally block can read them when emitting the
@@ -1252,18 +1267,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
 
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
-            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
-        }
-        // Attribute file-surface tool calls to the file-preview UI vs the LLM.
-        // The UI passes origin:'ui' when it fires these tools to refresh/navigate
-        // (pagination, folder expansion, link resolution, in-preview edits); the
-        // first read_file that opens a file comes from the LLM and is recorded as
-        // 'llm'. Lets us separate UI-refresh churn from genuine model-driven reads.
-        if (
-            (name === 'read_file' || name === 'write_file' || name === 'edit_block' || name === 'list_directory') &&
-            args && typeof args === 'object'
-        ) {
-            telemetryData.call_origin = (args as any).origin === 'ui' ? 'ui' : 'llm';
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
@@ -1640,13 +1643,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         // Single tool-call telemetry event, fired AFTER execution so it can carry
         // timing. In a finally so it still fires on the hard-crash path (the catch
         // above). Only missed if a tool never returns or throws (a true hang).
-        capture_call_tool('server_call_tool', {
-            ...telemetryData,
-            duration_ms: Date.now() - startTime,
-            is_error: String(isError),
-        });
+        // Not emitted for track_ui_event (it is just the transport for
+        // mcp_ui_event) — and UI-origin calls are dropped wholesale by the
+        // capture layer, so server_call_tool reflects only genuine
+        // agent-driven tool calls.
+        if (name !== 'track_ui_event') {
+            capture_call_tool('server_call_tool', {
+                ...telemetryData,
+                duration_ms: Date.now() - startTime,
+                is_error: String(isError),
+            });
+        }
     }
-});
+}
 
 // Add no-op handlers so Visual Studio initialization succeeds
 server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
