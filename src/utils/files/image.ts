@@ -37,7 +37,7 @@ export class ImageFileHandler implements FileHandler {
 
     async read(path: string, options?: ReadOptions): Promise<FileResult> {
         // Images are always read in full, ignoring offset and length
-        const buffer = await fs.readFile(path);
+        const buffer = await fs.readFile(path, { signal: options?.signal });
         const content = buffer.toString('base64');
         const mimeType = this.getMimeType(path);
 
