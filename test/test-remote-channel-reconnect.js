@@ -177,6 +177,45 @@ async function driveHealthChecks(rc, maxAttempts) {
   return !!(rc.channel && rc.channel.state === 'joined');
 }
 
+/**
+ * Model the WEDGE (open bug 2026-06-27): bring the channel up healthy, then make the
+ * socket half-open (readyState stays OPEN) AND leave the channel parked in 'joining' —
+ * which is what realtime-js does when it keeps re-attempting a join over a dead socket
+ * it never tears down. This is distinct from the 'errored' path the guard already
+ * handles: here the channel is stuck in a state the health-check treats as healthy.
+ */
+async function goHalfOpenStuckJoining(rc, client) {
+  await rc.createChannel(); // healthy subscribe -> 'joined'
+  assert.strictEqual(rc.channel.state, 'joined', 'precondition: channel should be joined');
+  client.realtime.socketDead = true; // dead peer, but readyState stays 1 (OPEN)
+  rc.channel.state = 'joining';      // realtime-js parks it rejoining on the dead socket
+  rc.lastChannelState = 'joining';
+}
+
+/**
+ * Drive the 10s health-check while the channel is stuck 'joining' on a half-open socket.
+ * Advances a SIMULATED clock 10s per tick (the real health-check interval) so a
+ * time-bounded guard can observe how long the channel has overstayed 'joining' without
+ * the test burning real wall-clock. Returns whether the channel recovered.
+ */
+async function driveHealthChecksStuckJoining(rc, maxTicks) {
+  const realNow = Date.now;
+  let simulated = realNow();
+  Date.now = () => simulated;
+  try {
+    for (let i = 0; i < maxTicks; i++) {
+      if (rc.channel && rc.channel.state === 'joined') return true;
+      rc.checkConnectionHealth(); // -> must eventually recreate once 'joining' overstays
+      await flush();
+      await flush();
+      simulated += 10_000; // advance one 10s health-check interval
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  return !!(rc.channel && rc.channel.state === 'joined');
+}
+
 // Silence the (intentionally verbose) diagnostic logging during the drive so
 // the test output stays readable; we summarise via the fake's statusLog instead.
 // Must await so console is restored only after the async callbacks have fired.
@@ -262,6 +301,28 @@ async function main() {
       assert.strictEqual(rc.reconnectAttempt, attemptsBefore, 'joining must not trigger a recreate');
       assert.strictEqual(client.realtime.rebuilds, rebuildsBefore, 'joining must not rebuild the socket');
     });
+  });
+
+  // REGRESSION REPRO (open bug 2026-06-27): a half-open socket can leave the channel
+  // parked in 'joining' instead of 'errored'. The previous test proves single-tick
+  // 'joining' must NOT recreate; THIS test proves 'joining' must not be healthy
+  // *forever* — if it overstays while the socket reads OPEN(1) (the half-open tell),
+  // the guard must force a recreate (the same path that recovers the 'errored' case),
+  // or the device wedges offline until restart. EXPECTED TO FAIL until the
+  // time-bounded-'joining' fix lands in checkConnectionHealth().
+  await test('recovers when a half-open socket leaves the channel stuck in joining', async () => {
+    const { rc, client } = makeRemoteChannel();
+    const recovered = await withQuietLogs(async () => {
+      await goHalfOpenStuckJoining(rc, client);
+      return driveHealthChecksStuckJoining(rc, 8); // ~80s simulated; a 30s bound fires by tick ~4
+    });
+    assert.strictEqual(
+      recovered,
+      true,
+      `channel wedged in 'joining' on a half-open socket and never recovered.\n` +
+        `     attempts(recreate)=${rc.reconnectAttempt} rebuilds=${client.realtime.rebuilds}\n` +
+        `     channelState=${rc.channel && rc.channel.state} socketReadyState=${client.realtime.conn.readyState}`
+    );
   });
 
   console.log(
