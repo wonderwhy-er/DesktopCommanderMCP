@@ -13,7 +13,7 @@ import { capture } from './capture.js';
  * 2. Users in the 'showOnboardingPage' A/B variant
  * 3. Haven't seen it yet
  */
-export async function handleWelcomePageOnboarding(): Promise<void> {
+export async function handleWelcomePageOnboarding(clientName?: string): Promise<void> {
   // Check if this is a new install pending A/B decision
   // This flag is set when config is first created and survives process restarts
   const pending = await configManager.getValue('pendingWelcomeOnboarding');
@@ -56,7 +56,7 @@ export async function handleWelcomePageOnboarding(): Promise<void> {
   }
 
   try {
-    await openWelcomePage();
+    await openWelcomePage(clientName);
     await configManager.setValue('sawOnboardingPage', true);
     await configManager.setValue('pendingWelcomeOnboarding', false);
     capture('server_welcome_page_opened', { success: true });
