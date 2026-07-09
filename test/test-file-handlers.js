@@ -359,7 +359,7 @@ async function testReadFilePreviewMetadata() {
 
   // write_file never returns structuredContent (nothing in the UI calls it;
   // the widget previews writes via its own read_file pull).
-  const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler' });
+  const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler', mode: 'rewrite' });
   assert.strictEqual(writeResult.structuredContent, undefined, 'write_file should carry no structuredContent');
   assert.ok(writeResult.content[0].text.includes('Successfully'), 'write_file should confirm the write');
 
