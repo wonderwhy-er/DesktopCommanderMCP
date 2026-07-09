@@ -6,22 +6,64 @@ import { KillProcessArgsSchema } from './schemas.js';
 
 const execAsync = promisify(exec);
 
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let field = '';
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (quoted && line[i + 1] === '"') {
+        field += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === ',' && !quoted) {
+      fields.push(field);
+      field = '';
+    } else {
+      field += char;
+    }
+  }
+
+  fields.push(field);
+  return fields;
+}
+
 export async function listProcesses(): Promise<ServerResult> {
-  const command = os.platform() === 'win32' ? 'tasklist' : 'ps aux';
+  const isWindows = os.platform() === 'win32';
+  const command = isWindows ? 'tasklist /FO CSV /NH' : 'ps aux';
   try {
     const { stdout } = await execAsync(command);
-    const processes = stdout.split('\n')
-      .slice(1)
-      .filter(Boolean)
-      .map(line => {
-        const parts = line.split(/\s+/);
-        return {
-          pid: parseInt(parts[1]),
-          command: parts[parts.length - 1],
-          cpu: parts[2],
-          memory: parts[3],
-        } as ProcessInfo;
-      });
+    const processes = isWindows
+      ? stdout.split(/\r?\n/)
+        .filter(Boolean)
+        .map(line => parseCsvLine(line))
+        .map(parts => {
+          const pid = Number.parseInt(parts[1], 10);
+          if (!Number.isInteger(pid)) return null;
+          return {
+            pid,
+            command: parts[0],
+            cpu: 'N/A',
+            memory: parts[4] ?? 'N/A',
+          } as ProcessInfo;
+        })
+        .filter((process): process is ProcessInfo => process !== null)
+      : stdout.split('\n')
+        .slice(1)
+        .filter(Boolean)
+        .map(line => {
+          const parts = line.split(/\s+/);
+          return {
+            pid: parseInt(parts[1], 10),
+            command: parts[parts.length - 1],
+            cpu: parts[2],
+            memory: parts[3],
+          } as ProcessInfo;
+        });
 
     return {
       content: [{

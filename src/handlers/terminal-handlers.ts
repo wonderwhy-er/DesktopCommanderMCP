@@ -17,7 +17,7 @@ import {
 import { ServerResult } from '../types.js';
 
 /**
- * Handle start_process command (improved execute_command)
+ * Handle start_process command
  */
 export async function handleStartProcess(args: unknown): Promise<ServerResult> {
     const parsed = StartProcessArgsSchema.parse(args);
@@ -25,7 +25,7 @@ export async function handleStartProcess(args: unknown): Promise<ServerResult> {
 }
 
 /**
- * Handle read_process_output command (improved read_output)
+ * Handle read_process_output command
  */
 export async function handleReadProcessOutput(args: unknown): Promise<ServerResult> {
     const parsed = ReadProcessOutputArgsSchema.parse(args);

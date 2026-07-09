@@ -254,6 +254,12 @@ export class TerminalManager {
 
     // Spawn the process with appropriate arguments
     const childProcess = spawn(spawnConfig.executable, spawnConfig.args, spawnOptions);
+    let spawnError: Error | undefined;
+    // `spawn` reports executable lookup failures asynchronously. Always attach
+    // a listener before checking pid so an invalid shell cannot crash the MCP server.
+    childProcess.on('error', (error) => {
+      spawnError = error;
+    });
     let output = '';
 
     // Ensure childProcess.pid is defined before proceeding
@@ -261,7 +267,7 @@ export class TerminalManager {
       // Return a consistent error object instead of throwing
       return {
         pid: -1,  // Use -1 to indicate an error state
-        output: 'Error: Failed to get process ID. The command could not be executed.',
+        output: `Error: ${spawnError?.message ?? 'Failed to get process ID. The command could not be executed.'}`,
         isBlocked: false
       };
     }
@@ -290,6 +296,7 @@ export class TerminalManager {
     return new Promise((resolve) => {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
+      let timeoutHandle: NodeJS.Timeout | null = null;
 
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
@@ -298,6 +305,7 @@ export class TerminalManager {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
 
         // Add timing info if requested
         if (collectTiming) {
@@ -408,7 +416,7 @@ export class TerminalManager {
       }, 100);
 
       // Timeout fallback
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
@@ -417,6 +425,15 @@ export class TerminalManager {
           isBlocked: true
         });
       }, timeoutMs);
+
+      childProcess.on('error', (error) => {
+        exitReason = 'process_exit';
+        resolveOnce({
+          pid: childProcess.pid ?? -1,
+          output: `Error: ${error.message}`,
+          isBlocked: false
+        });
+      });
 
       childProcess.on('exit', (code: any) => {
         if (childProcess.pid) {
