@@ -523,20 +523,47 @@ async function testRefreshDoesNotMisclassifyMarkdownContentAsDeletion() {
 }
 
 async function testUnsupportedRawContentPreview() {
-  console.log('\n--- Test 11: unsupported files render raw structured content ---');
+  console.log('\n--- Test 11: unsupported files render raw content ---');
 
+  // structuredContent is metadata-only; the raw text rides in content[]
+  // (the shape of an origin:'ui' read the widget pulls).
   const payload = extractRenderPayload({
-    content: [{ type: 'text', text: 'PDF file: report.pdf (1 pages)\n' }],
+    content: [{ type: 'text', text: '<!-- Page: 1 -->\nRaw PDF text' }],
     structuredContent: {
       fileName: 'report.pdf',
       filePath: '/tmp/report.pdf',
       fileType: 'unsupported',
-      content: '<!-- Page: 1 -->\nRaw PDF text',
     },
   });
 
   assert.ok(payload, 'Unsupported payload should be extracted');
-  assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'Structured content text should be used as raw source');
+  assert.strictEqual(payload.content, '<!-- Page: 1 -->\nRaw PDF text', 'content[] text should be used as raw source');
+
+  // A PDF ui-read returns multiple blocks: the summary text block first, then
+  // per-page image/text blocks. extractRenderPayload joins ALL non-empty text
+  // blocks (whitespace-only blocks are skipped, image blocks are ignored) so
+  // the page text is preserved, not just the summary line.
+  const multiBlockPayload = extractRenderPayload({
+    content: [
+      { type: 'text', text: '   ' },
+      { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' },
+      { type: 'text', text: 'PDF file: report.pdf (2 pages)\n' },
+      { type: 'text', text: '<!-- Page: 1 -->\nPage one text' },
+      { type: 'text', text: '<!-- Page: 2 -->\nPage two text' },
+    ],
+    structuredContent: {
+      fileName: 'report.pdf',
+      filePath: '/tmp/report.pdf',
+      fileType: 'unsupported',
+    },
+  });
+
+  assert.ok(multiBlockPayload, 'Multi-block payload should be extracted');
+  assert.strictEqual(
+    multiBlockPayload.content,
+    'PDF file: report.pdf (2 pages)\n\n<!-- Page: 1 -->\nPage one text\n<!-- Page: 2 -->\nPage two text',
+    'All non-empty text blocks should be joined so PDF page text is preserved'
+  );
 
   const capabilities = getFileTypeCapabilities(payload);
   assert.strictEqual(capabilities.supportsPreview, true, 'Unsupported payload with raw content should be displayable');
