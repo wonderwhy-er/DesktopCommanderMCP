@@ -359,7 +359,7 @@ async function testReadFilePreviewMetadata() {
 
   // write_file never returns structuredContent (nothing in the UI calls it;
   // the widget previews writes via its own read_file pull).
-  const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler' });
+  const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler', mode: 'rewrite' });
   assert.strictEqual(writeResult.structuredContent, undefined, 'write_file should carry no structuredContent');
   assert.ok(writeResult.content[0].text.includes('Successfully'), 'write_file should confirm the write');
 
@@ -420,6 +420,61 @@ async function testMarkdownExactMatchSave() {
 }
 
 /**
+ * Test 11: write_file data-loss guard (#546)
+ *
+ * An omitted `mode` falls back to 'rewrite', which silently destroys the
+ * target's existing content. The guard rejects no-mode writes to non-empty
+ * files (the #541 failure: an LLM intends to append but drops the optional
+ * param) while keeping new/empty files zero-friction. The guard lives in
+ * handleWriteFile — the low-level writeFile tool used by Test 8 bypasses it.
+ */
+async function testWriteModeGuard() {
+  console.log('\n--- Test 11: write_file data-loss guard (#546) ---');
+
+  const GUARD_FILE = path.join(TEST_DIR, 'guard.txt');
+  const originalContent = 'precious existing content\n';
+
+  // The #541 case: file has content, caller intends to append but omits mode.
+  await fs.writeFile(GUARD_FILE, originalContent);
+  const rejected = await handleWriteFile({ path: GUARD_FILE, content: 'appended line\n' });
+  assert.strictEqual(rejected.isError, true, 'No-mode write to non-empty file should be rejected');
+  assert.ok(rejected.content[0].text.includes('rejected'), 'Rejection should say the write was rejected');
+  assert.ok(rejected.content[0].text.includes("'append'") && rejected.content[0].text.includes("'rewrite'"),
+    'Rejection should tell the caller to retry with an explicit append or rewrite mode');
+  assert.strictEqual(await fs.readFile(GUARD_FILE, 'utf8'), originalContent,
+    'Rejected write must leave the file untouched');
+  console.log('✓ No-mode write to non-empty file rejected, content preserved');
+
+  // The recovery path the error steers the model to: retry with explicit append.
+  const appended = await handleWriteFile({ path: GUARD_FILE, content: 'appended line\n', mode: 'append' });
+  assert.notStrictEqual(appended.isError, true, 'Explicit append should succeed');
+  assert.strictEqual(await fs.readFile(GUARD_FILE, 'utf8'), originalContent + 'appended line\n',
+    'Append should add to the existing content');
+  console.log('✓ Retry with explicit append succeeds');
+
+  // Explicit rewrite on a non-empty file is a stated intent — allowed.
+  const rewritten = await handleWriteFile({ path: GUARD_FILE, content: 'replaced\n', mode: 'rewrite' });
+  assert.notStrictEqual(rewritten.isError, true, 'Explicit rewrite should succeed');
+  assert.strictEqual(await fs.readFile(GUARD_FILE, 'utf8'), 'replaced\n', 'Rewrite should replace the content');
+  console.log('✓ Explicit rewrite on non-empty file succeeds');
+
+  // New file, no mode: nothing to protect, zero-friction default stays.
+  const NEW_FILE = path.join(TEST_DIR, 'guard-new.txt');
+  const created = await handleWriteFile({ path: NEW_FILE, content: 'fresh file\n' });
+  assert.notStrictEqual(created.isError, true, 'No-mode write to a new file should succeed');
+  assert.strictEqual(await fs.readFile(NEW_FILE, 'utf8'), 'fresh file\n', 'New file should be created with content');
+  console.log('✓ No-mode write to new file succeeds');
+
+  // Existing but empty file, no mode: nothing to lose — allowed.
+  const EMPTY_FILE = path.join(TEST_DIR, 'guard-empty.txt');
+  await fs.writeFile(EMPTY_FILE, '');
+  const filledEmpty = await handleWriteFile({ path: EMPTY_FILE, content: 'now has content\n' });
+  assert.notStrictEqual(filledEmpty.isError, true, 'No-mode write to an empty file should succeed');
+  assert.strictEqual(await fs.readFile(EMPTY_FILE, 'utf8'), 'now has content\n', 'Empty file should accept the write');
+  console.log('✓ No-mode write to empty file succeeds');
+}
+
+/**
  * Run all tests
  */
 async function runAllTests() {
@@ -435,6 +490,7 @@ async function runAllTests() {
   await testWriteModes();
   await testReadFilePreviewMetadata();
   await testMarkdownExactMatchSave();
+  await testWriteModeGuard();
 
   console.log('\n✅ All file handler tests passed!');
 }
