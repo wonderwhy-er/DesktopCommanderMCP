@@ -290,7 +290,32 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
  */
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
+        const modeProvided = !!(args && typeof args === 'object' && 'mode' in args);
         const parsed = WriteFileArgsSchema.parse(args);
+
+        // An omitted `mode` falls back to 'rewrite', which silently destroys
+        // the target's existing content. The common failure is an LLM caller
+        // intending to append but dropping the optional param (issue #541), so
+        // require explicit intent when the target already has content;
+        // new/empty files keep the zero-friction default.
+        if (!modeProvided) {
+            let existing: Record<string, any> | null = null;
+            try {
+                existing = await getFileInfo(parsed.path);
+            } catch {
+                // Missing file or invalid path — nothing to protect; the write
+                // itself will surface any real path error.
+            }
+            if (existing?.isFile && existing.size > 0) {
+                return createErrorResponse(
+                    `Write rejected to prevent accidental data loss: ${parsed.path} already exists ` +
+                    `with content (${existing.size} bytes), and no 'mode' was specified — the default ` +
+                    `mode 'rewrite' would REPLACE the entire file. Retry with an explicit mode: ` +
+                    `'append' to add your content to the end of the existing file, or 'rewrite' ` +
+                    `to replace all existing content.`
+                );
+            }
+        }
 
         // Get the line limit from configuration
         const config = await configManager.getConfig();
