@@ -203,6 +203,8 @@ The setup command will install dependencies, build the server, and configure Cla
 
 </details>
 
+<a id="option-6-docker-installation--auto-updates-no-nodejs-required"></a>
+
 <details>
 <summary><b>Option 6: Docker Installation 🐳 ⭐ Auto-Updates (No Node.js Required)</b></summary>
 
@@ -826,7 +828,7 @@ For commands that may take a while:
 
 4. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories.
 
-5. **For production security**: Use the [Docker installation](#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) which provides complete isolation from your host system.
+5. **For production security**: Use the [Docker installation](#option-6-docker-installation--auto-updates-no-nodejs-required) which provides complete isolation from your host system.
 
 ### Configuration Tools
 
