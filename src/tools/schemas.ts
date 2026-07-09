@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 // Config tools schemas
-export const GetConfigArgsSchema = z.object({});
+export const GetConfigArgsSchema = z.object({
+  // 'ui' marks calls the config-editor widget fires programmatically; they are
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
+});
 
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
@@ -12,6 +16,7 @@ export const SetConfigValueArgsSchema = z.object({
     z.array(z.string()),
     z.null(),
   ]),
+  // 'ui' marks widget-fired calls; excluded from tool-call telemetry.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -24,6 +29,9 @@ export const StartProcessArgsSchema = z.object({
   timeout_ms: z.number(),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
+  // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const ReadProcessOutputArgsSchema = z.object({
@@ -54,7 +62,8 @@ export const ReadFileArgsSchema = z.object({
   range: z.string().optional(),
   options: z.record(z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
-  // LLM. Used only for telemetry attribution; see call_origin in server.ts.
+  // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
+  // in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -66,7 +75,8 @@ export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
-  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -116,7 +126,8 @@ export const CreateDirectoryArgsSchema = z.object({
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
   depth: z.number().optional().default(2),
-  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -144,7 +155,8 @@ export const EditBlockArgsSchema = z.object({
   range: z.string().optional(),
   content: z.any().optional(),
   options: z.record(z.any()).optional(),
-  // Telemetry attribution: 'ui' when fired by the file-preview UI, else 'llm'.
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
 }).refine(
   data => {
@@ -191,6 +203,9 @@ export const StartSearchArgsSchema = z.object({
   timeout_ms: z.number().optional(), // Match process naming convention
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
   literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
+  // 'ui' marks widget-fired calls (e.g. markdown link-target search);
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const GetMoreSearchResultsArgsSchema = z.object({

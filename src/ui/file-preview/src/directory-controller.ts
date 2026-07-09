@@ -171,7 +171,7 @@ export function attachDirectoryHandlers(options: {
             const command = options.buildOpenInFolderCommand(openPath);
             if (command) {
                 try {
-                    await options.callTool?.('start_process', { command, timeout_ms: 12000 });
+                    await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
                     // Keep UI stable if opening folder fails.
                 }
