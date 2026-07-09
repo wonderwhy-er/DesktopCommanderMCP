@@ -57,13 +57,16 @@ export async function listProcesses(): Promise<ServerResult> {
         .filter(Boolean)
         .map(line => {
           const parts = line.split(/\s+/);
+          const pid = Number.parseInt(parts[1], 10);
+          if (!Number.isInteger(pid) || pid <= 0) return null;
           return {
-            pid: parseInt(parts[1], 10),
+            pid,
             command: parts[parts.length - 1],
             cpu: parts[2],
             memory: parts[3],
           } as ProcessInfo;
-        });
+        })
+        .filter((process): process is ProcessInfo => process !== null);
 
     return {
       content: [{
