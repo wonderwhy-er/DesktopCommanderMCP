@@ -121,7 +121,7 @@ export function attachPanelActions(options: {
                     file_extension: fileExtension,
                 });
                 try {
-                    await options.callTool?.('start_process', { command, timeout_ms: 12000 });
+                    await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
                     // Keep UI stable if opening folder fails.
                 }
@@ -141,7 +141,7 @@ export function attachPanelActions(options: {
                     file_extension: fileExtension,
                 });
                 try {
-                    await options.callTool?.('start_process', { command, timeout_ms: 12000 });
+                    await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
                     // Keep UI stable if opening editor fails.
                 }

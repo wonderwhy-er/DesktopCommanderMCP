@@ -284,7 +284,15 @@ async function testWriteModes() {
 }
 
 /**
- * Test 9: read_file handler returns preview structured content for markdown/text
+ * Test 9: read_file preview contract.
+ *
+ * Since the pull-by-path preview refactor, structuredContent is widget-only:
+ * it is returned ONLY on origin:'ui' calls (the preview widget's own RPC
+ * reads) and carries metadata only (no content duplication, no sourceTool —
+ * the widget stamps that client-side). LLM-facing calls carry the full
+ * content in content[] and no structuredContent at all. Image ui-reads
+ * return the base64 in a text block (an image block would make the host
+ * inline-render the RPC response and stall the widget).
  */
 async function testReadFilePreviewMetadata() {
   console.log('\n--- Test 9: read_file preview structured content ---');
@@ -300,61 +308,60 @@ async function testReadFilePreviewMetadata() {
   await fs.writeFile(IMAGE_FILE, Buffer.from(tinyPngBase64, 'base64'));
   await fs.writeFile(SVG_FILE, tinySvg);
 
+  // LLM-facing reads: full content in content[], no structuredContent.
   const markdownResult = await handleReadFile({ path: MD_FILE });
   assert.ok(Array.isArray(markdownResult.content), 'Result should include content array');
-  assert.ok(markdownResult.content[0].text.includes(markdownContent), 'Legacy content should still include markdown body');
-  assert.ok(markdownResult.structuredContent, 'Markdown should include structuredContent');
-  assert.strictEqual(markdownResult.structuredContent.fileType, 'markdown', 'Markdown fileType should be markdown');
-  assert.strictEqual(markdownResult.structuredContent.filePath, MD_FILE, 'Markdown file path should be present');
-  assert.strictEqual(markdownResult.structuredContent.sourceTool, 'read_file', 'Markdown preview should preserve source tool');
-  assert.strictEqual(markdownResult.structuredContent.content, markdownResult.content[0].text, 'Markdown structuredContent should include returned content');
+  assert.ok(markdownResult.content[0].text.includes(markdownContent), 'Content should include markdown body');
+  assert.strictEqual(markdownResult.structuredContent, undefined, 'LLM-facing read should carry no structuredContent');
 
   const textResult = await handleReadFile({ path: TEXT_FILE });
-  assert.ok(Array.isArray(textResult.content), 'Result should include content array');
-  assert.ok(textResult.content[0].text.includes(textContent), 'Legacy content should still include text body');
-  assert.ok(textResult.structuredContent, 'Text should include structuredContent');
-  assert.strictEqual(textResult.structuredContent.fileType, 'text', 'Text fileType should be text');
-  assert.strictEqual(textResult.structuredContent.sourceTool, 'read_file', 'Text preview should preserve source tool');
-  assert.strictEqual(textResult.structuredContent.content, textResult.content[0].text, 'Text structuredContent should include returned content');
+  assert.ok(textResult.content[0].text.includes(textContent), 'Content should include text body');
+  assert.strictEqual(textResult.structuredContent, undefined, 'LLM-facing read should carry no structuredContent');
 
-  const htmlResult = await handleReadFile({ path: HTML_FILE });
-  assert.ok(Array.isArray(htmlResult.content), 'Result should include content array');
-  assert.ok(htmlResult.content[0].text.includes('<h1>Preview</h1>'), 'Legacy content should still include html body');
-  assert.ok(htmlResult.structuredContent, 'HTML should include structuredContent');
-  assert.strictEqual(htmlResult.structuredContent.fileType, 'html', 'HTML fileType should be html');
-  assert.strictEqual(htmlResult.structuredContent.sourceTool, 'read_file', 'HTML preview should preserve source tool');
-  assert.strictEqual(htmlResult.structuredContent.content, htmlResult.content[0].text, 'HTML structuredContent should include returned content');
+  // Widget (origin:'ui') reads: same content plus metadata-only structuredContent.
+  const uiMarkdownResult = await handleReadFile({ path: MD_FILE, origin: 'ui' });
+  assert.ok(uiMarkdownResult.structuredContent, 'ui read should include structuredContent');
+  assert.strictEqual(uiMarkdownResult.structuredContent.fileType, 'markdown', 'Markdown fileType should be markdown');
+  assert.strictEqual(uiMarkdownResult.structuredContent.filePath, MD_FILE, 'Markdown file path should be present');
+  assert.strictEqual(uiMarkdownResult.structuredContent.content, undefined, 'structuredContent should be metadata-only (no content)');
+  assert.strictEqual(uiMarkdownResult.structuredContent.sourceTool, undefined, 'structuredContent should not carry sourceTool (widget stamps it)');
+  assert.ok(uiMarkdownResult.content[0].text.includes(markdownContent), 'ui read content[] should carry the markdown body');
 
+  const uiHtmlResult = await handleReadFile({ path: HTML_FILE, origin: 'ui' });
+  assert.strictEqual(uiHtmlResult.structuredContent.fileType, 'html', 'HTML fileType should be html');
+  assert.ok(uiHtmlResult.content[0].text.includes('<h1>Preview</h1>'), 'ui read content[] should carry the html body');
+
+  // LLM-facing image read: image block so the host model can see the image;
+  // no structuredContent.
   const imageResult = await handleReadFile({ path: IMAGE_FILE });
-  assert.ok(Array.isArray(imageResult.content), 'Image result should include content array');
   const imageContentItem = imageResult.content.find((item) => item.type === 'image');
   assert.ok(imageContentItem, 'Image result should include an image content item so the host model can see the image');
   assert.strictEqual(imageContentItem.mimeType, 'image/png', 'Image content item should carry the png mimeType');
   assert.ok(typeof imageContentItem.data === 'string' && imageContentItem.data.length > 0, 'Image content item should carry non-empty base64 data');
-  assert.ok(imageResult.structuredContent, 'Image should include structuredContent');
-  assert.strictEqual(imageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
-  assert.strictEqual(typeof imageResult.structuredContent.content, 'string', 'Image structured payload should carry base64 in content');
-  assert.ok(imageResult.structuredContent.content.length > 0, 'Image structured payload should include non-empty content');
-  assert.strictEqual(imageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
-  assert.strictEqual(imageResult.structuredContent.filePath, IMAGE_FILE, 'Image file path should be present');
-  assert.strictEqual(imageResult.structuredContent.sourceTool, 'read_file', 'Image preview should preserve source tool');
+  assert.strictEqual(imageResult.structuredContent, undefined, 'LLM-facing image read should carry no structuredContent');
 
-  const svgResult = await handleReadFile({ path: SVG_FILE });
-  assert.ok(Array.isArray(svgResult.content), 'SVG result should include content array');
-  const svgContentItem = svgResult.content.find((item) => item.type === 'image');
-  assert.ok(svgContentItem, 'SVG result should include an image content item so the host model can see the image');
-  assert.strictEqual(svgContentItem.mimeType, 'image/svg+xml', 'SVG content item should carry the svg mimeType');
-  assert.ok(typeof svgContentItem.data === 'string' && svgContentItem.data.length > 0, 'SVG content item should carry non-empty base64 data');
-  assert.ok(svgResult.structuredContent, 'SVG should include structuredContent');
-  assert.strictEqual(svgResult.structuredContent.fileType, 'image', 'SVG should map to image preview state');
-  assert.strictEqual(svgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
-  assert.strictEqual(typeof svgResult.structuredContent.content, 'string', 'SVG structured payload should carry base64 in content');
-  assert.ok(svgResult.structuredContent.content.length > 0, 'SVG structured payload should include non-empty content');
-  assert.strictEqual(svgResult.structuredContent.sourceTool, 'read_file', 'SVG preview should preserve source tool');
+  // Widget image read: base64 rides in a TEXT block (no image block), plus
+  // metadata-only structuredContent with the mimeType the widget renders with.
+  const uiImageResult = await handleReadFile({ path: IMAGE_FILE, origin: 'ui' });
+  assert.ok(!uiImageResult.content.some((item) => item.type === 'image'), 'ui image read must not include an image block (host would inline-render and stall the RPC)');
+  assert.strictEqual(uiImageResult.content[0].type, 'text', 'ui image read should carry base64 in a text block');
+  assert.strictEqual(uiImageResult.content[0].text, tinyPngBase64, 'ui image read text block should be the base64 image data');
+  assert.ok(uiImageResult.structuredContent, 'ui image read should include structuredContent');
+  assert.strictEqual(uiImageResult.structuredContent.fileType, 'image', 'Image fileType should map to image preview state');
+  assert.strictEqual(uiImageResult.structuredContent.mimeType, 'image/png', 'Image structured payload should include mimeType');
+  assert.strictEqual(uiImageResult.structuredContent.content, undefined, 'Image structuredContent should be metadata-only');
 
+  const uiSvgResult = await handleReadFile({ path: SVG_FILE, origin: 'ui' });
+  assert.strictEqual(uiSvgResult.structuredContent.fileType, 'image', 'SVG should map to image preview state');
+  assert.strictEqual(uiSvgResult.structuredContent.mimeType, 'image/svg+xml', 'SVG structured payload should include SVG mimeType');
+  assert.ok(!uiSvgResult.content.some((item) => item.type === 'image'), 'ui SVG read must not include an image block');
+  assert.ok(uiSvgResult.content[0].text.length > 0, 'ui SVG read should carry base64 in a text block');
+
+  // write_file never returns structuredContent (nothing in the UI calls it;
+  // the widget previews writes via its own read_file pull).
   const writeResult = await handleWriteFile({ path: TEXT_FILE, content: 'written through handler' });
-  assert.ok(writeResult.structuredContent, 'write_file should include structuredContent');
-  assert.strictEqual(writeResult.structuredContent.sourceTool, 'write_file', 'write_file preview should preserve source tool');
+  assert.strictEqual(writeResult.structuredContent, undefined, 'write_file should carry no structuredContent');
+  assert.ok(writeResult.content[0].text.includes('Successfully'), 'write_file should confirm the write');
 
   const nullArgsResult = await handleReadFile(null);
   assert.ok(Array.isArray(nullArgsResult.content), 'Null-args result should include content array');
@@ -383,21 +390,31 @@ async function testMarkdownExactMatchSave() {
   });
 
   assert.ok(Array.isArray(result.content), 'edit_block result should include content array');
-  // After the file-preview refactor (commit 8fd8f94), edit_block's exact-match
-  // path returns a file preview + structuredContent instead of a
-  // "Successfully applied N edit(s)" message. Verify the new contract here.
   assert.strictEqual(result.content[0].type, 'text', 'edit_block result[0] should be text');
-  assert.ok(result.structuredContent, 'edit_block should return structuredContent');
-  assert.ok(result.structuredContent.filePath, 'edit_block structuredContent should include filePath');
-  assert.strictEqual(result.structuredContent.sourceTool, 'edit_block', 'edit_block preview should preserve source tool');
   assert.match(
     result.content[0].text,
     /\[Reading \d+ lines? from/,
     'edit_block should return a file-preview status line'
   );
+  // structuredContent is widget-only: LLM-facing edit_block calls omit it.
+  assert.strictEqual(result.structuredContent, undefined, 'LLM-facing edit_block should carry no structuredContent');
 
   const readBack = await fs.readFile(MD_FILE, 'utf8');
   assert.strictEqual(readBack, updatedContent, 'Markdown file should be rewritten with the updated content');
+
+  // Widget saves (origin:'ui') get metadata-only structuredContent — the save
+  // flow's success signal (assertSuccessfulEditBlockResult).
+  await fs.writeFile(MD_FILE, originalContent);
+  const uiResult = await handleEditBlock({
+    file_path: MD_FILE,
+    old_string: originalContent,
+    new_string: updatedContent,
+    expected_replacements: 1,
+    origin: 'ui',
+  });
+  assert.ok(uiResult.structuredContent, 'ui edit_block should return structuredContent');
+  assert.ok(uiResult.structuredContent.filePath, 'ui edit_block structuredContent should include filePath');
+  assert.strictEqual(uiResult.structuredContent.content, undefined, 'ui edit_block structuredContent should be metadata-only');
 
   console.log('✓ markdown exact-match save flow works');
 }
