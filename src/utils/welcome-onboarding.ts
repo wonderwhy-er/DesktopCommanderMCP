@@ -5,6 +5,17 @@ import { openWelcomePage } from './open-browser.js';
 import { logToStderr } from './logger.js';
 import { capture } from './capture.js';
 
+/** Consume a pending welcome page when this client must never receive it. */
+export async function skipWelcomePageOnboarding(): Promise<void> {
+  const pending = await configManager.getValue('pendingWelcomeOnboarding');
+  if (!pending) {
+    return;
+  }
+
+  await configManager.setValue('pendingWelcomeOnboarding', false);
+  logToStderr('debug', 'Welcome page skipped for ineligible client');
+}
+
 /**
  * Handle welcome page display for new users (A/B test controlled)
  * 
@@ -14,6 +25,13 @@ import { capture } from './capture.js';
  * 3. Haven't seen it yet
  */
 export async function handleWelcomePageOnboarding(clientName?: string): Promise<void> {
+  // Existing configs are migrated to false. Only configs created with the
+  // eligibility marker may receive this welcome-page campaign.
+  const eligible = await configManager.getValue('welcomeOnboardingEligible');
+  if (!eligible) {
+    return;
+  }
+
   // Check if this is a new install pending A/B decision
   // This flag is set when config is first created and survives process restarts
   const pending = await configManager.getValue('pendingWelcomeOnboarding');

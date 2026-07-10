@@ -83,6 +83,16 @@ class ConfigManager {
         const configData = await fs.readFile(this.configPath, 'utf8');
         this.config = JSON.parse(configData);
         this._isFirstRun = false;
+
+        // Configs created before this marker existed must not receive the
+        // welcome page retroactively when client eligibility changes later.
+        // New configs get this field from getDefaultConfig() and remain
+        // eligible across restarts until their first initialization.
+        if (this.config['welcomeOnboardingEligible'] === undefined) {
+          this.config['welcomeOnboardingEligible'] = false;
+          this.config['pendingWelcomeOnboarding'] = false;
+          await this.saveConfig();
+        }
       } catch (error) {
         // Config file doesn't exist, create default
         this.config = this.getDefaultConfig();
@@ -173,7 +183,8 @@ class ConfigManager {
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
-      pendingWelcomeOnboarding: true  // New install flag - triggers A/B test for welcome page
+      pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
+      welcomeOnboardingEligible: true // Distinguishes new installs from migrated legacy configs
     };
   }
 
