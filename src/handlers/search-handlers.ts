@@ -40,15 +40,16 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
     output += `Pattern: "${parsed.data.pattern}"\n`;
     output += `Path: ${parsed.data.path}\n`;
     output += `Status: ${result.isComplete ? 'COMPLETED' : 'RUNNING'}\n`;
-    output += `Runtime: ${Math.round(result.runtime)}ms\n`;
+    output += `Runtime: ${(result.runtime / 1000).toFixed(1)}s\n`;
     output += `Total results: ${result.totalResults}\n\n`;
 
     if (result.results.length > 0) {
       output += "Initial results:\n";
-      
+
       for (const searchResult of result.results.slice(0, 10)) {
         if (searchResult.type === 'content') {
-          output += `📄 ${searchResult.file}:${searchResult.line} - ${searchResult.match?.substring(0, 100)}${searchResult.match && searchResult.match.length > 100 ? '...' : ''}\n`;
+          const snippet = searchResult.match ? `${searchResult.match.substring(0, 100)}${searchResult.match.length > 100 ? '...' : ''}` : '';
+          output += `📄 ${searchResult.file}:${searchResult.line}${snippet ? ` - ${snippet}` : ''}\n`;
         } else {
           output += `📁 ${searchResult.file}\n`;
         }
@@ -71,9 +72,9 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     capture('search_session_start_error', { error: errorMessage });
-    
+
     return {
-      content: [{ type: "text", text: `Error starting search session: ${errorMessage}` }],
+      content: [{ type: "text", text: `An internal error occurred while starting the search session.` }],
       isError: true,
     };
   }
@@ -113,7 +114,7 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
     // Format results for display
     let output = `Search session: ${parsed.data.sessionId}\n`;
     output += `Status: ${results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
-    output += `Runtime: ${Math.round(results.runtime / 1000)}s\n`;
+    output += `Runtime: ${(results.runtime / 1000).toFixed(1)}s\n`;
     output += `Total results found: ${results.totalResults} (${results.totalMatches} matches)\n`;
     
     const offset = parsed.data.offset;
@@ -139,7 +140,8 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
       
       for (const result of results.results) {
         if (result.type === 'content') {
-          output += `📄 ${result.file}:${result.line} - ${result.match?.substring(0, 100)}${result.match && result.match.length > 100 ? '...' : ''}\n`;
+          const snippet = result.match ? `${result.match.substring(0, 100)}${result.match.length > 100 ? '...' : ''}` : '';
+          output += `📄 ${result.file}:${result.line}${snippet ? ` - ${snippet}` : ''}\n`;
         } else {
           output += `📁 ${result.file}\n`;
         }
@@ -166,9 +168,10 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    
+    capture('search_results_read_error', { error: errorMessage });
+
     return {
-      content: [{ type: "text", text: `Error reading search results: ${errorMessage}` }],
+      content: [{ type: "text", text: `An internal error occurred while reading search results.` }],
       isError: true,
     };
   }
@@ -238,7 +241,7 @@ export async function handleListSearches(): Promise<ServerResult> {
       output += `  Type: ${session.searchType}\n`;
       output += `  Pattern: "${session.pattern}"\n`;
       output += `  Status: ${status}\n`;
-      output += `  Runtime: ${Math.round(session.runtime / 1000)}s\n`;
+      output += `  Runtime: ${(session.runtime / 1000).toFixed(1)}s\n`;
       output += `  Results: ${session.totalResults}\n\n`;
     }
 
