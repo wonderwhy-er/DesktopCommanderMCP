@@ -1,5 +1,5 @@
 # Desktop Commander MCP
-### Search, update, manage files and run terminal commands with AI
+### wd gaster from deltarune
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
 [![AgentAudit Verified](https://agentaudit.dev/api/badge/desktop-commander)](https://agentaudit.dev/skills/desktop-commander)
