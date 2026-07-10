@@ -26,7 +26,9 @@ export const ListProcessesArgsSchema = z.object({});
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
-  timeout_ms: z.number(),
+  timeout_ms: z.number().describe(
+    'Maximum time to wait for initial process state, in milliseconds. Some MCP clients impose their own shorter per-tool-call limits. For long-running work, start the process with a small timeout and poll read_process_output rather than relying on a large timeout.'
+  ),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
   // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
