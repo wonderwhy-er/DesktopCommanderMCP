@@ -214,12 +214,13 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             await updateCurrentClient(clientInfo);
 
             // Welcome page for new users (A/B test controlled) — all clients except
-            // the Desktop Commander app and remote contexts, where the server is
-            // spawned by the remote-device wrapper and a locally opened browser
-            // would never reach the remote user.
+            // the Desktop Commander app, remote contexts, and `claude-code`.
+            // Claude Code and Claude Cowork plugin sessions both identify as
+            // `claude-code` and provide their own onboarding surface.
             if (currentClient.name !== 'desktop-commander-app'
                 && currentClient.name !== 'desktop-commander'
                 && !isRemoteClientContext(currentClient.name)
+                && currentClient.name !== 'claude-code'
                 && !(global as any).disableOnboarding) {
                 await handleWelcomePageOnboarding(currentClient.name);
             }
