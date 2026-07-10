@@ -333,6 +333,17 @@ Desktop Commander works with any MCP-compatible client. The standard JSON config
 Add this to your client's MCP configuration file at the locations below:
 
 <details>
+<summary><b>Autohand Code</b></summary>
+
+```sh
+autohand mcp add desktop-commander npx -y @wonderwhy-er/desktop-commander@latest
+```
+
+Add `--scope project` after `add` to keep the server configuration in the current project. See [Autohand Code](https://github.com/autohandai/code-cli/) for current installation and CLI details.
+
+</details>
+
+<details>
 <summary><b>Cursor</b></summary><br>
 
 [![Install MCP Server](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en-US/install-mcp?name=desktop-commander&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkB3b25kZXJ3aHktZXIvZGVza3RvcC1jb21tYW5kZXJAbGF0ZXN0Il19)
