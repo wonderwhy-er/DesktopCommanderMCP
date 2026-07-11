@@ -83,64 +83,88 @@ interface ShellSpawnConfig {
 }
 
 /**
+ * Split a shell configuration value into its executable and any extra arguments.
+ *
+ * defaultShell (and the per-call shell parameter) may carry flags, e.g.
+ * "pwsh.exe -NoProfile -NoLogo" or "/bin/bash --norc". Without this split the
+ * whole string is treated as one executable path, spawn fails with ENOENT and
+ * the call hangs until the client's timeout. Quotes are honoured so executable
+ * paths containing spaces survive, e.g. '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile'.
+ * See issue #448.
+ */
+function splitShellConfig(shell: string): { executable: string; args: string[] } {
+  const tokens: string[] = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(shell)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  const [executable = shell, ...args] = tokens;
+  return { executable, args };
+}
+
+/**
  * Get the appropriate spawn configuration for a given shell
  * This handles login shell flags for different shell types
  */
-function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
-  const shellName = path.basename(shellPath).toLowerCase();
-  
+export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
+  // The shell value may include arguments (e.g. "pwsh.exe -NoProfile"); match on
+  // the executable name only and keep the caller's extra args ahead of our flags.
+  const { executable: shellExecutable, args: shellArgs } = splitShellConfig(shellPath);
+  const shellName = path.basename(shellExecutable).toLowerCase();
+
   // Unix shells with login flag support
   if (shellName.includes('bash') || shellName.includes('zsh')) {
-    return { 
-      executable: shellPath, 
-      args: ['-l', '-c', command],
-      useShellOption: false 
+    return {
+      executable: shellExecutable,
+      args: [...shellArgs, '-l', '-c', command],
+      useShellOption: false
     };
   }
-  
+
   // PowerShell Core (cross-platform, supports -Login)
   if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['-Login', '-Command', command],
-      useShellOption: false 
+    return {
+      executable: shellExecutable,
+      args: [...shellArgs, '-Login', '-Command', command],
+      useShellOption: false
     };
   }
-  
+
   // Windows PowerShell 5.1 (no login flag support)
   if (shellName === 'powershell' || shellName === 'powershell.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['-Command', command],
-      useShellOption: false 
+    return {
+      executable: shellExecutable,
+      args: [...shellArgs, '-Command', command],
+      useShellOption: false
     };
   }
-  
+
   // CMD
   if (shellName === 'cmd' || shellName === 'cmd.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['/c', command],
+    return {
+      executable: shellExecutable,
+      args: [...shellArgs, '/c', command],
       windowsVerbatim: true,
-      useShellOption: false 
+      useShellOption: false
     };
   }
-  
+
   // Fish shell (uses -l for login, -c for command)
   if (shellName.includes('fish')) {
-    return { 
-      executable: shellPath, 
-      args: ['-l', '-c', command],
-      useShellOption: false 
+    return {
+      executable: shellExecutable,
+      args: [...shellArgs, '-l', '-c', command],
+      useShellOption: false
     };
   }
-  
+
   // Unknown/other shells - use shell option for safety
   // This provides a fallback for shells we don't explicitly handle
-  return { 
+  return {
     executable: command,
     args: [],
-    useShellOption: shellPath 
+    useShellOption: shellExecutable
   };
 }
 
