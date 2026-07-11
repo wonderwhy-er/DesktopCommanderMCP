@@ -330,13 +330,15 @@ export class TextFileHandler implements FileHandler {
         let bufferIndex = 0;
         let totalLines = 0;
 
-        for await (const line of rl) {
-            buffer[bufferIndex] = line;
-            bufferIndex = (bufferIndex + 1) % requestedLines;
-            totalLines++;
+        try {
+            for await (const line of rl) {
+                buffer[bufferIndex] = line;
+                bufferIndex = (bufferIndex + 1) % requestedLines;
+                totalLines++;
+            }
+        } finally {
+            await closeReadlineStream(rl, stream);
         }
-
-        rl.close();
 
         let result: string[];
         if (totalLines >= requestedLines) {
