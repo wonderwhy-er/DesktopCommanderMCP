@@ -2,14 +2,40 @@ import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 
+const MAX_COMMAND_PARSE_DEPTH = 32;
+const MAX_COMMAND_PARSE_CHARS = 4 * 1024 * 1024;
+
+class CommandParsingLimitError extends Error {
+    constructor(limit: 'depth' | 'budget') {
+        super(`Command parsing ${limit} limit exceeded`);
+        this.name = 'CommandParsingLimitError';
+    }
+}
+
+interface CommandParsingBudget {
+    remainingChars: number;
+}
+
 class CommandManager {
 
     getBaseCommand(command: string) {
         return command.split(' ')[0].toLowerCase().trim();
     }
 
-    extractCommands(commandString: string): string[] {
+    extractCommands(
+        commandString: string,
+        depth: number = 0,
+        budget: CommandParsingBudget = { remainingChars: MAX_COMMAND_PARSE_CHARS }
+    ): string[] {
         try {
+            if (depth > MAX_COMMAND_PARSE_DEPTH) {
+                throw new CommandParsingLimitError('depth');
+            }
+            if (commandString.length > budget.remainingChars) {
+                throw new CommandParsingLimitError('budget');
+            }
+            budget.remainingChars -= commandString.length;
+
             // Trim any leading/trailing whitespace
             commandString = commandString.trim();
 
@@ -67,7 +93,7 @@ class CommandManager {
                     }
                     if (j <= commandString.length && openParens === 0) {
                         const subContent = commandString.substring(i + 2, j - 1);
-                        const subCommands = this.extractCommands(subContent);
+                        const subCommands = this.extractCommands(subContent, depth + 1, budget);
                         commands.push(...subCommands);
                         i = j - 1;
                         if (!inQuote) {
@@ -88,7 +114,7 @@ class CommandManager {
                     }
                     if (j < commandString.length) {
                         const subContent = commandString.substring(i + 1, j);
-                        const subCommands = this.extractCommands(subContent);
+                        const subCommands = this.extractCommands(subContent, depth + 1, budget);
                         commands.push(...subCommands);
                         i = j;
                         if (!inQuote) {
@@ -121,7 +147,7 @@ class CommandManager {
                     if (j <= commandString.length && openParens === 0) {
                         const subshellContent = commandString.substring(i + 1, j - 1);
                         // Recursively extract commands from the subshell
-                        const subCommands = this.extractCommands(subshellContent);
+                        const subCommands = this.extractCommands(subshellContent, depth + 1, budget);
                         commands.push(...subCommands);
 
                         // Move position past the subshell
@@ -162,6 +188,14 @@ class CommandManager {
             // Remove duplicates and return
             return [...new Set(commands)];
         } catch (error) {
+            if (error instanceof CommandParsingLimitError) {
+                if (depth === 0) {
+                    capture('command_parser_limit_exceeded', {
+                        error: error.message
+                    });
+                }
+                throw error;
+            }
             // If anything goes wrong, log the error but return the basic command to not break execution
             capture('server_request_error', {
                 error: 'Error extracting commands'
@@ -251,6 +285,9 @@ class CommandManager {
             // No commands were blocked
             return true;
         } catch (error) {
+            if (error instanceof CommandParsingLimitError) {
+                return false;
+            }
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {
                 error: error instanceof Error ? error.message : String(error)
