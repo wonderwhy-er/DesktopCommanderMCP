@@ -37,7 +37,6 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 - [Usage](#usage)
 - [File Preview UI & Markdown Editor](#file-preview-ui--markdown-editor)
 - [Handling Long-Running Commands](#handling-long-running-commands)
-- [Work in Progress and TODOs](#roadmap)
 - [Sponsors and Supporters](#support-desktop-commander)
 - [Website](#website)
 - [Media](#media)
@@ -121,8 +120,8 @@ npx @wonderwhy-er/desktop-commander@latest setup --debug
 
 Restart Claude if running.
 
-**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Run the setup command again  
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude
+**🔄 Manual Update:** Run the setup command again
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
 </details>
@@ -135,8 +134,8 @@ curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/re
 ```
 This script handles all dependencies and configuration automatically.
 
-**✅ Auto-Updates:** Yes  
-**🔄 Manual Update:** Re-run the bash installer command above  
+**✅ Auto-Updates:** Yes
+**🔄 Manual Update:** Re-run the bash installer command above
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove`
 
 </details>
@@ -150,8 +149,8 @@ This script handles all dependencies and configuration automatically.
 4. **Install with the provided key** that appears after selecting your client
 5. **Restart Claude Desktop**
 
-**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Visit the Smithery page and reinstall  
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude
+**🔄 Manual Update:** Visit the Smithery page and reinstall
 
 </details>
 
@@ -179,8 +178,8 @@ Add this entry to your claude_desktop_config.json:
 ```
 Restart Claude if running.
 
-**✅ Auto-Updates:** Yes - automatically updates when you restart Claude  
-**🔄 Manual Update:** Run the setup command again  
+**✅ Auto-Updates:** Yes - automatically updates when you restart Claude
+**🔄 Manual Update:** Run the setup command again
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the entry from your claude_desktop_config.json
 
 </details>
@@ -197,8 +196,8 @@ Restart Claude if running.
 
 The setup command will install dependencies, build the server, and configure Claude's desktop app.
 
-**❌ Auto-Updates:** No - requires manual git updates  
-**🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`  
+**❌ Auto-Updates:** No - requires manual git updates
+**🔄 Manual Update:** `cd DesktopCommanderMCP && git pull && npm run setup`
 **🗑️ Uninstall:** Run `npx @wonderwhy-er/desktop-commander@latest remove` or remove the cloned directory and MCP server entry from Claude config
 
 </details>
@@ -265,7 +264,7 @@ The installer will check Docker, pull the image, prompt for folder mounting, and
       "args": [
         "run", "-i", "--rm",
         "-v", "dc-system:/usr",
-        "-v", "dc-home:/root", 
+        "-v", "dc-home:/root",
         "-v", "dc-workspace:/workspace",
         "-v", "dc-packages:/var",
         "-v", "/Users/username/Projects:/mnt/Projects",
@@ -310,8 +309,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommande
 
 </details>
 
-**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions  
-**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude  
+**✅ Auto-Updates:** Yes - `latest` tag automatically gets newer versions
+**🔄 Manual Update:** `docker pull mcp/desktop-commander:latest` then restart Claude
 
 </details>
 
@@ -565,7 +564,7 @@ Desktop Commander includes intelligent onboarding to help you discover what's po
 
 **Request Help Anytime:** You can ask for onboarding assistance at any time by simply saying:
 - *"Help me get started with Desktop Commander"*
-- *"Show me Desktop Commander examples"* 
+- *"Show me Desktop Commander examples"*
 - *"What can I do with Desktop Commander?"*
 
 Claude will then show you beginner-friendly tutorials and examples, including:
@@ -812,6 +811,11 @@ This audit trail helps with debugging, security monitoring, and understanding ho
 
 For commands that may take a while:
 
+1. `start_process` returns after timeout with initial output
+2. Command continues in background
+3. Use `read_process_output` with PID to get new output
+4. Use `force_terminate` to stop if needed
+
 ## Configuration Management
 
 ### ⚠️ Important Security Warnings
@@ -922,21 +926,16 @@ You can specify which shell to use for command execution:
 
 ```javascript
 // Using default shell (bash or system default)
-execute_command({ "command": "echo $SHELL" })
+start_process({ "command": "echo $SHELL" })
 
 // Using zsh specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/zsh" })
+start_process({ "command": "echo $SHELL", "shell": "/bin/zsh" })
 
 // Using bash specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/bash" })
+start_process({ "command": "echo $SHELL", "shell": "/bin/bash" })
 ```
 
 This allows you to use shell-specific features or maintain consistent environments across commands.
-
-1. `execute_command` returns after timeout with initial output
-2. Command continues in background
-3. Use `read_output` with PID to get new output
-4. Use `force_terminate` to stop if needed
 
 ## Debugging
 
@@ -1070,7 +1069,7 @@ Join our [Discord server](https://discord.gg/kQ27sNnZr7) to get help, share feed
 https://www.youtube.com/watch?v=ly3bed99Dy8&lc=UgztdHvDMqTb9jiqnf54AaABAg](https://www.youtube.com/watch?v=ly3bed99Dy8&lc=UgztdHvDMqTb9jiqnf54AaABAg
 )
 
-[![Great! I just used Windsurf, bought license a week ago, for upgrading old fullstack socket project and it works many times good or ok but also many times runs away in cascade and have to revert all changes losing hundereds of cascade tokens. In just a week down to less than 100 tokens and do not want to buy only 300 tokens for 10$. This Claude MCP ,bought claude Pro finally needed but wanted very good reason to also have next to ChatGPT, and now can code as much as I want not worrying about token cost.
+[![Great! I just used Windsurf, bought license a week ago, for upgrading old fullstack socket project and it works many times good or ok but also many times runs away in cascade and have to revert all changes losing hundreds of cascade tokens. In just a week down to less than 100 tokens and do not want to buy only 300 tokens for 10$. This Claude MCP ,bought claude Pro finally needed but wanted very good reason to also have next to ChatGPT, and now can code as much as I want not worrying about token cost.
 Also this is much more than code editing it is much more thank you for great video!](https://raw.githubusercontent.com/wonderwhy-er/ClaudeComputerCommander/main/testemonials/img_2.png)
 https://www.youtube.com/watch?v=ly3bed99Dy8&lc=UgyQFTmYLJ4VBwIlmql4AaABAg](https://www.youtube.com/watch?v=ly3bed99Dy8&lc=UgyQFTmYLJ4VBwIlmql4AaABAg)
 
@@ -1084,6 +1083,8 @@ Claude first to keep my sanity in check, then if necessary, engage with other ID
 https://medium.com/@pharmx/you-sir-are-my-hero-62cff5836a3e](https://medium.com/@pharmx/you-sir-are-my-hero-62cff5836a3e)
 
 If you find this project useful, please consider giving it a ⭐ star on GitHub! This helps others discover the project and encourages further development.
+
+## Contributing
 
 We welcome contributions from the community! Whether you've found a bug, have a feature request, or want to contribute code, here's how you can help:
 
