@@ -88,11 +88,10 @@ Execute long-running terminal commands on your computer and manage processes thr
   - All tool calls are automatically logged
   - Log rotation with 10MB size limit
   - Detailed timestamps and arguments
-- Security hardening:
+- Safety guardrails (not a sandbox — see [SECURITY.md](SECURITY.md)):
   - Symlink traversal prevention on file operations
-  - Command blocklist with bypass protection
-  - [Docker isolation](#option-6-docker-installation--auto-updates-no-nodejs-required) for full sandboxing
-  - See [SECURITY.md](SECURITY.md) for details
+  - Command blocklist for accidental execution
+  - [Docker isolation](#option-6-docker-installation--auto-updates-no-nodejs-required) for complete isolation
 
 ## How to install
 
