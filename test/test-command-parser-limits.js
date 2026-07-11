@@ -27,6 +27,22 @@ async function run() {
     'commands that exceed the parsing budget must fail closed'
   );
 
+  assert.deepStrictEqual(
+    commandManager.extractCommands('echo safe\nsudo echo blocked'),
+    ['echo', 'sudo'],
+    'newlines must separate shell commands'
+  );
+  assert.deepStrictEqual(
+    commandManager.extractCommands('cat <(rm /tmp/file)'),
+    ['rm', 'cat'],
+    'process substitutions must be recursively parsed'
+  );
+  assert.strictEqual(
+    await commandManager.validateCommand('${SUDO:-sudo} echo blocked'),
+    false,
+    'dynamic executable expansion must fail closed'
+  );
+
   console.log('PASS: command parser depth and work limits fail closed');
 }
 

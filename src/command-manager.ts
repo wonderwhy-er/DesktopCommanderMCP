@@ -12,6 +12,13 @@ class CommandParsingLimitError extends Error {
     }
 }
 
+class UnsafeDynamicCommandError extends Error {
+    constructor() {
+        super('Dynamic shell expansion cannot be validated as an executable');
+        this.name = 'UnsafeDynamicCommandError';
+    }
+}
+
 interface CommandParsingBudget {
     remainingChars: number;
 }
@@ -40,7 +47,7 @@ class CommandManager {
             commandString = commandString.trim();
 
             // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            const separators = ['\r\n', '\n', '\r', ';', '&&', '||', '|', '&'];
 
             // This will store our extracted commands
             const commands: string[] = [];
@@ -132,6 +139,24 @@ class CommandManager {
                     continue;
                 }
 
+                // Process substitutions execute their contents in a subshell.
+                if ((char === '<' || char === '>') && commandString[i + 1] === '(') {
+                    let openParens = 1;
+                    let j = i + 2;
+                    while (j < commandString.length && openParens > 0) {
+                        if (commandString[j] === '(') openParens++;
+                        if (commandString[j] === ')') openParens--;
+                        j++;
+                    }
+                    if (openParens === 0) {
+                        const subContent = commandString.substring(i + 2, j - 1);
+                        const subCommands = this.extractCommands(subContent, depth + 1, budget);
+                        commands.push(...subCommands);
+                        i = j - 1;
+                        continue;
+                    }
+                }
+
                 // Handle subshells - if we see an opening parenthesis, we need to find its matching closing parenthesis
                 if (char === '(') {
                     // Find the matching closing parenthesis
@@ -188,9 +213,11 @@ class CommandManager {
             // Remove duplicates and return
             return [...new Set(commands)];
         } catch (error) {
-            if (error instanceof CommandParsingLimitError) {
+            if (error instanceof CommandParsingLimitError || error instanceof UnsafeDynamicCommandError) {
                 if (depth === 0) {
-                    capture('command_parser_limit_exceeded', {
+                    capture(error instanceof CommandParsingLimitError
+                        ? 'command_parser_limit_exceeded'
+                        : 'command_parser_dynamic_executable_rejected', {
                         error: error.message
                     });
                 }
@@ -221,6 +248,10 @@ class CommandManager {
             // Find the first valid token (skip variables)
             for (let i = 0; i < tokens.length; i++) {
                 const token = tokens[i];
+
+                if (token.startsWith('${')) {
+                    throw new UnsafeDynamicCommandError();
+                }
                 
                 // Skip dollar-prefixed tokens (variables) but not $() command substitutions
                 if (token.startsWith('$') && !token.startsWith('$(')) {
@@ -241,6 +272,12 @@ class CommandManager {
                 return null;
             }
 
+            // The executable cannot be known until shell expansion. Reject it
+            // instead of skipping the token and validating a later argument.
+            if (firstToken.startsWith('${')) {
+                throw new UnsafeDynamicCommandError();
+            }
+
             // handle $() command substitution - extract the inner command
             if (firstToken.startsWith('$(') && firstToken.endsWith(')')) {
                 const inner = firstToken.slice(2, -1).trim();
@@ -255,6 +292,9 @@ class CommandManager {
             const baseName = path.basename(firstToken);
             return baseName.toLowerCase();
         } catch (error) {
+            if (error instanceof UnsafeDynamicCommandError) {
+                throw error;
+            }
             capture('Error extracting base command');
             return null;
         }
@@ -285,7 +325,7 @@ class CommandManager {
             // No commands were blocked
             return true;
         } catch (error) {
-            if (error instanceof CommandParsingLimitError) {
+            if (error instanceof CommandParsingLimitError || error instanceof UnsafeDynamicCommandError) {
                 return false;
             }
             console.error('Error validating command:', error);
