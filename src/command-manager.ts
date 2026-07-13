@@ -14,7 +14,7 @@ class CommandManager {
             commandString = commandString.trim();
 
             // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
+            const separators = [';', '&&', '||', '|', '&', '\n', '\r\n', '\r'];
 
             // This will store our extracted commands
             const commands: string[] = [];
@@ -76,6 +76,24 @@ class CommandManager {
                             currentCmd += commandString.substring(startIndex, j);
                             continue;
                         }
+                    }
+                }
+
+                // Handle bash process substitution <() and >()
+                if ((char === '<' || char === '>') && i + 1 < commandString.length && commandString[i + 1] === '(') {
+                    let openParens = 1;
+                    let j = i + 2; // skip past <( or >(
+                    while (j < commandString.length && openParens > 0) {
+                        if (commandString[j] === '(') openParens++;
+                        if (commandString[j] === ')') openParens--;
+                        j++;
+                    }
+                    if (j <= commandString.length && openParens === 0) {
+                        const subContent = commandString.substring(i + 2, j - 1);
+                        const subCommands = this.extractCommands(subContent);
+                        commands.push(...subCommands);
+                        i = j - 1;
+                        continue;
                     }
                 }
 
@@ -188,8 +206,16 @@ class CommandManager {
             for (let i = 0; i < tokens.length; i++) {
                 const token = tokens[i];
                 
-                // Skip dollar-prefixed tokens (variables) but not $() command substitutions
+                // Skip plain $VAR tokens but handle ${VAR:-default} by extracting the default
+                // value for blocklist checking, since the shell expands it at runtime.
+                // $() command substitutions are handled separately below.
                 if (token.startsWith('$') && !token.startsWith('$(')) {
+                    // ${VAR:-default} or ${VAR-default} — extract the default value
+                    const braceMatch = token.match(/^\$\{[^:}-]*(?::?-)(.+?)\}$/);
+                    if (braceMatch) {
+                        firstToken = braceMatch[1];
+                        break;
+                    }
                     continue;
                 }
                 

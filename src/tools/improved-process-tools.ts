@@ -409,6 +409,17 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   const config = await configManager.getConfig();
   const maxOutputLines = config.fileReadLineLimit ?? 1000;
 
+  // Validate input against blocked commands before sending to any process.
+  // This prevents bypassing the blocklist by launching a benign interactive
+  // process (e.g. python3 -i) and then feeding it blocked commands via stdin.
+  const isInputAllowed = await commandManager.validateCommand(input);
+  if (!isInputAllowed) {
+    return {
+      content: [{ type: "text", text: `Error: Input contains a blocked command and cannot be sent to process ${pid}.` }],
+      isError: true,
+    };
+  }
+
   // Check if this is a virtual Node session (node:local)
   if (virtualNodeSessions.has(pid)) {
     const session = virtualNodeSessions.get(pid)!;
