@@ -199,23 +199,25 @@ class CommandManager {
             if (!withoutEnvVars) return null;
 
             // Get the first token (the command)
-            const tokens = withoutEnvVars.split(/\s+/);
+            // Before tokenizing, resolve ${VAR:-default}, ${VAR:=default},
+            // ${VAR:+alt} patterns so multi-word defaults like ${VAR:-sudo ls}
+            // are visible to the blocklist.  These operators expand to
+            // executable text at runtime.
+            const withExpansions = withoutEnvVars.replace(
+                /\$\{[^}]*?(?::?[-=+])([^}]*)\}/g,
+                (_match, value) => value
+            );
+
+            const tokens = withExpansions.split(/\s+/);
             let firstToken = null;
 
             // Find the first valid token (skip variables)
             for (let i = 0; i < tokens.length; i++) {
                 const token = tokens[i];
                 
-                // Skip plain $VAR tokens but handle ${VAR:-default} by extracting the default
-                // value for blocklist checking, since the shell expands it at runtime.
+                // Skip plain $VAR tokens.
                 // $() command substitutions are handled separately below.
                 if (token.startsWith('$') && !token.startsWith('$(')) {
-                    // ${VAR:-default} or ${VAR-default} — extract the default value
-                    const braceMatch = token.match(/^\$\{[^:}-]*(?::?-)(.+?)\}$/);
-                    if (braceMatch) {
-                        firstToken = braceMatch[1];
-                        break;
-                    }
                     continue;
                 }
                 

@@ -54,6 +54,21 @@ async function runTests() {
     const cmds_555f = commandManager.extractCommands('${MYVAR} ls');
     ok(cmds_555f.includes('ls'), 'Plain ${MYVAR} is skipped, "ls" is extracted');
 
+    // Multi-word defaults: ${VAR:-sudo ls} should extract "sudo"
+    const cmds_555g = commandManager.extractCommands('${CMD:-sudo ls}');
+    ok(cmds_555g.includes('sudo'), '${CMD:-sudo ls} multi-word default extracts "sudo"');
+
+    const cmds_555h = commandManager.extractCommands('${CMD:-dd --help}');
+    ok(cmds_555h.includes('dd'), '${CMD:-dd --help} multi-word default extracts "dd"');
+
+    // ${VAR:=default} assign-and-expand
+    const cmds_555i = commandManager.extractCommands('${CMD:=sudo} echo hi');
+    ok(cmds_555i.includes('sudo'), '${CMD:=sudo} assign-expand extracts "sudo"');
+
+    // ${VAR:+alt} alternative value
+    const cmds_555j = commandManager.extractCommands('${CMD:+sudo} echo hi');
+    ok(cmds_555j.includes('sudo'), '${CMD:+sudo} alternative-value extracts "sudo"');
+
     // ─── #556: Newline injection bypass ──────────────────────────────────
 
     console.log('\n#556 — Newline injection bypass\n');
