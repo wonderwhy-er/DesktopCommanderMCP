@@ -214,7 +214,10 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
             await updateCurrentClient(clientInfo);
 
             // Welcome page for new users (A/B test controlled) — all clients except
-            // the Desktop Commander app and remote contexts.
+            // the Desktop Commander app and remote contexts. Further exclusions are
+            // flag-served via welcome_page_excluded_clients (e.g. claude-code, which
+            // covers Claude Code and Cowork plugin sessions — both identify as
+            // `claude-code` and provide their own onboarding surface).
             const isWelcomePageEligibleClient = currentClient.name !== 'desktop-commander-app'
                 && currentClient.name !== 'desktop-commander'
                 && !isRemoteClientContext(currentClient.name)
