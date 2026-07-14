@@ -63,9 +63,10 @@ export async function handleWelcomePageOnboarding(clientName?: string): Promise<
     await featureFlagManager.waitForFreshFlags();
   }
 
-  // Keep an MCP release compatible with an older flag document. Operators can
-  // still disable onboarding explicitly by setting this flag to false.
-  const enabled = featureFlagManager.get('welcome_page_enabled', true) === true;
+  // Keep an MCP release compatible with an older flag document: only an
+  // explicit false disables. Absent or malformed values fail open so a flag
+  // file typo cannot permanently consume pending onboarding for new installs.
+  const enabled = featureFlagManager.get('welcome_page_enabled', true) !== false;
   if (!enabled) {
     await skipWelcomePageOnboarding();
     return;

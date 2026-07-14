@@ -97,10 +97,18 @@ async function runScenario(name, config, featureFlags) {
   try {
     test.seedConfig(config, featureFlags);
     await test.initializeAsClaudeCode();
+    const resultConfig = test.readConfig();
     assert.equal(
-      test.readConfig().pendingWelcomeOnboarding,
+      resultConfig.pendingWelcomeOnboarding,
       false,
       `${name} must consume pending welcome onboarding`
+    );
+    // The A/B control path also consumes pending but records sawOnboardingPage:
+    // false. Skip paths must resolve before the A/B decision and never touch it.
+    assert.equal(
+      resultConfig.sawOnboardingPage,
+      undefined,
+      `${name} must skip before the A/B decision, not via control assignment`
     );
     console.log(`✓ ${name}`);
   } finally {
