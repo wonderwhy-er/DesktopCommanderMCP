@@ -24,18 +24,26 @@ class ExistingConfigClaudeCodeMigrationTest {
     this.configPath = path.join(this.home, '.claude-server-commander', 'config.json');
   }
 
-  seedLegacyConfig() {
+  seedConfig(config, featureFlags) {
     mkdirSync(path.dirname(this.configPath), { recursive: true });
-    writeFileSync(this.configPath, JSON.stringify({
-      telemetryEnabled: false,
-      pendingWelcomeOnboarding: true,
-    }));
+    writeFileSync(this.configPath, JSON.stringify(config));
+    if (featureFlags) {
+      writeFileSync(
+        path.join(path.dirname(this.configPath), 'feature-flags.json'),
+        JSON.stringify({ version: 'test', flags: featureFlags })
+      );
+    }
   }
 
   async initializeAsClaudeCode() {
     await new Promise((resolve, reject) => {
       const child = spawn('node', [DIST_INDEX], {
-        env: { ...process.env, HOME: this.home, USERPROFILE: this.home },
+        env: {
+          ...process.env,
+          HOME: this.home,
+          USERPROFILE: this.home,
+          DC_FLAG_URL: 'http://127.0.0.1:9/',
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let stdout = '';
@@ -84,17 +92,41 @@ class ExistingConfigClaudeCodeMigrationTest {
   }
 }
 
-const test = new ExistingConfigClaudeCodeMigrationTest();
-try {
-  test.seedLegacyConfig();
-  await test.initializeAsClaudeCode();
-  const config = test.readConfig();
-  assert.equal(
-    config.pendingWelcomeOnboarding,
-    false,
-    'legacy Claude Code configs must consume pending welcome onboarding'
-  );
-  console.log('✓ Legacy Claude Code config does not retain pending welcome onboarding');
-} finally {
-  test.cleanup();
+async function runScenario(name, config, featureFlags) {
+  const test = new ExistingConfigClaudeCodeMigrationTest();
+  try {
+    test.seedConfig(config, featureFlags);
+    await test.initializeAsClaudeCode();
+    const resultConfig = test.readConfig();
+    assert.equal(
+      resultConfig.pendingWelcomeOnboarding,
+      false,
+      `${name} must consume pending welcome onboarding`
+    );
+    // The A/B control path also consumes pending but records sawOnboardingPage:
+    // false. Skip paths must resolve before the A/B decision and never touch it.
+    assert.equal(
+      resultConfig.sawOnboardingPage,
+      undefined,
+      `${name} must skip before the A/B decision, not via control assignment`
+    );
+    console.log(`✓ ${name}`);
+  } finally {
+    test.cleanup();
+  }
 }
+
+await runScenario(
+  'Legacy Claude Code config does not retain pending welcome onboarding',
+  { telemetryEnabled: false, pendingWelcomeOnboarding: true },
+);
+await runScenario(
+  'Disabled welcome-page feature flag consumes pending onboarding',
+  { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
+  { welcome_page_enabled: false },
+);
+await runScenario(
+  'Configured Claude Code exclusion matches case-insensitively',
+  { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
+  { welcome_page_enabled: true, welcome_page_excluded_clients: ['CLAUDE-CODE'] },
+);

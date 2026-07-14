@@ -13,7 +13,20 @@ export async function skipWelcomePageOnboarding(): Promise<void> {
   }
 
   await configManager.setValue('pendingWelcomeOnboarding', false);
-  logToStderr('debug', 'Welcome page skipped for ineligible client');
+  logToStderr('debug', 'Welcome page skipped');
+}
+
+function isWelcomePageClientExcluded(clientName?: string): boolean {
+  const configuredClients = featureFlagManager.get('welcome_page_excluded_clients', []);
+  if (!Array.isArray(configuredClients) || !clientName) {
+    return false;
+  }
+
+  const normalizedClientName = clientName.trim().toLowerCase();
+  return configuredClients.some(
+    (configuredClient) => typeof configuredClient === 'string'
+      && configuredClient.trim().toLowerCase() === normalizedClientName
+  );
 }
 
 /**
@@ -48,6 +61,20 @@ export async function handleWelcomePageOnboarding(clientName?: string): Promise<
   if (!loadedFromCache) {
     logToStderr('debug', 'Waiting for feature flags to load...');
     await featureFlagManager.waitForFreshFlags();
+  }
+
+  // Keep an MCP release compatible with an older flag document: only an
+  // explicit false disables. Absent or malformed values fail open so a flag
+  // file typo cannot permanently consume pending onboarding for new installs.
+  const enabled = featureFlagManager.get('welcome_page_enabled', true) !== false;
+  if (!enabled) {
+    await skipWelcomePageOnboarding();
+    return;
+  }
+
+  if (isWelcomePageClientExcluded(clientName)) {
+    await skipWelcomePageOnboarding();
+    return;
   }
 
   // Check A/B test assignment
