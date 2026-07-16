@@ -25,14 +25,39 @@ const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC'
  *                      present (preserves any extra extensions, order-stable).
  * - Otherwise       -> leave the inherited value untouched.
  */
-function getRepairedPathExt(): string {
-  const current = process.env.PATHEXT;
+function getRepairedPathExt(current = process.env.PATHEXT): string {
   if (!current) return STANDARD_PATHEXT;
   const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
   if (!exts.includes('.EXE')) {
     return [...new Set([...STANDARD_PATHEXT.split(';'), ...exts])].join(';');
   }
   return current;
+}
+
+/**
+ * Repair Windows variables required by child shells when an MSIX host has
+ * stripped them from the inherited environment. PATHEXT repair is retained
+ * from #481; WINDIR/SystemRoot repair covers the PowerShell module-loading
+ * failures reported in #480.
+ */
+export function getRepairedWindowsShellEnvironment(
+  environment: NodeJS.ProcessEnv,
+  isWindows = process.platform === 'win32'
+): NodeJS.ProcessEnv {
+  if (!isWindows) return { ...environment };
+
+  const repaired = { ...environment };
+  repaired.PATHEXT = getRepairedPathExt(environment.PATHEXT);
+
+  const windowsDirectory = environment.WINDIR?.trim()
+    || environment.SystemRoot?.trim()
+    || 'C:\\Windows';
+  repaired.WINDIR = windowsDirectory;
+  if (!environment.SystemRoot?.trim()) {
+    repaired.SystemRoot = windowsDirectory;
+  }
+
+  return repaired;
 }
 
 interface CompletedSession {
@@ -205,10 +230,10 @@ export class TerminalManager {
       // Use shell-specific configuration with login flags where appropriate
       spawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
       spawnOptions = {
-        env: {
+        env: getRepairedWindowsShellEnvironment({
           ...process.env,
           TERM: 'xterm-256color'  // Better terminal compatibility
-        },
+        }),
         windowsHide: true  // Prevent visible console windows on Windows
       };
 
@@ -225,20 +250,12 @@ export class TerminalManager {
       };
       spawnOptions = {
         shell: shellToUse,
-        env: {
+        env: getRepairedWindowsShellEnvironment({
           ...process.env,
           TERM: 'xterm-256color'
-        },
+        }),
         windowsHide: true  // Prevent visible console windows on Windows
       };
-    }
-
-    // Repair PATHEXT on Windows before spawning. On some Windows DXT launches
-    // the server process inherits a corrupted PATHEXT (e.g. ".CPL"), which we
-    // would otherwise propagate via { ...process.env } and break command
-    // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
-    if (process.platform === 'win32' && spawnOptions.env) {
-      spawnOptions.env.PATHEXT = getRepairedPathExt();
     }
 
     // On Windows, when we invoke cmd.exe directly and pass the user's command as a
