@@ -35,6 +35,40 @@ function getRepairedPathExt(current = process.env.PATHEXT): string {
 }
 
 /**
+ * process.env is case-insensitive on Windows, but spreading it creates a
+ * regular object whose keys retain their original casing. Look up inherited
+ * values without depending on a particular spelling before normalizing them.
+ */
+function getEnvironmentValueIgnoringCase(
+  environment: NodeJS.ProcessEnv,
+  key: string
+): string | undefined {
+  const matchingEntries = Object.entries(environment).filter(
+    ([candidate]) => candidate.toUpperCase() === key.toUpperCase()
+  );
+
+  return matchingEntries.find(([candidate, value]) => candidate === key && value)?.[1]
+    || matchingEntries.find(([, value]) => value)?.[1];
+}
+
+/**
+ * Child process environments should contain one canonical spelling for each
+ * Windows variable. This prevents conflicting keys after a process.env spread.
+ */
+function setCanonicalWindowsEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  key: string,
+  value: string
+): void {
+  for (const candidate of Object.keys(environment)) {
+    if (candidate !== key && candidate.toUpperCase() === key.toUpperCase()) {
+      delete environment[candidate];
+    }
+  }
+  environment[key] = value;
+}
+
+/**
  * Repair Windows variables required by child shells when an MSIX host has
  * stripped them from the inherited environment. PATHEXT repair is retained
  * from #481; WINDIR/SystemRoot repair covers the PowerShell module-loading
@@ -47,15 +81,23 @@ export function getRepairedWindowsShellEnvironment(
   if (!isWindows) return { ...environment };
 
   const repaired = { ...environment };
-  repaired.PATHEXT = getRepairedPathExt(environment.PATHEXT);
+  setCanonicalWindowsEnvironmentValue(
+    repaired,
+    'PATHEXT',
+    getRepairedPathExt(getEnvironmentValueIgnoringCase(environment, 'PATHEXT'))
+  );
 
-  const windowsDirectory = environment.WINDIR?.trim()
-    || environment.SystemRoot?.trim()
+  const inheritedWindir = getEnvironmentValueIgnoringCase(environment, 'WINDIR');
+  const inheritedSystemRoot = getEnvironmentValueIgnoringCase(environment, 'SystemRoot');
+  const windowsDirectory = inheritedWindir?.trim()
+    || inheritedSystemRoot?.trim()
     || 'C:\\Windows';
-  repaired.WINDIR = windowsDirectory;
-  if (!environment.SystemRoot?.trim()) {
-    repaired.SystemRoot = windowsDirectory;
-  }
+  setCanonicalWindowsEnvironmentValue(repaired, 'WINDIR', windowsDirectory);
+  setCanonicalWindowsEnvironmentValue(
+    repaired,
+    'SystemRoot',
+    inheritedSystemRoot?.trim() || windowsDirectory
+  );
 
   return repaired;
 }
