@@ -97,7 +97,7 @@ desktop-commander-device --persist-session
 npm run device:start
 ```
 
-*(Or direct from `src/remote-device`: `npm run device`)*
+Use the root project script so the device runs with the repository's TypeScript tooling.
 
 ### 2. Authenticate
 
@@ -143,7 +143,7 @@ For developers contributing to the device or debugging issues:
 
 **Run with Debug Logging**:
 ```bash
-npm run device:dev
+npm run device:start:dev
 ```
 This enables verbose logging and ensures the device picks up usage of a local MCP server build if available.
 
