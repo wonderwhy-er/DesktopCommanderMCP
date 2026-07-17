@@ -2,8 +2,30 @@
 FROM node:lts-alpine
 
 ENV MCP_CLIENT_DOCKER=true
-# Create app directory
-WORKDIR /usr/src/app
+
+LABEL io.docker.server.metadata='{ \
+    "name": "desktop-commander", \
+    "version": "1.0.0", \
+    "description": "Desktop Commander MCP Server", \
+    "command": ["node", "dist/index.js"], \
+    "mounts": [ \
+    { \
+    "source": "/var/run/docker.sock", \
+    "target": "/var/run/docker.sock", \
+    "type": "bind" \
+    }, \
+    { \
+    "source": "/Users/dasein/Documents", \
+    "target": "/home/Documents", \
+    "type": "bind" \
+    } \
+    ] \
+    }'
+# 🔥 INSTALL DOCKER CLI + COMPOSE
+RUN apk add --no-cache \
+    docker-cli \
+    docker-cli-compose \
+    bash
 
 # Copy package.json and package-lock.json
 COPY package*.json ./
@@ -20,7 +42,6 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Expose port if needed (not specified, so using none)
+# Set default command (can be overridden by metadata)
+CMD ["node", "dist/index.js"]
 
-# Command to run the server
-CMD [ "node", "dist/index.js" ]
