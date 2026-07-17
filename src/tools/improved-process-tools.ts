@@ -92,7 +92,7 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000): Promis
 }
 
 /**
- * Start a new process (renamed from execute_command)
+ * Start a new process
  * Includes early detection of process waiting for input
  */
 export async function startProcess(args: unknown): Promise<ServerResult> {

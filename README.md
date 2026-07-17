@@ -889,8 +889,8 @@ By default, Desktop Commander shows helpful onboarding prompts to new users (tho
 # Disable onboarding for this session
 node dist/index.js --no-onboarding
 
-# Or if using npm scripts
-npm run start:no-onboarding
+# Or when running the built server directly
+node dist/index.js --no-onboarding
 
 # For npx installations, modify your claude_desktop_config.json:
 {
@@ -921,20 +921,20 @@ You can specify which shell to use for command execution:
 
 ```javascript
 // Using default shell (bash or system default)
-execute_command({ "command": "echo $SHELL" })
+start_process({ "command": "echo $SHELL" })
 
 // Using zsh specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/zsh" })
+start_process({ "command": "echo $SHELL", "shell": "/bin/zsh" })
 
 // Using bash specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/bash" })
+start_process({ "command": "echo $SHELL", "shell": "/bin/bash" })
 ```
 
 This allows you to use shell-specific features or maintain consistent environments across commands.
 
-1. `execute_command` returns after timeout with initial output
+1. `start_process` returns after timeout with initial output
 2. Command continues in background
-3. Use `read_output` with PID to get new output
+3. Use `read_process_output` with PID to get new output
 4. Use `force_terminate` to stop if needed
 
 ## Debugging

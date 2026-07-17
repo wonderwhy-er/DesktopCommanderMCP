@@ -148,6 +148,7 @@ export async function getConfig() {
         type: "text",
         text: `Error getting configuration: ${error instanceof Error ? error.message : String(error)}\nUsing empty configuration.`
       }],
+      isError: true,
     };
   }
 }

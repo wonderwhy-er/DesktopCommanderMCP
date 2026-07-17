@@ -363,7 +363,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Read contents from files and URLs.
                         Read PDF files and extract content as markdown and images.
                         
-                        Prefer this over 'execute_command' with cat/type for viewing files.
+                        Prefer this over 'start_process' with cat/type for viewing files.
                         
                         Supports partial file reading with:
                         - 'offset' (start line, default: 0)
@@ -575,7 +575,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Get a detailed listing of all files and directories in a specified path.
                         
-                        Use this instead of 'execute_command' with ls/dir commands.
+                        Use this instead of 'start_process' with ls/dir commands.
                         Results distinguish between files and directories with [FILE] and [DIR] prefixes.
                         
                         Supports recursive listing with the 'depth' parameter (default: 2):

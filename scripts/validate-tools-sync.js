@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Validates that the tools listed in mcpb-bundle/manifest.json match
+ * Validates that the tools listed in manifest.template.json match
  * the tools actually provided by the running MCP server
  * 
  * This uses JSON-RPC to query the server directly, avoiding fragile regex parsing.
@@ -26,7 +26,9 @@ const colors = {
 };
 
 async function extractToolsFromManifest() {
-  const manifestPath = join(rootDir, 'mcpb-bundle', 'manifest.json');
+  // The generated MCPB bundle is intentionally gitignored. Use the tracked
+  // template so this validation works in a fresh checkout after `npm run build`.
+  const manifestPath = join(rootDir, 'manifest.template.json');
   const content = await readFile(manifestPath, 'utf-8');
   const manifest = JSON.parse(content);
   

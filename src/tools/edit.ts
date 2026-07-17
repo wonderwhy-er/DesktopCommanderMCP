@@ -409,8 +409,15 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
     // Validate path and resolve handler once — used by both dispatch paths below
     let validatedPath: string;
     let handler: Awaited<ReturnType<typeof import('../utils/files/factory.js').getFileHandler>>;
+    let validatedOptions = parsed.options;
     try {
         validatedPath = await validatePath(parsed.file_path);
+        if (parsed.options?.outputPath) {
+            validatedOptions = {
+                ...parsed.options,
+                outputPath: await validatePath(parsed.options.outputPath),
+            };
+        }
         const { getFileHandler } = await import('../utils/files/factory.js');
         handler = await getFileHandler(validatedPath);
     } catch (error) {
@@ -435,7 +442,7 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
         if (hasEditRange) {
             try {
                 // parsed.range is guaranteed non-empty string by hasRange check above
-                await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                await handler.editRange!(validatedPath!, parsed.range!, content, validatedOptions);
                 const resolvedRangePath = resolveAbsolutePath(parsed.file_path);
                 return {
                     content: [{
