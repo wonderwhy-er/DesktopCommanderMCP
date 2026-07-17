@@ -21,7 +21,7 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
 
 **Want a better experience?** The Desktop Commander App gives you everything the MCP server does, plus:
 
-- **Use any AI model** — Claude, GPT-4.5, Gemini 2.5, or any model you prefer
+- **Use any AI model** — Claude, GPT-5.6, Gemini 3.5, or any model you prefer
 - **See file changes live** — visual file previews as AI edits your files
 - **Add custom MCPs and context** — extend with your own tools, no config files
 - **Coming soon** — skills system, dictation, background scheduled tasks, and more
