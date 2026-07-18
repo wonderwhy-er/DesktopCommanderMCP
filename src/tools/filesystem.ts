@@ -1,8 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
-import net from 'net';
 import dns from 'dns/promises';
+import ipaddr from 'ipaddr.js';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -362,44 +362,26 @@ const MAX_URL_REDIRECTS = 5;
 
 /**
  * Returns true if an IP address is not publicly routable — loopback, private,
- * link-local (including the 169.254.169.254 cloud metadata endpoint), CGNAT,
- * multicast, or otherwise reserved. Anything that isn't a valid IP is treated
- * as blocked so a malformed value can't slip through.
+ * link-local (including the 169.254.169.254 cloud metadata endpoint), unique
+ * local, CGNAT, multicast, or otherwise reserved. Anything that isn't a valid
+ * IP is treated as blocked so a malformed value can't slip through.
+ *
+ * Uses ipaddr.js for CIDR-correct classification across IPv4 and IPv6: only the
+ * `unicast` range is publicly routable, everything else is refused. IPv4-mapped
+ * IPv6 (e.g. `::ffff:127.0.0.1` and its hex form `::ffff:7f00:1`) is unwrapped
+ * to its IPv4 address first so the underlying range is what gets checked.
  */
 function isBlockedAddress(ip: string): boolean {
-    const family = net.isIP(ip);
-    if (family === 4) {
-        const toLong = (addr: string): number =>
-            addr.split('.').reduce((acc, part) => (acc << 8) + Number(part), 0) >>> 0;
-        const value = toLong(ip);
-        const inRange = (base: string, bits: number): boolean => {
-            const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
-            return (value & mask) === (toLong(base) & mask);
-        };
-        return (
-            inRange('0.0.0.0', 8) ||        // current network
-            inRange('10.0.0.0', 8) ||       // private
-            inRange('100.64.0.0', 10) ||    // carrier-grade NAT
-            inRange('127.0.0.0', 8) ||      // loopback
-            inRange('169.254.0.0', 16) ||   // link-local (cloud metadata)
-            inRange('172.16.0.0', 12) ||    // private
-            inRange('192.0.0.0', 24) ||     // IETF protocol assignments
-            inRange('192.168.0.0', 16) ||   // private
-            inRange('198.18.0.0', 15) ||    // benchmarking
-            inRange('224.0.0.0', 4) ||      // multicast
-            inRange('240.0.0.0', 4)         // reserved
-        );
+    let addr: ipaddr.IPv4 | ipaddr.IPv6;
+    try {
+        addr = ipaddr.parse(ip.split('%')[0]); // drop any IPv6 zone id
+    } catch {
+        return true;
     }
-    if (family === 6) {
-        const addr = ip.toLowerCase().split('%')[0]; // drop any zone id
-        if (addr === '::' || addr === '::1') return true;              // unspecified / loopback
-        if (addr.startsWith('fe80')) return true;                      // link-local
-        if (addr.startsWith('fc') || addr.startsWith('fd')) return true; // unique local
-        const mapped = addr.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
-        if (mapped) return isBlockedAddress(mapped[1]);
-        return false;
+    if (addr.kind() === 'ipv6' && (addr as ipaddr.IPv6).isIPv4MappedAddress()) {
+        addr = (addr as ipaddr.IPv6).toIPv4Address();
     }
-    return true;
+    return addr.range() !== 'unicast';
 }
 
 /**
@@ -424,7 +406,7 @@ export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
 
     const hostname = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
 
-    if (net.isIP(hostname)) {
+    if (ipaddr.isValid(hostname)) {
         if (isBlockedAddress(hostname)) {
             throw new Error(`Refusing to fetch a URL that targets a non-public address: ${hostname}`);
         }

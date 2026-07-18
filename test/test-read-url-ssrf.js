@@ -23,6 +23,8 @@ const BLOCKED_URLS = [
   'http://192.168.1.1/',                                               // private
   'http://172.16.5.4/',                                                // private
   'http://[::1]/',                                                     // IPv6 loopback
+  'http://[fe90::1]/',                                                 // IPv6 link-local (fe80::/10, not just fe80::)
+  'http://[::ffff:7f00:1]/',                                           // IPv4-mapped loopback in hex form (127.0.0.1)
   'file:///etc/passwd',                                                // non-http scheme
   'ftp://example.com/secret',                                          // non-http scheme
 ];
