@@ -34,6 +34,13 @@ async function run() {
   try {
     await fsp.symlink(target, link, 'dir');
   } catch (e) {
+    // Only skip when the platform genuinely won't create the symlink; a real
+    // setup error should fail the test rather than masquerade as a skip.
+    const skippableCodes = new Set(['EPERM', 'EACCES', 'ENOTSUP', 'ENOSYS']);
+    if (!skippableCodes.has(e.code)) {
+      await fsp.rm(base, { recursive: true, force: true });
+      throw e;
+    }
     console.log(`SKIP: cannot create directory symlink on this platform (${e.code})`);
     await fsp.rm(base, { recursive: true, force: true });
     return 'skipped';
@@ -69,8 +76,8 @@ async function run() {
     {
       const newChild = path.join(link, 'new-file.txt');
       const validated = await validatePath(newChild);
-      assert.strictEqual(path.dirname(await fsp.realpath(path.dirname(validated))), path.dirname(resolvedTarget),
-        'new child under the allowed symlink should validate against the target');
+      assert.strictEqual(await fsp.realpath(path.dirname(validated)), resolvedTarget,
+        'new child under the allowed symlink should validate inside the target itself');
       ok('not-yet-created child under the allowlisted symlink is accepted');
     }
 
