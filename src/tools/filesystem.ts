@@ -1,6 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
+import net from 'net';
+import dns from 'dns/promises';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -355,18 +357,137 @@ type FileResultPayloads = PdfPayload;
  * @param url URL to fetch content from
  * @returns File content or file result with metadata
  */
+// Follow at most this many redirects when reading a URL, re-validating each hop.
+const MAX_URL_REDIRECTS = 5;
+
+/**
+ * Returns true if an IP address is not publicly routable — loopback, private,
+ * link-local (including the 169.254.169.254 cloud metadata endpoint), CGNAT,
+ * multicast, or otherwise reserved. Anything that isn't a valid IP is treated
+ * as blocked so a malformed value can't slip through.
+ */
+function isBlockedAddress(ip: string): boolean {
+    const family = net.isIP(ip);
+    if (family === 4) {
+        const toLong = (addr: string): number =>
+            addr.split('.').reduce((acc, part) => (acc << 8) + Number(part), 0) >>> 0;
+        const value = toLong(ip);
+        const inRange = (base: string, bits: number): boolean => {
+            const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0;
+            return (value & mask) === (toLong(base) & mask);
+        };
+        return (
+            inRange('0.0.0.0', 8) ||        // current network
+            inRange('10.0.0.0', 8) ||       // private
+            inRange('100.64.0.0', 10) ||    // carrier-grade NAT
+            inRange('127.0.0.0', 8) ||      // loopback
+            inRange('169.254.0.0', 16) ||   // link-local (cloud metadata)
+            inRange('172.16.0.0', 12) ||    // private
+            inRange('192.0.0.0', 24) ||     // IETF protocol assignments
+            inRange('192.168.0.0', 16) ||   // private
+            inRange('198.18.0.0', 15) ||    // benchmarking
+            inRange('224.0.0.0', 4) ||      // multicast
+            inRange('240.0.0.0', 4)         // reserved
+        );
+    }
+    if (family === 6) {
+        const addr = ip.toLowerCase().split('%')[0]; // drop any zone id
+        if (addr === '::' || addr === '::1') return true;              // unspecified / loopback
+        if (addr.startsWith('fe80')) return true;                      // link-local
+        if (addr.startsWith('fc') || addr.startsWith('fd')) return true; // unique local
+        const mapped = addr.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
+        if (mapped) return isBlockedAddress(mapped[1]);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Guards against SSRF before a URL is fetched. Allows only http(s), and rejects
+ * hosts that are — or that resolve to — non-public addresses. Every resolved
+ * address is checked, so a hostname pointing at an internal IP is blocked too.
+ *
+ * @param rawUrl The URL about to be fetched
+ * @throws Error if the URL is not safe to fetch
+ */
+export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
+    let parsed: URL;
+    try {
+        parsed = new URL(rawUrl);
+    } catch {
+        throw new Error(`Invalid URL: ${rawUrl}`);
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`URL protocol not allowed: ${parsed.protocol} — only http and https can be read`);
+    }
+
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+
+    if (net.isIP(hostname)) {
+        if (isBlockedAddress(hostname)) {
+            throw new Error(`Refusing to fetch a URL that targets a non-public address: ${hostname}`);
+        }
+        return;
+    }
+
+    let resolved: Array<{ address: string }>;
+    try {
+        resolved = await dns.lookup(hostname, { all: true });
+    } catch {
+        throw new Error(`Could not resolve host: ${hostname}`);
+    }
+    if (resolved.length === 0) {
+        throw new Error(`Could not resolve host: ${hostname}`);
+    }
+    for (const { address } of resolved) {
+        if (isBlockedAddress(address)) {
+            throw new Error(
+                `Refusing to fetch a URL that resolves to a non-public address: ${hostname} -> ${address}`
+            );
+        }
+    }
+}
+
 export async function readFileFromUrl(url: string): Promise<FileResult> {
     // Import the MIME type utilities
     const { isImageFile } = await import('./mime-types.js');
+
+    // Block SSRF before any network access. This runs before the try/timeout so
+    // the specific reason surfaces to the caller unwrapped. It also covers the
+    // PDF path below, which re-downloads the (validated) final URL.
+    await assertUrlIsFetchable(url);
 
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
-        const response = await fetch(url, {
-            signal: controller.signal
-        });
+        // Follow redirects manually so each hop is re-validated — a public URL
+        // must not be able to redirect us onto an internal address.
+        let currentUrl = url;
+        let response!: Awaited<ReturnType<typeof fetch>>;
+        for (let hop = 0; ; hop++) {
+            response = await fetch(currentUrl, {
+                signal: controller.signal,
+                redirect: 'manual'
+            });
+
+            if (response.status < 300 || response.status >= 400) {
+                break;
+            }
+
+            const location = response.headers.get('location');
+            if (!location) {
+                break; // redirect status without a target — treat as final
+            }
+            if (hop >= MAX_URL_REDIRECTS) {
+                throw new Error(`Too many redirects while fetching URL: ${url}`);
+            }
+            const nextUrl = new URL(location, currentUrl).toString();
+            await assertUrlIsFetchable(nextUrl);
+            currentUrl = nextUrl;
+        }
 
         // Clear the timeout since fetch completed
         clearTimeout(timeoutId);
@@ -378,12 +499,12 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
-        const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
+        const isPdf = isPdfFile(contentType) || currentUrl.toLowerCase().endsWith('.pdf');
 
         // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(url);
+            // Use the final (validated) URL - pdfreader handles URL downloads internally
+            const pdfResult = await parsePdfToMarkdown(currentUrl);
 
             return {
                 content: "",
