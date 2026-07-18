@@ -97,6 +97,7 @@ export class MCPDevice {
 
             // Initialize desktop integration
             await this.desktop.initialize();
+            this.desktop.onDisconnect((reason) => void this.handleLocalMcpLoss(reason));
 
             console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
@@ -258,6 +259,33 @@ export class MCPDevice {
     }
 
     // Methods moved to RemoteChannel
+
+    /**
+     * The local Desktop Commander child died. A healthy remote channel says
+     * nothing about the local half being alive, so without this the device kept
+     * reporting itself online and every routed tool call came back "Not
+     * connected" until someone restarted the process by hand.
+     */
+    private async handleLocalMcpLoss(reason: string) {
+        if (this.deviceId) {
+            await this.remoteChannel.setOnlineStatus(this.deviceId, 'offline')
+                .catch((e: any) => console.error('Failed to mark device offline:', e.message));
+        }
+
+        // Recover proactively rather than waiting for the next tool call to
+        // trigger the lazy restart: we just went offline, so no further calls
+        // would be routed here and that wait would never end.
+        try {
+            await this.desktop.ensureReady();
+            if (this.deviceId) {
+                await this.remoteChannel.setOnlineStatus(this.deviceId, 'online');
+            }
+            console.log('♻️  Local Desktop Commander MCP restarted; device is online again');
+        } catch (error: any) {
+            console.error(`❌ Could not restart local Desktop Commander MCP: ${error.message}`);
+            await captureRemote('remote_device_local_mcp_restart_failed', { error, reason });
+        }
+    }
 
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
