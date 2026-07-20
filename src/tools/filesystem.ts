@@ -485,8 +485,11 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use the final (validated) URL - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(currentUrl);
+            // Parse the bytes from the request we already validated. Handing the URL
+            // to the parser would download it a second time, resolving DNS again and
+            // bypassing the checks above.
+            const pdfBytes = new Uint8Array(await response.arrayBuffer());
+            const pdfResult = await parsePdfToMarkdown(pdfBytes);
 
             return {
                 content: "",

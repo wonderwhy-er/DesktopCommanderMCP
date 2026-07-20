@@ -259,7 +259,10 @@ export function ensureChromeAvailable(): void {
     });
 }
 
-async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
+async function loadPdfToBuffer(source: string | Uint8Array): Promise<Buffer | ArrayBuffer | Uint8Array> {
+    if (typeof source !== 'string') {
+        return source;
+    }
     if (isUrl(source)) {
         const response = await fetch(source);
         return await response.arrayBuffer();
@@ -270,8 +273,12 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
 
 /**
  * Convert PDF to Markdown using @opendocsg/pdf2md
+ *
+ * Pass already-downloaded bytes to avoid a second fetch; callers that fetched the
+ * PDF through a validated request must do so, since re-fetching by URL resolves
+ * DNS again and skips those checks.
  */
-export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
+export async function parsePdfToMarkdown(source: string | Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
 
