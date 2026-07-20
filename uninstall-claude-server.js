@@ -412,6 +412,15 @@ function updateUninstallStep(index, status, error = null) {
     }
 }
 
+function resolveSystemBinary(candidates, fallback) {
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return fallback;
+}
+
 async function execAsync(command) {
     const execStep = addUninstallStep(`exec_${command.substring(0, 20)}...`);
     return new Promise((resolve, reject) => {
@@ -489,12 +498,16 @@ async function restartClaude() {
                 case "win32":
                     await execAsync(`taskkill /F /IM "Claude.exe"`);
                     break;
-                case "darwin":
-                    await execAsync(`killall "Claude"`);
+                case "darwin": {
+                    const killall = resolveSystemBinary(['/usr/bin/killall'], 'killall');
+                    await execAsync(`"${killall}" "Claude"`);
                     break;
-                case "linux":
-                    await execAsync(`pkill -f "claude"`);
+                }
+                case "linux": {
+                    const pkill = resolveSystemBinary(['/usr/bin/pkill', '/bin/pkill'], 'pkill');
+                    await execAsync(`"${pkill}" -f "claude"`);
                     break;
+                }
             }
             updateUninstallStep(killStep, 'completed');
             logToFile("Claude process terminated successfully");
