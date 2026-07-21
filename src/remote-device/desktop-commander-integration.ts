@@ -90,17 +90,23 @@ export class DesktopCommanderIntegration {
                 }
             );
 
+            // Supervise the local half. Without these, a child crash is silent:
+            // the SDK clears its transport and every subsequent call throws
+            // "Not connected" with nothing tying it back to the death.
+            // Attached BEFORE connect(): the SDK chains handlers that already
+            // exist on the transport, so its own close handling — which rejects
+            // in-flight requests with "Connection closed" immediately — keeps
+            // running. Assigned after connect() they would REPLACE the SDK's
+            // handler and an in-flight call at child death would hang until
+            // the 60s request timeout instead of failing fast.
+            this.mcpTransport.onclose = () => this.handleLocalDisconnect('stdio transport closed');
+            this.mcpTransport.onerror = (err: Error) =>
+                this.handleLocalDisconnect(`stdio transport error: ${err?.message ?? String(err)}`);
+
             // Connect to Desktop Commander
             console.debug('[DEBUG] Connecting MCP client to transport');
             await this.mcpClient.connect(this.mcpTransport);
             this.isReady = true;
-
-            // Supervise the local half. Without these, a child crash is silent:
-            // the SDK clears its transport and every subsequent call throws
-            // "Not connected" with nothing tying it back to the death.
-            this.mcpTransport.onclose = () => this.handleLocalDisconnect('stdio transport closed');
-            this.mcpTransport.onerror = (err: Error) =>
-                this.handleLocalDisconnect(`stdio transport error: ${err?.message ?? String(err)}`);
 
             console.log(' - 🔌 Connected to Desktop Commander MCP');
             console.debug('[DEBUG] Desktop Commander MCP connection successful');
@@ -203,10 +209,18 @@ export class DesktopCommanderIntegration {
         // restarts `desktop-commander remote`.
         await this.ensureReady();
 
+        // The child can die between ensureReady() resolving and the call below
+        // (handleLocalDisconnect nulls the client); surface that as a clear
+        // error instead of a TypeError on null.
+        const client = this.mcpClient;
+        if (!client) {
+            throw new Error('Local Desktop Commander MCP connection was lost while dispatching; it will be restarted on the next call');
+        }
+
         // Proxy other tools to MCP server
         try {
             console.debug('[DEBUG] Calling MCP tool:', toolName, 'args:', JSON.stringify(args).substring(0, 100));
-            const result = await this.mcpClient!.callTool({
+            const result = await client.callTool({
                 name: toolName,
                 arguments: args,
                 _meta: { remote: true, ...metadata || {} }

@@ -51,17 +51,25 @@ async function testBogusShellDoesNotCrash() {
   console.log('✓ bogus shell returns an error without crashing the process');
 }
 
-async function testBogusExecutableDoesNotCrash() {
-  // No shell option: the command itself is the executable that fails to resolve.
+async function testMissingCommandThroughShellDoesNotCrash() {
+  // NOTE: a falsy `shell` argument is coerced to the configured default shell
+  // (executeCommand: `shellToUse = config.defaultShell || true`), so this runs
+  // THROUGH a shell and exercises the exit-127 "command not found" path — it
+  // cannot produce a spawn 'error' event. The spawn-error path is covered by
+  // the bogus-shell case above.
   const result = await terminalManager.executeCommand(
     'this-command-does-not-exist-4f2a', 3000, false
   );
   await settle();
 
   assert.strictEqual(uncaught, null,
-    `spawn failure escaped as an uncaught exception: ${uncaught && uncaught.message}`);
+    `missing command escaped as an uncaught exception: ${uncaught && uncaught.message}`);
   assert.ok(result, 'executeCommand must return a result, not hang');
-  console.log('✓ bogus executable returns an error without crashing the process');
+  assert.ok(result.pid > 0,
+    `command runs via the default shell, so a real pid is expected; got ${result.pid}`);
+  assert.ok(/not found|not recognized/i.test(result.output),
+    `expected the shell's command-not-found error, got ${JSON.stringify(result.output)}`);
+  console.log('✓ missing command via default shell returns exit-127 output without crashing');
 }
 
 async function testHealthyCommandStillWorks() {
@@ -78,7 +86,7 @@ async function testHealthyCommandStillWorks() {
 async function main() {
   console.log('=== spawn error handling ===\n');
   await testBogusShellDoesNotCrash();
-  await testBogusExecutableDoesNotCrash();
+  await testMissingCommandThroughShellDoesNotCrash();
   await testHealthyCommandStillWorks();
   console.log('\nAll spawn-error tests passed.');
 }
