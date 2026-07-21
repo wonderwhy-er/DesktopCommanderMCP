@@ -1,8 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
 import os from 'os';
-import dns from 'dns/promises';
-import ipaddr from 'ipaddr.js';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -13,6 +11,9 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { fetchUrlValidated } from '../utils/urlSafety.js';
+
+export { assertUrlIsFetchable } from '../utils/urlSafety.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -357,119 +358,18 @@ type FileResultPayloads = PdfPayload;
  * @param url URL to fetch content from
  * @returns File content or file result with metadata
  */
-// Follow at most this many redirects when reading a URL, re-validating each hop.
-const MAX_URL_REDIRECTS = 5;
-
-/**
- * Returns true if an IP address is not publicly routable — loopback, private,
- * link-local (including the 169.254.169.254 cloud metadata endpoint), unique
- * local, CGNAT, multicast, or otherwise reserved. Anything that isn't a valid
- * IP is treated as blocked so a malformed value can't slip through.
- *
- * Uses ipaddr.js for CIDR-correct classification across IPv4 and IPv6: only the
- * `unicast` range is publicly routable, everything else is refused. IPv4-mapped
- * IPv6 (e.g. `::ffff:127.0.0.1` and its hex form `::ffff:7f00:1`) is unwrapped
- * to its IPv4 address first so the underlying range is what gets checked.
- */
-function isBlockedAddress(ip: string): boolean {
-    let addr: ipaddr.IPv4 | ipaddr.IPv6;
-    try {
-        addr = ipaddr.parse(ip.split('%')[0]); // drop any IPv6 zone id
-    } catch {
-        return true;
-    }
-    if (addr.kind() === 'ipv6' && (addr as ipaddr.IPv6).isIPv4MappedAddress()) {
-        addr = (addr as ipaddr.IPv6).toIPv4Address();
-    }
-    return addr.range() !== 'unicast';
-}
-
-/**
- * Guards against SSRF before a URL is fetched. Allows only http(s), and rejects
- * hosts that are — or that resolve to — non-public addresses. Every resolved
- * address is checked, so a hostname pointing at an internal IP is blocked too.
- *
- * @param rawUrl The URL about to be fetched
- * @throws Error if the URL is not safe to fetch
- */
-export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
-    let parsed: URL;
-    try {
-        parsed = new URL(rawUrl);
-    } catch {
-        throw new Error(`Invalid URL: ${rawUrl}`);
-    }
-
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        throw new Error(`URL protocol not allowed: ${parsed.protocol} — only http and https can be read`);
-    }
-
-    const hostname = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
-
-    if (ipaddr.isValid(hostname)) {
-        if (isBlockedAddress(hostname)) {
-            throw new Error(`Refusing to fetch a URL that targets a non-public address: ${hostname}`);
-        }
-        return;
-    }
-
-    let resolved: Array<{ address: string }>;
-    try {
-        resolved = await dns.lookup(hostname, { all: true });
-    } catch {
-        throw new Error(`Could not resolve host: ${hostname}`);
-    }
-    if (resolved.length === 0) {
-        throw new Error(`Could not resolve host: ${hostname}`);
-    }
-    for (const { address } of resolved) {
-        if (isBlockedAddress(address)) {
-            throw new Error(
-                `Refusing to fetch a URL that resolves to a non-public address: ${hostname} -> ${address}`
-            );
-        }
-    }
-}
-
 export async function readFileFromUrl(url: string): Promise<FileResult> {
     // Import the MIME type utilities
     const { isImageFile } = await import('./mime-types.js');
-
-    // Block SSRF before any network access. This runs before the try/timeout so
-    // the specific reason surfaces to the caller unwrapped. It also covers the
-    // PDF path below, which re-downloads the (validated) final URL.
-    await assertUrlIsFetchable(url);
 
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
-        // Follow redirects manually so each hop is re-validated — a public URL
-        // must not be able to redirect us onto an internal address.
-        let currentUrl = url;
-        let response!: Awaited<ReturnType<typeof fetch>>;
-        for (let hop = 0; ; hop++) {
-            response = await fetch(currentUrl, {
-                signal: controller.signal,
-                redirect: 'manual'
-            });
-
-            if (response.status < 300 || response.status >= 400) {
-                break;
-            }
-
-            const location = response.headers.get('location');
-            if (!location) {
-                break; // redirect status without a target — treat as final
-            }
-            if (hop >= MAX_URL_REDIRECTS) {
-                throw new Error(`Too many redirects while fetching URL: ${url}`);
-            }
-            const nextUrl = new URL(location, currentUrl).toString();
-            await assertUrlIsFetchable(nextUrl);
-            currentUrl = nextUrl;
-        }
+        // SSRF guard: validates the URL (and every redirect hop) before any
+        // request leaves the process.
+        const { response, finalUrl: currentUrl } = await fetchUrlValidated(url, controller.signal);
 
         // Clear the timeout since fetch completed
         clearTimeout(timeoutId);
