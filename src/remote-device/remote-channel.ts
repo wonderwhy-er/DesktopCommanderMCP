@@ -43,6 +43,28 @@ export class RemoteChannel {
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
 
+    // When set (by MCPDevice), channel health flows through the device status
+    // arbiter instead of writing mcp_devices directly — the arbiter combines
+    // it with local-child health so a channel resubscribe can't mark a device
+    // whose child is dead back online.
+    private channelHealthReporter: ((ready: boolean) => void) | null = null;
+
+    setChannelHealthReporter(reporter: (ready: boolean) => void) {
+        this.channelHealthReporter = reporter;
+    }
+
+    private reportChannelHealth(ready: boolean) {
+        if (this.channelHealthReporter) {
+            this.channelHealthReporter(ready);
+            return;
+        }
+        // Legacy fallback when no arbiter is wired (standalone use).
+        if (this.deviceId) {
+            this.setOnlineStatus(this.deviceId, ready ? 'online' : 'offline')
+                .catch((e: any) => console.error('Failed to update device status:', e.message));
+        }
+    }
+
     // Track last channel state for debug logging
     private lastChannelState: string | null = null;
 
@@ -228,22 +250,19 @@ export class RemoteChannel {
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
-                        // Update device status on successful connection
-                        if (this.deviceId) {
-                            this.setOnlineStatus(this.deviceId, 'online').catch(e => {
-                                console.error('Failed to set online status:', e.message);
-                            });
-                        }
+                        // Report channel health on successful connection (the
+                        // arbiter decides whether the device is truly online).
+                        this.reportChannelHealth(true);
                         resolve();
                     } else if (status === 'CHANNEL_ERROR') {
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
-                        this.setOnlineStatus(this.deviceId!, 'offline');
+                        this.reportChannelHealth(false);
                         captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
                         console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
-                        this.setOnlineStatus(this.deviceId!, 'offline');
+                        this.reportChannelHealth(false);
                         captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
                         reject(new Error('Tool call channel subscription timed out'));
                     } else if (status === 'CLOSED') {
@@ -251,7 +270,7 @@ export class RemoteChannel {
                         // forever (which would wedge the re-entrancy guard / watchdog), and
                         // mark the device offline like the other degraded states.
                         console.warn(`⚠️ Channel closed — ${this.connState()}`);
-                        this.setOnlineStatus(this.deviceId!, 'offline');
+                        this.reportChannelHealth(false);
                         reject(new Error('Tool call channel closed during subscribe'));
                     }
                 });
