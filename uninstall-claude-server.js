@@ -529,7 +529,8 @@ async function restartClaude() {
                 updateUninstallStep(startStep, 'skipped');
                 await trackEvent('uninstall_start_claude_skipped');
             } else if (platform === "darwin") {
-                await execAsync(`open -a "Claude"`);
+                const open = resolveSystemBinary(['/usr/bin/open'], 'open');
+                await execAsync(`"${open}" -a "Claude"`);
                 updateUninstallStep(startStep, 'completed');
                 logToFile("✅ Claude has been restarted automatically!");
                 await trackEvent('uninstall_start_claude_success');
