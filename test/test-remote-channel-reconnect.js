@@ -256,6 +256,68 @@ async function goHalfOpenThenDrive(rc, client) {
 }
 
 async function main() {
+  await test('heartbeat startup is idempotent for the same device', async () => {
+    const { rc } = makeRemoteChannel();
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    let created = 0;
+    globalThis.setInterval = () => ({ id: ++created });
+    globalThis.clearInterval = () => {};
+    try {
+      await withQuietLogs(async () => {
+        rc.sendHeartbeat = async () => {};
+        rc.startHeartbeat('device-1');
+        rc.startHeartbeat('device-1');
+      });
+      assert.strictEqual(created, 2, 'expected one connection timer and one heartbeat timer');
+    } finally {
+      rc.stopHeartbeat();
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+    }
+  });
+
+  await test('duplicate realtime call IDs dispatch once', async () => {
+    const { rc, client } = makeRemoteChannel();
+    let realtimeHandler;
+    let dispatched = 0;
+    const originalChannel = client.channel.bind(client);
+    client.channel = (topic) => {
+      const channel = originalChannel(topic);
+      channel.on = (_event, _filter, handler) => {
+        realtimeHandler = handler;
+        return channel;
+      };
+      return channel;
+    };
+    rc.onToolCall = () => { dispatched++; };
+
+    await withQuietLogs(async () => {
+      await rc.createChannel();
+      await flush();
+      const payload = { new: { id: 'call-1', tool_name: 'read_file', arguments: {} } };
+      realtimeHandler(payload);
+      realtimeHandler(payload);
+    });
+    assert.strictEqual(dispatched, 1, 'same queued call ID should only dispatch once');
+  });
+
+  await test('failed recreates observe bounded backoff before retrying', async () => {
+    const { rc } = makeRemoteChannel();
+    rc.channel = { state: 'errored' };
+    rc.client.removeChannel = async () => { rc.channel = null; };
+    rc.client.realtime.disconnect = async () => {};
+    rc.createChannel = async () => { throw new Error('simulated reconnect failure'); };
+
+    await withQuietLogs(() => rc.recreateChannel());
+    assert.strictEqual(rc.reconnectAttempt, 1);
+    assert(rc.nextReconnectAt > Date.now(), 'failed recreate should schedule a future retry');
+
+    rc.channel = { state: 'errored' };
+    await withQuietLogs(() => rc.recreateChannel());
+    assert.strictEqual(rc.reconnectAttempt, 1, 'retry inside backoff must not execute');
+  });
+
   // CONTROL: prove the harness CAN observe recovery — when the dead socket is
   // actually torn down (disconnect()), the next recreate re-subscribes.
   await test('control: recovers when the half-open socket is torn down before recreate', async () => {

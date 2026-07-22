@@ -28,6 +28,9 @@ const RECREATE_TIMEOUT_MS = 30000;
 // resolves/errors well within this window; 3 health ticks of unbroken 'joining' means the
 // state machine has stalled and only a fresh socket (via recreate) recovers it.
 const JOINING_WEDGE_TIMEOUT_MS = 30000;
+const RECONNECT_BASE_DELAY_MS = 10000;
+const RECONNECT_MAX_DELAY_MS = 300000;
+const MAX_PROCESSED_CALL_IDS = 1000;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -50,6 +53,9 @@ export class RemoteChannel {
     private reconnectAttempt = 0;        // recreateChannel() attempts since last success
     private isRecreatingChannel = false; // a recreate is in flight (re-entrancy guard)
     private joiningSince: number | null = null; // ts the channel entered an unbroken 'joining' run; null when not joining
+    private nextReconnectAt = 0;
+    private heartbeatDeviceId: string | null = null;
+    private processedCallIds = new Set<string>();
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -214,7 +220,19 @@ export class RemoteChannel {
                         filter: `user_id=eq.${this.user.id}`
                     },
                     (payload: any) => {
-                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
+                        const callId = payload?.new?.id;
+                        console.debug('[DEBUG] Realtime event received, payload:', callId);
+                        if (typeof callId === 'string' && callId) {
+                            if (this.processedCallIds.has(callId)) {
+                                console.debug('[DEBUG] Ignoring duplicate realtime call:', callId);
+                                return;
+                            }
+                            this.processedCallIds.add(callId);
+                            if (this.processedCallIds.size > MAX_PROCESSED_CALL_IDS) {
+                                const oldest = this.processedCallIds.values().next().value;
+                                if (oldest) this.processedCallIds.delete(oldest);
+                            }
+                        }
                         if (this.onToolCall) {
                             this.onToolCall(payload);
                         }
@@ -227,6 +245,7 @@ export class RemoteChannel {
                     if (status === 'SUBSCRIBED') {
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
+                        this.nextReconnectAt = 0;
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection
                         if (this.deviceId) {
@@ -355,6 +374,9 @@ export class RemoteChannel {
             console.debug('[DEBUG] recreateChannel() skipped - already in progress');
             return;
         }
+        if (Date.now() < this.nextReconnectAt) {
+            return;
+        }
         this.isRecreatingChannel = true;
         this.reconnectAttempt++;
 
@@ -384,8 +406,13 @@ export class RemoteChannel {
                 await this.createChannel();
             }, RECREATE_TIMEOUT_MS, 'recreateChannel');
         } catch (err: any) {
+            const delay = Math.min(
+                RECONNECT_BASE_DELAY_MS * (2 ** Math.max(0, this.reconnectAttempt - 1)),
+                RECONNECT_MAX_DELAY_MS,
+            );
+            this.nextReconnectAt = Date.now() + delay;
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
-            console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);
+            console.debug(`[DEBUG] Channel recreation failed: ${err?.message}; retry in ${delay}ms — ${this.connState()}`);
         } finally {
             this.isRecreatingChannel = false;
         }
@@ -450,6 +477,12 @@ export class RemoteChannel {
     }
 
     startHeartbeat(deviceId: string) {
+        if (this.heartbeatDeviceId === deviceId && this.connectionCheckInterval && this.heartbeatInterval) {
+            console.debug('[DEBUG] Heartbeat already active for device:', deviceId);
+            return;
+        }
+        this.stopHeartbeat();
+        this.heartbeatDeviceId = deviceId;
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
@@ -471,6 +504,7 @@ export class RemoteChannel {
             clearInterval(this.connectionCheckInterval);
             this.connectionCheckInterval = null;
         }
+        this.heartbeatDeviceId = null;
     }
 
     async setOnlineStatus(deviceId: string, status: 'online' | 'offline') {
