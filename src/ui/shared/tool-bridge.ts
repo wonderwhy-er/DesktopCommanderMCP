@@ -70,6 +70,16 @@ function normalizeToolArgs(args: ToolArgs | undefined): ToolArgs {
     return args ?? {};
 }
 
+function stableStringify(value: unknown): string {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`;
+    }
+    if (isObject(value)) {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? String(value);
+}
+
 function extractErrorMessage(error: unknown): string {
     if (error instanceof Error && error.message) {
         return error.message;
@@ -100,6 +110,7 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
     const targetOrigin = normalizeTargetOrigin(options.targetOrigin ?? getDefaultTargetOrigin());
     const idPrefix = options.idPrefix ?? 'tool-bridge';
     let requestCounter = 0;
+    const inFlight = new Map<string, Promise<unknown>>();
 
     async function callViaFallback(name: string, args: ToolArgs): Promise<unknown> {
         if (!host.parent || !host.addEventListener || !host.removeEventListener) {
@@ -166,8 +177,7 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
         });
     }
 
-    async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
-        const normalizedArgs = normalizeToolArgs(args);
+    async function callToolOnce(name: string, normalizedArgs: ToolArgs): Promise<unknown> {
         const helperCandidates = [host.openai, host.mcp].filter(
             (candidate): candidate is ToolHelper => Boolean(candidate?.callTool)
         );
@@ -187,6 +197,25 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
             return await callViaFallback(name, normalizedArgs);
         } catch (fallbackError) {
             throw fallbackError;
+        }
+    }
+
+    async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
+        const normalizedArgs = normalizeToolArgs(args);
+        const key = `${name}:${stableStringify(normalizedArgs)}`;
+        const existing = inFlight.get(key);
+        if (existing) {
+            return existing;
+        }
+
+        const pending = callToolOnce(name, normalizedArgs);
+        inFlight.set(key, pending);
+        try {
+            return await pending;
+        } finally {
+            if (inFlight.get(key) === pending) {
+                inFlight.delete(key);
+            }
         }
     }
 

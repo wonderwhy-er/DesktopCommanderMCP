@@ -5,6 +5,8 @@ import assert from 'assert';
 
 import { server } from '../dist/server.js';
 import { buildTrackUiEventCapturePayload } from '../dist/handlers/history-handlers.js';
+import { createToolBridge } from '../dist/ui/shared/tool-bridge.js';
+import { createUiEventTracker } from '../dist/ui/shared/ui-event-tracker.js';
 
 function getRequestHandler(method) {
   const handlers = server._requestHandlers;
@@ -54,10 +56,70 @@ async function testTrackUiEventPayloadCollisionProtection() {
   console.log('✓ track_ui_event payload collision protection works');
 }
 
+async function testConcurrentWidgetCallsAreCoalesced() {
+  console.log('\n--- Test: identical concurrent widget calls are coalesced ---');
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const bridge = createToolBridge({
+    host: {
+      openai: {
+        callTool: async () => {
+          calls++;
+          await gate;
+          return { content: [{ type: 'text', text: 'ok' }] };
+        },
+      },
+    },
+  });
+
+  const first = bridge.callTool('read_file', { path: 'same.txt', options: { offset: 0 } });
+  const second = bridge.callTool('read_file', { options: { offset: 0 }, path: 'same.txt' });
+  release();
+  const [a, b] = await Promise.all([first, second]);
+
+  assert.strictEqual(calls, 1, 'equivalent in-flight requests should share one host call');
+  assert.deepStrictEqual(a, b);
+  console.log('✓ identical concurrent calls share one request');
+}
+
+async function testSequentialWidgetCallsRunAgain() {
+  console.log('\n--- Test: sequential widget calls are not suppressed ---');
+  let calls = 0;
+  const bridge = createToolBridge({
+    host: { openai: { callTool: async () => ({ call: ++calls }) } },
+  });
+
+  await bridge.callTool('get_config', {});
+  await bridge.callTool('get_config', {});
+  assert.strictEqual(calls, 2, 'request should run again after the prior call settles');
+  console.log('✓ sequential calls execute normally');
+}
+
+async function testDuplicateUiEventsAreSuppressed() {
+  console.log('\n--- Test: immediate duplicate UI events are suppressed ---');
+  const calls = [];
+  const track = createUiEventTracker(
+    async (name, args) => { calls.push({ name, args }); return {}; },
+    { component: 'test-widget' },
+  );
+
+  track('click', { target: 'refresh' });
+  track('click', { target: 'refresh' });
+  track('click', { target: 'other' });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.strictEqual(calls.length, 2, 'duplicate should collapse while distinct event remains');
+  console.log('✓ duplicate event collapsed without suppressing distinct event');
+}
+
 export default async function runTests() {
   try {
     await testTrackUiEventCall();
     await testTrackUiEventPayloadCollisionProtection();
+    await testConcurrentWidgetCallsAreCoalesced();
+    await testSequentialWidgetCallsRunAgain();
+    await testDuplicateUiEventsAreSuppressed();
     console.log('\n✅ UI event tracking tests passed!');
     return true;
   } catch (error) {
