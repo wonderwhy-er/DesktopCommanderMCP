@@ -542,7 +542,11 @@ export class RemoteChannel {
             console.debug('[DEBUG] Spawning blocking update script:', scriptPath);
             console.debug('[DEBUG] Using node executable:', process.execPath);
 
-            const result = spawnSync('node', [
+            // process.execPath is the exact Node binary currently running the
+            // server. Using it (instead of the bare name 'node') skips PATH
+            // resolution entirely, so the update script always runs on the same
+            // runtime and can't be shadowed by a different 'node' on PATH.
+            const result = spawnSync(process.execPath, [
                 scriptPath,
                 deviceId,
                 supabaseUrl,
