@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { assertUrlIsFetchable, readFileFromUrl } from '../dist/tools/filesystem.js';
+import { fetchUrlValidated } from '../dist/utils/urlSafety.js';
 import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
 
 /**
@@ -77,8 +78,50 @@ async function run() {
   const parsed = await parsePdfToMarkdown(Buffer.from(MINIMAL_PDF_BASE64, 'base64'));
   assert.strictEqual(parsed.metadata.totalPages, 1, 'byte input should parse as a PDF');
   ok('parsePdfToMarkdown accepts already-fetched bytes');
+
+  // A public URL must not be able to redirect us onto an internal address.
+  // The fetch is stubbed (fetchUrlValidated takes the implementation as its
+  // third parameter precisely so this stays hermetic): the stub answers the
+  // public entry URL with a 302 pointing at cloud metadata, and records every
+  // request it is asked to make. An IP-literal entry URL keeps validation off
+  // the real DNS resolver.
+  const requested = [];
+  let capturedInit;
+  const redirectingFetch = async (url, init) => {
+    requested.push(String(url));
+    capturedInit = init;
+    return {
+      status: 302,
+      headers: { get: (name) => (name.toLowerCase() === 'location' ? 'http://169.254.169.254/latest/meta-data/' : null) },
+      body: null,
+    };
+  };
+  await assert.rejects(
+    () => fetchUrlValidated('https://8.8.8.8/entry', undefined, redirectingFetch),
+    /non-public/i,
+    'a redirect onto the metadata endpoint must be rejected'
+  );
+  assert.deepStrictEqual(
+    requested,
+    ['https://8.8.8.8/entry'],
+    'the internal redirect target must never be requested'
+  );
+  ok('redirect from a public URL to the metadata endpoint is blocked before any request to it');
+
+  // The connection must go to the address that passed validation, not wherever
+  // the hostname resolves at connect time (DNS rebinding). The fetch options
+  // carry an agent whose lookup answers from the validated set; ask it directly
+  // and confirm it returns the pinned address without touching the resolver.
+  assert.ok(capturedInit && capturedInit.agent, 'fetch should be given a pinning agent');
+  const pinned = await new Promise((resolve, reject) => {
+    capturedInit.agent.options.lookup('rebind.example', {}, (err, address, family) => {
+      if (err) reject(err); else resolve({ address, family });
+    });
+  });
+  assert.strictEqual(pinned.address, '8.8.8.8', 'socket lookup must return the validated address');
+  ok('socket-level lookup is pinned to the validated address');
 }
 
 run()
-  .then(() => { console.log(`\nPASS (${passed}/4)`); process.exit(0); })
+  .then(() => { console.log(`\nPASS (${passed}/6)`); process.exit(0); })
   .catch((e) => { console.error(`\nFAIL: ${e.message}`); process.exit(1); });

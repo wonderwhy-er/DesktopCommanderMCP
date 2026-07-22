@@ -1,4 +1,7 @@
 import dns from 'dns/promises';
+import http from 'http';
+import https from 'https';
+import type { LookupFunction } from 'net';
 import ipaddr from 'ipaddr.js';
 import fetch from 'cross-fetch';
 
@@ -29,15 +32,24 @@ function isBlockedAddress(ip: string): boolean {
     return addr.range() !== 'unicast';
 }
 
+/** An address that passed the SSRF checks, in `dns.lookup` shape. */
+export interface ValidatedAddress {
+    address: string;
+    family: number;
+}
+
 /**
  * Guards against SSRF before a URL is fetched. Allows only http(s), and rejects
  * hosts that are — or that resolve to — non-public addresses. Every resolved
  * address is checked, so a hostname pointing at an internal IP is blocked too.
  *
  * @param rawUrl The URL about to be fetched
+ * @returns The addresses the host was validated as — connect to these rather
+ *          than resolving the hostname again, or the second lookup can be
+ *          rebound to an internal address after the check passed
  * @throws Error if the URL is not safe to fetch
  */
-export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
+export async function assertUrlIsFetchable(rawUrl: string): Promise<ValidatedAddress[]> {
     let parsed: URL;
     try {
         parsed = new URL(rawUrl);
@@ -55,10 +67,10 @@ export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
         if (isBlockedAddress(hostname)) {
             throw new Error(`Refusing to fetch a URL that targets a non-public address: ${hostname}`);
         }
-        return;
+        return [{ address: hostname, family: ipaddr.parse(hostname.split('%')[0]).kind() === 'ipv6' ? 6 : 4 }];
     }
 
-    let resolved: Array<{ address: string }>;
+    let resolved: Array<{ address: string; family: number }>;
     try {
         resolved = await dns.lookup(hostname, { all: true });
     } catch {
@@ -74,29 +86,70 @@ export async function assertUrlIsFetchable(rawUrl: string): Promise<void> {
             );
         }
     }
+    return resolved.map(({ address, family }) => ({ address, family }));
+}
+
+/**
+ * An http(s) agent that connects only to the given pre-validated addresses
+ * instead of resolving the hostname again. The socket-level lookup re-resolving
+ * the name is what makes DNS rebinding work: a host can pass the guard and then
+ * serve an internal address to the connection's own lookup. TLS SNI and
+ * certificate checks still run against the original hostname.
+ */
+function pinnedAgentFor(url: URL, addresses: ValidatedAddress[]): http.Agent {
+    const lookup: LookupFunction = (_hostname, options, callback) => {
+        if (options.all) {
+            callback(null, addresses.map(({ address, family }) => ({ address, family })));
+        } else {
+            callback(null, addresses[0].address, addresses[0].family);
+        }
+    };
+    return url.protocol === 'https:' ? new https.Agent({ lookup }) : new http.Agent({ lookup });
+}
+
+/**
+ * Releases a response we are not going to return (a redirect hop), so its
+ * unread body does not hold the connection open. Handles both body shapes:
+ * a WHATWG stream (`cancel`) and node-fetch's Node stream (`destroy`).
+ */
+function discardResponseBody(response: Awaited<ReturnType<typeof fetch>>): void {
+    const body = response.body as { cancel?: () => Promise<void>; destroy?: () => void } | null;
+    if (body && typeof body.cancel === 'function') {
+        body.cancel().catch(() => {});
+    } else if (body && typeof body.destroy === 'function') {
+        body.destroy();
+    }
 }
 
 /**
  * Fetches a URL with the SSRF guard applied to the initial request and to every
  * redirect hop — a public URL must not be able to redirect us onto an internal
- * address. All code that downloads a user-supplied URL must go through this
- * (or pass already-downloaded bytes onward) rather than calling fetch directly.
+ * address. Each hop's socket connects to the addresses the guard validated
+ * (never re-resolving the hostname), closing the DNS-rebinding window between
+ * check and connect. All code that downloads a user-supplied URL must go
+ * through this (or pass already-downloaded bytes onward) rather than calling
+ * fetch directly.
  *
+ * @param fetchImpl Overridable for hermetic tests; defaults to cross-fetch
  * @returns The final response and the URL it actually came from
  */
 export async function fetchUrlValidated(
     url: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    fetchImpl: typeof fetch = fetch
 ): Promise<{ response: Awaited<ReturnType<typeof fetch>>; finalUrl: string }> {
-    await assertUrlIsFetchable(url);
-
     let currentUrl = url;
     let response!: Awaited<ReturnType<typeof fetch>>;
     for (let hop = 0; ; hop++) {
-        response = await fetch(currentUrl, {
+        const addresses = await assertUrlIsFetchable(currentUrl);
+        const parsed = new URL(currentUrl);
+        response = await fetchImpl(currentUrl, {
             signal,
-            redirect: 'manual'
-        });
+            redirect: 'manual',
+            // cross-fetch is node-fetch on Node, which connects through this
+            // agent; runtimes with WHATWG fetch ignore the extra field.
+            agent: pinnedAgentFor(parsed, addresses)
+        } as RequestInit);
 
         if (response.status < 300 || response.status >= 400) {
             break;
@@ -106,12 +159,11 @@ export async function fetchUrlValidated(
         if (!location) {
             break; // redirect status without a target — treat as final
         }
+        discardResponseBody(response); // this hop's body is never read
         if (hop >= MAX_URL_REDIRECTS) {
             throw new Error(`Too many redirects while fetching URL: ${url}`);
         }
-        const nextUrl = new URL(location, currentUrl).toString();
-        await assertUrlIsFetchable(nextUrl);
-        currentUrl = nextUrl;
+        currentUrl = new URL(location, currentUrl).toString();
     }
 
     return { response, finalUrl: currentUrl };
