@@ -27,15 +27,31 @@ function normalizeUiEventParams(params: Record<string, unknown> | undefined): Ui
 
 export function createUiEventTracker(callTool: ToolCaller, options: UiEventTrackerOptions) {
     const baseParams = options.baseParams ?? {};
+    const recentEvents = new Map<string, number>();
+    const duplicateWindowMs = 250;
 
     return (event: string, params: Record<string, unknown> = {}): void => {
+        const normalizedParams = {
+            ...baseParams,
+            ...normalizeUiEventParams(params),
+        };
+        const key = JSON.stringify([event, normalizedParams]);
+        const now = Date.now();
+        const lastSeen = recentEvents.get(key);
+        if (lastSeen !== undefined && now - lastSeen < duplicateWindowMs) {
+            return;
+        }
+        recentEvents.set(key, now);
+        if (recentEvents.size > 100) {
+            for (const [candidate, timestamp] of recentEvents) {
+                if (now - timestamp >= duplicateWindowMs) recentEvents.delete(candidate);
+            }
+        }
+
         void callTool('track_ui_event', {
             event,
             component: options.component,
-            params: {
-                ...baseParams,
-                ...normalizeUiEventParams(params),
-            },
+            params: normalizedParams,
         }).catch(() => {
             // UI analytics should never block UI interactions.
         });
