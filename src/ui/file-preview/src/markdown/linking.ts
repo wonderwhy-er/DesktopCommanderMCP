@@ -17,6 +17,7 @@ interface ParsedWikiLink {
 
 const WIKI_LINK_PATTERN = /\[\[([^\]|#]*)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g;
 const FENCE_PATTERN = /^(`{3,}|~{3,})/;
+const ALLOWED_EXTERNAL_SCHEMES = new Set(['http', 'https', 'mailto', 'ftp']);
 
 function encodeLinkPath(pathValue: string): string {
     return encodeURI(normalizePathSeparators(pathValue));
@@ -182,7 +183,16 @@ function fromFileUrl(url: URL): string {
 }
 
 function isExternalHref(rawHref: string): boolean {
-    return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawHref) && !isWindowsAbsolutePath(rawHref);
+    if (isWindowsAbsolutePath(rawHref)) {
+        return false;
+    }
+
+    const match = rawHref.match(/^([A-Za-z][A-Za-z0-9+.-]*):/);
+    if (!match) {
+        return false;
+    }
+
+    return ALLOWED_EXTERNAL_SCHEMES.has(match[1].toLowerCase());
 }
 
 function resolveFileTargetPath(currentPath: string, rawPath: string): string {
