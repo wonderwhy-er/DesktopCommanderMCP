@@ -15,11 +15,12 @@ export interface MCPDeviceOptions {
 
 /**
  * How many recently-handled call ids to remember for duplicate-delivery
- * suppression. Both transports deliver a call within milliseconds of each
- * other, so this only needs to outlive that window; 500 is ~minutes of even
- * heavy agent traffic and costs a few KB.
+ * suppression. The two transports deliver a call within MILLISECONDS of each
+ * other, so this only has to outlive that window — 100 ids is several minutes
+ * of even the heaviest agent traffic, and costs ~10 KB on the user's machine
+ * (the device process, not the shared server).
  */
-const SEEN_CALL_IDS_MAX = 500;
+const SEEN_CALL_IDS_MAX = 100;
 
 export class MCPDevice {
     private baseServerUrl: string;

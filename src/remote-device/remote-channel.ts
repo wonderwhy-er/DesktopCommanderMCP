@@ -380,8 +380,12 @@ export class RemoteChannel {
             return;
         }
 
+        // NOTE: deliberately NOT a telemetry event — this fires on every remote
+        // tool call (~126k/day in prod) and would be permanent per-call volume.
+        // Transport usage is already segmentable server-side: dispatch stamps
+        // metadata.transport, which rides mcp_command_executed. Only the
+        // doorbell FAILURE paths below are worth capturing.
         console.debug('[DEBUG] Doorbell received for call:', callId);
-        captureRemote('remote_channel_doorbell_received', { tool_name: payload?.tool_name }).catch(() => { });
 
         if (!this.client) return;
 
