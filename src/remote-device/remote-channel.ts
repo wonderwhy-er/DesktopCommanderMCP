@@ -2,18 +2,39 @@ import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChan
 import { captureRemote } from '../utils/capture.js';
 import { VERSION } from '../version.js';
 
+const NUL_CHAR = String.fromCharCode(0);
+const NUL_RE = new RegExp(NUL_CHAR, 'g');
+
 /**
- * Recursively strip NUL (U+0000) from any value destined for a jsonb column.
- * jsonb physically cannot hold a NUL and rejects the whole write with Postgres
- * 22P05 "unsupported Unicode escape sequence". Fast path: only pay the
- * reparse when the serialized form actually contains an escaped NUL
- * (JSON.stringify encodes a real NUL as the literal chars backslash-u-0-0-0-0).
+ * Recursively strip real NUL characters (U+0000) from strings and object keys.
+ * Postgres cannot store a NUL in jsonb OR text and rejects the whole write with
+ * 22P05, which strands the call at 'executing' until the 5-min timeout.
+ *
+ * Walks the structure instead of round-tripping through JSON: an earlier
+ * serialize-and-regex version matched the ESCAPE TEXT rather than the character,
+ * so legitimate content containing the six literal chars backslash-u-0-0-0-0
+ * (e.g. reading a source file with that escape in it) was silently corrupted,
+ * and a doubled-backslash form produced invalid JSON that threw. Both cases are
+ * covered by tests in test/test-strip-null-bytes.js.
  */
 export function stripNullBytes<T>(value: T): T {
-    if (value === null || value === undefined) return value;
-    const json = JSON.stringify(value);
-    if (json === undefined || !json.includes('\\u0000')) return value;
-    return JSON.parse(json.replace(/\\u0000/g, '')) as T;
+    if (typeof value === 'string') {
+        return (value.includes(NUL_CHAR) ? value.replace(NUL_RE, '') : value) as T;
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => stripNullBytes(item)) as T;
+    }
+    if (value && typeof value === 'object') {
+        // Plain objects only — leave Date/Buffer/etc. untouched.
+        const proto = Object.getPrototypeOf(value);
+        if (proto !== Object.prototype && proto !== null) return value;
+        const out: Record<string, any> = {};
+        for (const [k, v] of Object.entries(value as Record<string, any>)) {
+            out[k.includes(NUL_CHAR) ? k.replace(NUL_RE, '') : k] = stripNullBytes(v);
+        }
+        return out as T;
+    }
+    return value;
 }
 
 
@@ -301,9 +322,17 @@ export class RemoteChannel {
                             device_name: this.deviceName,
                             app_version: VERSION,
                             platform: process.platform
-                        }).then(() => {
-                            console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
-                            captureRemote('remote_channel_presence_tracked', { attempt: recovered }).catch(() => { });
+                        }).then((trackStatus: string) => {
+                            // track() RESOLVES with 'ok' | 'error' | 'timed out' —
+                            // it does not reject, so a non-'ok' status must be
+                            // checked or a failed presence publish looks like success.
+                            if (trackStatus === 'ok') {
+                                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
+                                captureRemote('remote_channel_presence_tracked', { attempt: recovered }).catch(() => { });
+                            } else {
+                                console.error(`❌ Presence track not acknowledged (${trackStatus}) — device may show offline`);
+                                captureRemote('remote_channel_presence_track_error', { result: trackStatus }).catch(() => { });
+                            }
                         }).catch((trackErr: any) => {
                             console.error('[DEBUG] Presence track failed:', trackErr?.message);
                             captureRemote('remote_channel_presence_track_error', { error: trackErr?.message }).catch(() => { });
@@ -386,7 +415,11 @@ export class RemoteChannel {
         }
         if (!row) {
             // Row already claimed+deleted, or cleanup raced delivery — nothing to do.
-            await captureRemote('remote_channel_doorbell_row_missing', {});
+            // Not retried on purpose: pre-flip the row was inserted before the
+            // doorbell was sent, so a missing row means it was already claimed
+            // and deleted. Post-009 this is the ONLY delivery path — see the
+            // 009 preconditions if this event ever becomes non-zero.
+            await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
             return;
         }
         if (row.status !== 'pending') {
@@ -629,7 +662,10 @@ export class RemoteChannel {
         // a 5-minute timeout for a tool that actually ran. Common with binary
         // file reads / process output. error_message is text, so it's exempt.
         if (result !== null) updateData.result = stripNullBytes(result);
-        if (errorMessage !== null) updateData.error_message = errorMessage;
+        // Postgres `text` rejects NUL too (not just jsonb) — a NUL-bearing error
+        // message would fail this terminal write, and because result === null the
+        // fallback below wouldn't fire, stranding the call until the 5-min timeout.
+        if (errorMessage !== null) updateData.error_message = stripNullBytes(errorMessage);
 
         console.debug('[DEBUG] Updating call result:', updateData);
         const { error } = await this.client
@@ -835,8 +871,17 @@ export class RemoteChannel {
             // Leave presence explicitly on the graceful path (socket close
             // covers the abrupt one).
             try {
-                await this.channel.untrack();
-                console.debug('[DEBUG] Presence untracked (graceful leave)');
+                // Only untrack a LIVE channel: on a dead/half-open socket the
+                // presence push is buffered and only settles via realtime-js's
+                // 10s timeout, which would blow past device.ts's 5s force-exit
+                // and skip the durable offline write. A closed socket drops
+                // server-side presence anyway.
+                if (this.channel.state === 'joined') {
+                    await this.channel.untrack();
+                    console.debug('[DEBUG] Presence untracked (graceful leave)');
+                } else {
+                    console.debug('[DEBUG] Skipping untrack — channel not joined; socket close clears presence');
+                }
             } catch { /* best effort */ }
             await this.channel.unsubscribe();
             this.channel = null;

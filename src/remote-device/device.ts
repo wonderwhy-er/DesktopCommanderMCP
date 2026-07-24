@@ -13,6 +13,14 @@ export interface MCPDeviceOptions {
     persistSession?: boolean;
 }
 
+/**
+ * How many recently-handled call ids to remember for duplicate-delivery
+ * suppression. Both transports deliver a call within milliseconds of each
+ * other, so this only needs to outlive that window; 500 is ~minutes of even
+ * heavy agent traffic and costs a few KB.
+ */
+const SEEN_CALL_IDS_MAX = 500;
+
 export class MCPDevice {
     private baseServerUrl: string;
     private remoteChannel: RemoteChannel;
@@ -21,6 +29,8 @@ export class MCPDevice {
     private configPath: string;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
+    /** Call ids already handled by THIS process (insertion-ordered, bounded). */
+    private seenCallIds: Set<string> = new Set();
 
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
@@ -259,6 +269,16 @@ export class MCPDevice {
 
     // Methods moved to RemoteChannel
 
+    /** Record a handled call id, evicting the oldest once the cap is reached. */
+    private rememberCallId(callId: string) {
+        this.seenCallIds.add(callId);
+        if (this.seenCallIds.size > SEEN_CALL_IDS_MAX) {
+            // Sets iterate in insertion order — drop the oldest entry.
+            const oldest = this.seenCallIds.values().next().value;
+            if (oldest !== undefined) this.seenCallIds.delete(oldest);
+        }
+    }
+
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
         // Expect toolCall to include a device_id field used to route calls to this device instance.
@@ -274,10 +294,23 @@ export class MCPDevice {
 
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
+        // LOCAL claim first — this is the authoritative guard against executing
+        // a call twice. During the transition both transports deliver every call
+        // to THIS SAME PROCESS, so an in-memory check is sufficient and, unlike
+        // the DB claim below, cannot fail open: a transient REST error made
+        // markCallExecuting return true for both deliveries, which could run a
+        // side-effecting command twice (found in review, 2026-07-24).
+        if (this.seenCallIds.has(call_id)) {
+            console.debug('[DEBUG] Duplicate delivery for call already handled here, skipping:', call_id);
+            return;
+        }
+        this.rememberCallId(call_id);
+
         try {
-            // Claim the call. During the transition every call arrives via BOTH
-            // transports (postgres_changes + broadcast doorbell) — only the
-            // delivery that flips the row pending→executing may run it.
+            // DB claim second — keeps the row state machine honest, gives
+            // cross-restart/cross-process protection, and is observable. It may
+            // fail open (returns true on a transient write error); the local
+            // guard above is what makes execution exactly-once.
             const claimed = await this.remoteChannel.markCallExecuting(call_id);
             if (!claimed) {
                 // markCallExecuting already logged the duplicate-delivery skip.

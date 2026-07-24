@@ -60,6 +60,18 @@ class FakeChannel {
     });
     return this;
   }
+  // Presence (added with the Broadcast/Presence transport): the device track()s
+  // itself on SUBSCRIBED and untrack()s on a graceful unsubscribe. realtime-js
+  // RESOLVES these with a status string ('ok' | 'error' | 'timed out') rather
+  // than rejecting, so the fakes mirror that contract.
+  track() {
+    this.tracked = true;
+    return Promise.resolve('ok');
+  }
+  untrack() {
+    this.tracked = false;
+    return Promise.resolve('ok');
+  }
   unsubscribe() {
     this.state = 'leaving';
     return Promise.resolve({ error: null });
@@ -154,6 +166,12 @@ function makeRemoteChannel() {
   rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.onToolCall = () => {};
   rc.deviceId = 'device-1';
+  rc.deviceName = 'test-device';
+  // recreateChannel() now sleeps a jittered 1-3s (capped ~45s) before rebuilding,
+  // so a fleet-wide event doesn't stampede reconnects. These tests are about
+  // WHETHER the wedge recovers, not how long it waits — stub the sleep so the
+  // suite stays sub-second. (Backoff duration is asserted separately below.)
+  rc.sleep = () => Promise.resolve();
   return { rc, client };
 }
 
