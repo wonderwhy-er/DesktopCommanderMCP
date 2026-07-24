@@ -2,6 +2,20 @@ import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChan
 import { captureRemote } from '../utils/capture.js';
 import { VERSION } from '../version.js';
 
+/**
+ * Recursively strip NUL (U+0000) from any value destined for a jsonb column.
+ * jsonb physically cannot hold a NUL and rejects the whole write with Postgres
+ * 22P05 "unsupported Unicode escape sequence". Fast path: only pay the
+ * reparse when the serialized form actually contains an escaped NUL
+ * (JSON.stringify encodes a real NUL as the literal chars backslash-u-0-0-0-0).
+ */
+export function stripNullBytes<T>(value: T): T {
+    if (value === null || value === undefined) return value;
+    const json = JSON.stringify(value);
+    if (json === undefined || !json.includes('\\u0000')) return value;
+    return JSON.parse(json.replace(/\\u0000/g, '')) as T;
+}
+
 
 export interface AuthSession {
     access_token: string;
@@ -609,7 +623,12 @@ export class RemoteChannel {
             completed_at: new Date().toISOString()
         };
 
-        if (result !== null) updateData.result = result;
+        // Strip NUL (U+0000) before it reaches the jsonb `result` column.
+        // jsonb cannot store  and rejects the whole write (Postgres 22P05),
+        // which otherwise leaves the call stuck 'executing' → the user waits out
+        // a 5-minute timeout for a tool that actually ran. Common with binary
+        // file reads / process output. error_message is text, so it's exempt.
+        if (result !== null) updateData.result = stripNullBytes(result);
         if (errorMessage !== null) updateData.error_message = errorMessage;
 
         console.debug('[DEBUG] Updating call result:', updateData);
@@ -621,6 +640,20 @@ export class RemoteChannel {
         if (error) {
             console.error('[DEBUG] Failed to update call result:', error.message);
             await captureRemote('remote_channel_update_call_result_error', { error });
+
+            // Fail-fast fallback: if the RESULT write failed (sanitize should
+            // prevent the NUL case, but any unstorable payload lands here),
+            // record a terminal 'failed' with a text-only message so the user
+            // gets an immediate, honest error instead of a 5-minute phantom
+            // timeout. Guard against infinite recursion (only for result writes).
+            if (result !== null && status !== 'failed') {
+                await this.updateCallResult(
+                    callId,
+                    'failed',
+                    null,
+                    `Result could not be stored (${error.message})`
+                );
+            }
         } else {
             // (an UPDATE without .select() returns no row data — log the id)
             console.debug('[DEBUG] Call result updated successfully:', callId);
