@@ -57,8 +57,11 @@ interface DeviceData {
 // write only feeds the "last seen X ago" label for offline devices. The server
 // sweeps broadcast-capable devices offline after 65 min (2 missed writes + slack).
 const HEARTBEAT_INTERVAL = 30 * 60 * 1000;
-// Cap a single channel recreate so a hung await can't pin the re-entrancy guard
-// true (which would silently disable the connection watchdog).
+// Cap the channel-rebuild portion of a recreate so a hung await can't pin the
+// re-entrancy guard true (which would silently disable the connection watchdog).
+// NOTE: the jittered backoff sleep runs BEFORE this cap and inside the guard, so
+// the total window in which checkConnectionHealth is a no-op is
+// backoff (<=45s) + RECREATE_TIMEOUT_MS — bounded at ~75s, not 30s.
 const RECREATE_TIMEOUT_MS = 30000;
 // Max time the channel may sit CONTINUOUSLY in 'joining' before we force a recreate.
 // 'joining' is normally healthy (we let realtime-js's rejoin backoff converge), but on a
@@ -135,11 +138,16 @@ export class RemoteChannel {
         console.debug('[DEBUG] Session set successfully, user:', user.email);
 
         // Private channels authorize with the user JWT at join time. supabase-js
-        // v2 generally forwards auth to realtime on its own — these are defensive
-        // (cheap, and a silent gap here would only surface as a channel dying at
-        // JWT expiry ~1h in): push the token now and re-push on every refresh.
-        this.client.realtime.setAuth(session.access_token);
-        console.debug('[DEBUG] Realtime socket authorized with user JWT');
+        // generally forwards auth to realtime itself; this is defensive and must
+        // push the CURRENT session token, not the one we were handed:
+        // auth.setSession() refreshes an expired token internally (device asleep
+        // >1h with --persist-session), and pushing the stale parameter here would
+        // overwrite the fresh token realtime already had — every private-channel
+        // join then fails until the next refresh (~50 min deaf).
+        const { data: { session: currentSession } } = await this.client.auth.getSession();
+        const realtimeToken = currentSession?.access_token ?? session.access_token;
+        this.client.realtime.setAuth(realtimeToken);
+        console.debug('[DEBUG] Realtime socket authorized with current session JWT');
         if (!this.authListenerRegistered) {
             this.authListenerRegistered = true;
             this.client.auth.onAuthStateChange((event, newSession) => {
@@ -275,7 +283,15 @@ export class RemoteChannel {
             const channelName = `user:${this.user.id}`;
             console.debug(`[DEBUG] Creating channel: ${channelName}`);
             this.channel = this.client.channel(channelName, {
-                config: { private: true, presence: { key: this.deviceId ?? undefined } }
+                // ack: true — without it send() resolves 'ok' as soon as the frame
+                // is written to the socket, so notifyResult's status check (and its
+                // failure telemetry) could never fire. presence.enabled makes the
+                // presence extension explicit rather than inferred.
+                config: {
+                    private: true,
+                    broadcast: { ack: true },
+                    presence: { key: this.deviceId ?? undefined, enabled: true }
+                }
             })
                 .on(
                     'postgres_changes' as any,
@@ -342,11 +358,11 @@ export class RemoteChannel {
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
                         this.setOnlineStatus(this.deviceId!, 'offline');
+                        // Single event: this fires on ordinary network faults too, so a
+                        // separate "private join failed" alarm would be a 1:1 duplicate
+                        // with no added specificity. Filter on the error text
+                        // ("Unauthorized"/policy) to isolate an 008 misconfiguration.
                         captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
-                        // Distinct fleet-level alarm: if the 008 channel policies were
-                        // ever wrong in prod, this event spiking is the immediate signal
-                        // (fix = SQL policy patch, no client rollback needed).
-                        captureRemote('remote_channel_private_join_failed', { attempt: this.reconnectAttempt, error: err?.message }).catch(() => { });
                         reject(err || new Error('Failed to initialize tool call channel subscription'));
                     } else if (status === 'TIMED_OUT') {
                         console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
@@ -703,21 +719,20 @@ export class RemoteChannel {
     async updateHeartbeat(deviceId: string) {
         if (!this.client) return;
         try {
-            // Re-assert status:'online' ONLY when the channel is actually joined:
-            // at a 30-min cadence this beats a lost race with the server's offline
-            // sweep for a HEALTHY device. But if the channel is dead (CHANNEL_ERROR
-            // already set the row offline), blindly flipping it back to 'online'
-            // would mask a deaf device — in kill-switch/presence-fallback mode that
-            // turns a fast-fail into a 5-minute timeout. Always refresh last_seen.
-            const isJoined = this.channel?.state === 'joined';
-            const updates: { last_seen: string; status?: string } = {
-                last_seen: new Date().toISOString(),
-            };
-            if (isJoined) updates.status = 'online';
+            // Skip the write entirely when the channel is not joined. Bumping
+            // last_seen on a deaf device would keep its row perpetually young, so
+            // the server's staleness sweep could never age it out and correct a
+            // stale 'online' — and whenever presence is unavailable (kill switch,
+            // wedged socket) that stale row is exactly what dispatch falls back to.
+            // Staying silent lets the sweep do its job.
+            if (this.channel?.state !== 'joined') {
+                console.debug('[DEBUG] Skipping heartbeat write — channel not joined; letting the row age out');
+                return;
+            }
 
             const { error } = await this.client
                 .from('mcp_devices')
-                .update(updates)
+                .update({ last_seen: new Date().toISOString(), status: 'online' })
                 .eq('id', deviceId);
 
             if (error) {
@@ -875,17 +890,17 @@ export class RemoteChannel {
             // Leave presence explicitly on the graceful path (socket close
             // covers the abrupt one).
             try {
-                // Only untrack a LIVE channel: on a dead/half-open socket the
-                // presence push is buffered and only settles via realtime-js's
-                // 10s timeout, which would blow past device.ts's 5s force-exit
-                // and skip the durable offline write. A closed socket drops
-                // server-side presence anyway.
-                if (this.channel.state === 'joined') {
-                    await this.channel.untrack();
-                    console.debug('[DEBUG] Presence untracked (graceful leave)');
-                } else {
-                    console.debug('[DEBUG] Skipping untrack — channel not joined; socket close clears presence');
-                }
+                // Bound the untrack: a HALF-OPEN socket still reports the channel
+                // as 'joined', so a state check alone is not enough — the presence
+                // push just buffers and settles via realtime-js's 10s timeout,
+                // which blows past device.ts's 5s force-exit and would skip both
+                // unsubscribe() and the durable offline write. Race it against a
+                // 1s cap; a dropped socket clears server-side presence anyway.
+                await Promise.race([
+                    this.channel.untrack(),
+                    this.sleep(1000),
+                ]);
+                console.debug('[DEBUG] Presence untrack attempted (bounded at 1s)');
             } catch { /* best effort */ }
             await this.channel.unsubscribe();
             this.channel = null;

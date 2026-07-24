@@ -167,11 +167,16 @@ function makeRemoteChannel() {
   rc.onToolCall = () => {};
   rc.deviceId = 'device-1';
   rc.deviceName = 'test-device';
-  // recreateChannel() now sleeps a jittered 1-3s (capped ~45s) before rebuilding,
-  // so a fleet-wide event doesn't stampede reconnects. These tests are about
-  // WHETHER the wedge recovers, not how long it waits — stub the sleep so the
-  // suite stays sub-second. (Backoff duration is asserted separately below.)
-  rc.sleep = () => Promise.resolve();
+  // recreateChannel() sleeps a jittered backoff before rebuilding so a fleet-wide
+  // event doesn't stampede reconnects. These tests are about WHETHER the wedge
+  // recovers, not how long it waits — stub the sleep so the suite stays
+  // sub-second, but record the requested delays so the formula can be asserted
+  // (see "reconnect backoff grows and stays bounded" below).
+  rc.sleptMs = [];
+  rc.sleep = (ms) => {
+    rc.sleptMs.push(ms);
+    return Promise.resolve();
+  };
   return { rc, client };
 }
 
@@ -340,6 +345,34 @@ async function main() {
       `channel wedged in 'joining' on a half-open socket and never recovered.\n` +
         `     attempts(recreate)=${rc.reconnectAttempt} rebuilds=${client.realtime.rebuilds}\n` +
         `     channelState=${rc.channel && rc.channel.state} socketReadyState=${client.realtime.conn.readyState}`
+    );
+  });
+
+  // The jittered backoff exists so a fleet-wide event (server deploy, Supabase
+  // blip) doesn't stampede every device into reconnecting at the same instant.
+  // Assert the shape rather than exact values: it must GROW with consecutive
+  // attempts and stay BOUNDED so a device can't disappear for minutes.
+  await test('reconnect backoff grows and stays bounded', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(async () => {
+      await goHalfOpen(rc, client);
+      // Force several consecutive failed recreates to climb the backoff.
+      for (let i = 0; i < 6; i++) {
+        await rc.recreateChannel();
+        rc.channel.state = 'errored'; // stay unhealthy so the next attempt escalates
+      }
+    });
+
+    assert.ok(rc.sleptMs.length >= 5, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
+    assert.ok(
+      rc.sleptMs.every((ms) => ms > 0 && ms <= 30_000),
+      `every backoff must be positive and capped at 30s: ${JSON.stringify(rc.sleptMs)}`
+    );
+    // Jitter is +/-50%, so compare first-attempt vs late-attempt ranges rather
+    // than adjacent pairs (adjacent values can legitimately dip).
+    assert.ok(
+      Math.max(...rc.sleptMs.slice(3)) > Math.min(...rc.sleptMs.slice(0, 2)),
+      `backoff should grow with consecutive attempts: ${JSON.stringify(rc.sleptMs)}`
     );
   });
 
