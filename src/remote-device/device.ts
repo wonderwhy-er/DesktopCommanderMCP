@@ -275,8 +275,14 @@ export class MCPDevice {
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
         try {
-            // Update call status to executing
-            await this.remoteChannel.markCallExecuting(call_id);
+            // Claim the call. During the transition every call arrives via BOTH
+            // transports (postgres_changes + broadcast doorbell) — only the
+            // delivery that flips the row pending→executing may run it.
+            const claimed = await this.remoteChannel.markCallExecuting(call_id);
+            if (!claimed) {
+                // markCallExecuting already logged the duplicate-delivery skip.
+                return;
+            }
 
             let result;
 
@@ -309,13 +315,16 @@ export class MCPDevice {
 
             console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
-            // Update database with result
+            // Update database with result, THEN ring the doorbell — the server
+            // fetches the row by id on the doorbell, so the write must land first.
             await this.remoteChannel.updateCallResult(call_id, 'completed', result);
+            await this.remoteChannel.notifyResult(call_id);
 
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
             await captureRemote('remote_device_tool_call_failed', { error, tool_name });
             await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+            await this.remoteChannel.notifyResult(call_id);
         }
     }
 

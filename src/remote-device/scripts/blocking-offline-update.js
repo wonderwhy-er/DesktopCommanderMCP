@@ -41,10 +41,12 @@ try {
         process.exit(3); // Exit code 3 for auth error
     }
 
-    // Update device status to offline
+    // Update device status to offline, stamping the exact shutdown moment so
+    // "last seen X ago" is precise for clean shutdowns (the periodic
+    // bookkeeping write only runs every 30 minutes).
     const { error } = await client
         .from('mcp_devices')
-        .update({ status: 'offline' })
+        .update({ status: 'offline', last_seen: new Date().toISOString() })
         .eq('id', deviceId);
 
     clearTimeout(timeoutHandle);
