@@ -202,6 +202,8 @@ The setup command will install dependencies, build the server, and configure Cla
 
 </details>
 
+<a id="option-6-docker-installation--auto-updates-no-nodejs-required"></a>
+
 <details>
 <summary><b>Option 6: Docker Installation 🐳 ⭐ Auto-Updates (No Node.js Required)</b></summary>
 
@@ -819,11 +821,13 @@ For commands that may take a while:
 
 1. **Known security limitations**: Directory restrictions and command blocking can be bypassed through various methods including symlinks, command substitution, and absolute paths or code execution
 
-2. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions.
+2. **Antivirus/EDR false positives**: Microsoft Defender or other endpoint security tools may flag Desktop Commander command execution as remote shell activity; see the [FAQ entry on antivirus alerts](FAQ.md#why-does-microsoft-defender-or-antivirus-flag-desktop-commander-as-a-remote-shell).
 
-3. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories.
+3. **Always change configuration in a separate chat window** from where you're doing your actual work. Claude may sometimes attempt to modify configuration settings (like `allowedDirectories`) if it encounters filesystem access restrictions.
 
-4. **For production security**: Use the [Docker installation](#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) which provides complete isolation from your host system.
+4. **The `allowedDirectories` setting currently only restricts filesystem operations**, not terminal commands. Terminal commands can still access files outside allowed directories.
+
+5. **For production security**: Use the [Docker installation](#option-6-docker-installation--auto-updates-no-nodejs-required) which provides complete isolation from your host system.
 
 ### Configuration Tools
 
