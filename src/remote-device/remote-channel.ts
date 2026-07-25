@@ -62,7 +62,11 @@ const HEARTBEAT_INTERVAL = 30 * 60 * 1000;
 // NOTE: the jittered backoff sleep runs BEFORE this cap and inside the guard, so
 // the total window in which checkConnectionHealth is a no-op is
 // backoff (<=45s) + RECREATE_TIMEOUT_MS — bounded at ~75s, not 30s.
-const RECREATE_TIMEOUT_MS = 30000;
+// Must exceed createChannel()'s worst case, which now includes
+// trackPresenceWithRetry: 3 track() pushes at realtime-js's 10s DEFAULT_TIMEOUT
+// plus 0.5s+1s backoff = ~31.5s. At the old 30s these two constants were in
+// silent conflict — any recreate where presence never acked ALWAYS timed out.
+const RECREATE_TIMEOUT_MS = 45000;
 // Max time the channel may sit CONTINUOUSLY in 'joining' before we force a recreate.
 // 'joining' is normally healthy (we let realtime-js's rejoin backoff converge), but on a
 // HALF-OPEN socket (readyState OPEN yet dead) realtime-js parks the channel in 'joining'
@@ -101,6 +105,13 @@ export class RemoteChannel {
     // channel never re-fires SUBSCRIBED) and the server would keep reporting
     // this device offline.
     private presenceTracked = false;
+    // Last capability value written to the DB (null = not yet written), so the
+    // flag isn't re-written on every reconnect.
+    private transportCapableWritten: boolean | null = null;
+    // Re-entrancy guard for the presence self-heal: on a wedged socket each
+    // track() buffers for the full 10s push timeout, so unguarded 10s health
+    // ticks would stack pending pushes.
+    private isTrackingPresence = false;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -247,15 +258,22 @@ export class RemoteChannel {
 
         if (existingDevice) {
             console.debug('[DEBUG] Updating device status to online');
+            // NOTE: transport_broadcast_v1 is deliberately NOT set here. The flag
+            // is a promise the device may not be able to keep, and the server
+            // treats it as binding: for a flagged device, absent presence is
+            // authoritative offline (overlayPresence) and dispatch then throws
+            // "No devices available". Advertising it before the private channel
+            // is proven means an 008/authz/Realtime problem takes the device dark
+            // even though its legacy postgres_changes channel is perfectly
+            // healthy — the exact outcome the independent legacyChannel exists to
+            // prevent. It is written only after SUBSCRIBED + a successful presence
+            // track (see markTransportCapable), and cleared when presence
+            // definitively fails, so a device that cannot deliver on the promise
+            // simply reports itself legacy and stays dispatchable.
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
-                // transport_broadcast_v1 = this device joins the private user
-                // channel (Broadcast doorbells + Presence). The server keys its
-                // transport choice and offline-sweep tier on this flag.
-                // app_version rides along so adoption ("are old versions gone
-                // yet?") is answerable from SQL and PostHog alike.
-                capabilities: { transport_broadcast_v1: true, app_version: VERSION },
+                capabilities: { app_version: VERSION },
                 device_name: deviceName
             });
 
@@ -294,6 +312,16 @@ export class RemoteChannel {
      * health check re-try later if every attempt here fails.
      */
     private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
+        if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
+        this.isTrackingPresence = true;
+        try {
+            await this.trackPresenceInner(recovered, attempts);
+        } finally {
+            this.isTrackingPresence = false;
+        }
+    }
+
+    private async trackPresenceInner(recovered: number, attempts: number): Promise<void> {
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
             let status: string;
@@ -312,6 +340,10 @@ export class RemoteChannel {
                 this.presenceTracked = true;
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
                 captureRemote('remote_channel_presence_tracked', { attempt: recovered }).catch(() => { });
+                // Transport is proven end-to-end (channel joined AND presence
+                // published) — only now is it safe to let the server route us
+                // over broadcast and treat our presence as authoritative.
+                await this.setTransportCapable(true);
                 return;
             }
 
@@ -320,8 +352,39 @@ export class RemoteChannel {
         }
 
         this.presenceTracked = false;
-        console.error('❌ Presence track failed after retries — device may show offline until the next health tick');
+        console.error('❌ Presence track failed after retries — reverting to the legacy transport tier');
         captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
+        // Withdraw the promise: without presence the server cannot see us, and a
+        // stale capability flag would make it refuse to dispatch entirely. Going
+        // back to the legacy tier keeps the device usable over postgres_changes.
+        await this.setTransportCapable(false);
+    }
+
+    /**
+     * Advertise (or withdraw) the broadcast transport capability. The server
+     * reads this flag to choose a transport AND to decide whether absent
+     * presence means "offline" — so it must only ever be true while this device
+     * can actually be reached that way.
+     */
+    private async setTransportCapable(capable: boolean): Promise<void> {
+        if (!this.client || !this.deviceId) return;
+        if (this.transportCapableWritten === capable) return; // no redundant writes
+        try {
+            const capabilities: Record<string, any> = { app_version: VERSION };
+            if (capable) capabilities.transport_broadcast_v1 = true;
+            const { error } = await this.client
+                .from('mcp_devices')
+                .update({ capabilities })
+                .eq('id', this.deviceId);
+            if (error) {
+                console.error('[DEBUG] Failed to update transport capability:', error.message);
+                return;
+            }
+            this.transportCapableWritten = capable;
+            console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'legacy'}`);
+        } catch (error: any) {
+            console.error('[DEBUG] Transport capability update threw:', error?.message);
+        }
     }
 
     /**
@@ -374,7 +437,11 @@ export class RemoteChannel {
      */
     private createChannel(): Promise<void> {
         return new Promise((resolve, reject) => {
-            if (!this.client || !this.user?.id || !this.onToolCall) {
+            if (!this.client || !this.user?.id || !this.onToolCall || !this.deviceId) {
+                // deviceId included deliberately: it is the presence KEY, and a
+                // null key makes realtime assign a random one — the server's
+                // lookup by device id then misses and the device is invisible
+                // while every local signal says healthy.
                 console.debug('[DEBUG] createChannel() failed - missing prerequisites');
                 return reject(new Error('Client not initialized or missing subscription parameters'));
             }
@@ -591,7 +658,7 @@ export class RemoteChannel {
             // Self-heal a failed presence publish: the channel is up, so nothing
             // else will ever retry (SUBSCRIBED won't fire again), and without
             // presence the server reports this healthy device as offline.
-            if (!this.presenceTracked && this.deviceId) {
+            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
             }
@@ -710,8 +777,13 @@ export class RemoteChannel {
                 try { await (this.client as any).realtime?.disconnect?.(); } catch { /* best effort */ }
 
                 console.debug('[DEBUG] Calling createChannel() for recreation');
-                await this.createChannel();
+                // Rebuild the legacy safety net FIRST and unconditionally: if
+                // createChannel() throws or exceeds RECREATE_TIMEOUT_MS, anything
+                // after it is skipped, which used to leave the fallback dead for
+                // the entire duration of a private-channel outage — every
+                // subsequent health tick repeating the same teardown.
                 this.createLegacyChannel();
+                await this.createChannel();
             }, RECREATE_TIMEOUT_MS, 'recreateChannel');
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
@@ -774,7 +846,12 @@ export class RemoteChannel {
         // fallback below wouldn't fire, stranding the call until the 5-min timeout.
         if (errorMessage !== null) updateData.error_message = stripNullBytes(errorMessage);
 
-        console.debug('[DEBUG] Updating call result:', updateData);
+        // Log a summary, not the payload: results reach 13 MB and util.inspect
+        // on the hot path costs more than everything else in this function.
+        console.debug(
+            `[DEBUG] Updating call result: ${callId} status=${status}` +
+            (result !== null ? ` resultBytes=~${JSON.stringify(updateData.result)?.length ?? 0}` : '')
+        );
         const { error } = await this.client
             .from('mcp_remote_calls')
             .update(updateData)
@@ -973,7 +1050,10 @@ export class RemoteChannel {
     }
 
     async unsubscribe() {
-        await this.removeLegacyChannel();
+        // Bounded like the untrack below: removeChannel() sends a leave push that
+        // only settles via realtime-js's 10s timeout on a half-open socket, which
+        // would blow device.ts's 5s force-exit and skip the durable offline write.
+        await Promise.race([this.removeLegacyChannel(), this.sleep(1000)]);
         if (this.channel) {
             // Leave presence explicitly on the graceful path (socket close
             // covers the abrupt one).
