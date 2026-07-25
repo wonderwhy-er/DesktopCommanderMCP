@@ -30,6 +30,9 @@ policy gateway between the AI client and Desktop Commander. A gateway can
 normalize a tool call, apply file and command policy, request human approval,
 forward allowed calls, and write a redacted audit record.
 
+Gateway timeouts, errors, and missing policy decisions should fail closed: do
+not forward a call without an explicit allow decision or completed approval.
+
 This is an additional governance layer, not a sandbox. It can govern only calls
 that are routed through it; a client connected directly to Desktop Commander can
 bypass the gateway. Keep OS-level isolation in place when containment is required.
