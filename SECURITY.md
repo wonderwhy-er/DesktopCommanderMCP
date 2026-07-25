@@ -34,9 +34,8 @@ This is an additional governance layer, not a sandbox. It can govern only calls
 that are routed through it; a client connected directly to Desktop Commander can
 bypass the gateway. Keep OS-level isolation in place when containment is required.
 
-The gateway should be implementation-neutral. A local policy service or a tool
-such as PatchWarden can implement the pattern, but Desktop Commander does not
-require or imply support for any particular gateway.
+Desktop Commander does not require or imply support for any particular gateway
+implementation.
 
 ## Recommended deployment for stronger isolation
 
