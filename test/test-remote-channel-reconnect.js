@@ -352,27 +352,45 @@ async function main() {
   // blip) doesn't stampede every device into reconnecting at the same instant.
   // Assert the shape rather than exact values: it must GROW with consecutive
   // attempts and stay BOUNDED so a device can't disappear for minutes.
-  await test('reconnect backoff grows and stays bounded', async () => {
+  await test('reconnect backoff grows with attempts and stays bounded', async () => {
     const { rc, client } = makeRemoteChannel();
     await withQuietLogs(async () => {
       await goHalfOpen(rc, client);
-      // Force several consecutive failed recreates to climb the backoff.
-      for (let i = 0; i < 6; i++) {
+      // Model a PERSISTENT outage: rebuilding the socket doesn't help, so every
+      // recreate fails and reconnectAttempt actually climbs. The default fake
+      // heals on rebuildSocket(), which meant every recreate SUCCEEDED, the
+      // counter reset to 0, and all samples came from the attempt-1
+      // distribution — making a "grows" assertion a coin flip (~10% flake,
+      // measured over 30 runs) and never exercising the cap at all.
+      client.realtime.rebuildSocket = function () {
+        this.rebuilds++;
+        this.conn = { readyState: 1 };
+        this.socketDead = true; // still dead after the rebuild
+      };
+      client.realtime.socketDead = true;
+      for (let i = 0; i < 7; i++) {
         await rc.recreateChannel();
-        rc.channel.state = 'errored'; // stay unhealthy so the next attempt escalates
+        if (rc.channel) rc.channel.state = 'errored';
       }
     });
 
-    assert.ok(rc.sleptMs.length >= 5, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
+    assert.ok(rc.sleptMs.length >= 6, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
+    // Formula: min(30_000, 1000 * 2**min(attempt,5)) * (0.5 + random())
+    // -> hard ceiling is 30_000 * 1.5 = 45_000 ms.
     assert.ok(
-      rc.sleptMs.every((ms) => ms > 0 && ms <= 30_000),
-      `every backoff must be positive and capped at 30s: ${JSON.stringify(rc.sleptMs)}`
+      rc.sleptMs.every((ms) => ms > 0 && ms <= 45_000),
+      `every backoff must be positive and <= 45s: ${JSON.stringify(rc.sleptMs)}`
     );
-    // Jitter is +/-50%, so compare first-attempt vs late-attempt ranges rather
-    // than adjacent pairs (adjacent values can legitimately dip).
+    // With the counter climbing, late attempts draw from a strictly higher
+    // range than the first: attempt 1 tops out at 3_000, attempt 5+ starts at
+    // 15_000 — so this cannot flake on jitter.
     assert.ok(
-      Math.max(...rc.sleptMs.slice(3)) > Math.min(...rc.sleptMs.slice(0, 2)),
-      `backoff should grow with consecutive attempts: ${JSON.stringify(rc.sleptMs)}`
+      rc.sleptMs[0] <= 3_000,
+      `first backoff should be the attempt-1 range: ${rc.sleptMs[0]}`
+    );
+    assert.ok(
+      Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
+      `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
   });
 

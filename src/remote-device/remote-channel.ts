@@ -75,6 +75,17 @@ const JOINING_WEDGE_TIMEOUT_MS = 30000;
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
     private channel: RealtimeChannel | null = null;
+    /**
+     * TRANSITION ONLY (removed at the flip): the legacy postgres_changes
+     * listener lives on its OWN public channel, deliberately NOT on the private
+     * user channel. It is the safety net for the broadcast transport, so it
+     * must not share a failure mode with it — if it rode the private channel,
+     * an 008 policy problem or any private-channel auth failure would take out
+     * BOTH transports at once and the device would go completely dark instead
+     * of degrading to the old path. Costs one extra channel per device (the
+     * device's own connection carries 2, far under the 100/connection quota).
+     */
+    private legacyChannel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private connectionCheckInterval: NodeJS.Timeout | null = null;
 
@@ -85,6 +96,11 @@ export class RemoteChannel {
     private onToolCall: ((payload: any) => void) | null = null;
     // Guard so setSession being called twice can't stack auth listeners.
     private authListenerRegistered = false;
+    // False when presence publishing failed on a channel that is otherwise
+    // healthy — the health check re-tries, since nothing else would (a joined
+    // channel never re-fires SUBSCRIBED) and the server would keep reporting
+    // this device offline.
+    private presenceTracked = false;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -254,6 +270,10 @@ export class RemoteChannel {
             console.debug('[DEBUG] Calling createChannel()');
 
             // ! Ignore silently in Initialization to reconnect after
+            // Legacy postgres_changes listener on its own public channel — the
+            // independent safety net for the doorbell transport (see legacyChannel).
+            this.createLegacyChannel();
+
             await this.createChannel().catch((error) => {
                 console.debug(`[DEBUG] Failed to create channel, will retry after socket reconnect: ${error?.message || error} — ${this.connState()}`);
             });
@@ -263,6 +283,89 @@ export class RemoteChannel {
             await captureRemote('remote_channel_register_device_error', { error: 'Device not found', deviceId: currentDeviceId });
             throw new Error(`Device not found: ${currentDeviceId}`);
         }
+    }
+
+    /**
+     * Publish this device's presence, retrying a non-'ok' result. track()
+     * RESOLVES with 'ok' | 'error' | 'timed out' rather than rejecting, and a
+     * silent failure is expensive: the server treats absent presence as
+     * authoritative offline, so one lost track makes a fully working device
+     * undispatchable until the channel next bounces. `presenceTracked` lets the
+     * health check re-try later if every attempt here fails.
+     */
+    private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+            if (!this.channel || this.channel.state !== 'joined') return;
+            let status: string;
+            try {
+                status = await this.channel.track({
+                    device_id: this.deviceId,
+                    device_name: this.deviceName,
+                    app_version: VERSION,
+                    platform: process.platform
+                });
+            } catch (trackErr: any) {
+                status = `threw: ${trackErr?.message}`;
+            }
+
+            if (status === 'ok') {
+                this.presenceTracked = true;
+                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
+                captureRemote('remote_channel_presence_tracked', { attempt: recovered }).catch(() => { });
+                return;
+            }
+
+            console.error(`❌ Presence track not acknowledged (${status}) — attempt ${attempt}/${attempts}`);
+            if (attempt < attempts) await this.sleep(500 * attempt);
+        }
+
+        this.presenceTracked = false;
+        console.error('❌ Presence track failed after retries — device may show offline until the next health tick');
+        captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
+    }
+
+    /**
+     * Subscribe the legacy postgres_changes listener on its own PUBLIC channel.
+     * Independent of the private user channel on purpose (see legacyChannel).
+     * Best-effort: failures here are logged, never thrown — the doorbell path is
+     * primary, and realtime-js rejoins this channel on its own.
+     * Removed entirely at the flip (009), when postgres_changes stops firing.
+     */
+    private createLegacyChannel(): void {
+        if (!this.client || !this.user?.id) return;
+        try {
+            this.legacyChannel = this.client
+                .channel('device_tool_call_queue')
+                .on(
+                    'postgres_changes' as any,
+                    {
+                        event: 'INSERT',
+                        schema: 'public',
+                        table: 'mcp_remote_calls',
+                        filter: `user_id=eq.${this.user.id}`
+                    },
+                    (payload: any) => {
+                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
+                        if (this.onToolCall) {
+                            this.onToolCall(payload);
+                        }
+                    }
+                )
+                .subscribe((status: string) => {
+                    console.debug(`[DEBUG] Legacy channel status: ${status}`);
+                });
+        } catch (error: any) {
+            console.debug('[DEBUG] Legacy channel subscribe failed (doorbell path unaffected):', error?.message);
+        }
+    }
+
+    /** Tear down the legacy channel (best effort). */
+    private async removeLegacyChannel(): Promise<void> {
+        if (!this.legacyChannel || !this.client) return;
+        try {
+            await this.client.removeChannel(this.legacyChannel);
+        } catch { /* best effort */ }
+        this.legacyChannel = null;
     }
 
     /**
@@ -294,21 +397,6 @@ export class RemoteChannel {
                 }
             })
                 .on(
-                    'postgres_changes' as any,
-                    {
-                        event: 'INSERT',
-                        schema: 'public',
-                        table: 'mcp_remote_calls',
-                        filter: `user_id=eq.${this.user.id}`
-                    },
-                    (payload: any) => {
-                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
-                        if (this.onToolCall) {
-                            this.onToolCall(payload);
-                        }
-                    }
-                )
-                .on(
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
@@ -331,32 +419,20 @@ export class RemoteChannel {
                                 console.error('Failed to set online status:', e.message);
                             });
                         }
-                        // Announce presence — this IS the live "online" signal for
-                        // the server's dispatch check and the dashboard's green dot.
-                        this.channel?.track({
-                            device_id: this.deviceId,
-                            device_name: this.deviceName,
-                            app_version: VERSION,
-                            platform: process.platform
-                        }).then((trackStatus: string) => {
-                            // track() RESOLVES with 'ok' | 'error' | 'timed out' —
-                            // it does not reject, so a non-'ok' status must be
-                            // checked or a failed presence publish looks like success.
-                            if (trackStatus === 'ok') {
-                                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
-                                captureRemote('remote_channel_presence_tracked', { attempt: recovered }).catch(() => { });
-                            } else {
-                                console.error(`❌ Presence track not acknowledged (${trackStatus}) — device may show offline`);
-                                captureRemote('remote_channel_presence_track_error', { result: trackStatus }).catch(() => { });
-                            }
-                        }).catch((trackErr: any) => {
-                            console.error('[DEBUG] Presence track failed:', trackErr?.message);
-                            captureRemote('remote_channel_presence_track_error', { error: trackErr?.message }).catch(() => { });
-                        });
-                        resolve();
+                        // Announce presence — this IS the live "online" signal the
+                        // server's dispatch check reads. A failed track leaves a
+                        // perfectly healthy device invisible (server treats absent
+                        // presence as authoritative offline → "No devices
+                        // available"), so retry, and only resolve once it lands:
+                        // resolving first would let registerDevice() print
+                        // "Device ready" while the device is still undispatchable.
+                        this.trackPresenceWithRetry(recovered)
+                            .catch(() => { /* logged inside */ })
+                            .finally(() => resolve());
                     } else if (status === 'CHANNEL_ERROR') {
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
+                        this.presenceTracked = false;
                         this.setOnlineStatus(this.deviceId!, 'offline');
                         // Single event: this fires on ordinary network faults too, so a
                         // separate "private join failed" alarm would be a 1:1 duplicate
@@ -512,6 +588,13 @@ export class RemoteChannel {
         // 'joined' = healthy. Clear the joining-overstay timer.
         if (state === 'joined') {
             this.joiningSince = null;
+            // Self-heal a failed presence publish: the channel is up, so nothing
+            // else will ever retry (SUBSCRIBED won't fire again), and without
+            // presence the server reports this healthy device as offline.
+            if (!this.presenceTracked && this.deviceId) {
+                console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
+                this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
+            }
             return;
         }
 
@@ -617,6 +700,9 @@ export class RemoteChannel {
                     await this.client!.removeChannel(this.channel);
                     this.channel = null;
                 }
+                // Rebuild the legacy channel too: it shares the socket, so a
+                // socket-level wedge takes it down with the private channel.
+                await this.removeLegacyChannel();
 
                 // FIX (core): force a brand-new WebSocket. After idle / wifi-loss the socket can
                 // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
@@ -625,6 +711,7 @@ export class RemoteChannel {
 
                 console.debug('[DEBUG] Calling createChannel() for recreation');
                 await this.createChannel();
+                this.createLegacyChannel();
             }, RECREATE_TIMEOUT_MS, 'recreateChannel');
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
@@ -886,6 +973,7 @@ export class RemoteChannel {
     }
 
     async unsubscribe() {
+        await this.removeLegacyChannel();
         if (this.channel) {
             // Leave presence explicitly on the graceful path (socket close
             // covers the abrupt one).
