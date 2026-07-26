@@ -1,5 +1,7 @@
 type UiEventParamValue = string | number | boolean | null;
 
+import { canonicalRequestKey } from './canonical-key.js';
+
 export type UiEventParams = Record<string, UiEventParamValue>;
 
 type ToolCaller = (name: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -35,7 +37,7 @@ export function createUiEventTracker(callTool: ToolCaller, options: UiEventTrack
             ...baseParams,
             ...normalizeUiEventParams(params),
         };
-        const key = JSON.stringify([event, normalizedParams]);
+        const key = canonicalRequestKey([event, normalizedParams]);
         const now = Date.now();
         const lastSeen = recentEvents.get(key);
         if (lastSeen !== undefined && now - lastSeen < duplicateWindowMs) {
@@ -45,6 +47,11 @@ export function createUiEventTracker(callTool: ToolCaller, options: UiEventTrack
         if (recentEvents.size > 100) {
             for (const [candidate, timestamp] of recentEvents) {
                 if (now - timestamp >= duplicateWindowMs) recentEvents.delete(candidate);
+            }
+            while (recentEvents.size > 100) {
+                const oldest = recentEvents.keys().next().value;
+                if (oldest === undefined) break;
+                recentEvents.delete(oldest);
             }
         }
 

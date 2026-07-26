@@ -1,5 +1,7 @@
 type ToolArgs = Record<string, unknown>;
 
+import { canonicalRequestKey } from './canonical-key.js';
+
 type ToolHelper = {
     callTool: (name: string, args: ToolArgs) => Promise<unknown> | unknown;
 };
@@ -68,16 +70,6 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function normalizeToolArgs(args: ToolArgs | undefined): ToolArgs {
     return args ?? {};
-}
-
-function stableStringify(value: unknown): string {
-    if (Array.isArray(value)) {
-        return `[${value.map(stableStringify).join(',')}]`;
-    }
-    if (isObject(value)) {
-        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
-    }
-    return JSON.stringify(value) ?? String(value);
 }
 
 function extractErrorMessage(error: unknown): string {
@@ -202,7 +194,7 @@ export function createToolBridge(options: ToolBridgeOptions = {}) {
 
     async function callTool(name: string, args?: ToolArgs): Promise<unknown> {
         const normalizedArgs = normalizeToolArgs(args);
-        const key = `${name}:${stableStringify(normalizedArgs)}`;
+        const key = `${name}:${canonicalRequestKey(normalizedArgs)}`;
         const existing = inFlight.get(key);
         if (existing) {
             return existing;
