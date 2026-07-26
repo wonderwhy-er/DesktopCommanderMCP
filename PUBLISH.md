@@ -2,33 +2,6 @@
 
 This document outlines the complete process for publishing new versions of Desktop Commander to both NPM and the MCP Registry.
 
-## ⛔ RELEASE GATE — remote device (Broadcast/Presence transport)
-
-**Applies to any release containing the Broadcast/Presence remote-device
-transport (`capabilities.transport_broadcast_v1`, private `user:{id}` channel).**
-Publishing it before the backend is ready **bricks remote use for every device
-that updates**. Verify BOTH against **prod** (`olvbkozcufcbptfogatw`) first:
-
-1. **Migration 008 is applied** — the private-channel policies exist:
-   ```sql
-   SELECT policyname FROM pg_policies
-    WHERE schemaname='realtime' AND tablename='messages';
-   -- expect: "users receive on own channel", "users send on own channel"
-   ```
-   Without it the device cannot join `user:{id}`, so it loses the doorbell
-   transport. (The legacy `postgres_changes` listener rides its own public
-   channel, so the device degrades rather than going dark — but it is still a
-   broken release.)
-
-2. **The new server is deployed** (the `v*` tag that knows about
-   `transport_broadcast_v1`). The old server's flat 45-second offline sweep
-   marks these devices offline 45s after registration — they heartbeat every
-   30 minutes — and dispatch then fails against them.
-
-Order is strict: **008 → server deploy → this npm release.** Full rationale,
-failure modes and rollback rules: `remote-dc-mcp/migrations/README.md` and
-`BROADCAST_PRESENCE_RUNBOOK.md`.
-
 ## 🚀 Automated Release (Recommended)
 
 We now have an automated release script that handles the entire process with **automatic state tracking and resume capability**!
