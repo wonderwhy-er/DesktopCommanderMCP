@@ -6,16 +6,11 @@ const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
 
 /**
- * Recursively strip real NUL characters (U+0000) from strings and object keys.
- * Postgres cannot store a NUL in jsonb OR text and rejects the whole write with
- * 22P05, which strands the call at 'executing' until the 5-min timeout.
- *
- * Walks the structure instead of round-tripping through JSON: an earlier
- * serialize-and-regex version matched the ESCAPE TEXT rather than the character,
- * so legitimate content containing the six literal chars backslash-u-0-0-0-0
- * (e.g. reading a source file with that escape in it) was silently corrupted,
- * and a doubled-backslash form produced invalid JSON that threw. Both cases are
- * covered by tests in test/test-strip-null-bytes.js.
+ * Recursively strip NUL characters (U+0000) from strings and object keys.
+ * Postgres rejects NUL in jsonb and text (22P05), failing the whole write and
+ * stranding the call at 'executing' until the 5-min timeout.
+ * Walks the structure rather than round-tripping JSON, which would match the
+ * escape text and corrupt legitimate content. See test/test-strip-null-bytes.js.
  */
 export function stripNullBytes<T>(value: T): T {
     if (typeof value === 'string') {
@@ -52,104 +47,50 @@ interface DeviceData {
     last_seen: string;
 }
 
-// Bookkeeping cadence for the durable last_seen column ONCE the broadcast
-// transport is proven. Liveness is then carried by Presence (websocket-level,
-// flips in seconds), so this write is not the live signal — but it IS the
-// server's fallback whenever presence is unavailable, which is why it cannot be
-// slow. Paired with DEVICE_OFFLINE_TIMEOUT_CAPABLE_MS = 15 min (3 missed
-// writes); the full rationale for that pairing, and the list of states that
-// reach it, lives on that constant in remote-dc-mcp/src/server/constants.ts.
+// last_seen cadences. The server tiers its offline sweep on the
+// transport_broadcast_v1 flag (not the app version), so each cadence must fit
+// its tier's threshold in remote-dc-mcp/src/server/constants.ts:
+// capable -> 15 min, unflagged -> 45s. Too slow in the legacy tier and the sweep
+// blacks out a device whose legacy channel is still delivering.
 const CAPABLE_HEARTBEAT_INTERVAL = 5 * 60 * 1000;
-// Cadence while this device is in the LEGACY tier — i.e. whenever
-// transport_broadcast_v1 is not currently advertised, i.e. whenever presence
-// has not (yet) been proven. MUST stay well inside the server's legacy sweep
-// threshold (DEVICE_OFFLINE_TIMEOUT_MS = 45s), because the server tiers the
-// sweep on the CAPABILITY FLAG, not on the app version: a device without the
-// flag is judged by the 45s rule no matter how new its build is.
-//
-// Getting this wrong is not a slow degradation, it is a blackout: on the slow
-// capable cadence a device that cannot prove the private channel (008 not applied,
-// an authz hiccup, exhausted track() retries) is swept offline ~45s after
-// registering and dispatch then throws "No devices available" forever — even
-// though its INDEPENDENT legacy postgres_changes channel is joined and would
-// deliver calls perfectly. That blackout is exactly what the independent
-// legacyChannel exists to prevent, so the two must be kept in step.
 const LEGACY_HEARTBEAT_INTERVAL = 15 * 1000;
-// Cap the channel-rebuild portion of a recreate so a hung await can't pin the
-// re-entrancy guard true (which would silently disable the connection watchdog).
-// NOTE: the jittered backoff sleep runs BEFORE this cap and inside the guard, so
-// the total window in which checkConnectionHealth is a no-op is
-// backoff (<=45s) + RECREATE_TIMEOUT_MS — bounded at ~75s, not 30s.
-// Must exceed createChannel()'s worst case, which now includes
-// trackPresenceWithRetry: 3 track() pushes at realtime-js's 10s DEFAULT_TIMEOUT
-// plus 0.5s+1s backoff = ~31.5s. At the old 30s these two constants were in
-// silent conflict — any recreate where presence never acked ALWAYS timed out.
+// Cap on a recreate's rebuild step, so a hung await can't pin
+// isRecreatingChannel and disable the watchdog. Must exceed createChannel()'s
+// worst case (~31.5s of presence retries).
 const RECREATE_TIMEOUT_MS = 45000;
-// Max time the channel may sit CONTINUOUSLY in 'joining' before we force a recreate.
-// 'joining' is normally healthy (we let realtime-js's rejoin backoff converge), but on a
-// HALF-OPEN socket (readyState OPEN yet dead) realtime-js parks the channel in 'joining'
-// forever and never reconnects the socket — the device then wedges offline silently with
-// no recreate firing. realtime-js's join push times out in ~10s, so a genuine join
-// resolves/errors well within this window; 3 health ticks of unbroken 'joining' means the
-// state machine has stalled and only a fresh socket (via recreate) recovers it.
+// Max continuous time in 'joining' before forcing a recreate — a half-open
+// socket parks the channel there forever, and a genuine join settles in ~10s.
 const JOINING_WEDGE_TIMEOUT_MS = 30000;
-// Consecutive failed channel recreates after which this device WITHDRAWS
-// transport_broadcast_v1.
-//
-// This is load-bearing, not tidiness. For a flagged device the server treats
-// absent Presence as AUTHORITATIVE offline and applies that overlay BEFORE
-// selection — it outranks the `status` column entirely. So a device that keeps
-// the flag while unable to join the private channel is undispatchable no matter
-// how healthy its legacy channel is, and no matter how fresh its last_seen.
-// Withdrawing the promise is what drops it back to a tier the server will still
-// route to (see setTransportCapable / the rollback runbook's stage rules).
-//
-// The withdrawal deliberately does NOT hang off CHANNEL_ERROR: realtime-js
-// re-fires that on every failed rejoin, so a momentary blip would flap the
-// capability and its DB write. Gate on sustained failure instead — 3 recreates
-// is ~30s given the jittered backoff. A later successful track() re-advertises
-// automatically.
-//
-// DO NOT LOWER THIS TO 2. Ordinary half-open recovery legitimately costs two
-// attempts: removeChannel() disconnects the socket when the last channel leaves,
-// and realtime-js then refuses to reconnect for ~100ms while _connectionState is
-// 'disconnecting', so the FIRST recreate's join pushes are buffered and burn the
-// full 10s join timeout — the second dials the fresh socket and succeeds. At 2,
-// every routine wifi drop would withdraw the capability and churn the DB.
+// Failed recreates before withdrawing transport_broadcast_v1: keeping the flag
+// while unable to join makes the device undispatchable. Not lower than 3 —
+// ordinary half-open recovery costs 2, since the first recreate's join is
+// buffered while realtime-js refuses to redial the socket it just dropped.
 const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
-// Bound on the capability-withdrawal write. It runs in recreateChannel()'s catch
-// block, outside RECREATE_TIMEOUT_MS's reach, so it needs its own cap.
+// Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
+// does not cover.
 const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
-// Bound on the shutdown path's session fetch. See setOffline() — auth.getSession()
-// can block on a token refresh, and this runs against device.ts's 5s force-exit.
+// Cap on the shutdown session fetch, which races device.ts's 5s force-exit.
 const OFFLINE_SESSION_TIMEOUT_MS = 500;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
     private channel: RealtimeChannel | null = null;
     /**
-     * TRANSITION ONLY (removed at the flip): the legacy postgres_changes
-     * listener lives on its OWN public channel, deliberately NOT on the private
-     * user channel. It is the safety net for the broadcast transport, so it
-     * must not share a failure mode with it — if it rode the private channel,
-     * an 008 policy problem or any private-channel auth failure would take out
-     * BOTH transports at once and the device would go completely dark instead
-     * of degrading to the old path. Costs one extra channel per device (the
-     * device's own connection carries 2, far under the 100/connection quota).
+     * Legacy postgres_changes listener, on its OWN public channel — deliberately
+     * not the private one, so a private-channel auth failure can't take both
+     * transports down. Removed at the flip (009).
      */
     private legacyChannel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private connectionCheckInterval: NodeJS.Timeout | null = null;
-    // Device whose last_seen the heartbeat timer maintains; null = stopped.
-    // Held so scheduleHeartbeat() can re-arm itself without re-plumbing the id.
+    /** Device the heartbeat timer maintains; null = stopped, so re-arm is inert. */
     private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
-    // Tokens from the last successful setSession / TOKEN_REFRESHED, so the
-    // shutdown path never has to wait on auth.getSession(). See setOffline().
+    /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
-    // Set once unsubscribe() starts: suppresses further reachability-driven
-    // status writes so they cannot land after setOffline()'s durable write.
+    /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
+     * land after setOffline()'s durable write. */
     private shuttingDown = false;
 
 
@@ -159,17 +100,13 @@ export class RemoteChannel {
     private onToolCall: ((payload: any) => void) | null = null;
     // Guard so setSession being called twice can't stack auth listeners.
     private authListenerRegistered = false;
-    // False when presence publishing failed on a channel that is otherwise
-    // healthy — the health check re-tries, since nothing else would (a joined
-    // channel never re-fires SUBSCRIBED) and the server would keep reporting
-    // this device offline.
+    /** False when presence publishing failed on an otherwise healthy channel;
+     * the health check retries, since SUBSCRIBED won't fire again. */
     private presenceTracked = false;
-    // Last capability value written to the DB (null = not yet written), so the
-    // flag isn't re-written on every reconnect.
+    /** Last capability value written (null = never), to avoid redundant writes. */
     private transportCapableWritten: boolean | null = null;
-    // Re-entrancy guard for the presence self-heal: on a wedged socket each
-    // track() buffers for the full 10s push timeout, so unguarded 10s health
-    // ticks would stack pending pushes.
+    /** Re-entrancy guard: on a wedged socket each track() buffers for the full
+     * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
 
     // Track last device status to prevent duplicate log messages
@@ -178,10 +115,9 @@ export class RemoteChannel {
     // Track last channel state for debug logging
     private lastChannelState: string | null = null;
 
-    // Reconnect diagnostics + guard (see connState() / recreateChannel())
-    private reconnectAttempt = 0;        // recreateChannel() attempts since last success
-    private isRecreatingChannel = false; // a recreate is in flight (re-entrancy guard)
-    private joiningSince: number | null = null; // ts the channel entered an unbroken 'joining' run; null when not joining
+    private reconnectAttempt = 0;        // recreates since the last success
+    private isRecreatingChannel = false; // re-entrancy guard
+    private joiningSince: number | null = null; // start of an unbroken 'joining' run
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -223,13 +159,10 @@ export class RemoteChannel {
         this._user = user;
         console.debug('[DEBUG] Session set successfully, user:', user.email);
 
-        // Private channels authorize with the user JWT at join time. supabase-js
-        // generally forwards auth to realtime itself; this is defensive and must
-        // push the CURRENT session token, not the one we were handed:
-        // auth.setSession() refreshes an expired token internally (device asleep
-        // >1h with --persist-session), and pushing the stale parameter here would
-        // overwrite the fresh token realtime already had — every private-channel
-        // join then fails until the next refresh (~50 min deaf).
+        // Private channels authorize with the user JWT at join time. Push the
+        // CURRENT token, not the one we were handed: setSession() refreshes an
+        // expired token internally, and pushing the stale parameter would
+        // overwrite it, failing every join until the next refresh.
         const { data: { session: currentSession } } = await this.client.auth.getSession();
         const realtimeToken = currentSession?.access_token ?? session.access_token;
         this.client.realtime.setAuth(realtimeToken);
@@ -328,18 +261,10 @@ export class RemoteChannel {
 
         if (existingDevice) {
             console.debug('[DEBUG] Updating device status to online');
-            // NOTE: transport_broadcast_v1 is deliberately NOT set here. The flag
-            // is a promise the device may not be able to keep, and the server
-            // treats it as binding: for a flagged device, absent presence is
-            // authoritative offline (overlayPresence) and dispatch then throws
-            // "No devices available". Advertising it before the private channel
-            // is proven means an 008/authz/Realtime problem takes the device dark
-            // even though its legacy postgres_changes channel is perfectly
-            // healthy — the exact outcome the independent legacyChannel exists to
-            // prevent. It is written only after SUBSCRIBED + a successful presence
-            // track (see markTransportCapable), and cleared when presence
-            // definitively fails, so a device that cannot deliver on the promise
-            // simply reports itself legacy and stays dispatchable.
+            // transport_broadcast_v1 is deliberately NOT set here. The server
+            // treats the flag as binding — for a flagged device absent presence
+            // means offline — so it is only written once presence is proven
+            // (setTransportCapable), and withdrawn if presence fails.
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
@@ -374,12 +299,9 @@ export class RemoteChannel {
     }
 
     /**
-     * Publish this device's presence, retrying a non-'ok' result. track()
-     * RESOLVES with 'ok' | 'error' | 'timed out' rather than rejecting, and a
-     * silent failure is expensive: the server treats absent presence as
-     * authoritative offline, so one lost track makes a fully working device
-     * undispatchable until the channel next bounces. `presenceTracked` lets the
-     * health check re-try later if every attempt here fails.
+     * Publish presence, retrying a non-'ok' result — track() resolves with a
+     * status rather than rejecting, and absent presence reads as offline on the
+     * server. `presenceTracked` lets the health check retry later.
      */
     private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
         if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
@@ -434,10 +356,8 @@ export class RemoteChannel {
     }
 
     /**
-     * The complete `capabilities` JSONB value for this device. Built in ONE
-     * place because every write REPLACES the whole column — a second literal
-     * elsewhere would silently delete whatever key it forgot on the next
-     * reconnect.
+     * The complete `capabilities` JSONB value. One place only: every write
+     * replaces the whole column, so a second literal would silently drop keys.
      */
     private capabilitiesPayload(broadcastCapable: boolean): Record<string, any> {
         return {
@@ -447,16 +367,10 @@ export class RemoteChannel {
     }
 
     /**
-     * Advertise (or withdraw) the broadcast transport capability. The server
-     * reads this flag to choose a transport AND to decide whether absent
-     * presence means "offline" — so it must only ever be true while this device
-     * can actually be reached that way.
-     *
-     * The flag also selects which tier of the server's offline sweep judges
-     * this device (45s legacy vs 15min capable), so every change here MUST
-     * re-arm the heartbeat at the matching cadence — otherwise withdrawing the
-     * flag leaves the device in the 45s tier while it still heartbeats on the
-     * slow capable cadence and the sweep blacks it out.
+     * Advertise (or withdraw) the broadcast capability. Only true while the
+     * device is genuinely reachable that way: the server uses it to pick a
+     * transport, to read absent presence as offline, and to choose the sweep
+     * tier — so every change must re-arm the heartbeat to match.
      */
     private async setTransportCapable(capable: boolean): Promise<void> {
         if (!this.client || !this.deviceId) return;
@@ -476,13 +390,9 @@ export class RemoteChannel {
             // Tier changed — move last_seen onto the cadence that tier's sweep
             // threshold expects (no-op if the heartbeat hasn't started yet).
             this.scheduleHeartbeat();
-            // Dropping to the fast tier: the row was last written on the slow
-            // capable cadence, so it can already be minutes old — i.e. ALREADY
-            // past the 45s legacy threshold the device is now judged by. Write
-            // once immediately rather than waiting out the new interval, which
-            // would leave the device swept-offline in the meantime (and, on a
-            // device flapping tiers faster than the interval, indefinitely,
-            // since every re-arm restarts the countdown).
+            // Dropping to the fast tier: last_seen may already be minutes old,
+            // i.e. past the 45s threshold now judging us. Write once immediately
+            // instead of waiting out the new interval.
             if (!capable && this.heartbeatDeviceId) {
                 this.updateHeartbeat(this.heartbeatDeviceId).catch(() => { /* logged inside */ });
             }
@@ -492,11 +402,8 @@ export class RemoteChannel {
     }
 
     /**
-     * Subscribe the legacy postgres_changes listener on its own PUBLIC channel.
-     * Independent of the private user channel on purpose (see legacyChannel).
-     * Best-effort: failures here are logged, never thrown — the doorbell path is
-     * primary, and realtime-js rejoins this channel on its own.
-     * Removed entirely at the flip (009), when postgres_changes stops firing.
+     * Legacy postgres_changes listener on its own public channel. Best-effort:
+     * failures are logged, never thrown. Removed at the flip (009).
      */
     private createLegacyChannel(): void {
         if (!this.client || !this.user?.id) return;
@@ -590,13 +497,10 @@ export class RemoteChannel {
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
                         this.queueStatusWrite('online');
-                        // Announce presence — this IS the live "online" signal the
-                        // server's dispatch check reads. A failed track leaves a
-                        // perfectly healthy device invisible (server treats absent
-                        // presence as authoritative offline → "No devices
-                        // available"), so retry, and only resolve once it lands:
-                        // resolving first would let registerDevice() print
-                        // "Device ready" while the device is still undispatchable.
+                        // Presence IS the live "online" signal dispatch reads, so
+                        // retry, and resolve only once it lands — otherwise
+                        // registerDevice() prints "Device ready" while the device
+                        // is still undispatchable.
                         this.trackPresenceWithRetry(recovered)
                             .catch(() => { /* logged inside */ })
                             .finally(() => resolve());
@@ -628,11 +532,9 @@ export class RemoteChannel {
     }
 
     /**
-     * Handle a 'new_call' broadcast doorbell. The doorbell carries only ids —
-     * the authoritative row is fetched by primary key and fed through the SAME
-     * handler as a postgres_changes payload, so device.ts is transport-agnostic.
-     * During the transition both transports deliver every call; the claim in
-     * markCallExecuting() guarantees single execution.
+     * Handle a 'new_call' doorbell. It carries ids only; the row is fetched by
+     * primary key and fed through the same handler as a postgres_changes
+     * payload, so device.ts stays transport-agnostic.
      */
     private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
@@ -642,20 +544,15 @@ export class RemoteChannel {
             return;
         }
 
-        // NOTE: deliberately NOT a telemetry event — this fires on every remote
-        // tool call (~126k/day in prod) and would be permanent per-call volume.
-        // Transport usage is already segmentable server-side: dispatch stamps
-        // metadata.transport, which rides mcp_command_executed. Only the
-        // doorbell FAILURE paths below are worth capturing.
+        // Not a telemetry event on purpose: ~126k/day in prod. Transport usage
+        // is already segmentable server-side via metadata.transport.
         console.debug('[DEBUG] Doorbell received for call:', callId);
 
         if (!this.client) return;
 
-        // Retry the row fetch on transient failures (observed live: a REST
-        // blip while the websocket stayed healthy). During the transition the
-        // legacy postgres_changes delivery covers a lost doorbell, but after
-        // the flip this fetch is the only way the device learns about the
-        // call — a network hiccup must not cost a 5-minute timeout.
+        // Retry on transient failures (a REST blip while the socket stays
+        // healthy). Post-flip this fetch is the only way we learn about a call,
+        // so a hiccup must not cost a 5-minute timeout.
         let row: any = null;
         let lastError: any = null;
         for (const delayMs of [0, 500, 1500]) {
@@ -680,19 +577,13 @@ export class RemoteChannel {
             return;
         }
         if (!row) {
-            // Row already claimed+deleted, or cleanup raced delivery — nothing to do.
-            // Not retried on purpose: pre-flip the row was inserted before the
-            // doorbell was sent, so a missing row means it was already claimed
-            // and deleted. Post-009 this is the ONLY delivery path — see the
-            // 009 preconditions if this event ever becomes non-zero.
+            // Already claimed and deleted, or cleanup raced delivery. Not
+            // retried: the row is always inserted before the doorbell is sent.
             await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
             return;
         }
-        // OPTIMIZATION, not a correctness guard — do not rely on it. Saves a
-        // hop when the legacy path already claimed this call. The actual
-        // exactly-once guarantees live in device.ts: the in-process seenCallIds
-        // check (same-process double delivery) and the conditional DB claim
-        // (cross-process/restart).
+        // Optimization, not a guard — saves a hop when the legacy path already
+        // claimed this. Exactly-once lives in device.ts (seenCallIds + DB claim).
         if (row.status !== 'pending') {
             console.debug('[DEBUG] Doorbell call already claimed via legacy path:', callId);
             return;
@@ -703,11 +594,9 @@ export class RemoteChannel {
     }
 
     /**
-     * Notify the server that a call's result row is written. Fire-and-forget:
-     * a skipped/failed send just means the server's 10s recovery poll delivers
-     * the result instead — identical to today's Realtime-hiccup behavior.
-     * MUST be called only after updateCallResult() has resolved, so the
-     * server's fetch-by-id finds a terminal row.
+     * Tell the server a result row is written. Fire-and-forget: a failed send
+     * just falls back to the server's 10s recovery poll. MUST run only after
+     * updateCallResult() resolves, so the server's fetch-by-id sees a terminal row.
      */
     async notifyResult(callId: string): Promise<void> {
         if (!this.channel || this.channel.state !== 'joined') {
@@ -773,13 +662,11 @@ export class RemoteChannel {
             return;
         }
 
-        // 'joining' = transitional — normally let realtime-js's own rejoin backoff converge
-        // instead of tearing the channel down mid-join (recreating on every non-joined state
-        // amputates that backoff). BUT bound it: on a half-open socket realtime-js can park
-        // the channel in 'joining' indefinitely without ever reconnecting the socket, so the
-        // recreate below would never fire and the device wedges offline silently. If 'joining'
-        // overstays JOINING_WEDGE_TIMEOUT_MS unbroken, force a recreate — the only path that
-        // disconnect()s the dead socket. (connState() in the log shows the half-open socket.)
+        // 'joining' is transitional — let realtime-js's rejoin backoff converge
+        // rather than tearing the channel down mid-join. But bound it: a
+        // half-open socket parks the channel here indefinitely, so past
+        // JOINING_WEDGE_TIMEOUT_MS force a recreate, the only path that
+        // disconnect()s the dead socket.
         if (state === 'joining') {
             const now = Date.now();
             if (this.joiningSince === null) this.joiningSince = now;
@@ -845,11 +732,8 @@ export class RemoteChannel {
         console.log(`🔄 Recreating channel... (attempt ${this.reconnectAttempt}) — ${this.connState()}`);
 
         try {
-            // Jittered exponential backoff so a fleet-wide event (server deploy,
-            // Supabase blip) doesn't stampede every device into reconnecting at
-            // the same instant. attempt 1 ≈ 1-3s, capped at ~15-45s. The
-            // re-entrancy guard above keeps the 10s watchdog from stacking
-            // recreates while we sleep.
+            // Jittered backoff so a fleet-wide event doesn't stampede every
+            // device into reconnecting at once. ~1-3s rising to ~15-45s.
             const backoffMs = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempt, 5)) * (0.5 + Math.random());
             console.debug(`[DEBUG] Reconnect backoff: ${Math.round(backoffMs)}ms`);
             await this.sleep(backoffMs);
@@ -867,9 +751,9 @@ export class RemoteChannel {
             // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
             // the 10s watchdog. On timeout we reject -> catch -> finally clears the guard.
             await this.withTimeout(async () => {
-                // Destroy old channel — AWAIT it so the channel registry empties before we
-                // rebuild. (The un-awaited version raced the synchronous new-channel push, so
-                // realtime-js never tore the socket down and a half-open one got reused.)
+                // Await it so the channel registry empties before we rebuild —
+                // otherwise realtime-js never tears the socket down and a
+                // half-open one gets reused.
                 if (this.channel) {
                     console.debug('[DEBUG] Destroying old channel');
                     await this.client!.removeChannel(this.channel);
@@ -896,21 +780,13 @@ export class RemoteChannel {
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
             console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);
-            // Sustained private-channel failure: stop promising a transport we
-            // cannot deliver. Until this withdrawal the flag could only ever be
-            // cleared from trackPresenceInner, which is unreachable unless the
-            // channel is already 'joined' — so a device that could never join
-            // (008 dropped, RLS/JWT failure after a long sleep) kept advertising
-            // itself, and the server's presence overlay then reported it OFFLINE
-            // authoritatively, overriding a perfectly good `status` and blacking
-            // it out until the process restarted.
+            // Sustained failure: stop promising a transport we can't deliver, or
+            // the server's presence overlay reports this device offline
+            // authoritatively and overrides `status`.
             if (this.reconnectAttempt >= TRANSPORT_WITHDRAW_AFTER_ATTEMPTS) {
-                // BOUNDED, and in its own try: this runs in the catch block,
-                // which RECREATE_TIMEOUT_MS does NOT cover (it wraps only the
-                // inner withTimeout above). An unbounded await here would pin
-                // isRecreatingChannel=true on a hanging PATCH and silently
-                // disable the 10s connection watchdog — precisely the failure
-                // mode withTimeout() was introduced for.
+                // Bounded, in its own try: this catch block is outside
+                // RECREATE_TIMEOUT_MS, so a hanging PATCH would pin
+                // isRecreatingChannel and disable the watchdog.
                 try {
                     await this.withTimeout(
                         () => this.setTransportCapable(false),
@@ -918,8 +794,8 @@ export class RemoteChannel {
                         'withdrawTransportCapability'
                     );
                 } catch (withdrawErr: any) {
-                    // Next failed recreate retries; transportCapableWritten is
-                    // only advanced on a confirmed write, so nothing is lost.
+                    // The next failed recreate retries; the flag only advances
+                    // on a confirmed write, so nothing is lost.
                     console.debug(`[DEBUG] Capability withdrawal did not complete: ${withdrawErr?.message}`);
                 }
             }
@@ -929,15 +805,12 @@ export class RemoteChannel {
     }
 
     /**
-     * Claim a call for execution. Returns true only when THIS update flipped
-     * the row from 'pending' to 'executing' — during the transition every call
-     * is delivered twice (postgres_changes + broadcast doorbell), and this
-     * claim is what guarantees it executes once. The .eq('status','pending')
-     * makes the claim conditional; .select('id') makes it observable (a
-     * supabase-js UPDATE returns no row data without it).
-     * On a transient DB ERROR we return true (execute anyway) — matching the
-     * old behavior, where a failed status write never blocked execution; the
-     * duplicate-execution window that leaves is no worse than today's.
+     * Claim a call. True only when THIS update flipped the row pending ->
+     * executing, which is what makes dual delivery safe across processes.
+     * .eq('status','pending') makes it conditional; .select('id') makes the
+     * result observable. On a transient DB error it returns true (execute
+     * anyway), matching prior behaviour — so device.ts's in-memory guard is what
+     * actually guarantees exactly-once within a process.
      */
     async markCallExecuting(callId: string): Promise<boolean> {
         if (!this.client) throw new Error('Client not initialized');
@@ -1016,56 +889,34 @@ export class RemoteChannel {
     }
 
     /**
-     * True while this device can still be reached by SOME transport: the
-     * private user channel (broadcast doorbells) or, during the transition, its
-     * independent legacy postgres_changes channel.
-     *
-     * The heartbeat gate deliberately asks "reachable?", not "is the private
-     * channel up?". Gating on the private channel alone means a device whose
-     * ONLY working transport is the legacy channel never writes last_seen, so
-     * the server's 45s legacy sweep marks it offline and dispatch refuses it —
-     * a total blackout for a device that can actually run tools.
-     *
-     * Removed with the rest of the legacy path at the flip (009), after which
-     * the private channel is the only transport and this collapses back to a
-     * single check.
+     * Reachable by SOME transport — the private channel or, during the
+     * transition, the independent legacy one. Gates the heartbeat and `status`:
+     * asking only about the private channel starves last_seen for a device whose
+     * legacy channel is fine, and the 45s sweep then blacks it out.
+     * Collapses to a single check at the flip (009).
      */
     private isReachable(): boolean {
         return this.channel?.state === 'joined' || this.legacyChannel?.state === 'joined';
     }
 
     /**
-     * Reconcile the durable `status` column with ACTUAL reachability.
-     *
-     * `status` is transport-agnostic — it is the column the server's
-     * resolveTargetDevice() filters on — so it must never be driven by the
-     * health of ONE transport. Writing 'offline' from the private channel's
-     * error path (which is what this replaces) blacked out devices whose
-     * legacy channel was joined and delivering: realtime-js re-fires
-     * CHANNEL_ERROR on every failed rejoin, so during a private-channel
-     * outage each retry re-wrote 'offline' while the heartbeat re-wrote
-     * 'online', leaving the row oscillating and roughly half of all dispatches
-     * failing with "No devices available" for a perfectly healthy machine.
-     *
-     * Same predicate as the heartbeat gate, so the two can never disagree.
+     * Set `status` from actual reachability. `status` is transport-agnostic (the
+     * server filters on it), so it must not follow one channel's health — the
+     * private channel's error path re-fires on every rejoin and would oscillate
+     * the row against the heartbeat. Same predicate as the heartbeat gate.
      */
     private syncReachabilityStatus(): void {
         this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
     }
 
     /**
-     * Serialize the CHANNEL-CALLBACK status writes — not every writer. These
-     * fire from un-awaited callbacks (SUBSCRIBED, CHANNEL_ERROR, CLOSED), and
-     * two concurrent PATCHes to the same row land in arbitrary order: the real
-     * window is inside recreateChannel(), where removeChannel()'s CLOSED writes
-     * 'offline' and the fresh join's SUBSCRIBED writes 'online' ~100-300ms later
-     * — comparable to a PostgREST round trip. Unordered, the 'offline' can win
-     * and leave a healthy device undispatchable until the next heartbeat tick.
+     * Serialize the channel-callback status writes. They fire from un-awaited
+     * callbacks, and inside recreateChannel() a teardown's 'offline' and the
+     * fresh join's 'online' land ~100-300ms apart — unordered, 'offline' can win
+     * and leave a healthy device undispatchable until the next heartbeat.
      *
-     * Deliberately NOT the single writer: updateHeartbeat, registerDevice and
-     * setOffline's subprocess all write status directly. That is fine — the
-     * heartbeat re-asserting 'online' every tier interval is the intended
-     * self-correction — but do not assume this chain gives total ordering.
+     * Not the single writer: updateHeartbeat, registerDevice and setOffline's
+     * subprocess write status directly, so this is not total ordering.
      */
     private queueStatusWrite(status: 'online' | 'offline'): void {
         // After teardown begins, setOffline() owns the final status write.
@@ -1210,20 +1061,13 @@ export class RemoteChannel {
         console.debug('[DEBUG] setOffline() initiating blocking update for device:', deviceId);
 
         try {
-            // Get a session for the subprocess — BOUNDED, with a fallback.
-            //
-            // auth.getSession() is not a cheap storage read: it takes a lock with
-            // a 10s acquire timeout, and it refreshes when the token is merely
-            // WITHIN ~90s of expiry, which POSTs /token with its own retry
-            // budget (~30s on retryable network errors). On a just-woken machine
-            // — token near expiry, wifi not re-associated — that is exactly the
-            // shape that blows device.ts's 5s force-exit, and then spawnSync
-            // never runs and the durable offline write never lands. That row
-            // then reads 'online' for the whole capable sweep tier, with every
-            // dispatch to it costing the caller a 5-minute timeout.
-            //
-            // The subprocess calls setSession() itself, so a slightly stale
-            // access_token is fine as long as the refresh_token is good.
+            // Session for the subprocess — bounded, with a cached fallback.
+            // getSession() is not a cheap read: it takes a lock (10s acquire
+            // timeout) and refreshes when the token is within ~90s of expiry,
+            // POSTing /token with its own ~30s retry budget. On a just-woken
+            // machine that outlasts device.ts's 5s force-exit, and then spawnSync
+            // never runs and the offline write is lost. The subprocess calls
+            // setSession() itself, so a slightly stale access_token is fine.
             const live = await Promise.race([
                 this.client.auth.getSession().then((r) => r.data?.session ?? null),
                 this.sleep(OFFLINE_SESSION_TIMEOUT_MS).then(() => null),
@@ -1307,68 +1151,34 @@ export class RemoteChannel {
     }
 
     async unsubscribe() {
-        // Teardown has begun: from here on, setOffline()'s durable write is the
-        // authoritative final word on `status`, so stop every other writer
-        // (channel callbacks AND the heartbeat) from racing it. Otherwise a
-        // late 'online' is applied after the subprocess has written 'offline',
-        // leaving an exited process marked online until the sweep ages it out —
-        // and every dispatch in between costs the caller a 5-minute timeout.
-        //
-        // The window that actually needs this is NOT the CLOSED fired by the
-        // unsubscribe below: realtime-js sets state='leaving' on the first line
-        // of unsubscribe() and removeChannel() calls it synchronously, so by the
-        // time that CLOSED lands isReachable() already reads false and the write
-        // would have been 'offline' anyway. The real races are:
-        //   1. a heartbeat tick (every 15s in the legacy tier) firing or already
-        //      in flight as the signal arrives — see updateHeartbeat, and
-        //   2. SIGINT arriving while recreateChannel() sits in its jittered
-        //      backoff (up to ~45s): this.channel is already null so unsubscribe
-        //      skips its block, setOffline writes 'offline', then the backoff
-        //      expires during desktop.shutdown() and the fresh join's SUBSCRIBED
-        //      queues 'online' after the durable write.
+        // setOffline()'s durable write is the final word on `status` from here,
+        // so stop the heartbeat and the channel callbacks from racing it. The
+        // races that matter: a heartbeat tick firing as the signal arrives, and
+        // SIGINT during recreateChannel()'s backoff, where the later join's
+        // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
-        // BUDGET: device.ts force-exits 5s after the signal, and the durable
-        // offline write (setOffline's spawnSync, 3s cap + a bounded session
-        // fetch, 0.5s) is the one thing this whole path exists to produce. So
-        // everything before it must be tightly bounded:
-        //   250ms drain + 500ms untrack + 500ms(×2, see below) + 500ms session
-        //   + 3000ms spawnSync  ≈ 4.75s worst case
-        // Only the untrack bound can actually bind: removeChannel/unsubscribe
-        // both set state='leaving' first, which makes realtime-js's _canPush()
-        // false so the leave push resolves 'ok' inline rather than waiting out
-        // its 10s timeout. The other two bounds are cheap insurance, not load-
-        // bearing — do not "reclaim" the budget by removing the untrack one.
+        // Budget: device.ts force-exits 5s after the signal and setOffline needs
+        // ~3.5s of it, so everything here must fit in ~1.5s.
+        // Only the untrack bound can actually bind — removeChannel/unsubscribe
+        // set state='leaving' first, so their leave push resolves inline.
         const LEAVE_BOUND_MS = 500;
-        // Drain the QUEUED channel-callback writes. This cannot drain a
-        // heartbeat PATCH — updateHeartbeat writes directly, not through the
-        // chain — but the gate above stops any NEW heartbeat, and one already in
-        // flight necessarily started before this point.
+        // Drain queued channel-callback writes. Can't drain an in-flight
+        // heartbeat PATCH (it doesn't use the chain), but the gate above stops
+        // any new one and an in-flight one started earlier.
         await Promise.race([this.statusWriteChain, this.sleep(250)]);
-        // Bounded like the untrack below: removeChannel() sends a leave push that
-        // only settles via realtime-js's 10s timeout on a half-open socket, which
-        // would blow device.ts's 5s force-exit and skip the durable offline write.
         await Promise.race([this.removeLegacyChannel(), this.sleep(LEAVE_BOUND_MS)]);
         if (this.channel) {
-            // Leave presence explicitly on the graceful path (socket close
-            // covers the abrupt one).
+            // Leave presence on the graceful path (socket close covers the abrupt
+            // one). Bounded: a half-open socket still reports 'joined', so the
+            // push just buffers and would settle via realtime-js's 10s timeout.
             try {
-                // Bound the untrack: a HALF-OPEN socket still reports the channel
-                // as 'joined', so a state check alone is not enough — the presence
-                // push just buffers and settles via realtime-js's 10s timeout,
-                // which blows past device.ts's 5s force-exit and would skip both
-                // unsubscribe() and the durable offline write. A dropped socket
-                // clears server-side presence anyway.
                 await Promise.race([
                     this.channel.untrack(),
                     this.sleep(LEAVE_BOUND_MS),
                 ]);
                 console.debug('[DEBUG] Presence untrack attempted (bounded)');
             } catch { /* best effort */ }
-            // Bounded as insurance only. unsubscribe() sets state='leaving' on
-            // its first line, so _canPush() is false and the leave push resolves
-            // 'ok' inline — it cannot actually wait out the 10s push timeout the
-            // way the untrack above can. Kept because it costs nothing and the
-            // guarantee lives in library internals, not in our contract.
+            // Bounded as insurance; unsubscribe() resolves inline in practice.
             await Promise.race([this.channel.unsubscribe(), this.sleep(LEAVE_BOUND_MS)]);
             this.channel = null;
             console.log('✓ Unsubscribed from tool call channel');
