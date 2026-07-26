@@ -356,9 +356,16 @@ export class MCPDevice {
 
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
-            await this.remoteChannel.notifyResult(call_id);
+            // The failure path must not fail: this method's promise is discarded
+            // at every call site, so a throw here becomes an unhandled rejection
+            // and takes the device process down.
+            try {
+                await captureRemote('remote_device_tool_call_failed', { error, tool_name });
+                await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+                await this.remoteChannel.notifyResult(call_id);
+            } catch (reportError: any) {
+                console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
+            }
         }
     }
 

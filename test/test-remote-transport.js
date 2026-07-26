@@ -216,6 +216,32 @@ await test('doorbell with a missing row is a no-op', async () => {
   assert(delivered.length === 0, 'missing row must not deliver');
 });
 
+// --- 2b. Handler rejections are observed -------------------------------------
+// handleNewToolCall is async and its promise is discarded at both call sites, so
+// a rejection would be unhandled and terminate the device process.
+
+await test('a rejecting tool-call handler does not produce an unhandled rejection', async () => {
+  const { rc } = makeRemoteChannel({ row: { id: 'x', status: 'pending' } });
+  rc.onToolCall = async () => { throw new Error('handler blew up'); };
+
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+    await new Promise((r) => setImmediate(r)); // let a rejection surface
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  assert(unhandled.length === 0, `unhandled rejection escaped: ${unhandled[0]?.message}`);
+});
+
+await test('a synchronously throwing handler is contained too', async () => {
+  const { rc } = makeRemoteChannel({ row: { id: 'x', status: 'pending' } });
+  rc.onToolCall = () => { throw new Error('sync throw'); };
+  await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID }); // must not reject
+});
+
 // --- 3. Result ordering -----------------------------------------------------
 // The server fetches the row by id when the doorbell arrives, so the write must
 // land first or it sees a non-terminal row and waits for the recovery poll.
