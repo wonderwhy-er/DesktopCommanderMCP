@@ -43,7 +43,7 @@ try {
 
     // Update device status to offline, stamping the exact shutdown moment so
     // "last seen X ago" is precise for clean shutdowns (the periodic
-    // bookkeeping write only runs every 30 minutes).
+    // bookkeeping write only runs on the slow capable cadence).
     const { error } = await client
         .from('mcp_devices')
         .update({ status: 'offline', last_seen: new Date().toISOString() })
