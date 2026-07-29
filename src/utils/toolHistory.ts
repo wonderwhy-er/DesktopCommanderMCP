@@ -106,8 +106,14 @@ class ToolHistory {
         }
       }
 
-      // Keep only last 1000 entries
-      this.history = records.slice(-this.MAX_ENTRIES);
+      // Keep only last 1000 entries, and cap on the way IN as well as on the
+      // way out. Entries written before the cap existed are still on disk and
+      // are well under the whole-file trim threshold, so without this the cap
+      // does nothing for anyone upgrading with an existing history file — i.e.
+      // for everyone it was written for.
+      this.history = records
+        .slice(-this.MAX_ENTRIES)
+        .map(record => ({ ...record, output: this.capOutput(record.output) }));
 
       // If file is getting too large, trim it
       if (lines.length > this.MAX_ENTRIES * 2) {

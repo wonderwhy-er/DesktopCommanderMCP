@@ -65,6 +65,12 @@ const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
 const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
 // Cap on the shutdown session fetch, which races device.ts's 5s force-exit.
 const OFFLINE_SESSION_TIMEOUT_MS = 500;
+// realtime-js parks in 'disconnecting' for ~100ms after a disconnect and
+// connect() early-returns for that whole window (see waitForSocketSettled).
+// Bound generously — this only ever delays a recreate, which RECREATE_TIMEOUT_MS
+// already covers.
+const SOCKET_SETTLE_MAX_MS = 300;
+const SOCKET_SETTLE_POLL_MS = 20;
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -672,6 +678,26 @@ export class RemoteChannel {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    /**
+     * Block until realtime-js has left the 'disconnecting' state it enters on
+     * disconnect(), so the next subscribe() actually dials a socket instead of
+     * hitting connect()'s early return. Bounded either way — worst case we cost
+     * a recreate SOCKET_SETTLE_MAX_MS.
+     */
+    private async waitForSocketSettled(): Promise<void> {
+        const realtime = (this.client as any)?.realtime;
+        // No predicate to poll (older/newer client): wait out the internal
+        // fallback timer blind rather than guess at the state.
+        if (typeof realtime?.isDisconnecting !== 'function') {
+            await this.sleep(SOCKET_SETTLE_MAX_MS);
+            return;
+        }
+        const deadline = Date.now() + SOCKET_SETTLE_MAX_MS;
+        while (realtime.isDisconnecting() && Date.now() < deadline) {
+            await this.sleep(SOCKET_SETTLE_POLL_MS);
+        }
+    }
+
     private async withTimeout<T>(op: () => Promise<T>, ms: number, name: string): Promise<T> {
         let timer: NodeJS.Timeout | undefined;
         try {
@@ -744,6 +770,17 @@ export class RemoteChannel {
                 // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
                 // forever. disconnect() drops it so the next subscribe() dials a fresh one.
                 try { await (this.client as any).realtime?.disconnect?.(); } catch { /* best effort */ }
+
+                // ...but disconnect() is not synchronous from connect()'s point
+                // of view: it parks _connectionState in 'disconnecting' and
+                // _teardownConnection() nulls the conn.onclose that would clear
+                // it, so only an internal ~100ms fallback timer does. connect()
+                // early-returns for that whole window, so rebuilding here makes
+                // subscribe()'s socket.connect() a silent no-op and BOTH
+                // channels sit in 'joining' until the 10s join timeout — the
+                // wasted-first-recreate that left the device dark on the legacy
+                // channel too. Wait for the state to settle before rebuilding.
+                await this.waitForSocketSettled();
 
                 console.debug('[DEBUG] Calling createChannel() for recreation');
                 // Rebuild the legacy safety net FIRST and unconditionally: if

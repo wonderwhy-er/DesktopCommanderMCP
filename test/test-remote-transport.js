@@ -45,6 +45,11 @@ function assert(condition, message) {
 
 const makeChannelState = (state) => ({ state });
 
+// Captured before any test runs: the heartbeat re-arm test monkeypatches
+// globalThis.setTimeout to never fire, and the fake client's write completion
+// must not silently depend on that.
+const realSetTimeout = globalThis.setTimeout;
+
 /** MCPDevice with the network and desktop edges stubbed. */
 function makeDevice({ claimResults = [] } = {}) {
   const device = new MCPDevice();
@@ -73,9 +78,15 @@ function makeDevice({ claimResults = [] } = {}) {
  * `update(...).eq(...)` (awaited) and `select(...).eq(...).maybeSingle()`.
  * Records every mcp_devices write in `writes`.
  */
-function makeFakeClient({ row = null, failFetches = 0 } = {}) {
+function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {}) {
   const writes = [];
+  // Recorded when a write COMPLETES, not when it is issued. `writes` alone
+  // cannot test ordering: setOnlineStatus evaluates .update() synchronously
+  // before its only await, so issue order holds with or without the
+  // statusWriteChain serialisation.
+  const completions = [];
   let fetchAttempts = 0;
+  let pendingWrite = null;
 
   const result = () => {
     const p = Promise.resolve({ data: null, error: null });
@@ -94,20 +105,52 @@ function makeFakeClient({ row = null, failFetches = 0 } = {}) {
   const chain = {
     update: (payload) => {
       writes.push(payload);
+      // Per-write completion latency, so a test can make an earlier write land
+      // LATER than a later one — the only way to observe serialisation.
+      pendingWrite = {
+        payload,
+        delay: writeLatencies.length ? writeLatencies.shift() : 0,
+      };
       return chain;
     },
     select: () => chain,
     insert: () => chain,
-    eq: () => result(),
+    eq: () => {
+      if (!pendingWrite) return result();
+      const { payload, delay } = pendingWrite;
+      pendingWrite = null;
+      const p = new Promise((resolve) => {
+        const settle = () => {
+          completions.push(payload);
+          resolve({ data: null, error: null });
+        };
+        // Only defer when a test actually asked for latency, so every other
+        // test keeps the original resolve-immediately semantics.
+        if (delay > 0) realSetTimeout(settle, delay);
+        else settle();
+      });
+      // markCallExecuting chains .eq().eq().select() off a single update(), so
+      // this must stay chainable exactly like result() does — returning a bare
+      // promise leaves that chain hanging forever.
+      p.eq = () => p;
+      p.select = () => p;
+      p.maybeSingle = async () => ({ data: null, error: null });
+      return p;
+    },
   };
 
   return {
     writes,
+    completions,
     attempts: () => fetchAttempts,
     // Required by recreateChannel(); without them it dies on a TypeError before
     // reaching anything the recreate tests stub.
     removeChannel: () => Promise.resolve('ok'),
-    realtime: { disconnect: () => Promise.resolve() },
+    // isDisconnecting models a client that has already settled, so
+    // waitForSocketSettled() polls once and returns. NOTE: this fake has no
+    // real connection state, so it cannot observe whether a new socket was
+    // actually dialled — the recreate tests verify sequencing, not transport.
+    realtime: { disconnect: () => Promise.resolve(), isDisconnecting: () => false },
     from: () => chain,
   };
 }
@@ -374,15 +417,29 @@ await test('status goes offline when no transport is joined', async () => {
 });
 
 await test('concurrent status writes stay ordered', async () => {
-  const { rc, client } = makeRemoteChannel();
+  // The first write completes AFTER the second is issued. Without the
+  // statusWriteChain serialisation the teardown's 'offline' then lands at the
+  // DB after the re-join's 'online', leaving a healthy device undispatchable
+  // until the next heartbeat (up to 5 min on the capable tier). Assert on
+  // `completions`, not `writes` — see makeFakeClient.
+  const { rc, client } = makeRemoteChannel({ writeLatencies: [20, 0] });
   rc.channel = makeChannelState('joined');
   rc.queueStatusWrite('offline'); // teardown
   rc.queueStatusWrite('online'); // immediate re-join
   await rc.statusWriteChain;
+  // Let the deferred first write land even when the implementation does NOT
+  // serialise, so this fails on ORDER — the actual bug — rather than on timing.
+  const deadline = Date.now() + 500;
+  while (client.completions.length < 2 && Date.now() < deadline) {
+    await new Promise((r) => realSetTimeout(r, 5));
+  }
   assert(client.writes.length === 2, 'both writes issued');
+  assert(client.completions.length === 2, 'both writes completed');
   assert(
-    client.writes.map((w) => w.status).join(',') === 'offline,online',
-    'writes must apply in issue order so the join wins'
+    client.completions.map((w) => w.status).join(',') === 'offline,online',
+    `writes must COMPLETE in issue order so the join wins, got ${client.completions
+      .map((w) => w.status)
+      .join(',')}`
   );
 });
 
