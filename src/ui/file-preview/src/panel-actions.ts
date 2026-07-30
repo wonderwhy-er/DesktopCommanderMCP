@@ -121,7 +121,7 @@ export function attachPanelActions(options: {
                     file_extension: fileExtension,
                 });
                 try {
-                    await options.callTool?.('start_process', { command, timeout_ms: 12000 });
+                    await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
                     // Keep UI stable if opening folder fails.
                 }
@@ -141,7 +141,7 @@ export function attachPanelActions(options: {
                     file_extension: fileExtension,
                 });
                 try {
-                    await options.callTool?.('start_process', { command, timeout_ms: 12000 });
+                    await options.callTool?.('start_process', { command, timeout_ms: 12000, origin: 'ui' });
                 } catch {
                     // Keep UI stable if opening editor fails.
                 }
@@ -173,8 +173,8 @@ export function attachPanelActions(options: {
 
         try {
             const readArgs = direction === 'before'
-                ? { path: options.payload.filePath, offset: 0, length: range.fromLine - 1 }
-                : { path: options.payload.filePath, offset: range.toLine };
+                ? { path: options.payload.filePath, offset: 0, length: range.fromLine - 1, origin: 'ui' }
+                : { path: options.payload.filePath, offset: range.toLine, origin: 'ui' };
 
             const result = await options.callTool?.('read_file', readArgs);
             const newText = extractToolText(result);

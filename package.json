@@ -1,11 +1,15 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.41",
+  "version": "0.2.46",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
   "author": "Eduards Ruzga",
   "homepage": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wonderwhy-er/DesktopCommanderMCP.git"
+  },
   "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
   "engines": {

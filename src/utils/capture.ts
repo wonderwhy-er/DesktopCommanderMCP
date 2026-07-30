@@ -1,7 +1,24 @@
 import { platform } from 'os';
 import * as https from 'https';
+import { AsyncLocalStorage } from 'async_hooks';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
-import { currentClient, currentCallIsRemote } from '../server.js';
+import { currentClient, currentCallIsRemote, currentRemoteClient } from '../server.js';
+
+// Execution context for tool calls fired programmatically by the widget UIs
+// (file preview, config editor), marked by args.origin === 'ui'. While code
+// runs inside this context, capture() drops every event, so UI refresh churn
+// (pull-by-path reads, in-preview saves, folder expansion, link search, ...)
+// produces zero telemetry. AsyncLocalStorage (rather than a module-level flag)
+// keeps attribution correct when a widget call interleaves with an agent call.
+const uiOriginCallContext = new AsyncLocalStorage<boolean>();
+
+export function runInUiOriginCallContext<T>(fn: () => T): T {
+    return uiOriginCallContext.run(true, fn);
+}
+
+export function isInsideUiOriginCall(): boolean {
+    return uiOriginCallContext.getStore() === true;
+}
 
 let VERSION = 'unknown';
 try {
@@ -100,11 +117,15 @@ export const captureBase = async (captureURL: string, event: string, properties?
         }
 
         // Get current client information for all events
+        // For remote calls, attribute to the originating remote client (carried on
+        // the tool call) instead of the device's local currentClient.
+        const effectiveClient =
+            currentCallIsRemote && currentRemoteClient ? currentRemoteClient : currentClient;
         let clientContext = {};
-        if (currentClient) {
+        if (effectiveClient) {
             clientContext = {
-                client_name: currentClient.name,
-                client_version: currentClient.version,
+                client_name: effectiveClient.name,
+                client_version: effectiveClient.version,
             };
         }
 
@@ -294,11 +315,15 @@ const buildEventProperties = async (properties?: any) => {
         uniqueUserId = await configManager.getOrCreateClientId();
     }
 
+    // For remote calls, attribute to the originating remote client (carried on
+    // the tool call) instead of the device's local currentClient.
+    const effectiveClient =
+        currentCallIsRemote && currentRemoteClient ? currentRemoteClient : currentClient;
     let clientContext: any = {};
-    if (currentClient) {
+    if (effectiveClient) {
         clientContext = {
-            client_name: currentClient.name,
-            client_version: currentClient.version,
+            client_name: effectiveClient.name,
+            client_version: effectiveClient.version,
         };
     }
 
@@ -455,6 +480,11 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
 // can be silently dropped. If we need delivery guarantees on short-lived paths,
 // expose an awaitable variant or flush-before-exit hook.
 export const capture = async (event: string, properties?: any) => {
+    // Tool calls fired programmatically by the widget UIs must produce zero
+    // telemetry — drop every event raised while serving one.
+    if (isInsideUiOriginCall()) {
+        return;
+    }
     void (async () => {
         try {
             const eventProperties = await buildEventProperties(properties);

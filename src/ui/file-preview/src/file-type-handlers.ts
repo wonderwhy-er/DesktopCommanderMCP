@@ -22,14 +22,14 @@ function renderImageBody(payload: RenderPayload): RenderBodyResult {
         };
     }
 
-    if (!payload.imageData || payload.imageData.trim().length === 0) {
+    if (!payload.content || payload.content.trim().length === 0) {
         return {
             notice: 'Preview is unavailable because image data is missing.',
             html: '<div class="panel-content source-content"></div>',
         };
     }
 
-    const src = `data:${mimeType};base64,${payload.imageData}`;
+    const src = `data:${mimeType};base64,${payload.content}`;
     return {
         html: `<div class="panel-content image-content"><div class="image-preview"><img src="${escapeHtml(src)}" alt="${escapeHtml(payload.fileName)}" loading="eager" decoding="async"></div></div>`,
     };

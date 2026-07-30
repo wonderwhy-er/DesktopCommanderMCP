@@ -11,7 +11,7 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
-  showMcpUI?: boolean; // Explicit user override for MCP UI widgets; unset = automatic (A/B test decides)
+  showMcpUI?: boolean; // Explicit user override for MCP UI widgets; unset = shown
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
@@ -53,6 +53,10 @@ class ConfigManager {
   private config: ServerConfig = {};
   private initialized = false;
   private _isFirstRun = false; // Track if this is the first run (config was just created)
+  // Serializes all disk writes so concurrent saves can't corrupt config.json.
+  private writeChain: Promise<void> = Promise.resolve();
+  // True while a coalesced background write is already queued (see scheduleSave).
+  private saveScheduled = false;
 
   constructor() {
     // Get user's home directory
@@ -80,6 +84,16 @@ class ConfigManager {
         const configData = await fs.readFile(this.configPath, 'utf8');
         this.config = JSON.parse(configData);
         this._isFirstRun = false;
+
+        // Configs created before this marker existed must not receive the
+        // welcome page retroactively when client eligibility changes later.
+        // New configs get this field from getDefaultConfig() and remain
+        // eligible across restarts until their first initialization.
+        if (this.config['welcomeOnboardingEligible'] === undefined) {
+          this.config['welcomeOnboardingEligible'] = false;
+          this.config['pendingWelcomeOnboarding'] = false;
+          await this.saveConfig();
+        }
       } catch (error) {
         // Config file doesn't exist, create default
         this.config = this.getDefaultConfig();
@@ -170,20 +184,51 @@ class ConfigManager {
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
-      pendingWelcomeOnboarding: true  // New install flag - triggers A/B test for welcome page
+      pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
+      welcomeOnboardingEligible: true // Distinguishes new installs from migrated legacy configs
     };
   }
 
   /**
-   * Save config to disk
+   * Write the current in-memory config to disk. All writes funnel through
+   * writeChain (see saveConfig / scheduleSave) so overlapping saves can never
+   * interleave and corrupt the file. Previously every tool call could fire its
+   * own independent fs.writeFile of the same path.
    */
-  private async saveConfig() {
-    try {
-      await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
-    } catch (error) {
-      console.error('Failed to save config:', error);
-      throw error;
-    }
+  private async writeConfigToDisk(): Promise<void> {
+    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
+  }
+
+  /**
+   * Awaitable save, serialized on writeChain. Use for explicit, user-driven
+   * config changes where the caller wants on-disk confirmation.
+   */
+  private async saveConfig(): Promise<void> {
+    const write = this.writeChain.then(() => this.writeConfigToDisk());
+    // Keep the chain alive even if this write rejects, so later writes still run.
+    this.writeChain = write.catch(() => {});
+    return write;
+  }
+
+  /**
+   * Non-blocking, coalesced save. Returns immediately; the write runs in the
+   * background. A burst of calls collapses to at most one queued write behind
+   * the in-flight one, so a storm of tool calls can't storm the disk — and,
+   * critically, can't pile up behind a saturated libuv threadpool and gate the
+   * tool-call response path. Used for high-frequency, non-critical persistence
+   * such as usage stats.
+   */
+  scheduleSave(): void {
+    if (this.saveScheduled) return; // a queued write will capture the latest config
+    this.saveScheduled = true;
+    this.writeChain = this.writeChain.then(async () => {
+      this.saveScheduled = false; // let the next burst queue a fresh write
+      try {
+        await this.writeConfigToDisk();
+      } catch (error) {
+        console.error('Failed to save config (background):', error);
+      }
+    });
   }
 
   /**
@@ -235,6 +280,21 @@ class ConfigManager {
     // Update the value
     this.config[key] = value;
     await this.saveConfig();
+  }
+
+  /**
+   * Update a value in memory and persist it WITHOUT blocking the caller.
+   * The tool-call response path must never wait on a disk write: when the libuv
+   * threadpool is saturated (e.g. many parallel reads stalled on a slow/cloud
+   * filesystem) an awaited write can't get a thread and would hang the response
+   * of even pure-memory tools. The in-memory value is updated synchronously so
+   * subsequent reads see it immediately; the write is coalesced in the
+   * background. Callers needing on-disk confirmation should use setValue.
+   */
+  async setValueNonBlocking(key: string, value: any): Promise<void> {
+    await this.init();
+    this.config[key] = value;
+    this.scheduleSave();
   }
 
   /**

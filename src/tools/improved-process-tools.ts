@@ -1,4 +1,4 @@
-import { terminalManager } from '../terminal-manager.js';
+import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
@@ -338,6 +338,14 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   } else {
     // Absolute position read
     statusMessage = `[Reading ${result.readCount} lines from line ${result.readFrom} (total: ${result.totalLines} lines, ${result.remaining} remaining)]`;
+  }
+
+  // Surface buffer-cap eviction so the model knows the retained output is not
+  // the full output and that line numbers shifted (matches the truncation
+  // markers used by other tools).
+  if (result.evictedLines && result.evictedLines > 0) {
+    const capMB = Math.round(MAX_BUFFERED_OUTPUT_CHARS / 1024 / 1024);
+    statusMessage += `\n[WARNING: output exceeded the ${capMB}MB buffer cap; the ${result.evictedLines} earliest lines were evicted and cannot be read. Line numbers and totals refer to the retained buffer only]`;
   }
 
   // Add process state info

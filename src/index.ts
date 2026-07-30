@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// MUST be first: raises the libuv threadpool size before any fs work is
+// submitted. See src/bootstrap.ts for why import order matters.
+import './bootstrap.js';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
 import { server, flushDeferredMessages } from './server.js';
 import { commandManager } from './command-manager.js';

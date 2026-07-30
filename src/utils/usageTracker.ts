@@ -92,10 +92,14 @@ class UsageTracker {
   }
 
   /**
-   * Save usage stats to config
+   * Save usage stats to config.
+   * Non-blocking: the tool-call return path must not wait on a disk write. The
+   * in-memory stats are already updated by the caller (getStats returns the live
+   * config object), so persistence is coalesced in the background. This is what
+   * keeps a saturated libuv threadpool from gating tool responses on every call.
    */
   private async saveStats(stats: ToolUsageStats): Promise<void> {
-    await configManager.setValue('usageStats', stats);
+    await configManager.setValueNonBlocking('usageStats', stats);
   }
 
   /**
@@ -419,7 +423,15 @@ class UsageTracker {
   async shouldShowOnboarding(): Promise<boolean> {
     // Check feature flag first (remote kill switch)
     const { featureFlagManager } = await import('./feature-flags.js');
-    const onboardingEnabled = featureFlagManager.get('onboarding_injection', true);
+
+    // Default false: on cold starts (no flag cache yet, e.g. ephemeral Docker
+    // containers) this can run before the background flag fetch completes.
+    // Treat an unknown flag as "off" so nothing is injected — flags load
+    // within seconds, so when the flag is ON onboarding still fires on a
+    // later call while the user is new. Deliberately no waiting here to keep
+    // tool calls latency-free.
+    // See: https://github.com/wonderwhy-er/DesktopCommanderMCP/issues/538
+    const onboardingEnabled = featureFlagManager.get('onboarding_injection', false);
     if (!onboardingEnabled) {
       return false;
     }

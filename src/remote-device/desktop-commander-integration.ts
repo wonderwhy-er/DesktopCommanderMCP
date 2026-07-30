@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 
@@ -35,7 +35,13 @@ export class DesktopCommanderIntegration {
 
         try {
             console.debug('[DEBUG] Creating StdioClientTransport');
-            this.mcpTransport = new StdioClientTransport(config);
+            // DC_REMOTE_DEVICE tells the spawned server it is serving remote
+            // services, so it suppresses local-only behavior like opening the
+            // welcome page in a browser the remote user would never see.
+            this.mcpTransport = new StdioClientTransport({
+                ...config,
+                env: { ...getDefaultEnvironment(), ...config.env, DC_REMOTE_DEVICE: 'true' }
+            });
 
             // Create MCP client
             console.debug('[DEBUG] Creating MCP Client');

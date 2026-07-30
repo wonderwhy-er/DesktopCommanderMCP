@@ -40,7 +40,7 @@ export const CONFIG_FIELD_DEFINITIONS = {
   },
   showMcpUI: {
     label: 'Show MCP UI Widgets',
-    description: 'Controls whether tools render interactive UI widgets (file preview, config editor) in supported clients. When not set, Desktop Commander decides automatically. Set to true to always show widgets, or false to always use plain text. Note: changes take effect after restarting the app.',
+    description: 'Controls whether tools render interactive UI widgets (file preview, config editor) in supported clients. Widgets are shown unless this is set to false. Note: changes take effect after restarting the app.',
     valueType: 'boolean',
   },
 } as const satisfies Record<string, ConfigFieldDefinition>;

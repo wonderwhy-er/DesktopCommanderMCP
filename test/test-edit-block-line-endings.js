@@ -33,18 +33,16 @@ const MIXED_FILE = path.join(TEST_DIR, 'file_with_mixed.txt');
  * Since the file-preview refactor (commit 8fd8f94), handleEditBlock's
  * exact-match path no longer returns a "Successfully applied N edit(s)"
  * text message — it returns a file preview (status line + snippet of
- * the edited region) plus structuredContent carrying fileName/filePath/
- * fileType for the preview UI.
+ * the edited region). Since the pull-by-path preview refactor,
+ * structuredContent is widget-only (returned solely on origin:'ui'
+ * calls), so LLM-shaped calls like these carry none.
  *
- * We assert the new contract: text response + structuredContent present
- * + preview status line shape, which together mean the edit was written
- * and a preview was produced. Callers additionally verify the edit
- * landed by reading the file back.
+ * We assert the preview status line shape, which means the edit was
+ * written and a preview was produced. Callers additionally verify the
+ * edit landed by reading the file back.
  */
 function assertEditBlockSuccess(result, message) {
   assert.strictEqual(result.content[0].type, 'text', `${message} (should return text content)`);
-  assert.ok(result.structuredContent, `${message} (should return structuredContent)`);
-  assert.ok(result.structuredContent.filePath, `${message} (structuredContent.filePath should be set)`);
   assert.ok(
     /\[Reading \d+ lines? from/.test(result.content[0].text),
     `${message} (text should contain file-preview status line)`

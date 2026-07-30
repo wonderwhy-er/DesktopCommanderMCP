@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 // Config tools schemas
-export const GetConfigArgsSchema = z.object({});
+export const GetConfigArgsSchema = z.object({
+  // 'ui' marks calls the config-editor widget fires programmatically; they are
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
+});
 
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
@@ -12,6 +16,7 @@ export const SetConfigValueArgsSchema = z.object({
     z.array(z.string()),
     z.null(),
   ]),
+  // 'ui' marks widget-fired calls; excluded from tool-call telemetry.
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
@@ -24,6 +29,9 @@ export const StartProcessArgsSchema = z.object({
   timeout_ms: z.number(),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
+  // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const ReadProcessOutputArgsSchema = z.object({
@@ -52,7 +60,11 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional()
+  options: z.record(z.any()).optional(),
+  // Whether the call came from the file-preview UI (refresh/navigation) or the
+  // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
+  // in server.ts.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const ReadMultipleFilesArgsSchema = z.object({
@@ -63,6 +75,9 @@ export const WriteFileArgsSchema = z.object({
   path: z.string(),
   content: z.string(),
   mode: z.enum(['rewrite', 'append']).default('rewrite'),
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 // PDF modification schemas - exported for reuse
@@ -111,6 +126,9 @@ export const CreateDirectoryArgsSchema = z.object({
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
   depth: z.number().optional().default(2),
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const MoveFileArgsSchema = z.object({
@@ -136,7 +154,10 @@ export const EditBlockArgsSchema = z.object({
   // Structured file range rewrite (Excel, etc.)
   range: z.string().optional(),
   content: z.any().optional(),
-  options: z.record(z.any()).optional()
+  options: z.record(z.any()).optional(),
+  // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
+  // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
+  origin: z.enum(['ui', 'llm']).optional(),
 }).refine(
   data => {
     // Helper to check if value is actually provided (not undefined, not empty string)
@@ -182,6 +203,9 @@ export const StartSearchArgsSchema = z.object({
   timeout_ms: z.number().optional(), // Match process naming convention
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
   literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
+  // 'ui' marks widget-fired calls (e.g. markdown link-target search);
+  // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
+  origin: z.enum(['ui', 'llm']).optional(),
 });
 
 export const GetMoreSearchResultsArgsSchema = z.object({
@@ -216,3 +240,38 @@ export const TrackUiEventArgsSchema = z.object({
   component: z.string().optional().default('file_preview'),
   params: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional().default({}),
 });
+
+/**
+ * Map of tool name -> argument schema, used by the dispatcher to detect and warn
+ * about parameters a caller sent that the tool does not support. Keep in sync
+ * with the tool definitions in server.ts.
+ */
+export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+  get_config: GetConfigArgsSchema,
+  set_config_value: SetConfigValueArgsSchema,
+  read_file: ReadFileArgsSchema,
+  read_multiple_files: ReadMultipleFilesArgsSchema,
+  write_file: WriteFileArgsSchema,
+  write_pdf: WritePdfArgsSchema,
+  create_directory: CreateDirectoryArgsSchema,
+  list_directory: ListDirectoryArgsSchema,
+  move_file: MoveFileArgsSchema,
+  start_search: StartSearchArgsSchema,
+  get_more_search_results: GetMoreSearchResultsArgsSchema,
+  stop_search: StopSearchArgsSchema,
+  list_searches: ListSearchesArgsSchema,
+  get_file_info: GetFileInfoArgsSchema,
+  edit_block: EditBlockArgsSchema,
+  start_process: StartProcessArgsSchema,
+  read_process_output: ReadProcessOutputArgsSchema,
+  interact_with_process: InteractWithProcessArgsSchema,
+  force_terminate: ForceTerminateArgsSchema,
+  list_sessions: ListSessionsArgsSchema,
+  list_processes: ListProcessesArgsSchema,
+  kill_process: KillProcessArgsSchema,
+  get_usage_stats: GetUsageStatsArgsSchema,
+  get_recent_tool_calls: GetRecentToolCallsArgsSchema,
+  give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
+  get_prompts: GetPromptsArgsSchema,
+  track_ui_event: TrackUiEventArgsSchema,
+};

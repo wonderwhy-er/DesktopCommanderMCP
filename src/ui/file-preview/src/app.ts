@@ -26,7 +26,6 @@ import type { HtmlPreviewMode } from './types.js';
 
 let isExpanded = false;
 let hideSummaryRow = false;
-let previewShownFired = false;
 let onRender: (() => void) | undefined;
 let trackUiEvent: ((event: string, params?: Record<string, unknown>) => void) | undefined;
 let conflictDialogController: ConflictDialogController | undefined;
@@ -146,47 +145,126 @@ const markdownController = createMarkdownController({
     },
 });
 
-/**
- * Check if a payload needs its file content to be read.
- * Tool results from edit_block/write_file include structuredContent but
- * their text is a success message, not file content. Detect this by
- * checking for the absence of the read status line that read_file always includes.
- * URL payloads are fetched remotely by read_file(isUrl:true); we can't
- * re-fetch them from here (no isUrl flag on the refresh path), so skip.
- */
-function needsContentRead(payload: RenderPayload): boolean {
-    if (payload.fileType === 'directory' || payload.fileType === 'image' || payload.fileType === 'unsupported') {
-        return false;
+// Only read_file's own parameters may ride along on a re-read. Forwarding a
+// different tool's args (e.g. edit_block's old_string) makes the server prepend
+// an "unsupported params" warning that would pollute the pulled content.
+const READ_ARG_KEYS = ['path', 'offset', 'length', 'sheet', 'range', 'isUrl'] as const;
+
+function pickReadArgs(args: unknown): Record<string, unknown> | undefined {
+    if (!args || typeof args !== 'object') {
+        return undefined;
     }
-    if (/^https?:\/\//i.test(payload.filePath)) {
-        return false;
+    const src = args as Record<string, unknown>;
+    // edit_block calls the file "file_path"; read_file/write_file call it "path".
+    const path = typeof src.path === 'string'
+        ? src.path
+        : typeof src.file_path === 'string'
+            ? src.file_path
+            : undefined;
+    if (!path) {
+        return undefined;
     }
-    return !parseReadRange(payload.content);
+    const out: Record<string, unknown> = { path };
+    for (const key of READ_ARG_KEYS) {
+        if (key !== 'path' && src[key] !== undefined) {
+            out[key] = src[key];
+        }
+    }
+    return out;
 }
 
-async function readAndResolvePayload(
-    payload: RenderPayload,
-    onReady: (payload: RenderPayload) => void
+// The host doesn't send the tool name with tool-input, so infer mutations from
+// their arg shape: write_file carries `content`; edit_block `old_string`/
+// `new_string`. Drives two things: timing (a mutation's tool-input arrives
+// BEFORE the file changes, so those pull at tool-result time instead of input
+// time) and telemetry (the pulled payload's sourceTool is re-stamped with the
+// originating tool, since the pull itself is always a read_file).
+function inferMutationTool(args: unknown): 'write_file' | 'edit_block' | undefined {
+    if (!args || typeof args !== 'object') {
+        return undefined;
+    }
+    const src = args as Record<string, unknown>;
+    if (src.old_string !== undefined || src.new_string !== undefined) {
+        return 'edit_block';
+    }
+    if (src.content !== undefined) {
+        return 'write_file';
+    }
+    return undefined;
+}
+
+// Bound the RPC read so a stalled host response resolves to onFail instead of
+// hanging. Kept under the loading watchdog (PREVIEW_WATCHDOG_MS) so the pull
+// gets its chance to fail before the failure row appears.
+const PULL_TIMEOUT_MS = 8000;
+
+// One in-flight pull per path — the input-time pull and a tool-result-triggered
+// pull for the same call would otherwise read the file twice.
+let pullInFlightPath: string | undefined;
+
+/**
+ * The widget's render path: pull content + metadata over the RPC channel
+ * (`app.callServerTool` with origin:'ui'). The notification channel is not used
+ * for rendering — the host may strip structuredContent from it or swallow it
+ * entirely (images). `args` reproduces the original read exactly
+ * (offset/length/sheet/range/isUrl) so partial reads stay faithful.
+ */
+async function pullPayloadByArgs(
+    args: Record<string, unknown>,
+    onReady: (payload: RenderPayload) => void,
+    onFail: () => void
 ): Promise<void> {
+    const filePath = typeof args.path === 'string' ? args.path : undefined;
+    if (!filePath) {
+        onFail();
+        return;
+    }
+    if (pullInFlightPath === filePath) {
+        return;
+    }
+    pullInFlightPath = filePath;
     try {
-        const freshPayload = await markdownController.readPayload(payload.filePath);
-        if (freshPayload) {
-            onReady({
-                ...freshPayload,
-                sourceTool: payload.sourceTool ?? freshPayload.sourceTool,
-            });
-            if (freshPayload.fileType === 'markdown') {
-                void markdownController.refreshFromDisk(freshPayload);
-            }
+        // The host can hold the RPC response indefinitely (e.g. it preempts
+        // delivery to inline-render an image), so callServerTool would await
+        // forever with no throw. Race a timeout so the pull settles either way.
+        const raw = await Promise.race([
+            callToolIfReady('read_file', { ...args, origin: 'ui' }),
+            new Promise<never>((_resolve, reject) => {
+                setTimeout(
+                    () => reject(new Error(`RPC read_file did not respond within ${PULL_TIMEOUT_MS}ms`)),
+                    PULL_TIMEOUT_MS,
+                );
+            }),
+        ]);
+        const payload = extractRenderPayload(raw);
+        if (payload) {
+            onReady(payload);
             return;
         }
     } catch {
-        // Fall through to original payload.
+        // Timed out or rejected — fall through to the caller's fallback.
+    } finally {
+        pullInFlightPath = undefined;
     }
-    onReady(payload);
+    onFail();
+}
+
+// If a loading state hasn't resolved into a real render within this window, the
+// host most likely never delivered the tool result / RPC response (e.g. it
+// preempted delivery to inline-render an image). Rather than sit on "Preparing
+// preview…" forever, we surface a failure row.
+const PREVIEW_WATCHDOG_MS = 10000;
+let previewWatchdogId: ReturnType<typeof setTimeout> | undefined;
+
+function clearPreviewWatchdog(): void {
+    if (previewWatchdogId !== undefined) {
+        clearTimeout(previewWatchdogId);
+        previewWatchdogId = undefined;
+    }
 }
 
 function renderStatusState(container: HTMLElement, message: string): void {
+    clearPreviewWatchdog();
     container.innerHTML = `
       <main class="shell">
         ${renderCompactRow({ label: message, variant: 'status', interactive: false })}
@@ -202,6 +280,13 @@ function renderLoadingState(container: HTMLElement): void {
       </main>
     `;
     document.body.classList.add('dc-ready');
+    // Fall back to a failure row if nothing renders in time. Any successful
+    // render (renderApp) or explicit status clears this first.
+    clearPreviewWatchdog();
+    previewWatchdogId = setTimeout(() => {
+        previewWatchdogId = undefined;
+        renderStatusState(container, 'Unable to generate preview in this environment.');
+    }, PREVIEW_WATCHDOG_MS);
 }
 
 export function renderApp(
@@ -210,6 +295,7 @@ export function renderApp(
     htmlMode: HtmlPreviewMode = 'rendered',
     expandedState = false
 ): void {
+    clearPreviewWatchdog();
     isExpanded = expandedState;
     currentHtmlMode = htmlMode;
     shellController?.dispose();
@@ -356,13 +442,6 @@ export function renderApp(
         onRender,
     });
     onRender?.();
-    if (!previewShownFired) {
-        previewShownFired = true;
-        trackUiEvent?.('preview_shown', {
-            file_type: payload.fileType,
-            file_extension: fileExtension,
-        });
-    }
 }
 
 export function bootstrapApp(): void {
@@ -436,6 +515,14 @@ export function bootstrapApp(): void {
     };
 
     let pendingCachedPayload: RenderPayload | undefined;
+    let lastToolInputArgs: Record<string, unknown> | undefined;
+    // The mutation tool that produced the current tool call, if any — stamped
+    // onto the pulled payload so telemetry attributes to write_file/edit_block
+    // rather than the read_file pull that rendered it.
+    let lastMutationTool: 'write_file' | 'edit_block' | undefined;
+    // True once the current tool call has been rendered (via the input-time pull),
+    // so a late tool-result notification doesn't trigger a redundant second pull.
+    let renderedForCurrentInput = false;
     let initialStateResolved = false;
     const resolveInitialState = (payload?: RenderPayload, message?: string): void => {
         if (initialStateResolved) {
@@ -491,6 +578,13 @@ export function bootstrapApp(): void {
 
     app.ontoolinput = (params) => {
         const requestedPath = typeof params.arguments?.path === 'string' ? params.arguments.path : undefined;
+        const readArgs = pickReadArgs(params.arguments);
+        lastMutationTool = inferMutationTool(params.arguments);
+        if (readArgs) {
+            // Retained so mutations (which pull at tool-result time) know what
+            // to re-read — faithfully reproducing offset/length/sheet/range.
+            lastToolInputArgs = readArgs;
+        }
         if (
             !initialStateResolved
             && pendingCachedPayload
@@ -505,38 +599,77 @@ export function bootstrapApp(): void {
 
         renderLoadingState(container);
         onRender?.();
+        renderedForCurrentInput = false;
+
+        // All previews render from the widget's own origin:'ui' RPC read — the
+        // notification channel is unreliable (the host strips structuredContent,
+        // and for images swallows the tool-result entirely to inline-render).
+        // tool-input always fires and carries the path + read args, so pull here.
+        // Exception: mutations (write_file/edit_block) — their tool-input arrives
+        // before the file changes, so they pull at tool-result time instead.
+        if (readArgs && !lastMutationTool) {
+            void pullPayloadByArgs(
+                readArgs,
+                (p) => {
+                    renderedForCurrentInput = true;
+                    if (initialStateResolved) {
+                        renderAndSync(getEffectiveIncomingPayload(p));
+                    } else {
+                        resolveInitialState(getEffectiveIncomingPayload(p));
+                    }
+                },
+                // Pull failed/timed out — the loading watchdog shows the failure row.
+                () => {},
+            );
+        }
     };
 
     app.ontoolresult = (result) => {
         pendingCachedPayload = undefined;
-        const payload = extractRenderPayload(result);
-        const message = extractToolText(result as unknown as Record<string, unknown>);
-        if (!initialStateResolved) {
-            if (payload) {
-                if (needsContentRead(payload)) {
-                    void readAndResolvePayload(payload, (p) => resolveInitialState(getEffectiveIncomingPayload(p)));
-                    return;
-                }
-                resolveInitialState(getEffectiveIncomingPayload(payload));
-                return;
-            }
-            if (message) {
-                resolveInitialState(undefined, message);
-            }
+
+        // Host-facing responses carry no structuredContent, so this notification
+        // only signals completion. Reads already rendered from their input-time
+        // pull; mutations (write_file/edit_block) pull now that the file changed.
+        if (renderedForCurrentInput) {
             return;
         }
 
-        if (payload) {
-            if (needsContentRead(payload)) {
-                renderLoadingState(container);
-                void readAndResolvePayload(payload, (p) => renderAndSync(getEffectiveIncomingPayload(p)));
+        const message = extractToolText(result as unknown as Record<string, unknown>);
+        const isError = (result as { isError?: boolean })?.isError === true;
+        const pullArgs = lastToolInputArgs
+            ?? (currentPayload?.filePath ? { path: currentPayload.filePath } : undefined);
+
+        const deliver = (pulled: RenderPayload): void => {
+            renderedForCurrentInput = true;
+            // The pull is always a read_file; re-stamp the originating mutation
+            // tool so telemetry attributes to write_file/edit_block.
+            const p = lastMutationTool ? { ...pulled, sourceTool: lastMutationTool } : pulled;
+            if (initialStateResolved) {
+                renderAndSync(getEffectiveIncomingPayload(p));
             } else {
-                renderAndSync(getEffectiveIncomingPayload(payload));
+                resolveInitialState(getEffectiveIncomingPayload(p));
             }
-        } else if (message) {
-            renderStatusState(container, message);
+        };
+        const renderMessageFallback = (): void => {
+            if (!message) {
+                return;
+            }
+            if (!initialStateResolved) {
+                resolveInitialState(undefined, message);
+            } else {
+                renderStatusState(container, message);
+                onRender?.();
+            }
+        };
+
+        // A failed tool call has nothing worth re-reading — show its message.
+        if (!isError && pullArgs) {
+            renderLoadingState(container);
             onRender?.();
+            void pullPayloadByArgs(pullArgs, deliver, renderMessageFallback);
+            return;
         }
+        renderMessageFallback();
     };
 
     app.ontoolcancelled = (params) => {
@@ -558,6 +691,7 @@ export function bootstrapApp(): void {
     };
 
     const teardown = (): void => {
+        clearPreviewWatchdog();
         shellController?.dispose();
         shellController = undefined;
         markdownController.disposeHandles();

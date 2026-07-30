@@ -71,7 +71,12 @@ function getErrorFromPath(path: string): string {
  * Handle read_file command
  */
 export async function handleReadFile(args: unknown): Promise<ServerResult> {
-    const HANDLER_TIMEOUT = 60000; // 60 seconds total operation timeout
+    // Backstop for the whole handler operation. The real control is the
+    // 3-minute cancellable read timeout inside readFileFromDisk; this sits just
+    // above it (so that one fires first, with cleanup + a useful error) but
+    // still below the MCP client's ~4-minute hard cap, so we never leave the
+    // client hanging on an opaque timeout.
+    const HANDLER_TIMEOUT = 3.5 * 60 * 1000; // 3m30s
     // Add input validation
     if (args === null || args === undefined) {
         return createErrorResponse('No arguments provided for read_file command');
@@ -134,29 +139,48 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     },
                     ...pdfContent
                 ],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType: 'unsupported' as const,
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: pdfContent
-                        .filter((item): item is { type: "text"; text: string } => item.type === "text")
-                        .map((item) => item.text)
-                        .join("\n"),
-                },
+                ...(parsed.origin === 'ui' ? {
+                    structuredContent: {
+                        fileName: path.basename(resolvedFilePath),
+                        filePath: resolvedFilePath,
+                        fileType: 'unsupported' as const,
+                        ...await getDefaultEditorMetadata(resolvedFilePath),
+                    },
+                } : {}),
             };
         }
 
         // Handle image files
         if (fileResult.metadata?.isImage) {
             // Return the image bytes in the MCP content array so the host model can
-            // actually see the image. structuredContent additionally carries the bytes
-            // for the preview widget to render.
+            // actually see the image. The preview widget gets its copy from its own
+            // origin:'ui' read — structuredContent stays metadata-only.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
             const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
+            const imageStructuredContent = {
+                fileName: path.basename(resolvedFilePath),
+                filePath: resolvedFilePath,
+                fileType: 'image' as const,
+                ...await getDefaultEditorMetadata(resolvedFilePath),
+                mimeType: fileResult.mimeType,
+            };
+            // Widget pull (origin: 'ui'): return the base64 in a TEXT block, never
+            // an image block. An image content block makes the host inline-vision-
+            // render the result, which preempts delivery of this RPC response to
+            // the widget — leaving the preview stuck on "Preparing preview…" for
+            // exactly the host-rendered types (png/jpeg/gif/webp). Text-only lets
+            // the RPC response through so the widget can draw the <img>.
+            if (parsed.origin === 'ui') {
+                return {
+                    content: [{ type: "text", text: imageData }],
+                    structuredContent: imageStructuredContent,
+                };
+            }
+            // Model-facing read: keep the image block so the host/model sees it.
+            // No structuredContent — the widget renders from its own origin:'ui'
+            // read, and nothing else consumes it.
             return {
                 content: [
                     {
@@ -169,35 +193,31 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         mimeType: fileResult.mimeType
                     }
                 ],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType: 'image',
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: imageData,
-                    imageData,
-                    mimeType: fileResult.mimeType
-                }
             };
         } else {
             // For all other files, return as text.
             // structuredContent carries only file metadata (no content duplication);
-            // the widget reads text from the MCP content array.
-            const textContent = typeof fileResult.content === 'string'
+            // the widget reads text from the MCP content array (over the RPC read).
+            let textContent = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('utf8');
             const fileType = fileResult.metadata?.isDirectory ? 'directory' as const : resolvePreviewFileType(resolvedFilePath);
+            // The directory fallback prefixes a "use list_directory instead" hint
+            // for the LLM. The widget's own read (a list_directory preview pulls
+            // read_file on the dir path) would render that hint as a notice — strip it.
+            if (parsed.origin === 'ui' && fileType === 'directory') {
+                textContent = textContent.replace(/^This is a directory, not a file\.[^\n]*\n+/, '');
+            }
             return {
                 content: [{ type: "text", text: textContent }],
-                structuredContent: {
-                    fileName: path.basename(resolvedFilePath),
-                    filePath: resolvedFilePath,
-                    fileType,
-                    sourceTool: 'read_file',
-                    ...await getDefaultEditorMetadata(resolvedFilePath),
-                    content: textContent,
-                },
+                ...(parsed.origin === 'ui' ? {
+                    structuredContent: {
+                        fileName: path.basename(resolvedFilePath),
+                        filePath: resolvedFilePath,
+                        fileType,
+                        ...await getDefaultEditorMetadata(resolvedFilePath),
+                    },
+                } : {}),
             };
         }
     };
@@ -284,7 +304,32 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
  */
 export async function handleWriteFile(args: unknown): Promise<ServerResult> {
     try {
+        const modeProvided = !!(args && typeof args === 'object' && 'mode' in args);
         const parsed = WriteFileArgsSchema.parse(args);
+
+        // An omitted `mode` falls back to 'rewrite', which silently destroys
+        // the target's existing content. The common failure is an LLM caller
+        // intending to append but dropping the optional param (issue #541), so
+        // require explicit intent when the target already has content;
+        // new/empty files keep the zero-friction default.
+        if (!modeProvided) {
+            let existing: Record<string, any> | null = null;
+            try {
+                existing = await getFileInfo(parsed.path);
+            } catch {
+                // Missing file or invalid path — nothing to protect; the write
+                // itself will surface any real path error.
+            }
+            if (existing?.isFile && existing.size > 0) {
+                return createErrorResponse(
+                    `Write rejected to prevent accidental data loss: ${parsed.path} already exists ` +
+                    `with content (${existing.size} bytes), and no 'mode' was specified — the default ` +
+                    `mode 'rewrite' would REPLACE the entire file. Retry with an explicit mode: ` +
+                    `'append' to add your content to the end of the existing file, or 'rewrite' ` +
+                    `to replace all existing content.`
+                );
+            }
+        }
 
         // Get the line limit from configuration
         const config = await configManager.getConfig();
@@ -305,20 +350,14 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
 
         // Provide more informative message based on mode
         const modeMessage = parsed.mode === 'append' ? 'appended to' : 'wrote to';
-        const resolvedWritePath = resolveAbsolutePath(parsed.path);
 
+        // No structuredContent: nothing in the UI calls write_file (the widget
+        // previews the write via its own read_file pull at tool-result time).
         return {
             content: [{
                 type: "text",
                 text: `Successfully ${modeMessage} ${parsed.path} (${lineCount} lines) ${errorMessage}`
             }],
-            structuredContent: {
-                fileName: path.basename(resolvedWritePath),
-                filePath: resolvedWritePath,
-                fileType: resolvePreviewFileType(resolvedWritePath),
-                sourceTool: 'write_file',
-                ...await getDefaultEditorMetadata(resolvedWritePath),
-            },
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -357,11 +396,13 @@ export async function handleListDirectory(args: unknown): Promise<ServerResult> 
 
         return {
             content: [{ type: "text", text: resultText }],
-            structuredContent: {
-                fileName: path.basename(resolvedPath),
-                filePath: resolvedPath,
-                fileType: 'directory' as const,
-            },
+            ...(parsed.origin === 'ui' ? {
+                structuredContent: {
+                    fileName: path.basename(resolvedPath),
+                    filePath: resolvedPath,
+                    fileType: 'directory' as const,
+                },
+            } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

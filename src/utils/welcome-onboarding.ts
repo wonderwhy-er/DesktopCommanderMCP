@@ -5,6 +5,30 @@ import { openWelcomePage } from './open-browser.js';
 import { logToStderr } from './logger.js';
 import { capture } from './capture.js';
 
+/** Consume a pending welcome page when this client must never receive it. */
+export async function skipWelcomePageOnboarding(): Promise<void> {
+  const pending = await configManager.getValue('pendingWelcomeOnboarding');
+  if (!pending) {
+    return;
+  }
+
+  await configManager.setValue('pendingWelcomeOnboarding', false);
+  logToStderr('debug', 'Welcome page skipped');
+}
+
+function isWelcomePageClientExcluded(clientName?: string): boolean {
+  const configuredClients = featureFlagManager.get('welcome_page_excluded_clients', []);
+  if (!Array.isArray(configuredClients) || !clientName) {
+    return false;
+  }
+
+  const normalizedClientName = clientName.trim().toLowerCase();
+  return configuredClients.some(
+    (configuredClient) => typeof configuredClient === 'string'
+      && configuredClient.trim().toLowerCase() === normalizedClientName
+  );
+}
+
 /**
  * Handle welcome page display for new users (A/B test controlled)
  * 
@@ -13,7 +37,14 @@ import { capture } from './capture.js';
  * 2. Users in the 'showOnboardingPage' A/B variant
  * 3. Haven't seen it yet
  */
-export async function handleWelcomePageOnboarding(): Promise<void> {
+export async function handleWelcomePageOnboarding(clientName?: string): Promise<void> {
+  // Existing configs are migrated to false. Only configs created with the
+  // eligibility marker may receive this welcome-page campaign.
+  const eligible = await configManager.getValue('welcomeOnboardingEligible');
+  if (!eligible) {
+    return;
+  }
+
   // Check if this is a new install pending A/B decision
   // This flag is set when config is first created and survives process restarts
   const pending = await configManager.getValue('pendingWelcomeOnboarding');
@@ -30,6 +61,20 @@ export async function handleWelcomePageOnboarding(): Promise<void> {
   if (!loadedFromCache) {
     logToStderr('debug', 'Waiting for feature flags to load...');
     await featureFlagManager.waitForFreshFlags();
+  }
+
+  // Keep an MCP release compatible with an older flag document: only an
+  // explicit false disables. Absent or malformed values fail open so a flag
+  // file typo cannot permanently consume pending onboarding for new installs.
+  const enabled = featureFlagManager.get('welcome_page_enabled', true) !== false;
+  if (!enabled) {
+    await skipWelcomePageOnboarding();
+    return;
+  }
+
+  if (isWelcomePageClientExcluded(clientName)) {
+    await skipWelcomePageOnboarding();
+    return;
   }
 
   // Check A/B test assignment
@@ -56,7 +101,7 @@ export async function handleWelcomePageOnboarding(): Promise<void> {
   }
 
   try {
-    await openWelcomePage();
+    await openWelcomePage(clientName);
     await configManager.setValue('sawOnboardingPage', true);
     await configManager.setValue('pendingWelcomeOnboarding', false);
     capture('server_welcome_page_opened', { success: true });

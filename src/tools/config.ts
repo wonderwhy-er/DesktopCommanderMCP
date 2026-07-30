@@ -3,7 +3,7 @@ import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
-import { shouldShowMcpUiPreviews } from '../utils/mcp-ui-ab-test.js';
+import { shouldShowMcpUi } from '../utils/mcp-ui.js';
 import { access, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import {
@@ -116,9 +116,9 @@ export async function getConfig() {
       }
     };
     const availableShells = await detectAvailableShells(systemInfo);
-    // Effective MCP UI decision (override > A/B test > default ON) for editor display.
-    const effectiveShowMcpUI = await shouldShowMcpUiPreviews();
-    
+    // Effective MCP UI decision (user override > default ON) for editor display.
+    const effectiveShowMcpUI = await shouldShowMcpUi();
+
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
       content: [{
@@ -133,10 +133,10 @@ export async function getConfig() {
         entries: CONFIG_FIELD_KEYS.map((key) => {
           const definition = CONFIG_FIELD_DEFINITIONS[key];
           let value = (configWithSystemInfo as Record<string, unknown>)[key];
-          // showMcpUI is tri-state (unset = automatic via A/B test). The editor
-          // renders booleans as a two-state toggle, so when unset show the
-          // EFFECTIVE decision; flipping the toggle then pins an explicit override.
-          if (key === 'showMcpUI' && value === undefined) {
+          // showMcpUI is tri-state (unset = shown). The editor renders booleans
+          // as a two-state toggle, so when no explicit boolean is stored show
+          // the EFFECTIVE decision; flipping the toggle then pins an override.
+          if (key === 'showMcpUI' && typeof value !== 'boolean') {
             value = effectiveShowMcpUI;
           }
           return {

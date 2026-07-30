@@ -56,7 +56,7 @@ export class TextFileHandler implements FileHandler {
         const includeStatusMessage = options?.includeStatusMessage ?? true;
 
         // Binary detection is done at factory level - just read as text
-        return this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage);
+        return this.readFileWithSmartPositioning(filePath, offset, length, 'text/plain', includeStatusMessage, options?.signal);
     }
 
     async write(path: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
@@ -118,11 +118,11 @@ export class TextFileHandler implements FileHandler {
     /**
      * Get file line count (for files under size limit)
      */
-    private async getFileLineCount(filePath: string): Promise<number | undefined> {
+    private async getFileLineCount(filePath: string, signal?: AbortSignal): Promise<number | undefined> {
         try {
             const stats = await fs.stat(filePath);
             if (stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
-                const content = await fs.readFile(filePath, 'utf8');
+                const content = await fs.readFile(filePath, { encoding: 'utf8', signal });
                 return TextFileHandler.countLines(content);
             }
         } catch (error) {
@@ -208,12 +208,13 @@ export class TextFileHandler implements FileHandler {
         offset: number,
         length: number,
         mimeType: string,
-        includeStatusMessage: boolean = true
+        includeStatusMessage: boolean = true,
+        signal?: AbortSignal
     ): Promise<FileResult> {
         const stats = await fs.stat(filePath);
         const fileSize = stats.size;
 
-        const totalLines = await this.getFileLineCount(filePath);
+        const totalLines = await this.getFileLineCount(filePath, signal);
 
         // For negative offsets (tail behavior), use reverse reading
         if (offset < 0) {
@@ -221,20 +222,20 @@ export class TextFileHandler implements FileHandler {
 
             if (fileSize > FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD &&
                 requestedLines <= READ_PERFORMANCE_THRESHOLDS.SMALL_READ_THRESHOLD) {
-                return await this.readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
+                return await this.readLastNLinesReverse(filePath, requestedLines, mimeType, includeStatusMessage, totalLines, signal);
             } else {
-                return await this.readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage, totalLines);
+                return await this.readFromEndWithReadline(filePath, requestedLines, mimeType, includeStatusMessage, totalLines, signal);
             }
         }
         // For positive offsets
         else {
             if (fileSize < FILE_SIZE_LIMITS.LARGE_FILE_THRESHOLD || offset === 0) {
-                return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
+                return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines, signal);
             } else {
                 if (offset > READ_PERFORMANCE_THRESHOLDS.DEEP_OFFSET_THRESHOLD) {
-                    return await this.readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
+                    return await this.readFromEstimatedPosition(filePath, offset, length, mimeType, includeStatusMessage, totalLines, signal);
                 } else {
-                    return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines);
+                    return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, totalLines, signal);
                 }
             }
         }
@@ -248,7 +249,8 @@ export class TextFileHandler implements FileHandler {
         n: number,
         mimeType: string,
         includeStatusMessage: boolean = true,
-        fileTotalLines?: number
+        fileTotalLines?: number,
+        signal?: AbortSignal
     ): Promise<FileResult> {
         const fd = await fs.open(filePath, 'r');
         try {
@@ -260,6 +262,11 @@ export class TextFileHandler implements FileHandler {
             let partialLine = '';
 
             while (position > 0 && lines.length < n) {
+                if (signal?.aborted) {
+                    const err = new Error('Read aborted') as NodeJS.ErrnoException;
+                    err.code = 'ABORT_ERR';
+                    throw err;
+                }
                 const readSize = Math.min(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE, position);
                 position -= readSize;
 
@@ -297,10 +304,11 @@ export class TextFileHandler implements FileHandler {
         requestedLines: number,
         mimeType: string,
         includeStatusMessage: boolean = true,
-        fileTotalLines?: number
+        fileTotalLines?: number,
+        signal?: AbortSignal
     ): Promise<FileResult> {
         const rl = createInterface({
-            input: createReadStream(filePath),
+            input: createReadStream(filePath, { signal }),
             crlfDelay: Infinity
         });
 
@@ -342,10 +350,11 @@ export class TextFileHandler implements FileHandler {
         length: number,
         mimeType: string,
         includeStatusMessage: boolean = true,
-        fileTotalLines?: number
+        fileTotalLines?: number,
+        signal?: AbortSignal
     ): Promise<FileResult> {
         const rl = createInterface({
-            input: createReadStream(filePath),
+            input: createReadStream(filePath, { signal }),
             crlfDelay: Infinity
         });
 
@@ -381,11 +390,12 @@ export class TextFileHandler implements FileHandler {
         length: number,
         mimeType: string,
         includeStatusMessage: boolean = true,
-        fileTotalLines?: number
+        fileTotalLines?: number,
+        signal?: AbortSignal
     ): Promise<FileResult> {
         // First, do a quick scan to estimate lines per byte
         const rl = createInterface({
-            input: createReadStream(filePath),
+            input: createReadStream(filePath, { signal }),
             crlfDelay: Infinity
         });
 
@@ -401,7 +411,7 @@ export class TextFileHandler implements FileHandler {
         rl.close();
 
         if (sampleLines === 0) {
-            return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines);
+            return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines, signal);
         }
 
         // Estimate position
@@ -413,7 +423,7 @@ export class TextFileHandler implements FileHandler {
             const stats = await fd.stat();
             const startPosition = Math.min(estimatedBytePosition, stats.size);
 
-            const stream = createReadStream(filePath, { start: startPosition });
+            const stream = createReadStream(filePath, { start: startPosition, signal });
             const rl2 = createInterface({
                 input: stream,
                 crlfDelay: Infinity

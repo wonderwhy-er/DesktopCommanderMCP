@@ -1,34 +1,61 @@
 # Security Policy
 
-## Current Security Approach
+## Security Model
 
-Desktop Commander is designed for human users working with AI assistants like Claude. The security restrictions built into the tool are primarily **guardrails to help the AI model** avoid actions the user didn't intend, rather than hardened security boundaries.
+Desktop Commander is a privileged local automation tool. It lets an AI client you authorize read and write files and execute terminal commands on your machine. That capability is the point of the product — not a flaw.
 
-**Security is not currently our top priority** - we haven't heard significant demand from users for stronger security controls. We take **user needs seriously**, so if you need better security controls for your specific use case, please contact the team to discuss your requirements.
+Because it can run arbitrary terminal commands, Desktop Commander should be understood as an **amplifier of whatever the connected AI client asks it to do**. Its built-in restrictions are **safety guardrails that reduce accidental or unintended actions**, not a security sandbox that can contain a malicious or compromised client.
 
-**For users who need security**: We recommend using Desktop Commander with Docker, which provides complete isolation. See the [Docker installation section](README.md#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) in our README for setup instructions.
+### Core assumption
 
-## Reporting Vulnerabilities
+Desktop Commander assumes the connected AI client — and the account driving it — is **trusted and uncompromised**. It executes requested actions and does not attempt to determine whether a request originates from a genuine user, from prompt injection, or from a compromised AI account. Protecting the integrity of that client and account is part of the overall security model and is the user's responsibility.
 
-1. **Create a GitHub Issue** with detailed information
-2. **Label it as security-related** for visibility  
-3. **Include technical details** and proof of concept if possible
-4. **Request attribution** if you'd like to be credited in any future advisories
+If the AI client should never be able to reach the rest of your machine, that guarantee can only come from OS-level isolation (see below).
 
-We will acknowledge reports and provide context as needed.
+## What the built-in controls do
 
-## Current Security Limitations
+| Control | Purpose | Security boundary? |
+|---------|---------|--------------------|
+| Allowed directories | Reduce accidental file access | No |
+| Command blocklist | Reduce accidental execution | No |
+| Symlink traversal prevention | Block a class of accidental path escapes | No |
+| Docker / VM isolation | Contain the tool to an isolated environment | Yes |
 
-This project has known security limitations:
-- Directory restrictions can be bypassed via symlinks and terminal commands
-- Command blocking can be bypassed via substitution and absolute paths
-- Terminal commands can access files outside `allowedDirectories` restrictions
+Terminal command execution is a first-class feature. Because it can launch arbitrary programs, path-based and command-based restrictions can be circumvented by design — for example via shell substitution, absolute paths, or invoking another interpreter. These controls are advisory: they make common mistakes less likely; they are not a boundary against a client that is actively trying to escape them.
 
-**For production use requiring security**: Use Docker installation with selective folder mounting for complete isolation. See [Docker installation instructions](README.md#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required) for setup details.
+## Recommended deployment for stronger isolation
 
-## Disclosure Timeline
+For any workload where the AI client must not access the wider machine, run Desktop Commander inside an isolated environment:
 
-As a startup focused on user needs rather than theoretical security concerns, we prioritize issues based on actual user demand. We may not respond immediately to security reports but will address issues that affect real user workflows. We appreciate responsible disclosure and will work with researchers when addressing vulnerabilities aligns with user priorities.
+- **Docker** with selective folder mounting (see the [Docker installation section](README.md#option-6-docker-installation-🐳-⭐-auto-updates-no-nodejs-required))
+- A **virtual machine**, dev container, or a separate/dedicated workstation
+
+Additional practical steps:
+
+- Enable MFA on the AI accounts you connect
+- Only connect AI clients you trust; remove ones you no longer use
+- Scope work to project-specific directories rather than your whole home folder
+- Review generated commands when the context warrants it
+
+## Known limitations
+
+- Directory restrictions are guardrails, not sandboxing — terminal commands can reach files outside `allowedDirectories`.
+- The command blocklist can be circumvented via substitution, absolute paths, or alternate interpreters.
+- Desktop Commander does not protect against a compromised AI account or prompt injection reaching a trusted client. For that threat model, use OS-level isolation.
+
+## License and responsibility
+
+Desktop Commander is free, open-source software released under the MIT License. As is standard for MIT-licensed software, it is provided "as is," without warranty, and you are responsible for how you deploy and secure it in your environment. This security model describes how the tool is designed to behave; it does not transfer responsibility for your accounts, machines, or connected AI clients to the project.
+
+## Reporting a Vulnerability
+
+We welcome responsible disclosure and review all reported security issues.
+
+1. **Open a GitHub issue** with technical details and, if possible, a proof of concept.
+2. **Label it security-related** for visibility.
+3. **Request attribution** if you'd like to be credited.
+
+If you'd prefer not to disclose publicly, reach out via Discord to arrange private disclosure. We acknowledge reports, assess severity and impact, and prioritize fixes accordingly.
 
 ## Contact
 
@@ -37,4 +64,4 @@ As a startup focused on user needs rather than theoretical security concerns, we
 
 ---
 
-*Last updated: January 2025*
+*Last updated: July 2026*
