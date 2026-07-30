@@ -3,6 +3,7 @@ import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
+import { shouldShowMcpUi } from '../utils/mcp-ui.js';
 import { access, readFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import {
@@ -115,7 +116,9 @@ export async function getConfig() {
       }
     };
     const availableShells = await detectAvailableShells(systemInfo);
-    
+    // Effective MCP UI decision (user override > default ON) for editor display.
+    const effectiveShowMcpUI = await shouldShowMcpUi();
+
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
       content: [{
@@ -129,7 +132,13 @@ export async function getConfig() {
         },
         entries: CONFIG_FIELD_KEYS.map((key) => {
           const definition = CONFIG_FIELD_DEFINITIONS[key];
-          const value = (configWithSystemInfo as Record<string, unknown>)[key];
+          let value = (configWithSystemInfo as Record<string, unknown>)[key];
+          // showMcpUI is tri-state (unset = shown). The editor renders booleans
+          // as a two-state toggle, so when no explicit boolean is stored show
+          // the EFFECTIVE decision; flipping the toggle then pins an override.
+          if (key === 'showMcpUI' && typeof value !== 'boolean') {
+            value = effectiveShowMcpUI;
+          }
           return {
             key,
             value,
@@ -248,10 +257,15 @@ export async function setConfigValue(args: unknown) {
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
       console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);
+      // UI visibility is fixed per session for rendering consistency; the new
+      // value applies once the client restarts the MCP server.
+      const restartNote = parsed.data.key === 'showMcpUI'
+        ? '\n\nNote: this setting takes effect after restarting the app (the MCP server keeps its current UI mode for the rest of this session).'
+        : '';
       return {
         content: [{
           type: "text",
-          text: `Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore, null, 2)}\n\nUpdated configuration:\n${JSON.stringify(updatedConfig, null, 2)}`
+          text: `Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore, null, 2)}${restartNote}\n\nUpdated configuration:\n${JSON.stringify(updatedConfig, null, 2)}`
         }],
       };
     } catch (saveError: any) {
