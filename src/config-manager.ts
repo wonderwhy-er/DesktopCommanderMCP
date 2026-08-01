@@ -2,9 +2,9 @@ import fs from 'fs/promises';
 import path from 'path';
 import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
-import os from 'os';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
+import { getDefaultShell } from './platform/runtime.js';
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -167,18 +167,7 @@ class ConfigManager {
         "cipher",    // Encrypt/decrypt files or wipe data
         "takeown"    // Take ownership of files
       ],
-      defaultShell: (() => {
-        if (os.platform() === 'win32') {
-          return 'powershell.exe';
-        }
-        // Use user's actual shell from environment
-        // On macOS, default to zsh (default since Catalina) since process.env.SHELL
-        // may not be set when running inside Claude Desktop
-        const fallbackShell = os.platform() === 'darwin' ? '/bin/zsh' : '/bin/sh';
-        const userShell = process.env.SHELL || fallbackShell;
-        // Return just the shell path - we'll handle login shell flag elsewhere
-        return userShell;
-      })(),
+      defaultShell: getDefaultShell(),
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)

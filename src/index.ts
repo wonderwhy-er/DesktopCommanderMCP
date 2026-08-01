@@ -13,6 +13,7 @@ import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
+import { runLinuxServiceInstaller } from './npm-scripts/linux-service.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 
 // Store messages to defer until after initialization
@@ -38,6 +39,11 @@ async function runServer() {
     // Check if first argument is "remote"
     if (process.argv[2] === 'remote') {
       await runRemote();
+      return;
+    }
+
+    if (process.argv[2] === 'linux-service') {
+      await runLinuxServiceInstaller();
       return;
     }
 

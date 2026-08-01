@@ -1,9 +1,9 @@
-import { 
+import {
     listProcesses,
     killProcess
 } from '../tools/process.js';
 
-import { 
+import {
     KillProcessArgsSchema
 } from '../tools/schemas.js';
 
@@ -12,8 +12,8 @@ import { ServerResult } from '../types.js';
 /**
  * Handle list_processes command
  */
-export async function handleListProcesses(): Promise<ServerResult> {
-    return listProcesses();
+export async function handleListProcesses(args: unknown): Promise<ServerResult> {
+    return listProcesses(args);
 }
 
 /**

@@ -93,6 +93,10 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Command blocklist for accidental execution
   - [Docker isolation](#option-6-docker-installation--auto-updates-no-nodejs-required) for complete isolation
 
+## Linux support
+
+Linux desktop and headless Ubuntu/Debian deployments are documented in [LINUX.md](LINUX.md), including systemd installation and runtime behavior.
+
 ## How to install
 
 ### Install in Claude Desktop

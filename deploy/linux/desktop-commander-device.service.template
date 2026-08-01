@@ -1,0 +1,27 @@
+[Unit]
+Description=Desktop Commander Remote Device
+Documentation=https://github.com/wonderwhy-er/DesktopCommanderMCP
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__GROUP__
+WorkingDirectory=__HOME__
+Environment="HOME=__HOME__"
+Environment=NODE_ENV=production
+Environment=DESKTOP_COMMANDER_HEADLESS=true
+Environment="PATH=__PATH__"
+ExecStart="__BINARY__" remote --persist-session --disable-no-sleep
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

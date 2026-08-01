@@ -13,7 +13,7 @@
   "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "bin": {
     "desktop-commander": "dist/index.js",
@@ -35,7 +35,7 @@
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
     "bump:major": "node scripts/sync-version.js --bump --major",
-    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/ && shx mkdir -p dist/remote-device/scripts && shx cp src/remote-device/scripts/blocking-offline-update.js dist/remote-device/scripts/ && node scripts/build-ui-runtime.cjs",
+    "build": "tsc && shx cp setup-claude-server.js uninstall-claude-server.js track-installation.js dist/ && shx chmod +x dist/*.js && shx mkdir -p dist/data && shx cp src/data/onboarding-prompts.json dist/data/ && shx mkdir -p dist/remote-device/scripts && shx cp src/remote-device/scripts/blocking-offline-update.js dist/remote-device/scripts/ && node scripts/build-ui-runtime.cjs && shx mkdir -p dist/linux && shx cp scripts/install-linux-service.sh deploy/linux/desktop-commander-device.service.template dist/linux/ && shx chmod +x dist/linux/install-linux-service.sh",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:debug": "node --inspect-brk=9229 dist/index.js",
@@ -46,6 +46,7 @@
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
     "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
+    "test:linux": "npm run build && node test/test-linux-platform.js && node test/test-linux-service-installer.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",
