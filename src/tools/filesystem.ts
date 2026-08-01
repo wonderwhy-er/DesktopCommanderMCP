@@ -50,6 +50,41 @@ function isBlockedHostname(hostname: string): boolean {
     return normalized === 'localhost' || normalized.endsWith('.localhost');
 }
 
+function isIpv6LoopbackAddress(ip: string): boolean {
+    const normalized = ip.toLowerCase().split('%')[0];
+    if (normalized === '::1') {
+        return true;
+    }
+
+    if (normalized.includes('.')) {
+        return false;
+    }
+
+    const segments = normalized.split('::');
+    if (segments.length > 2) {
+        return false;
+    }
+
+    const left = segments[0] ? segments[0].split(':') : [];
+    const right = segments[1] ? segments[1].split(':') : [];
+    const missingSegments = 8 - (left.length + right.length);
+
+    if ((segments.length === 1 && left.length !== 8) || missingSegments < 0) {
+        return false;
+    }
+
+    const expanded = segments.length === 1
+        ? left
+        : [...left, ...Array(missingSegments).fill('0'), ...right];
+
+    const hextets = expanded.map((segment) => Number.parseInt(segment || '0', 16));
+    if (hextets.length !== 8 || hextets.some((value) => Number.isNaN(value) || value < 0 || value > 0xffff)) {
+        return false;
+    }
+
+    return hextets.slice(0, 7).every((value) => value === 0) && hextets[7] === 1;
+}
+
 function isPrivateIpAddress(rawIp: string): boolean {
     const ip = rawIp.toLowerCase().split('%')[0];
     const ipVersion = net.isIP(ip);
@@ -74,7 +109,7 @@ function isPrivateIpAddress(rawIp: string): boolean {
 
     // IPv6 local/loopback/IPv4-mapped ranges
     if (ipVersion === 6) {
-        if (ip === '::1') {
+        if (isIpv6LoopbackAddress(ip)) {
             return true;
         }
         if (ip.startsWith('fc') || ip.startsWith('fd')) {
@@ -576,7 +611,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         const isPdf = isPdfFile(contentType) || currentTarget.url.pathname.toLowerCase().endsWith('.pdf');
 
         if (isPdf) {
-            const pdfBuffer = Buffer.from(await response.arrayBuffer());
+            const pdfBuffer = await response.arrayBuffer();
             const pdfResult = await parsePdfBufferToMarkdown(pdfBuffer);
 
             return {
