@@ -99,6 +99,7 @@ async function runPs(
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: PROCESS_OUTPUT_LIMIT,
+    env: { ...process.env, LC_ALL: 'C' },
   });
   return String(stdout);
 }

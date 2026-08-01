@@ -21,6 +21,10 @@ const SENSITIVE_FLAG_PATTERN = new RegExp(
   `(^|\\s)(--?(?:${SENSITIVE_NAME}))(=|\\s+)(?:"[^"]*"|'[^']*'|\\S+)`,
   'gi',
 );
+const SENSITIVE_WINDOWS_FLAG_PATTERN = new RegExp(
+  `(^|\\s)(/(?:${SENSITIVE_NAME}|rp|p))(:|=|\\s+)(?:"[^"]*"|'[^']*'|\\S+)`,
+  'gi',
+);
 const SENSITIVE_ENV_PATTERN = new RegExp(
   `\\b([A-Za-z0-9_]*(?:${SENSITIVE_NAME})[A-Za-z0-9_]*)=(?:"[^"]*"|'[^']*'|\\S+)`,
   'gi',
@@ -29,6 +33,7 @@ const SENSITIVE_ENV_PATTERN = new RegExp(
 export function redactProcessArgs(args: string): string {
   const redacted = args
     .replace(SENSITIVE_FLAG_PATTERN, '$1$2$3[REDACTED]')
+    .replace(SENSITIVE_WINDOWS_FLAG_PATTERN, '$1$2$3[REDACTED]')
     .replace(SENSITIVE_ENV_PATTERN, '$1=[REDACTED]')
     .replace(/\b(Bearer)\s+\S+/gi, '$1 [REDACTED]')
     .replace(/([a-z][a-z0-9+.-]*:\/\/[^:\s\/@]+):[^@\s]+@/gi, '$1:[REDACTED]@');

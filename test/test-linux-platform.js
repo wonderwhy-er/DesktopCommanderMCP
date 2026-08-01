@@ -71,6 +71,15 @@ function testSafeProcessFormatting() {
   assert(!redacted.includes('hunter2'));
   assert(!redacted.includes(':secret@'));
 
+  const windowsArgs = 'schtasks /create /p SecretPwd123 app.exe /TOKEN:abc456 /api-key="key789" /password "secret value"';
+  const windowsRedacted = redactProcessArgs(windowsArgs);
+  assert(!windowsRedacted.includes('SecretPwd123'));
+  assert(!windowsRedacted.includes('abc456'));
+  assert(!windowsRedacted.includes('key789'));
+  assert(!windowsRedacted.includes('secret value'));
+  assert(windowsRedacted.includes('/p [REDACTED]'));
+  assert(windowsRedacted.includes('/TOKEN:[REDACTED]'));
+
   const processInfo = [{
     pid: 1,
     ppid: 0,

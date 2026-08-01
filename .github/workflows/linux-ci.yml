@@ -24,6 +24,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -45,6 +47,8 @@ jobs:
       - name: Install system dependencies
         run: apt-get update && apt-get install -y --no-install-recommends git procps ripgrep bash ca-certificates systemd
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
       - run: node dist/npm-scripts/verify-ripgrep.js
@@ -59,6 +63,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20

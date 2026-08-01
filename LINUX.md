@@ -94,7 +94,7 @@ Use `--start` to start it immediately during installation.
 systemctl status desktop-commander-device
 sudo systemctl restart desktop-commander-device
 sudo systemctl stop desktop-commander-device
-journalctl -u desktop-commander-device --since today
+sudo journalctl -u desktop-commander-device --since today
 ```
 
 The unit uses `KillMode=control-group`, so child shells and long-running commands
