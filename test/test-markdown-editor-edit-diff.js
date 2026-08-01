@@ -35,6 +35,9 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.Node = dom.window.Node;
 globalThis.DOMParser = dom.window.DOMParser;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
+if (!globalThis.navigator) {
+  globalThis.navigator = dom.window.navigator;
+}
 // Tiptap's focus() calls requestAnimationFrame which jsdom doesn't ship
 // by default. Stub with a synchronous no-op — we don't need real focus
 // behaviour for these tests.

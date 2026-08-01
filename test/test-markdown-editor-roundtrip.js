@@ -31,6 +31,9 @@ globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.Node = dom.window.Node;
 globalThis.DOMParser = dom.window.DOMParser;
 globalThis.getComputedStyle = dom.window.getComputedStyle;
+if (!globalThis.navigator) {
+  globalThis.navigator = dom.window.navigator;
+}
 
 const { Editor } = await import('@tiptap/core');
 const StarterKit = (await import('@tiptap/starter-kit')).default;
