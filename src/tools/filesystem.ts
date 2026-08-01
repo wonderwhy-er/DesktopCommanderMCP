@@ -2,6 +2,9 @@ import fs from "fs/promises";
 import path from "path";
 import os from 'os';
 import fetch from 'cross-fetch';
+import dns from 'dns/promises';
+import net from 'net';
+import { Agent as HttpsAgent } from 'https';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { capture } from '../utils/capture.js';
@@ -10,7 +13,7 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { parsePdfBufferToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -32,7 +35,204 @@ const FILE_SIZE_LIMITS = {
     LINE_COUNT_LIMIT: 10 * 1024 * 1024,      // 10MB for line counting
 } as const;
 
+const URL_SECURITY_LIMITS = {
+    MAX_REDIRECTS: 5,
+} as const;
+
 // UTILITY FUNCTIONS - Eliminate duplication
+type ValidatedRemoteReadTarget = {
+    url: URL;
+    allowedAddresses: string[];
+};
+
+function isBlockedHostname(hostname: string): boolean {
+    const normalized = hostname.toLowerCase();
+    return normalized === 'localhost' || normalized.endsWith('.localhost');
+}
+
+function isIpv6LoopbackAddress(ip: string): boolean {
+    const normalized = ip.toLowerCase().split('%')[0];
+    if (normalized === '::1') {
+        return true;
+    }
+
+    if (normalized.includes('.')) {
+        return false;
+    }
+
+    const segments = normalized.split('::');
+    if (segments.length > 2) {
+        return false;
+    }
+
+    const left = segments[0] ? segments[0].split(':') : [];
+    const right = segments[1] ? segments[1].split(':') : [];
+    const missingSegments = 8 - (left.length + right.length);
+
+    if ((segments.length === 1 && left.length !== 8) || missingSegments < 0) {
+        return false;
+    }
+
+    const expanded = segments.length === 1
+        ? left
+        : [...left, ...Array(missingSegments).fill('0'), ...right];
+
+    const hextets = expanded.map((segment) => Number.parseInt(segment || '0', 16));
+    if (hextets.length !== 8 || hextets.some((value) => Number.isNaN(value) || value < 0 || value > 0xffff)) {
+        return false;
+    }
+
+    return hextets.slice(0, 7).every((value) => value === 0) && hextets[7] === 1;
+}
+
+function isPrivateIpAddress(rawIp: string): boolean {
+    const ip = rawIp.toLowerCase().split('%')[0];
+    const ipVersion = net.isIP(ip);
+
+    // IPv4 private/local ranges
+    if (ipVersion === 4) {
+        const octets = ip.split('.').map((part) => Number.parseInt(part, 10));
+        if (octets.length !== 4 || octets.some((o) => Number.isNaN(o))) {
+            return true;
+        }
+        const [a, b] = octets;
+        return (
+            a === 0 || // "this network"
+            a === 10 ||
+            a === 127 ||
+            (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
+            (a === 169 && b === 254) ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168)
+        );
+    }
+
+    // IPv6 local/loopback/IPv4-mapped ranges
+    if (ipVersion === 6) {
+        if (isIpv6LoopbackAddress(ip)) {
+            return true;
+        }
+        if (ip.startsWith('fc') || ip.startsWith('fd')) {
+            return true; // unique local address space (fc00::/7)
+        }
+        if (ip.startsWith('fe8') || ip.startsWith('fe9') || ip.startsWith('fea') || ip.startsWith('feb')) {
+            return true; // link-local (fe80::/10)
+        }
+        if (ip.startsWith('::ffff:')) {
+            return isPrivateIpAddress(ip.slice('::ffff:'.length));
+        }
+    }
+
+    return false;
+}
+
+async function validateRemoteReadUrl(urlString: string): Promise<ValidatedRemoteReadTarget> {
+    let parsedUrl: URL;
+    try {
+        parsedUrl = new URL(urlString);
+    } catch {
+        throw new Error(`Invalid URL: ${urlString}`);
+    }
+
+    if (parsedUrl.protocol !== 'https:') {
+        throw new Error(`Only HTTPS URLs are allowed: ${urlString}`);
+    }
+
+    const hostname = parsedUrl.hostname;
+    if (!hostname) {
+        throw new Error(`URL must include a hostname: ${urlString}`);
+    }
+
+    if (isBlockedHostname(hostname)) {
+        throw new Error(`Blocked URL hostname: ${hostname}`);
+    }
+
+    if (net.isIP(hostname)) {
+        if (isPrivateIpAddress(hostname)) {
+            throw new Error(`Blocked private or loopback IP address: ${hostname}`);
+        }
+        return { url: parsedUrl, allowedAddresses: [hostname] };
+    }
+
+    let resolvedAddresses: Array<{ address: string }>;
+    try {
+        resolvedAddresses = await dns.lookup(hostname, { all: true, verbatim: true });
+    } catch (error) {
+        throw new Error(`Failed to resolve URL hostname "${hostname}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    if (resolvedAddresses.length === 0) {
+        throw new Error(`URL hostname did not resolve to an address: ${hostname}`);
+    }
+
+    for (const resolvedAddress of resolvedAddresses) {
+        if (isPrivateIpAddress(resolvedAddress.address)) {
+            throw new Error(`Blocked URL hostname "${hostname}" because it resolves to a private or loopback address`);
+        }
+    }
+
+    const allowedAddresses = Array.from(new Set(resolvedAddresses.map((addr) => addr.address)));
+    return { url: parsedUrl, allowedAddresses };
+}
+
+function isRedirectStatus(statusCode: number): boolean {
+    return statusCode === 301 || statusCode === 302 || statusCode === 303 || statusCode === 307 || statusCode === 308;
+}
+
+function createPinnedLookup(allowedAddresses: string[]) {
+    return (
+        _hostname: string,
+        options: any,
+        callback: any
+    ): void => {
+        const requestedFamily = typeof options === 'number' ? options : options?.family;
+        const returnAll = typeof options === 'object' && options?.all === true;
+
+        const candidates = allowedAddresses.filter((address) => {
+            if (!requestedFamily) {
+                return true;
+            }
+            return net.isIP(address) === requestedFamily;
+        });
+
+        if (candidates.length === 0) {
+            callback(new Error('No validated addresses available for requested address family') as NodeJS.ErrnoException, '');
+            return;
+        }
+
+        if (returnAll) {
+            callback(null, candidates.map((address) => ({ address, family: net.isIP(address) })));
+            return;
+        }
+
+        const selectedAddress = candidates[0];
+        callback(null, selectedAddress, net.isIP(selectedAddress));
+    };
+}
+
+function createPinnedHttpsAgent(validatedTarget: ValidatedRemoteReadTarget): HttpsAgent {
+    return new HttpsAgent({
+        keepAlive: false,
+        servername: validatedTarget.url.hostname,
+        lookup: createPinnedLookup(validatedTarget.allowedAddresses) as any
+    });
+}
+
+async function releaseResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<void> {
+    const responseBody = response.body as unknown as { cancel?: () => Promise<void>; destroy?: () => void } | null;
+    if (!responseBody) {
+        return;
+    }
+
+    if (typeof responseBody.cancel === 'function') {
+        await responseBody.cancel();
+        return;
+    }
+
+    if (typeof responseBody.destroy === 'function') {
+        responseBody.destroy();
+    }
+}
 
 /**
  * Get MIME type information for a file
@@ -364,26 +564,55 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
-        const response = await fetch(url, {
-            signal: controller.signal
-        });
+        let currentTarget = await validateRemoteReadUrl(url);
+        let response: Awaited<ReturnType<typeof fetch>> | null = null;
 
-        // Clear the timeout since fetch completed
-        clearTimeout(timeoutId);
+        for (let redirectCount = 0; redirectCount <= URL_SECURITY_LIMITS.MAX_REDIRECTS; redirectCount++) {
+            const pinnedAgent = createPinnedHttpsAgent(currentTarget);
+            const requestOptions: RequestInit & { agent: HttpsAgent } = {
+                signal: controller.signal,
+                redirect: 'manual',
+                agent: pinnedAgent
+            };
+            response = await fetch(currentTarget.url.toString(), requestOptions as RequestInit);
+
+            if (!isRedirectStatus(response.status)) {
+                break;
+            }
+
+            if (redirectCount === URL_SECURITY_LIMITS.MAX_REDIRECTS) {
+                await releaseResponseBody(response);
+                throw new Error(`URL redirected too many times (max ${URL_SECURITY_LIMITS.MAX_REDIRECTS})`);
+            }
+
+            const redirectLocation = response.headers.get('location');
+            if (!redirectLocation) {
+                await releaseResponseBody(response);
+                throw new Error(`Redirect response missing location header for URL: ${currentTarget.url.toString()}`);
+            }
+
+            const redirectedUrl = new URL(redirectLocation, currentTarget.url).toString();
+            await releaseResponseBody(response);
+            currentTarget = await validateRemoteReadUrl(redirectedUrl);
+        }
+
+        if (!response) {
+            throw new Error(`Failed to fetch URL: ${url}`);
+        }
 
         if (!response.ok) {
+            await releaseResponseBody(response);
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
 
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
-        const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
+        const isPdf = isPdfFile(contentType) || currentTarget.url.pathname.toLowerCase().endsWith('.pdf');
 
-        // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(url);
+            const pdfBuffer = await response.arrayBuffer();
+            const pdfResult = await parsePdfBufferToMarkdown(pdfBuffer);
 
             return {
                 content: "",
@@ -411,15 +640,15 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
             return { content, mimeType: contentType, metadata: { isImage } };
         }
     } catch (error) {
-        // Clear the timeout to prevent memory leaks
-        clearTimeout(timeoutId);
-
         // Return error information instead of throwing
         const errorMessage = error instanceof DOMException && error.name === 'AbortError'
             ? `URL fetch timed out after ${FILE_OPERATION_TIMEOUTS.URL_FETCH}ms: ${url}`
             : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
 
         throw new Error(errorMessage);
+    } finally {
+        // Clear the timeout to prevent memory leaks
+        clearTimeout(timeoutId);
     }
 }
 

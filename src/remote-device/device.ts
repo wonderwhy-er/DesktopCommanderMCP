@@ -267,8 +267,8 @@ export class MCPDevice {
         console.debug('[DEBUG] Tool call received, device_id:', device_id, 'this.deviceId:', this.deviceId);
 
         // Only process jobs for this device
-        if (device_id && device_id !== this.deviceId) {
-            console.debug('[DEBUG] Ignoring tool call for different device');
+        if (!device_id || device_id !== this.deviceId) {
+            console.debug('[DEBUG] Ignoring tool call not explicitly targeted to this device');
             return;
         }
 
