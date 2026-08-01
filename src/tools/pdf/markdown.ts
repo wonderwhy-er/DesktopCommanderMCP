@@ -274,14 +274,20 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
 export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
-
-        // @ts-ignore: Type definition mismatch for ESM usage
-        return await pdf2md(new Uint8Array(data), pageNumbers);
+        return await parsePdfBufferToMarkdown(data, pageNumbers);
 
     } catch (error) {
         console.error("Error converting PDF to Markdown (v3):", error);
         throw error;
     }
+}
+
+export async function parsePdfBufferToMarkdown(
+    data: Buffer | ArrayBuffer | Uint8Array,
+    pageNumbers: number[] | PageRange = []
+): Promise<PdfParseResult> {
+    // @ts-ignore: Type definition mismatch for ESM usage
+    return await pdf2md(data instanceof Uint8Array ? data : new Uint8Array(data), pageNumbers);
 }
 
 export async function parseMarkdownToPdf(markdown: string, options: any = {}): Promise<Buffer> {

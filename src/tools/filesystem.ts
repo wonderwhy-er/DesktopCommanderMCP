@@ -4,6 +4,7 @@ import os from 'os';
 import fetch from 'cross-fetch';
 import dns from 'dns/promises';
 import net from 'net';
+import { Agent as HttpsAgent } from 'https';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { capture } from '../utils/capture.js';
@@ -12,7 +13,7 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { parsePdfBufferToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -39,6 +40,10 @@ const URL_SECURITY_LIMITS = {
 } as const;
 
 // UTILITY FUNCTIONS - Eliminate duplication
+type ValidatedRemoteReadTarget = {
+    url: URL;
+    allowedAddresses: string[];
+};
 
 function isBlockedHostname(hostname: string): boolean {
     const normalized = hostname.toLowerCase();
@@ -86,7 +91,7 @@ function isPrivateIpAddress(rawIp: string): boolean {
     return false;
 }
 
-async function validateRemoteReadUrl(urlString: string): Promise<URL> {
+async function validateRemoteReadUrl(urlString: string): Promise<ValidatedRemoteReadTarget> {
     let parsedUrl: URL;
     try {
         parsedUrl = new URL(urlString);
@@ -111,7 +116,7 @@ async function validateRemoteReadUrl(urlString: string): Promise<URL> {
         if (isPrivateIpAddress(hostname)) {
             throw new Error(`Blocked private or loopback IP address: ${hostname}`);
         }
-        return parsedUrl;
+        return { url: parsedUrl, allowedAddresses: [hostname] };
     }
 
     let resolvedAddresses: Array<{ address: string }>;
@@ -131,11 +136,67 @@ async function validateRemoteReadUrl(urlString: string): Promise<URL> {
         }
     }
 
-    return parsedUrl;
+    const allowedAddresses = Array.from(new Set(resolvedAddresses.map((addr) => addr.address)));
+    return { url: parsedUrl, allowedAddresses };
 }
 
 function isRedirectStatus(statusCode: number): boolean {
     return statusCode === 301 || statusCode === 302 || statusCode === 303 || statusCode === 307 || statusCode === 308;
+}
+
+function createPinnedLookup(allowedAddresses: string[]) {
+    return (
+        _hostname: string,
+        options: any,
+        callback: any
+    ): void => {
+        const requestedFamily = typeof options === 'number' ? options : options?.family;
+        const returnAll = typeof options === 'object' && options?.all === true;
+
+        const candidates = allowedAddresses.filter((address) => {
+            if (!requestedFamily) {
+                return true;
+            }
+            return net.isIP(address) === requestedFamily;
+        });
+
+        if (candidates.length === 0) {
+            callback(new Error('No validated addresses available for requested address family') as NodeJS.ErrnoException, '');
+            return;
+        }
+
+        if (returnAll) {
+            callback(null, candidates.map((address) => ({ address, family: net.isIP(address) })));
+            return;
+        }
+
+        const selectedAddress = candidates[0];
+        callback(null, selectedAddress, net.isIP(selectedAddress));
+    };
+}
+
+function createPinnedHttpsAgent(validatedTarget: ValidatedRemoteReadTarget): HttpsAgent {
+    return new HttpsAgent({
+        keepAlive: false,
+        servername: validatedTarget.url.hostname,
+        lookup: createPinnedLookup(validatedTarget.allowedAddresses) as any
+    });
+}
+
+async function releaseResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<void> {
+    const responseBody = response.body as unknown as { cancel?: () => Promise<void>; destroy?: () => void } | null;
+    if (!responseBody) {
+        return;
+    }
+
+    if (typeof responseBody.cancel === 'function') {
+        await responseBody.cancel();
+        return;
+    }
+
+    if (typeof responseBody.destroy === 'function') {
+        responseBody.destroy();
+    }
 }
 
 /**
@@ -468,30 +529,36 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
-        let currentUrl = await validateRemoteReadUrl(url);
+        let currentTarget = await validateRemoteReadUrl(url);
         let response: Awaited<ReturnType<typeof fetch>> | null = null;
 
         for (let redirectCount = 0; redirectCount <= URL_SECURITY_LIMITS.MAX_REDIRECTS; redirectCount++) {
-            response = await fetch(currentUrl.toString(), {
+            const pinnedAgent = createPinnedHttpsAgent(currentTarget);
+            const requestOptions: RequestInit & { agent: HttpsAgent } = {
                 signal: controller.signal,
-                redirect: 'manual'
-            });
+                redirect: 'manual',
+                agent: pinnedAgent
+            };
+            response = await fetch(currentTarget.url.toString(), requestOptions as RequestInit);
 
             if (!isRedirectStatus(response.status)) {
                 break;
             }
 
             if (redirectCount === URL_SECURITY_LIMITS.MAX_REDIRECTS) {
+                await releaseResponseBody(response);
                 throw new Error(`URL redirected too many times (max ${URL_SECURITY_LIMITS.MAX_REDIRECTS})`);
             }
 
             const redirectLocation = response.headers.get('location');
             if (!redirectLocation) {
-                throw new Error(`Redirect response missing location header for URL: ${currentUrl.toString()}`);
+                await releaseResponseBody(response);
+                throw new Error(`Redirect response missing location header for URL: ${currentTarget.url.toString()}`);
             }
 
-            const redirectedUrl = new URL(redirectLocation, currentUrl).toString();
-            currentUrl = await validateRemoteReadUrl(redirectedUrl);
+            const redirectedUrl = new URL(redirectLocation, currentTarget.url).toString();
+            await releaseResponseBody(response);
+            currentTarget = await validateRemoteReadUrl(redirectedUrl);
         }
 
         if (!response) {
@@ -499,18 +566,18 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         }
 
         if (!response.ok) {
+            await releaseResponseBody(response);
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
 
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
-        const isPdf = isPdfFile(contentType) || currentUrl.toString().toLowerCase().endsWith('.pdf');
+        const isPdf = isPdfFile(contentType) || currentTarget.url.pathname.toLowerCase().endsWith('.pdf');
 
-        // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use the validated final URL after redirect checks
-            const pdfResult = await parsePdfToMarkdown(currentUrl.toString());
+            const pdfBuffer = Buffer.from(await response.arrayBuffer());
+            const pdfResult = await parsePdfBufferToMarkdown(pdfBuffer);
 
             return {
                 content: "",
