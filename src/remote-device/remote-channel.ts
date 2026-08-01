@@ -214,7 +214,12 @@ export class RemoteChannel {
                         filter: `user_id=eq.${this.user.id}`
                     },
                     (payload: any) => {
-                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
+                        const payloadDeviceId = payload?.new?.device_id;
+                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id, 'device_id:', payloadDeviceId);
+                        if (!payloadDeviceId || payloadDeviceId !== this.deviceId) {
+                            console.debug('[DEBUG] Ignoring remote call not explicitly targeted to this device');
+                            return;
+                        }
                         if (this.onToolCall) {
                             this.onToolCall(payload);
                         }
