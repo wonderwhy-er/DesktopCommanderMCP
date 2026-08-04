@@ -10,11 +10,23 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TEST_DIR = join(__dirname, 'test_output');
 
-// Ensure test dir is allowed
-await configManager.setValue('allowedDirectories', [TEST_DIR]);
+// Saved before the test narrows allowedDirectories, restored in teardown().
+// Without this the test leaks its own directory into the user's real
+// ~/.claude-server-commander/config.json and every later filesystem call —
+// in this process or any other — is refused outside test_output.
+let originalConfig = null;
 
 async function setup() {
+    originalConfig = await configManager.getConfig();
+    // Ensure test dir is allowed
+    await configManager.setValue('allowedDirectories', [TEST_DIR]);
     await fs.mkdir(TEST_DIR, { recursive: true });
+}
+
+async function teardown() {
+    if (originalConfig) {
+        await configManager.updateConfig(originalConfig);
+    }
 }
 
 async function createTestFile(name, content) {
@@ -111,10 +123,19 @@ async function testLineCount() {
     }
 
     console.log(`\n${passed} passed, ${failed} failed out of ${passed + failed} tests`);
-    if (failed > 0) process.exit(1);
+    return failed;
 }
 
-setup().then(testLineCount).catch(err => {
+// teardown must run on the failure path too, or a failing assertion leaves the
+// user's allowedDirectories pinned to test_output.
+let exitCode = 0;
+try {
+    await setup();
+    exitCode = (await testLineCount()) > 0 ? 1 : 0;
+} catch (err) {
     console.error('Test error:', err);
-    process.exit(1);
-});
+    exitCode = 1;
+} finally {
+    await teardown();
+}
+process.exit(exitCode);
