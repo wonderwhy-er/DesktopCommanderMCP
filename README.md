@@ -1,4 +1,6 @@
 # Desktop Commander MCP
+
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.wonderwhy-er%2Fdesktop-commander.svg)](https://mcptoplist.com/server/io.github.wonderwhy-er%2Fdesktop-commander)
 ### Search, update, manage files and run terminal commands with AI
 
 [![npm downloads](https://img.shields.io/npm/dw/@wonderwhy-er/desktop-commander)](https://www.npmjs.com/package/@wonderwhy-er/desktop-commander)
