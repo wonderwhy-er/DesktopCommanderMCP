@@ -645,30 +645,18 @@ function runPreFlightChecks(options) {
             allPassed = false;
         }
         
-        // Check MCP auth and token expiration
+        // Check MCP auth. Registry sessions are short-lived, and a full release
+        // takes longer than one lasts, so when a credential is available we only
+        // confirm it resolves here and create the session at publish time.
         if (allPassed) {
             checkMcpAuth();
-            if (!checkMcpTokenExpiration()) {
-                // A missing or stale registry JWT is recoverable when a shared
-                // PAT is available — mint a fresh one instead of failing.
-                if (getMcpToken()) {
-                    printInfo('Refreshing MCP Registry session from shared token...');
-                    try {
-                        mcpLogin();
-                        if (!checkMcpTokenExpiration()) {
-                            allPassed = false;
-                        }
-                    } catch (error) {
-                        printError(`Automatic MCP Registry login failed: ${error.message}`);
-                        printError('Verify the configured credential is valid and has the required scopes.');
-                        allPassed = false;
-                    }
-                } else {
-                    printError('No MCP Registry credentials available.');
-                    printError('Run: mcp-publisher login github');
-                    printError('Or configure shared-secret access (see --help).');
-                    allPassed = false;
-                }
+            if (getMcpToken()) {
+                printSuccess('MCP Registry credential available (session created at publish time)');
+            } else if (!checkMcpTokenExpiration()) {
+                printError('No MCP Registry credentials available.');
+                printError('Run: mcp-publisher login github');
+                printError('Or configure shared-secret access (see --help).');
+                allPassed = false;
             }
         }
     } else {
@@ -990,7 +978,13 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
                 let publishSuccess = false;
                 let retryCount = 0;
                 const maxRetries = 2;
-                
+
+                // Sessions are short-lived, so create one now rather than relying
+                // on anything from pre-flight.
+                if (getMcpToken()) {
+                    mcpLogin();
+                }
+
                 while (!publishSuccess && retryCount < maxRetries) {
                     try {
                         exec('mcp-publisher publish');
