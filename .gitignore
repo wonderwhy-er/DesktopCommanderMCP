@@ -58,3 +58,7 @@ test_files/
 test_fix.js
 test_search.js
 .ripgrep-downloads/
+
+# Release tooling (local, may contain environment identifiers)
+.release-config.json
+.release-state.json

@@ -108,6 +108,123 @@ function execSilent(command, options = {}) {
     return exec(command, { silent: true, ...options });
 }
 
+// =============================================================================
+// MCP REGISTRY CREDENTIALS
+// =============================================================================
+// The registry ties the server's namespace to the GitHub identity that
+// authenticates, not to repo collaborator status. Maintainers therefore share
+// a scoped token via a secret manager rather than each logging in by hand.
+//
+// Nothing environment-specific is committed. Configuration is resolved from:
+//   1. Environment: MCP_SECRET_NAME / MCP_SECRET_PROJECT
+//   2. .release-config.json in the repo root (gitignored)
+//   3. Project falls back to the active gcloud project
+//
+// See .release-config.example.json. If no secret name is configured, the
+// script uses interactive login and behaves exactly as it did before.
+
+const RELEASE_CONFIG_FILE = path.join(process.cwd(), '.release-config.json');
+
+function loadReleaseConfig() {
+    if (!fs.existsSync(RELEASE_CONFIG_FILE)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(RELEASE_CONFIG_FILE, 'utf8'));
+    } catch (error) {
+        printWarning(`Could not parse ${path.basename(RELEASE_CONFIG_FILE)} — ignoring it`);
+        return {};
+    }
+}
+
+// Cache so we don't repeat gcloud calls or duplicate notices
+let cachedMcpToken;
+
+/**
+ * Resolve the MCP Registry token, or null if none is available.
+ * Never throws and never prints the token.
+ */
+function getMcpToken() {
+    if (cachedMcpToken !== undefined) return cachedMcpToken;
+
+    if (process.env.MCP_GITHUB_TOKEN) {
+        printInfo('Using MCP Registry token from MCP_GITHUB_TOKEN');
+        cachedMcpToken = process.env.MCP_GITHUB_TOKEN.trim();
+        return cachedMcpToken;
+    }
+
+    const config = loadReleaseConfig();
+    const secretName = process.env.MCP_SECRET_NAME || config.mcpSecretName;
+
+    if (!secretName) {
+        // Nothing configured — interactive login is the expected path here.
+        cachedMcpToken = null;
+        return cachedMcpToken;
+    }
+
+    const hasGcloud = execSilent('which gcloud', { ignoreError: true }).trim();
+    if (!hasGcloud) {
+        printWarning('A shared secret is configured but gcloud is not installed');
+        cachedMcpToken = null;
+        return cachedMcpToken;
+    }
+
+    const project = process.env.MCP_SECRET_PROJECT
+        || config.mcpSecretProject
+        || execSilent('gcloud config get-value project 2>/dev/null', { ignoreError: true }).trim();
+
+    if (!project) {
+        printWarning('No secret project configured and no active gcloud project set');
+        cachedMcpToken = null;
+        return cachedMcpToken;
+    }
+
+    const token = execSilent(
+        `gcloud secrets versions access latest --secret=${secretName} --project=${project} 2>/dev/null`,
+        { ignoreError: true }
+    ).trim();
+
+    if (token) {
+        printSuccess('MCP Registry token loaded from secret manager');
+        cachedMcpToken = token;
+    } else {
+        printInfo('Configured secret is not readable — will use interactive login');
+        printInfo('If you expected access, check: gcloud auth login');
+        cachedMcpToken = null;
+    }
+
+    return cachedMcpToken;
+}
+
+/**
+ * Log in to the MCP Registry, preferring a shared PAT over interactive OAuth.
+ * Returns true on success. Throws only if the underlying command hard-fails
+ * in a way we can't recover from.
+ */
+function mcpLogin() {
+    const token = getMcpToken();
+
+    if (token) {
+        // The token is passed on argv because that is the only interface
+        // mcp-publisher exposes. Any failure message from execSync embeds the
+        // full command, so redact before it can reach a terminal or CI log.
+        try {
+            exec(`mcp-publisher login github --token ${token}`, { stdio: 'pipe' });
+        } catch (error) {
+            const redacted = new Error(
+                String(error.message || error).split(token).join('***REDACTED***')
+            );
+            redacted.stderr = error.stderr;
+            throw redacted;
+        }
+        printSuccess('Authenticated to MCP Registry with shared token');
+        return true;
+    }
+
+    printWarning('Falling back to interactive GitHub login (browser device flow)');
+    exec('mcp-publisher login github', { stdio: 'inherit' });
+    printSuccess('Authenticated to MCP Registry interactively');
+    return true;
+}
+
 /**
  * Calculate alpha version from current version
  * - "0.2.28" → "0.2.29-alpha.0"
@@ -265,6 +382,17 @@ function showHelp() {
     console.log('State Management:');
     console.log('  The script automatically tracks completed steps and resumes from failures.');
     console.log('  Use --clear-state to reset and start from the beginning.');
+    console.log('');
+    console.log('MCP Registry Authentication:');
+    console.log('  Resolution order for the registry token:');
+    console.log('    1. MCP_GITHUB_TOKEN environment variable');
+    console.log('    2. Secret manager, if configured (see .release-config.example.json)');
+    console.log('    3. Interactive `mcp-publisher login github` (browser device flow)');
+    console.log('');
+    console.log('  Configure via .release-config.json (gitignored) or the environment:');
+    console.log('    MCP_SECRET_NAME, MCP_SECRET_PROJECT');
+    console.log('');
+    console.log('  With nothing configured, login is interactive, as before.');
     console.log('');
     console.log('Examples:');
     console.log('  node scripts/publish-release.cjs              # Patch release (0.2.16 -> 0.2.17)');
@@ -432,7 +560,7 @@ function checkMcpTokenExpiration() {
         const tokenPath = path.join(homeDir, '.config', 'mcp-publisher', 'token.json');
 
         if (!fs.existsSync(tokenPath)) {
-            printError('MCP Registry token not found. Please run: mcp-publisher login github');
+            printWarning('No MCP Registry session found — a login is needed.');
             return false;
         }
 
@@ -461,8 +589,7 @@ function checkMcpTokenExpiration() {
             const hoursUntilExpiry = (expirationDate - now) / (1000 * 60 * 60);
             
             if (expirationDate <= now) {
-                printError(`MCP Registry token expired on ${expirationDate.toLocaleString()}`);
-                printError('Please refresh your token: mcp-publisher login github');
+                printWarning(`MCP Registry session expired on ${expirationDate.toLocaleString()}`);
                 return false;
             }
             
@@ -522,7 +649,26 @@ function runPreFlightChecks(options) {
         if (allPassed) {
             checkMcpAuth();
             if (!checkMcpTokenExpiration()) {
-                allPassed = false;
+                // A missing or stale registry JWT is recoverable when a shared
+                // PAT is available — mint a fresh one instead of failing.
+                if (getMcpToken()) {
+                    printInfo('Refreshing MCP Registry session from shared token...');
+                    try {
+                        mcpLogin();
+                        if (!checkMcpTokenExpiration()) {
+                            allPassed = false;
+                        }
+                    } catch (error) {
+                        printError(`Automatic MCP Registry login failed: ${error.message}`);
+                        printError('Verify the configured credential is valid and has the required scopes.');
+                        allPassed = false;
+                    }
+                } else {
+                    printError('No MCP Registry credentials available.');
+                    printError('Run: mcp-publisher login github');
+                    printError('Or configure shared-secret access (see --help).');
+                    allPassed = false;
+                }
             }
         }
     } else {
@@ -860,12 +1006,12 @@ Automated release commit with version bump from ${currentVersion} to ${newVersio
                             if (retryCount < maxRetries) {
                                 printWarning('Authentication token expired. Attempting to refresh...');
                                 try {
-                                    exec('mcp-publisher login github', { stdio: 'inherit' });
+                                    mcpLogin();
                                     printSuccess('Token refreshed. Retrying publish...');
                                     continue;
                                 } catch (loginError) {
                                     printError('Could not refresh token automatically.');
-                                    printError('Please run manually: mcp-publisher login github');
+                                    printError('Run: mcp-publisher login github');
                                     throw error;
                                 }
                             }

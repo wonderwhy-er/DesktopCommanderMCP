@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to .release-config.json (gitignored) and fill in. Optional: without it, registry login is interactive.",
+  "mcpSecretName": "your-secret-name",
+  "mcpSecretProject": "your-project-id-or-omit-to-use-active-gcloud-project"
+}
