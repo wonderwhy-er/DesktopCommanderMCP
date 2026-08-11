@@ -32,6 +32,25 @@ function formatLocalTimestamp(isoTimestamp: string): string {
 class ToolHistory {
   private history: ToolCallRecord[] = [];
   private readonly MAX_ENTRIES = 1000;
+  /**
+   * Cap on the output kept per entry. Entries hold the FULL ServerResult, and
+   * get_recent_tool_calls serialises them straight back out, so without a cap
+   * the history is unbounded in two compounding ways:
+   *
+   *   - a single large output (a big read_file, a wide list_directory) makes
+   *     every later history dump that includes it large too, and
+   *   - any tool whose output happens to CONTAIN a history dump — e.g.
+   *     `cat`-ing a file a previous dump was written to — nests the whole
+   *     history inside itself, and each nesting level roughly doubles the JSON
+   *     escaping. Observed 2026-07-27: 83KB of arguments on disk produced a
+   *     1.89MB in-memory dump this way.
+   *
+   * Excluding more tool names cannot fix that, because the nesting arrives
+   * through ordinary tools. Capping the stored output does, and a preview is
+   * all this history is for — it is a "what happened recently" aid, not a
+   * result cache.
+   */
+  private readonly MAX_STORED_OUTPUT_BYTES = 4 * 1024;
   private readonly MAX_HISTORY_FILE_SIZE_BYTES = 5 * 1024 * 1024;
   // When the file exceeds the cap we trim it down to this target instead of
   // all the way to zero, so a single overflow doesn't cause every subsequent
@@ -87,8 +106,14 @@ class ToolHistory {
         }
       }
 
-      // Keep only last 1000 entries
-      this.history = records.slice(-this.MAX_ENTRIES);
+      // Keep only last 1000 entries, and cap on the way IN as well as on the
+      // way out. Entries written before the cap existed are still on disk and
+      // are well under the whole-file trim threshold, so without this the cap
+      // does nothing for anyone upgrading with an existing history file — i.e.
+      // for everyone it was written for.
+      this.history = records
+        .slice(-this.MAX_ENTRIES)
+        .map(record => ({ ...record, output: this.capOutput(record.output) }));
 
       // If file is getting too large, trim it
       if (lines.length > this.MAX_ENTRIES * 2) {
@@ -214,17 +239,44 @@ class ToolHistory {
   /**
    * Add a tool call to history
    */
+  /**
+   * Replace an oversized output with a short marker. Keeps the record shape
+   * ({ content: [...] }) so readers and formatters need no special case.
+   */
+  private capOutput(output: ServerResult): ServerResult {
+    let size: number;
+    try {
+      size = JSON.stringify(output)?.length ?? 0;
+    } catch {
+      // Circular or otherwise unserialisable — it could never be returned to a
+      // client anyway, so don't retain it.
+      size = Number.POSITIVE_INFINITY;
+    }
+    if (size <= this.MAX_STORED_OUTPUT_BYTES) return output;
+
+    const shown = Number.isFinite(size) ? `${size} bytes` : 'unserialisable';
+    return {
+      ...(output as any),
+      content: [
+        {
+          type: 'text',
+          text: `[output omitted from history: ${shown}, over the ${this.MAX_STORED_OUTPUT_BYTES}-byte cap]`,
+        },
+      ],
+    } as ServerResult;
+  }
+
   addCall(
-    toolName: string, 
-    args: any, 
-    output: ServerResult, 
+    toolName: string,
+    args: any,
+    output: ServerResult,
     duration?: number
   ): void {
     const record: ToolCallRecord = {
       timestamp: new Date().toISOString(),
       toolName,
       arguments: args,
-      output,
+      output: this.capOutput(output),
       duration
     };
 
