@@ -60,6 +60,18 @@ class FakeChannel {
     });
     return this;
   }
+  // Presence (added with the Broadcast/Presence transport): the device track()s
+  // itself on SUBSCRIBED and untrack()s on a graceful unsubscribe. realtime-js
+  // RESOLVES these with a status string ('ok' | 'error' | 'timed out') rather
+  // than rejecting, so the fakes mirror that contract.
+  track() {
+    this.tracked = true;
+    return Promise.resolve('ok');
+  }
+  untrack() {
+    this.tracked = false;
+    return Promise.resolve('ok');
+  }
   unsubscribe() {
     this.state = 'leaving';
     return Promise.resolve({ error: null });
@@ -154,6 +166,17 @@ function makeRemoteChannel() {
   rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.onToolCall = () => {};
   rc.deviceId = 'device-1';
+  rc.deviceName = 'test-device';
+  // recreateChannel() sleeps a jittered backoff before rebuilding so a fleet-wide
+  // event doesn't stampede reconnects. These tests are about WHETHER the wedge
+  // recovers, not how long it waits — stub the sleep so the suite stays
+  // sub-second, but record the requested delays so the formula can be asserted
+  // (see "reconnect backoff grows and stays bounded" below).
+  rc.sleptMs = [];
+  rc.sleep = (ms) => {
+    rc.sleptMs.push(ms);
+    return Promise.resolve();
+  };
   return { rc, client };
 }
 
@@ -322,6 +345,52 @@ async function main() {
       `channel wedged in 'joining' on a half-open socket and never recovered.\n` +
         `     attempts(recreate)=${rc.reconnectAttempt} rebuilds=${client.realtime.rebuilds}\n` +
         `     channelState=${rc.channel && rc.channel.state} socketReadyState=${client.realtime.conn.readyState}`
+    );
+  });
+
+  // The jittered backoff exists so a fleet-wide event (server deploy, Supabase
+  // blip) doesn't stampede every device into reconnecting at the same instant.
+  // Assert the shape rather than exact values: it must GROW with consecutive
+  // attempts and stay BOUNDED so a device can't disappear for minutes.
+  await test('reconnect backoff grows with attempts and stays bounded', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(async () => {
+      await goHalfOpen(rc, client);
+      // Model a PERSISTENT outage: rebuilding the socket doesn't help, so every
+      // recreate fails and reconnectAttempt actually climbs. The default fake
+      // heals on rebuildSocket(), which meant every recreate SUCCEEDED, the
+      // counter reset to 0, and all samples came from the attempt-1
+      // distribution — making a "grows" assertion a coin flip (~10% flake,
+      // measured over 30 runs) and never exercising the cap at all.
+      client.realtime.rebuildSocket = function () {
+        this.rebuilds++;
+        this.conn = { readyState: 1 };
+        this.socketDead = true; // still dead after the rebuild
+      };
+      client.realtime.socketDead = true;
+      for (let i = 0; i < 7; i++) {
+        await rc.recreateChannel();
+        if (rc.channel) rc.channel.state = 'errored';
+      }
+    });
+
+    assert.ok(rc.sleptMs.length >= 6, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
+    // Formula: min(30_000, 1000 * 2**min(attempt,5)) * (0.5 + random())
+    // -> hard ceiling is 30_000 * 1.5 = 45_000 ms.
+    assert.ok(
+      rc.sleptMs.every((ms) => ms > 0 && ms <= 45_000),
+      `every backoff must be positive and <= 45s: ${JSON.stringify(rc.sleptMs)}`
+    );
+    // With the counter climbing, late attempts draw from a strictly higher
+    // range than the first: attempt 1 tops out at 3_000, attempt 5+ starts at
+    // 15_000 — so this cannot flake on jitter.
+    assert.ok(
+      rc.sleptMs[0] <= 3_000,
+      `first backoff should be the attempt-1 range: ${rc.sleptMs[0]}`
+    );
+    assert.ok(
+      Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
+      `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
   });
 
