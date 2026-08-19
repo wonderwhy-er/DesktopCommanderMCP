@@ -89,6 +89,9 @@ export class RemoteChannel {
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
      * land after setOffline()'s durable write. */
     private shuttingDown = false;
+    /** Auth session gone for good: stops rejoins and caps the notice at one line. */
+    private sessionLost = false;
+    private handlingSignedOut = false;
 
 
     // Store subscription parameters for channel recreation
@@ -121,7 +124,23 @@ export class RemoteChannel {
 
 
     initialize(url: string, key: string): void {
-        this.client = createClient(url, key);
+        this.client = createClient(url, key, {
+            realtime: {
+                // supabase-js's resolver ends in `?? supabaseKey`, so after SIGNED_OUT
+                // the socket silently re-pins to the anon key and every private-channel
+                // join is refused. Overriding under `realtime` (not the top-level
+                // `accessToken`, which turns client.auth into a throwing Proxy).
+                accessToken: async (): Promise<string | null> => {
+                    try {
+                        const { data } = await this.client!.auth.getSession();
+                        if (data.session?.access_token) return data.session.access_token;
+                    } catch {
+                        /* fall through to the cached token */
+                    }
+                    return this.lastKnownSession?.access_token ?? null;
+                },
+            },
+        });
     }
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
@@ -177,11 +196,64 @@ export class RemoteChannel {
                         access_token: newSession.access_token,
                         refresh_token: newSession.refresh_token ?? this.lastKnownSession?.refresh_token ?? null,
                     };
+                } else if (event === 'SIGNED_OUT') {
+                    void this.handleSignedOut();
                 }
             });
         }
 
         return { error };
+    }
+
+    /**
+     * Session gone: one restore attempt, then go offline and stop retrying.
+     *
+     * The attempt matters because auth-js only treats network errors and 502/503/504
+     * as retryable — a 429 or 500 kills the session while the refresh token is fine.
+     * We don't re-authenticate: DeviceAuthenticator opens a browser and waits.
+     */
+    private async handleSignedOut(): Promise<void> {
+        if (this.handlingSignedOut || this.sessionLost || this.shuttingDown) return;
+        this.handlingSignedOut = true;
+        try {
+            const cached = this.lastKnownSession;
+            if (cached?.refresh_token && this.client) {
+                console.debug('[DEBUG] SIGNED_OUT — attempting one session restore');
+                const { error } = await this.client.auth.setSession({
+                    access_token: cached.access_token,
+                    refresh_token: cached.refresh_token,
+                });
+                if (!error) {
+                    console.log('   - ✅ Remote session restored after a transient sign-out');
+                    await captureRemote('remote_channel_signed_out_recovered', {});
+                    return;
+                }
+                await captureRemote('remote_channel_session_restore_failed', {
+                    errorName: (error as any)?.name ?? null,
+                    errorStatus: (error as any)?.status ?? null,
+                    errorMessage: error.message ?? null,
+                });
+                console.debug(`[DEBUG] Session restore failed: ${error.message}`);
+            }
+
+            this.sessionLost = true;
+            await captureRemote('remote_channel_session_lost', {
+                hadRefreshToken: !!cached?.refresh_token,
+            });
+
+            this.stopHeartbeat();
+            try {
+                await this.setOffline(this.deviceId ?? undefined);
+            } catch { /* best effort */ }
+
+            console.error('\n⚠️  Remote session expired and could not be renewed.');
+            console.error('   This device is now offline for remote calls; local tools still work.');
+            console.error('   Restart the terminal running Desktop Commander to reconnect.\n');
+        } catch (error: any) {
+            console.debug(`[DEBUG] handleSignedOut() failed: ${error?.message}`);
+        } finally {
+            this.handlingSignedOut = false;
+        }
     }
 
     async getSession(): Promise<{ data: { session: Session | null }; error: any }> {
@@ -620,6 +692,7 @@ export class RemoteChannel {
      * Check if channel is connected, recreate if not.
      */
     private checkConnectionHealth(): void {
+        if (this.sessionLost) return;
         if (!this.channel || !this.client || !this.user?.id || !this.onToolCall) {
             return;
         }
