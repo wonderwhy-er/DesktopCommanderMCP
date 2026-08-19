@@ -331,14 +331,15 @@ async function goHalfOpenStuckJoining(rc, client) {
 
 /**
  * Drive the 10s health-check while the channel is stuck 'joining' on a half-open socket.
- * Advances a SIMULATED clock 10s per tick (the real health-check interval) so a
- * time-bounded guard can observe how long the channel has overstayed 'joining' without
- * the test burning real wall-clock. Returns whether the channel recovered.
+ * Advances a SIMULATED monotonic clock (performance.now — what the liveness guards
+ * read) 10s per tick (the real health-check interval) so a time-bounded guard can
+ * observe how long the channel has overstayed 'joining' without the test burning
+ * real wall-clock. Returns whether the channel recovered.
  */
 async function driveHealthChecksStuckJoining(rc, maxTicks) {
-  const realNow = Date.now;
-  let simulated = realNow();
-  Date.now = () => simulated;
+  const realPerfNow = performance.now;
+  let simulated = realPerfNow.call(performance);
+  performance.now = () => simulated;
   try {
     for (let i = 0; i < maxTicks; i++) {
       if (rc.channel && rc.channel.state === 'joined') return true;
@@ -348,7 +349,7 @@ async function driveHealthChecksStuckJoining(rc, maxTicks) {
       simulated += 10_000; // advance one 10s health-check interval
     }
   } finally {
-    Date.now = realNow;
+    performance.now = realPerfNow;
   }
   return !!(rc.channel && rc.channel.state === 'joined');
 }
@@ -368,14 +369,23 @@ async function goHalfOpenStuckJoined(rc, client) {
 
 /**
  * Drive the 10s health-check while state stays 'joined' throughout, advancing a
- * simulated clock past HEARTBEAT_STALE_TIMEOUT_MS (75s) without real delay.
- * channel.state can't signal recovery here (it never left 'joined'), so recovery
- * is judged by whether a fresh socket actually got forced.
+ * simulated monotonic clock (performance.now — what the liveness guards read)
+ * past HEARTBEAT_STALE_TIMEOUT_MS (75s) without real delay. channel.state can't
+ * signal recovery here (it never left 'joined'), so recovery is judged by
+ * whether a fresh socket actually got forced.
+ *
+ * Regression guard baked in: Date.now() is pinned hours BACKWARD for the whole
+ * drive — the clock-skew correction can move Date.now by exactly such an offset
+ * mid-run, and staleness detection must not care (it reads performance.now).
+ * Against a Date.now-based implementation this skew makes staleMs negative and
+ * the recovery below never fires.
  */
 async function driveHealthChecksStuckJoined(rc, client, maxTicks) {
-  const realNow = Date.now;
-  let simulated = realNow();
-  Date.now = () => simulated;
+  const realPerfNow = performance.now;
+  const realDateNow = Date.now;
+  let simulated = realPerfNow.call(performance);
+  performance.now = () => simulated;
+  Date.now = () => realDateNow() - 6 * 3600_000;
   try {
     for (let i = 0; i < maxTicks; i++) {
       if (client.realtime.rebuilds > 0) return true;
@@ -385,7 +395,8 @@ async function driveHealthChecksStuckJoined(rc, client, maxTicks) {
       simulated += 10_000;
     }
   } finally {
-    Date.now = realNow;
+    performance.now = realPerfNow;
+    Date.now = realDateNow;
   }
   return client.realtime.rebuilds > 0;
 }

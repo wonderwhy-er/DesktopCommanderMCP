@@ -165,8 +165,12 @@ export class RemoteChannel {
 
     private reconnectAttempt = 0;        // recreates since the last success
     private isRecreatingChannel = false; // re-entrancy guard
-    private joiningSince: number | null = null; // start of an unbroken 'joining' run
-    /** Last confirmed proof of life (SUBSCRIBED or heartbeat 'ok'); null until the first one lands. */
+    private joiningSince: number | null = null; // start of an unbroken 'joining' run (performance.now())
+    /** Last confirmed proof of life (SUBSCRIBED or heartbeat 'ok'); null until the
+     * first one lands. On performance.now(), not Date.now(): the clock-skew
+     * correction above can (un)patch Date.now mid-run, jumping wall-clock math by
+     * the whole offset — a backward jump would suppress stale detection for as
+     * long as the offset. Same for joiningSince. */
     private lastHeartbeatOkAt: number | null = null;
     private heartbeatListenerRegistered = false;
     /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
@@ -188,7 +192,7 @@ export class RemoteChannel {
             this.heartbeatListenerRegistered = true;
             try {
                 (this.client as any).realtime?.onHeartbeat?.((status: string) => {
-                    if (status === 'ok') this.lastHeartbeatOkAt = Date.now();
+                    if (status === 'ok') this.lastHeartbeatOkAt = performance.now();
                 });
             } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
         }
@@ -534,7 +538,7 @@ export class RemoteChannel {
                     if (status === 'SUBSCRIBED') {
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
-                        this.lastHeartbeatOkAt = Date.now(); // a fresh join is proof of life too
+                        this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
@@ -710,7 +714,7 @@ export class RemoteChannel {
             // 'joined' is a cached string, not proof of a live socket. Cross-check
             // against the last confirmed heartbeat reply.
             if (this.lastHeartbeatOkAt !== null) {
-                const staleMs = Date.now() - this.lastHeartbeatOkAt;
+                const staleMs = performance.now() - this.lastHeartbeatOkAt;
                 if (staleMs > HEARTBEAT_STALE_TIMEOUT_MS) {
                     console.debug(`[DEBUG] ⚠️ Channel reads 'joined' but no confirmed heartbeat in ${Math.round(staleMs / 1000)}s - forcing recreate — ${this.connState()}`);
                     captureRemote('remote_channel_heartbeat_stale', { staleMs, attempt: this.reconnectAttempt });
@@ -735,7 +739,7 @@ export class RemoteChannel {
         // JOINING_WEDGE_TIMEOUT_MS force a recreate, the only path that
         // disconnect()s the dead socket.
         if (state === 'joining') {
-            const now = Date.now();
+            const now = performance.now();
             if (this.joiningSince === null) this.joiningSince = now;
             const stuckMs = now - this.joiningSince;
             if (stuckMs < JOINING_WEDGE_TIMEOUT_MS) return;
@@ -833,7 +837,7 @@ export class RemoteChannel {
             // know the heartbeat is stale (this recreate may have been triggered
             // by exactly that).
             const heartbeatStale = this.lastHeartbeatOkAt !== null
-                && (Date.now() - this.lastHeartbeatOkAt) > HEARTBEAT_STALE_TIMEOUT_MS;
+                && (performance.now() - this.lastHeartbeatOkAt) > HEARTBEAT_STALE_TIMEOUT_MS;
             if (this.channel?.state === 'joined' && !heartbeatStale) {
                 console.log(`✅ Channel self-healed during backoff — skipping recreate — ${this.connState()}`);
                 return; // finally-block below clears the re-entrancy guard
