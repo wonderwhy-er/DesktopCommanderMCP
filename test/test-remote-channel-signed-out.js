@@ -31,7 +31,8 @@ class FakeRealtime {
     if (token) this.accessTokenValue = token;
     return Promise.resolve();
   }
-  disconnect() {}
+  disconnectCalls = 0;
+  disconnect() { this.disconnectCalls++; }
 }
 
 class FakeAuth {
@@ -215,6 +216,26 @@ async function main() {
 
     assert.strictEqual(rc.sessionLost, true, 'expected the session to be marked lost');
     assert.strictEqual(client.channels.length, channelsBefore, 'no channel may be created after the session is lost');
+  });
+
+  await test('session loss tears down the existing channel and socket (kills realtime-js rejoin)', async () => {
+    // sessionLost only gates OUR health loop — an errored channel left behind
+    // keeps realtime-js's own ~10s rejoin timer firing expired-JWT joins
+    // forever (staging rig 2026-08-18: ~2.5k joins/device/day post-give-up).
+    const { rc, client } = makeRemoteChannel();
+    client.auth.setSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
+    const stale = client.channel('user:user-1');
+    stale.state = 'errored';
+    rc.channel = stale;
+
+    await withQuietLogs(async () => {
+      client.auth.emit('SIGNED_OUT');
+      await flush(10);
+    });
+
+    assert.strictEqual(rc.channel, null, 'the errored channel must be detached on session loss');
+    assert.strictEqual(stale.state, 'closed', 'the errored channel must be removed, not abandoned');
+    assert.ok(client.realtime.disconnectCalls >= 1, 'the socket must be disconnected so nothing rejoins');
   });
 
   await test('the user-facing notice prints once, not once per health tick', async () => {

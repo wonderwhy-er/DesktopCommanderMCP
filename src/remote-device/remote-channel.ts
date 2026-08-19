@@ -242,6 +242,23 @@ export class RemoteChannel {
             });
 
             this.stopHeartbeat();
+
+            // Tear realtime down entirely, same as recreateChannel() does: sessionLost
+            // only gates OUR health loop, while realtime-js keeps its own per-channel
+            // rejoin timer (~10s cap) firing expired-JWT joins on the errored channel
+            // until the channel is removed — measured in the 2026-08-18 staging rig at
+            // ~2.5k Unauthorized joins/device/day even with the downgrade guard active.
+            try {
+                if (this.channel) {
+                    await this.client?.removeChannel(this.channel);
+                    this.channel = null;
+                }
+                await this.removeLegacyChannel();
+                try { await (this.client as any)?.realtime?.disconnect?.(); } catch { /* best effort */ }
+            } catch (teardownError: any) {
+                console.debug(`[DEBUG] Session-lost channel teardown failed: ${teardownError?.message}`);
+            }
+
             try {
                 await this.setOffline(this.deviceId ?? undefined);
             } catch { /* best effort */ }
