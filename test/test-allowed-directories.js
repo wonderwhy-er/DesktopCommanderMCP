@@ -414,9 +414,9 @@ export default async function runTests() {
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
   runTests().then(success => {
-    process.exit(success ? 0 : 1);
+    process.exitCode = success ? 0 : 1;
   }).catch(error => {
     console.error('❌ Unhandled error:', error);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }
