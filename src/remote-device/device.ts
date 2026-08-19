@@ -207,13 +207,21 @@ export class MCPDevice {
             this.deviceId = config?.deviceId;
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
-            console.log('💾 Found persisted session for device ' + this.deviceId);
-            if (config.session) {
+            if (config.session && this.persistSession) {
+                console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
             }
 
-            console.debug('[DEBUG] No session in config');
+            // A previously saved session must not be reused on an opted-out run:
+            // it would skip the re-authorization the flag promises, and the save
+            // at the end of start() then discards a possibly-rotated refresh
+            // token — orphaning one more live server-side session.
+            if (config.session) {
+                console.debug('[DEBUG] Ignoring persisted session (--no-persist-session)');
+            } else {
+                console.debug('[DEBUG] No session in config');
+            }
             return null;
         } catch (error: any) {
 
