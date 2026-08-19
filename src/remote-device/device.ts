@@ -39,7 +39,12 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-        this.persistSession = options.persistSession || false;
+        // Default ON. Off meant a full re-authorization on every start, and each
+        // one mints a fresh GoTrue session that nothing ever revokes — 364k live
+        // sessions across 21k users, whose orphaned refresh-token families get
+        // replayed, trip GoTrue's reuse detection, and take the whole family down
+        // including the token a healthy connector is holding.
+        this.persistSession = options.persistSession ?? true;
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -427,11 +432,13 @@ if (isMainModule) {
     // Parse command-line arguments
     const args = process.argv.slice(2);
     const options = {
-        persistSession: args.includes('--persist-session')
+        // --persist-session is kept as an accepted no-op so existing invocations
+        // and docs keep working; --no-persist-session opts back out.
+        persistSession: !args.includes('--no-persist-session')
     };
 
-    if (options.persistSession) {
-        console.log('🔒 Session persistence enabled');
+    if (!options.persistSession) {
+        console.log('🔓 Session persistence disabled — re-authorization required on every start');
     }
 
     const device = new MCPDevice(options);
