@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import path from 'path';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
@@ -294,6 +295,12 @@ export class TerminalManager {
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
 
+      // A multibyte UTF-8 character can be split across two 'data' chunks; a
+      // stateful decoder holds the incomplete tail byte(s) and prepends them
+      // to the next chunk instead of replacing them with U+FFFD per chunk.
+      const stdoutDecoder = new StringDecoder('utf8');
+      const stderrDecoder = new StringDecoder('utf8');
+
       const resolveOnce = (result: CommandExecutionResult) => {
         if (resolved) return;
         resolved = true;
@@ -318,7 +325,7 @@ export class TerminalManager {
       };
 
       childProcess.stdout.on('data', (data: any) => {
-        const text = data.toString();
+        const text = stdoutDecoder.write(data);
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -364,7 +371,7 @@ export class TerminalManager {
       });
 
       childProcess.stderr.on('data', (data: any) => {
-        const text = data.toString();
+        const text = stderrDecoder.write(data);
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -419,6 +426,14 @@ export class TerminalManager {
       }, timeoutMs);
 
       childProcess.on('exit', (code: any) => {
+        // Flush any incomplete multibyte sequence still buffered by the
+        // decoders, so a process that exits mid-character doesn't drop it.
+        const flushed = stdoutDecoder.end() + stderrDecoder.end();
+        if (flushed) {
+          if (!resolved) output += flushed;
+          this.appendToLineBuffer(session, flushed);
+        }
+
         if (childProcess.pid) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
