@@ -282,6 +282,10 @@ export class MCPDevice {
 
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
+        // Which pipe actually delivered this call (doorbell / legacy) —
+        // written back onto the row so server-side analytics can tell actual
+        // delivery apart from dispatch intent (metadata.transport).
+        const delivered_via = payload.__delivered_via ?? null;
         // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
 
@@ -351,7 +355,7 @@ export class MCPDevice {
 
             // Update database with result, THEN ring the doorbell — the server
             // fetches the row by id on the doorbell, so the write must land first.
-            await this.remoteChannel.updateCallResult(call_id, 'completed', result);
+            await this.remoteChannel.updateCallResult(call_id, 'completed', result, null, { metadata, deliveredVia: delivered_via });
             await this.remoteChannel.notifyResult(call_id);
 
         } catch (error: any) {
@@ -361,7 +365,7 @@ export class MCPDevice {
             // and takes the device process down.
             try {
                 await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-                await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+                await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message, { metadata, deliveredVia: delivered_via });
                 await this.remoteChannel.notifyResult(call_id);
             } catch (reportError: any) {
                 console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);

@@ -404,7 +404,10 @@ export class RemoteChannel {
                     },
                     (payload: any) => {
                         console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
-                        this.dispatchToolCall(payload);
+                        // Tag the delivery path so the result row can attribute which
+                        // pipe ACTUALLY delivered (metadata.transport only records
+                        // dispatch intent — during doorbell failures the two diverge).
+                        this.dispatchToolCall({ ...payload, __delivered_via: 'legacy' });
                     }
                 )
                 .subscribe((status: string) => {
@@ -573,7 +576,7 @@ export class RemoteChannel {
         }
 
         // Same payload shape as postgres_changes ({ new: row }).
-        this.dispatchToolCall({ new: row });
+        this.dispatchToolCall({ new: row, __delivered_via: 'doorbell' });
     }
 
     /**
@@ -850,12 +853,25 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
+    async updateCallResult(
+        callId: string,
+        status: string,
+        result: any = null,
+        errorMessage: string | null = null,
+        attribution: { metadata: any; deliveredVia: string | null } | null = null
+    ) {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
             completed_at: new Date().toISOString()
         };
+        // Stamp which pipe actually delivered the call. Merged over the row's
+        // dispatch-time metadata (which the caller carries from the delivered
+        // payload) so transport intent and actual delivery coexist for the
+        // server's result-claim analytics event.
+        if (attribution?.deliveredVia) {
+            updateData.metadata = { ...(attribution.metadata ?? {}), delivered_via: attribution.deliveredVia };
+        }
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
         // jsonb cannot store  and rejects the whole write (Postgres 22P05),
