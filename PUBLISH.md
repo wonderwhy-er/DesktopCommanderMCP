@@ -1,237 +1,160 @@
-# Publishing Guide for Desktop Commander MCP
+# Release Guide for Desktop Commander MCP
 
-This document outlines the complete process for publishing new versions of Desktop Commander to both NPM and the MCP Registry.
+Releases are published by CI (`.github/workflows/release.yml`). A release goes to
+**four places from one trigger**:
 
-## 🚀 Automated Release (Recommended)
+1. **npm** — `@wonderwhy-er/desktop-commander`
+2. **GitHub release** — with the `desktop-commander-<version>.mcpb` asset attached
+3. **Claude directory** — Anthropic's scanner picks the `.mcpb` off the GitHub
+   release automatically (validation on their side takes a few days)
+4. **MCP Registry** — `io.github.wonderwhy-er/desktop-commander`
 
-We now have an automated release script that handles the entire process with **automatic state tracking and resume capability**!
-
-```bash
-# Patch release (0.2.16 → 0.2.17) - Bug fixes, small improvements
-npm run release
-
-# Minor release (0.2.16 → 0.3.0) - New features
-npm run release:minor
-
-# Major release (0.2.16 → 1.0.0) - Breaking changes
-npm run release:major
-
-# Test without publishing
-npm run release:dry
-
-# Clear saved state and start fresh
-node scripts/publish-release.cjs --clear-state
-```
-
-### ✨ Smart State Tracking
-
-The script automatically tracks completed steps and **resumes from failures**:
-
-1. **Automatic Resume**: If any step fails, just run the script again - it will skip completed steps and continue from where it failed
-2. **No Manual Flags**: No need to remember which `--skip-*` flags to use
-3. **Clear State**: Use `--clear-state` to reset and start from the beginning
-4. **Transparent**: Shows which steps were already completed when resuming
-
-**Example workflow:**
-```bash
-# Start release - tests fail
-npm run release
-# ❌ Step 2/6 failed: Tests failed
-
-# Fix the tests, then just run again
-npm run release
-# ✓ Step 1/6: Version bump already completed
-# ✓ Step 2/6: Running tests...  (continues from here)
-```
-
-The script automatically handles:
-- ✅ Version bumping
-- ✅ Building project and MCPB bundle
-- ✅ Running tests
-- ✅ Git commit and tagging
-- ✅ NPM publishing
-- ✅ MCP Registry publishing
-- ✅ Publication verification
-- ✨ **State tracking and automatic resume**
+**Who can release:** anyone with write (push) access to this repository. Both the
+tag push and the Actions "Run workflow" button require write permission. No npm
+login, no mcp-publisher, no personal registry auth needed — CI holds the npm
+token as a repo secret and authenticates to the MCP Registry with GitHub OIDC.
 
 ---
 
-## Manual Release Process
-
-If you prefer to release manually or need to troubleshoot, follow these steps:
-
-## Prerequisites
-
-- Node.js 18+ installed
-- NPM account with publish permissions to `@wonderwhy-er/desktop-commander`
-- GitHub account with access to `wonderwhy-er/DesktopCommanderMCP`
-- `mcp-publisher` CLI tool installed: `brew install mcp-publisher`
-
-## Publishing Process
-
-### 1. Version Bump
-
-Choose the appropriate version bump based on your changes:
+## Normal release (terminal)
 
 ```bash
-# Patch version (0.2.14 → 0.2.15) - Bug fixes, small improvements
-npm run bump
-
-# Minor version (0.2.14 → 0.3.0) - New features, backwards compatible
-npm run bump:minor
-
-# Major version (0.2.14 → 1.0.0) - Breaking changes
-npm run bump:major
+npm run release          # patch  (0.2.47 → 0.2.48)
+npm run release:minor    # minor  (0.2.47 → 0.3.0)
+npm run release:major    # major  (0.2.47 → 1.0.0)
+npm run release:dry      # preview the plan, change nothing
 ```
 
-This script automatically updates:
-- `package.json` version
-- `server.json` version and packages array
-- `src/version.ts` version
+The script shows the full plan and asks for one confirmation:
 
-### 2. Build and Test
+```
+Release plan:
+  1. Run tests (local, nothing changed yet)
+  2. Bump version 0.2.47 → 0.2.48 and commit
+  3. Push main + tag v0.2.48 to origin — this starts the CI release:
+     build MCPB → publish npm → GitHub release with .mcpb asset
+     (picked up by the Claude directory) → publish MCP Registry
+
+Release v0.2.48 now? [y/N]
+```
+
+After you confirm: tests run locally, the version is bumped and committed, and
+the tag push hands off to CI. Watch the run at
+https://github.com/wonderwhy-er/DesktopCommanderMCP/actions/workflows/release.yml
+
+Requirements: on `main`, clean working tree, tests passing. `--yes` skips the
+prompt, `--skip-tests` builds without the test suite.
+
+## Normal release (GitHub UI — no local setup at all)
+
+1. Actions → **Release** → **Run workflow**
+2. Pick `bump` = patch / minor / major
+3. Run
+
+CI runs the tests, bumps the version, commits and tags `main`, then publishes
+everywhere — identical result to the terminal flow.
+
+---
+
+## Partial releases (skip some targets)
+
+Sometimes you only want a subset (npm outage, registry problem, npm-only fix).
+Both entry points support it:
+
+**Terminal** (dispatches to CI via `gh`, needs `gh auth login` once):
 
 ```bash
-# Build the project to ensure everything compiles
-npm run build
-
-# Run tests to ensure quality
-npm test
-
-# Optional: Test locally if needed
-npm run setup:debug
+npm run release -- --skip-registry                    # npm + GitHub release only
+npm run release -- --skip-npm --skip-registry         # GitHub release/MCPB only
+npm run release -- --skip-github-release --skip-registry   # npm only
 ```
 
-### 3. Commit and Tag
+**GitHub UI**: same Run workflow dialog — check `skip_npm`, `skip_registry`,
+and/or `skip_github_release`.
+
+**Completing a partial release later** (e.g. released npm-only, now want the
+rest): re-release the existing tag — every publish step detects targets that
+already have the version and skips them, so only the missing ones run:
 
 ```bash
-# Stage the version files
-git add package.json server.json src/version.ts
-
-# Commit with descriptive message
-git commit -m "Bump version to X.Y.Z
-
-- Brief description of changes
-- Notable features or fixes
-- Any breaking changes"
-
-# Create and push git tag
-git tag vX.Y.Z
-git push origin main
-git push origin vX.Y.Z
+npm run release -- --tag=v0.2.48        # completes whatever v0.2.48 is missing
 ```
 
-### 4. Publish to NPM
+(or UI: Run workflow with `tag` = `v0.2.48`, nothing else)
+
+One ordering rule: the MCP Registry validates that the npm package exists, so
+you cannot publish a **new** version to the registry while skipping npm.
+Publish npm first, complete the registry later with `--tag=`.
+
+## When a release fails mid-way
+
+Click **"Re-run failed jobs"** on the failed Actions run. Publish steps are
+idempotent (already-published targets are skipped), so the re-run finishes only
+what's missing. If the failure needed a workflow fix, land the fix on `main`
+first and use `--tag=vX.Y.Z` / the UI `tag` field instead — dispatch runs
+`main`'s copy of the workflow.
+
+## Alpha releases
 
 ```bash
-# Publish to NPM registry
-npm publish
-
-# Verify publication
-npm view @wonderwhy-er/desktop-commander version
+npm run release:alpha    # 0.2.47 → 0.2.48-alpha.0 → npm only, under the alpha dist-tag
 ```
 
-**Note**: Make sure you're logged into NPM with the correct account:
-```bash
-npm whoami
-# If not logged in: npm login
-```
+Alphas are the one flow that still publishes from your machine (needs
+`npm login`). No git tag, no CI, no GitHub release, no registry — CI
+intentionally refuses pre-release tags. After alpha testing, reset the version
+files to a stable version before the next regular release.
 
-### 5. Publish to MCP Registry
+Install an alpha with: `npm install -g @wonderwhy-er/desktop-commander@alpha`
 
-```bash
-# Authenticate with GitHub (if token expired)
-mcp-publisher login github
-# Follow the device flow authentication
+## Release notes
 
-# Publish to MCP Registry
-mcp-publisher publish
+CI creates the GitHub release with GitHub's auto-generated notes (the list of
+merged PRs since the previous tag). Edit the release afterwards to curate them —
+editing notes after publishing is safe and doesn't affect npm, the registry, or
+the Claude directory (the scanner reads the `.mcpb` asset, not the notes).
 
-# Verify publication
-curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander" | jq '.servers[0].version'
-```
+---
 
-### 6. Create GitHub Release (Optional but Recommended)
+## One-time setup (repository admin)
 
-1. Go to https://github.com/wonderwhy-er/DesktopCommanderMCP/releases
-2. Click "Create a new release"
-3. Select the tag you just created (`vX.Y.Z`)
-4. Fill in release notes with:
-   - **What's New**: New features and improvements
-   - **Bug Fixes**: Issues resolved
-   - **Breaking Changes**: If any (for major versions)
-   - **Installation**: Reference to updated installation methods
+| What | Where | Why |
+|---|---|---|
+| `NPM_TOKEN` secret | Settings → Secrets and variables → Actions | npm automation token with publish rights on `@wonderwhy-er/desktop-commander`. The only credential in the whole pipeline. |
+| MCP Registry auth | nothing to set up | CI uses `mcp-publisher login github-oidc`; the registry grants `io.github.wonderwhy-er/*` to workflows running in this repo automatically. |
+| Claude directory channel | email to our Anthropic contact | one-time registration: repo `wonderwhy-er/DesktopCommanderMCP`, tag pattern `v*`, asset pattern `desktop-commander-*.mcpb`, maintainer contact. After this, every release is ingested automatically. |
 
-## Complete Example Workflow
+## What runs where (reference)
 
-```bash
-# 1. Bump version (patch example)
-npm run bump
+| Step | Normal (terminal) | UI / dispatch |
+|---|---|---|
+| Tests | locally, before anything changes | in CI, before the bump |
+| Version bump + commit + tag | locally by the script | in CI by the workflow |
+| MCPB build, npm, GitHub release, registry | CI | CI |
 
-# 2. Build and test
-npm run build
-npm test
+Version consistency is enforced twice: `scripts/sync-version.js` keeps
+`package.json`, `server.json`, and `src/version.ts` in lock-step, and CI
+refuses to publish if the tag and those files disagree.
 
-# 3. Commit and tag
-git add package.json server.json src/version.ts
-git commit -m "Bump version to 0.2.15
+## Registry information
 
-- Fixed issue with file search performance
-- Added better error handling for process timeouts
-- Updated documentation"
-
-git tag v0.2.15
-git push origin main
-git push origin v0.2.15
-
-# 4. Publish to NPM
-npm publish
-
-# 5. Publish to MCP Registry
-mcp-publisher publish
-
-# 6. Verify both publications
-npm view @wonderwhy-er/desktop-commander version
-curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander" | jq '.servers[0].version'
-```
+- **npm package**: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
+- **MCP Registry**: https://registry.modelcontextprotocol.io/ (`io.github.wonderwhy-er/desktop-commander`)
+- **GitHub releases**: https://github.com/wonderwhy-er/DesktopCommanderMCP/releases
+- Registry versions are **immutable**: a published version can never be
+  overwritten, only superseded by a new version (or hidden with
+  `mcp-publisher status --status deleted`).
 
 ## Troubleshooting
 
-### NPM Publishing Issues
-
-- **Authentication Error**: Run `npm login` and verify with `npm whoami`
-- **Permission Error**: Ensure you have publish rights to the `@wonderwhy-er` scope
-- **Version Already Exists**: You cannot republish the same version. Bump the version again.
-
-### MCP Registry Issues
-
-- **Authentication Expired**: Run `mcp-publisher login github` and complete device flow
-- **Repository URL Invalid**: Ensure the GitHub repository is public and accessible
-- **Server.json Validation**: Check that the format matches the schema requirements
-
-### Common Mistakes to Avoid
-
-1. **Forgetting to build**: Always run `npm run build` before publishing
-2. **Inconsistent versions**: Use the bump scripts to keep all files in sync
-3. **Missing git tags**: Tags help track releases and are expected by many tools
-4. **Not testing**: Test the build locally before publishing
-5. **Publishing without committing**: Always commit version changes before publishing
-
-## Registry Information
-
-- **NPM Package**: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
-- **MCP Registry**: https://registry.modelcontextprotocol.io/
-- **Server ID**: `490703ba-12b3-48d8-81ef-056010280a9a`
-- **GitHub Repository**: https://github.com/wonderwhy-er/DesktopCommanderMCP
-
-## Version Sync Script Details
-
-The `scripts/sync-version.js` script ensures version consistency by:
-1. Reading the version from `package.json`
-2. Optionally bumping it (patch/minor/major)
-3. Writing the updated version to:
-   - `package.json`
-   - `server.json` (both main version and packages array)
-   - `src/version.ts`
-
-This prevents version mismatches between NPM and MCP Registry publications.
+- **npm publish failed in CI**: check the `NPM_TOKEN` secret is set and not
+  expired; re-run failed jobs.
+- **Registry publish failed with 401/audience error**: the mcp-publisher binary
+  or registry API changed; check the workflow's install step, re-run.
+- **"Version mismatch" in CI**: the tag doesn't match `package.json`/
+  `server.json` — the tag was cut by hand. Delete the tag, use the script.
+- **Tag exists but no workflow ran**: the tagged commit predates
+  `release.yml` on that ref, or the tag doesn't match `v*`. Use
+  `npm run release -- --tag=vX.Y.Z` to release it via dispatch.
+- **Same-version re-release**: npm and the registry both refuse duplicate
+  versions — that's what makes re-runs safe. To ship a fix, bump again.

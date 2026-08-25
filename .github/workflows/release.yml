@@ -1,0 +1,292 @@
+# Release pipeline for Desktop Commander.
+#
+# Two ways to start a release:
+#
+#   1. Terminal: `npm run release` locally — tests, bumps, commits, pushes the
+#      vX.Y.Z tag. The tag push triggers this workflow, which does all
+#      publishing.
+#   2. GitHub UI: Actions → Release → Run workflow → pick a `bump`
+#      (patch/minor/major). CI then runs the tests, bumps the version, commits
+#      and tags main itself, and continues straight into publishing — no local
+#      setup needed at all. (The tag it pushes uses GITHUB_TOKEN, which never
+#      triggers a second run — this run carries on with the release.)
+#
+# Publishing = build MCPB → GitHub release + .mcpb asset (Anthropic's directory
+# scanner ingests it from there) → npm publish → MCP Registry publish (OIDC,
+# no secrets).
+#
+# Re-running after a mid-way failure: use the "Re-run failed jobs" button on
+# the failed run, or Run workflow with `tag` = the existing tag (dispatch from
+# main). Every publish step skips targets that already have the version, so
+# re-runs are safe. With several runs queued for the same tag, GitHub keeps
+# only the newest pending one.
+#
+# Required repo secret: NPM_TOKEN (npm automation token for
+# @wonderwhy-er/desktop-commander). The MCP Registry step needs no secret:
+# OIDC grants io.github.wonderwhy-er/* to workflows running in this repo.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Cut a NEW release from main with this version bump'
+        required: false
+        type: choice
+        options: ['none', 'patch', 'minor', 'major']
+        default: 'none'
+      tag:
+        description: 'OR: re-release an existing tag (e.g. v0.2.48) after a failed run'
+        required: false
+        type: string
+        default: ''
+      skip_npm:
+        description: 'Skip npm publish (note: registry publish of a NEW version fails without the npm package)'
+        required: false
+        type: boolean
+        default: false
+      skip_registry:
+        description: 'Skip MCP Registry publish'
+        required: false
+        type: boolean
+        default: false
+      skip_github_release:
+        description: 'Skip GitHub release + MCPB asset (Claude directory will not see this version)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the GitHub release + upload the .mcpb asset; push the bump commit/tag in cut mode
+  id-token: write   # MCP Registry OIDC login
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # @vscode/ripgrep's postinstall queries api.github.com; unauthenticated calls
+  # rate-limit on shared runner IPs. Also authenticates the gh CLI steps.
+  GITHUB_TOKEN: ${{ github.token }}
+  # Chrome is never launched in this workflow (puppeteer is a transitive dep).
+  PUPPETEER_SKIP_DOWNLOAD: '1'
+  REGISTRY_VERSION_URL: 'https://registry.modelcontextprotocol.io/v0/servers/io.github.wonderwhy-er%2Fdesktop-commander/versions'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # Three entry paths:
+      #   push of a v* tag        → mode=tag, release that tag
+      #   dispatch with tag=vX.Y.Z → mode=tag, re-release that tag
+      #   dispatch with bump=...   → mode=cut, bump+tag main here in CI
+      - name: Resolve release mode
+        id: mode
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            MODE="tag"; TAG="$GITHUB_REF_NAME"
+          elif [ -n "$INPUT_TAG" ] && [ "${INPUT_BUMP:-none}" != "none" ]; then
+            echo "Provide either 'tag' (re-release) or 'bump' (new release), not both"; exit 1
+          elif [ -n "$INPUT_TAG" ]; then
+            MODE="tag"; TAG="$INPUT_TAG"
+          elif [ "${INPUT_BUMP:-none}" != "none" ]; then
+            MODE="cut"; TAG=""
+          else
+            echo "Provide 'tag' (re-release an existing tag) or 'bump' (cut a new release)"; exit 1
+          fi
+          if [ "$MODE" = "tag" ]; then
+            case "$TAG" in
+              v[0-9]*.[0-9]*.[0-9]*) ;;
+              *) echo "'$TAG' is not a release tag (expected vX.Y.Z)"; exit 1 ;;
+            esac
+            case "$TAG" in
+              *-*) echo "'$TAG' looks like a pre-release; this workflow publishes stable releases only"; exit 1 ;;
+            esac
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.mode.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          # Caches the npm download cache keyed on package-lock.json, so
+          # npm ci (and the bundle install inside build:mcpb) pull packages
+          # from cache instead of the network on every release.
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Cut mode does in CI what the local script does locally: test first,
+      # then bump, commit, tag, push. Tag-push releases assume the local
+      # script already ran the tests before tagging.
+      - name: Run tests (cut mode)
+        if: steps.mode.outputs.mode == 'cut'
+        run: npm test
+
+      - name: Bump version, commit, tag, push (cut mode)
+        if: steps.mode.outputs.mode == 'cut'
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          case "$CURRENT" in
+            *-*) echo "Current version $CURRENT is a pre-release; set a stable version first"; exit 1 ;;
+          esac
+          case "$BUMP" in
+            minor) npm run bump:minor ;;
+            major) npm run bump:major ;;
+            *)     npm run bump ;;
+          esac
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag $TAG already exists on origin"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json server.json src/version.ts
+          git commit -m "Release $TAG
+
+          Automated release commit with version bump from $CURRENT to $VERSION"
+          git tag "$TAG"
+          git push origin HEAD:main
+          git push origin "$TAG"
+          echo "Cut $TAG (this run continues the release; the GITHUB_TOKEN tag push triggers nothing)"
+
+      # Single source of truth for the rest of the job. In tag mode this also
+      # asserts the tag was cut correctly — stop before anything publishes.
+      - name: Determine release version
+        id: ver
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          EXPECTED_TAG: ${{ steps.mode.outputs.tag }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if [ "$MODE" = "tag" ] && [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "Version mismatch: tag=$EXPECTED_TAG but package.json=$VERSION"; exit 1
+          fi
+          SRV=$(node -p "require('./server.json').version")
+          SRV_PKG=$(node -p "require('./server.json').packages[0].version")
+          if [ "$SRV" != "$VERSION" ] || [ "$SRV_PKG" != "$VERSION" ]; then
+            echo "Version mismatch: package.json=$VERSION server.json=$SRV server.json.packages[0]=$SRV_PKG"; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Self-contained: downloads all-platform ripgrep binaries, builds TS,
+      # stages prod-only deps, validates the manifest, packs.
+      # Output: desktop-commander-<version>.mcpb in the repo root.
+      # Known trade-off: sharp (PDF image extraction on read) only gets the
+      # linux-x64 binary here, so it stays inert in the MCPB on mac/win —
+      # accepted for now to keep the bundle at ~52 MB.
+      - name: Build MCPB bundle
+        run: npm run build:mcpb
+
+      - name: Publish to npm
+        if: ${{ !inputs.skip_npm }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $VERSION — skipping publish"
+          else
+            npm publish
+          fi
+
+      - name: Verify npm publish
+        if: ${{ !inputs.skip_npm }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
+              echo "npm has $VERSION"; exit 0
+            fi
+            echo "waiting for npm to list $VERSION (attempt $i)"; sleep 15
+          done
+          echo "npm never listed $VERSION"; exit 1
+
+      - name: Create GitHub release and attach MCPB
+        if: ${{ !inputs.skip_github_release }}
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          MCPB="desktop-commander-$VERSION.mcpb"
+          test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Release Notes — $TAG" --generate-notes --verify-tag
+          fi
+          gh release upload "$TAG" "$MCPB" --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Unpinned on purpose: the registry docs recommend `latest`, and an
+      # outdated binary can fail OIDC with an audience error. Pin only if an
+      # upstream release ever breaks us.
+      - name: Install mcp-publisher
+        if: ${{ !inputs.skip_registry }}
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Publish to MCP Registry
+        if: ${{ !inputs.skip_registry }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # Registry versions are immutable; a re-run after a successful publish
+          # must skip instead of failing on the duplicate. The exact-version
+          # endpoint returns 200 when the version exists, 404 when it doesn't.
+          if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
+            echo "registry already has $VERSION — skipping publish"
+            exit 0
+          fi
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      - name: Verify registry publish
+        if: ${{ !inputs.skip_registry }}
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
+              echo "registry has $VERSION"; exit 0
+            fi
+            echo "waiting for registry to list $VERSION (attempt $i)"; sleep 15
+          done
+          echo "registry never listed $VERSION"; exit 1
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          {
+            echo "## Release $TAG"
+            echo "- npm: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander/v/$VERSION"
+            echo "- GitHub release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+            echo "- MCPB asset: desktop-commander-$VERSION.mcpb (picked up by the Claude directory scanner)"
+            echo "- MCP Registry: io.github.wonderwhy-er/desktop-commander @ $VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
