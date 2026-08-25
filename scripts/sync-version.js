@@ -75,7 +75,7 @@ PLUGIN_MANIFESTS.forEach(manifestPath => {
             : arg
     );
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-    updatedManifests.push(path.basename(path.dirname(manifestPath)) + '/plugin.json');
+    updatedManifests.push(manifestPath);
 });
 
 const targets = ['package.json', 'server.json', 'version.ts', ...updatedManifests].join(', ');
