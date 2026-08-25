@@ -1,6 +1,17 @@
 import { readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 
+const PACKAGE_NAME = '@wonderwhy-er/desktop-commander';
+
+// Plugin manifests pin the npm version in their MCP launch args, so they have
+// to move with every release. They cannot use `@latest`: npx re-resolves that
+// on every launch and reinstalls the whole dependency tree whenever the cached
+// copy is stale, which can outlast a host's connect timeout on a slow machine.
+const PLUGIN_MANIFESTS = [
+    'plugins/claude/.claude-plugin/plugin.json',
+    'plugins/cursor/.cursor-plugin/plugin.json'
+];
+
 function bumpVersion(version, type = 'patch') {
     const [major, minor, patch] = version.split('.').map(Number);
     switch(type) {
@@ -49,4 +60,23 @@ writeFileSync('server.json', JSON.stringify(serverJson, null, 2) + '\n');
 const versionFileContent = `export const VERSION = '${version}';\n`;
 writeFileSync('src/version.ts', versionFileContent);
 
-console.log(`Version ${version} synchronized${shouldBump ? ' and bumped' : ''} across package.json, server.json, and version.ts`);
+// Update the pinned launch version in each plugin manifest
+const updatedManifests = [];
+PLUGIN_MANIFESTS.forEach(manifestPath => {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const server = manifest.mcpServers && manifest.mcpServers['desktop-commander'];
+    if (!server || !Array.isArray(server.args)) {
+        console.warn(`Skipped ${manifestPath}: no desktop-commander mcpServers args to update`);
+        return;
+    }
+    server.args = server.args.map(arg =>
+        typeof arg === 'string' && arg.startsWith(`${PACKAGE_NAME}@`)
+            ? `${PACKAGE_NAME}@${version}`
+            : arg
+    );
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    updatedManifests.push(path.basename(path.dirname(manifestPath)) + '/plugin.json');
+});
+
+const targets = ['package.json', 'server.json', 'version.ts', ...updatedManifests].join(', ');
+console.log(`Version ${version} synchronized${shouldBump ? ' and bumped' : ''} across ${targets}`);
