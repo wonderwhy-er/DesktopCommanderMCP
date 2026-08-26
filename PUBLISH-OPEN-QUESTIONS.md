@@ -39,3 +39,20 @@ Open:
   automatically — including releases we might not want in the directory.
   If that ever matters, we'd need a separate tag pattern for directory-bound
   releases.
+
+## 3. Smaller loose ends
+
+- **`npm pkg fix`**: npm warns on publish that it auto-corrects some
+  `package.json` format issues. Cosmetic; run `npm pkg fix` and commit sometime.
+- **Registry verify loop**: the final "verify registry publish" step re-checks
+  our own publish — arguably redundant (the npm one is load-bearing, the
+  registry one is belt-and-braces). Drop it if it ever annoys.
+- **PR #626** (registry PAT via GCP Secret Manager): obsolete under this
+  pipeline — the local script no longer publishes to the registry at all and
+  CI uses OIDC. Close it with a note to Eduards when this branch merges.
+- **sharp / PDF image extraction in the MCPB**: decided 2026-08-26 — NOT
+  bundling cross-platform sharp binaries (would roughly double the ~52 MB
+  bundle). CI-built MCPBs carry linux-x64 sharp only, so image extraction
+  when reading PDFs stays silently inactive on macOS/Windows MCPB installs
+  (it was Apple-Silicon-only before, so no regression for most users, but it
+  is now inert for everyone on Desktop). Revisit if the feature matters.

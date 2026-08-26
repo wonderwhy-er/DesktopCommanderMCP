@@ -11,8 +11,8 @@ Releases are published by CI (`.github/workflows/release.yml`). A release goes t
 
 **Who can release:** anyone with write (push) access to this repository. Both the
 tag push and the Actions "Run workflow" button require write permission. No npm
-login, no mcp-publisher, no personal registry auth needed — CI holds the npm
-token as a repo secret and authenticates to the MCP Registry with GitHub OIDC.
+login, no mcp-publisher, no personal auth, no secrets anywhere — CI publishes
+to npm via OIDC trusted publishing and to the MCP Registry via GitHub OIDC.
 
 ---
 
@@ -145,7 +145,7 @@ the Claude directory (the scanner reads the `.mcpb` asset, not the notes).
 
 | What | Where | Why |
 |---|---|---|
-| `NPM_TOKEN` secret | Settings → Secrets and variables → Actions | npm automation token with publish rights on `@wonderwhy-er/desktop-commander`. The only credential in the whole pipeline. |
+| npm trusted publisher | npmjs.com → `@wonderwhy-er/desktop-commander` → Settings → Trusted Publisher | GitHub Actions: user `wonderwhy-er`, repo `DesktopCommanderMCP`, workflow `release.yml`, environment empty. No token, no secret — CI publishes via OIDC with automatic provenance. Configured by any package owner. |
 | MCP Registry auth | nothing to set up | CI uses `mcp-publisher login github-oidc`; the registry grants `io.github.wonderwhy-er/*` to workflows running in this repo automatically. |
 | Claude directory channel | email to our Anthropic contact | one-time registration: repo `wonderwhy-er/DesktopCommanderMCP`, tag pattern `v*`, asset pattern `desktop-commander-*.mcpb`, maintainer contact. After this, every release is ingested automatically. |
 
@@ -172,8 +172,9 @@ refuses to publish if the tag and those files disagree.
 
 ## Troubleshooting
 
-- **npm publish failed in CI**: check the `NPM_TOKEN` secret is set and not
-  expired; re-run failed jobs.
+- **npm publish failed in CI**: check the trusted-publisher config on
+  npmjs.com still matches (repo `DesktopCommanderMCP`, workflow
+  `release.yml`, environment empty); re-run failed jobs.
 - **Registry publish failed with 401/audience error**: the mcp-publisher binary
   or registry API changed; check the workflow's install step, re-run.
 - **"Version mismatch" in CI**: the tag doesn't match `package.json`/

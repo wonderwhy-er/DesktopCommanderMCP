@@ -30,9 +30,10 @@
 # re-runs are safe. With several runs queued for the same tag, GitHub keeps
 # only the newest pending one.
 #
-# Required repo secret: NPM_TOKEN (npm automation token for
-# @wonderwhy-er/desktop-commander). The MCP Registry step needs no secret:
-# OIDC grants io.github.wonderwhy-er/* to workflows running in this repo.
+# No secrets required. npm auth = OIDC trusted publishing (configured on
+# npmjs.com: package Settings → Trusted Publisher → this repo + release.yml).
+# MCP Registry auth = OIDC (grants io.github.wonderwhy-er/* to workflows
+# running in this repo automatically).
 
 name: Release
 
@@ -234,10 +235,16 @@ jobs:
       - name: Build MCPB bundle
         run: npm run build:mcpb
 
+      # npm auth: OIDC trusted publishing — no token, no secret. Configured on
+      # npmjs.com (package Settings → Trusted Publisher → this repo +
+      # release.yml). Needs npm >= 11.5.1; Node 22 bundles npm 10, so upgrade.
+      - name: Upgrade npm for OIDC trusted publishing
+        if: ${{ !inputs.skip_npm }}
+        run: npm install -g npm@latest && npm --version
+
       - name: Publish to npm
         if: ${{ !inputs.skip_npm }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
           REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
