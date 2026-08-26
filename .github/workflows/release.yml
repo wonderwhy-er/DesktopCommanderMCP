@@ -280,9 +280,10 @@ jobs:
           test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
           if [ "$REHEARSAL" = "true" ]; then
             if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              # --generate-notes so the draft previews exactly what a real
+              # release's auto-generated notes would look like
               gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
-                --title "REHEARSAL — $TAG" \
-                --notes "Rehearsal run — draft only, never publish this release. Delete it (and the $TAG tag) after inspecting the .mcpb asset."
+                --title "REHEARSAL — $TAG" --generate-notes
             fi
             gh release upload "$TAG" "$MCPB" --repo "$GITHUB_REPOSITORY" --clobber
             echo "REHEARSAL: draft release with .mcpb at https://github.com/$GITHUB_REPOSITORY/releases (visible to repo collaborators only)"
