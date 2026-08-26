@@ -86,6 +86,31 @@ One ordering rule: the MCP Registry validates that the npm package exists, so
 you cannot publish a **new** version to the registry while skipping npm.
 Publish npm first, complete the registry later with `--tag=`.
 
+## Rehearsal — test the pipeline without releasing
+
+```bash
+npm run release:rehearsal
+```
+
+Force-pushes a `test-v<version>` tag at your current HEAD (any branch). CI runs
+the **entire pipeline in safety mode**: MCPB is built for real, `npm publish
+--dry-run` (tarball contents in the log, nothing uploaded), the GitHub release
+is created as a **draft** with the `.mcpb` attached (invisible without repo
+write access), and the registry step validates `server.json` and proves the
+OIDC login without publishing.
+
+Use it to validate workflow changes before they reach main — tag-triggered
+runs execute the workflow file at the tagged commit, so your branch's copy is
+what runs. Repeatable: re-running force-moves the same tag.
+
+Afterwards: check the run summary, optionally download the `.mcpb` from the
+draft and install it in Claude Desktop, then clean up:
+
+```bash
+gh release delete test-vX.Y.Z --yes
+git push origin :refs/tags/test-vX.Y.Z && git tag -d test-vX.Y.Z
+```
+
 ## When a release fails mid-way
 
 Click **"Re-run failed jobs"** on the failed Actions run. Publish steps are

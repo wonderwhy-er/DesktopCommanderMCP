@@ -149,6 +149,7 @@ function parseArgs() {
         alpha: false,
         help: false,
         yes: false,
+        rehearsal: false,
         // These switch to dispatch mode: the release runs in CI via
         // `gh workflow run` so the skip flags reach the workflow inputs.
         skipNpm: false,
@@ -166,6 +167,7 @@ function parseArgs() {
             case '--dry-run': options.dryRun = true; break;
             case '--yes':
             case '-y': options.yes = true; break;
+            case '--rehearsal': options.rehearsal = true; break;
             case '--skip-npm': options.skipNpm = true; break;
             case '--skip-registry': options.skipRegistry = true; break;
             case '--skip-github-release': options.skipGithubRelease = true; break;
@@ -199,6 +201,9 @@ function showHelp() {
     console.log('  --alpha         Alpha release: publish to npm (alpha tag) from this');
     console.log('                  machine, no git tag, no CI (needs npm login)');
     console.log('  --dry-run       Show what would happen without changing anything');
+    console.log('  --rehearsal     Push a test-vX.Y.Z tag: CI runs the whole pipeline in');
+    console.log('                  safety mode (npm dry-run, DRAFT release, registry');
+    console.log('                  validate+login only) — nothing is published');
     console.log('  --yes, -y       Skip the confirmation prompt');
     console.log('  --help, -h      Show this help message');
     console.log('');
@@ -284,11 +289,63 @@ async function dispatchRelease(options) {
     printInfo(`Watch it: ${REPO_URL}/actions/workflows/release.yml`);
 }
 
+/**
+ * Rehearsal: force-push a test-v<version> tag at the current HEAD. CI runs the
+ * full pipeline in safety mode — npm publish --dry-run, DRAFT GitHub release,
+ * registry validate + OIDC login without publish. Works from any branch, so a
+ * changed workflow can be tested before it reaches main (tag-triggered runs
+ * use the workflow file at the tagged commit).
+ */
+async function rehearsalRelease(options) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    const tag = `test-v${pkg.version}`;
+    const branch = execSilent('git rev-parse --abbrev-ref HEAD', { ignoreError: true }).trim();
+    const dirty = execSilent('git status --porcelain', { ignoreError: true }).trim();
+
+    printStep(`Rehearsal: run the release pipeline in CI without publishing anything.`);
+    printInfo(`Tag ${tag} will be force-pushed at HEAD of "${branch}" — CI runs THAT commit's workflow.`);
+    printInfo('CI will: build the MCPB, npm publish --dry-run, create a DRAFT release');
+    printInfo('with the .mcpb attached, validate server.json, and prove the registry');
+    printInfo('OIDC login. Nothing is published anywhere.');
+    if (dirty) {
+        printWarning('Working tree has uncommitted changes — they will NOT be part of the rehearsal (the tag points at the last commit).');
+    }
+    console.log('');
+
+    if (options.dryRun) {
+        printWarning(`DRY RUN - would run: git tag -f ${tag} && git push -f origin ${tag}`);
+        return;
+    }
+
+    if (!options.yes && !(await confirm(`Push rehearsal tag ${tag} now?`))) {
+        printWarning('Aborted, nothing was done.');
+        return;
+    }
+
+    exec(`git tag -f ${tag}`);
+    exec(`git push -f origin ${tag}`);
+    printSuccess(`Rehearsal started for ${tag}`);
+    printInfo(`Watch it: ${REPO_URL}/actions/workflows/release.yml`);
+    console.log('');
+    console.log('When done, inspect the draft release and the npm dry-run log, then clean up:');
+    console.log(`  gh release delete ${tag} --yes`);
+    console.log(`  git push origin :refs/tags/${tag} && git tag -d ${tag}`);
+}
+
 async function publishRelease() {
     const options = parseArgs();
 
     if (options.help) {
         showHelp();
+        return;
+    }
+
+    if (options.rehearsal) {
+        if (options.alpha || options.tag || options.skipNpm || options.skipRegistry || options.skipGithubRelease) {
+            printError('--rehearsal cannot be combined with --alpha, --tag, or skip flags.');
+            process.exit(1);
+        }
+        await rehearsalRelease(options);
         return;
     }
 

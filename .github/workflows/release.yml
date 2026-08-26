@@ -15,6 +15,15 @@
 # scanner ingests it from there) → npm publish → MCP Registry publish (OIDC,
 # no secrets).
 #
+# REHEARSAL MODE: a `test-vX.Y.Z` tag (or `npm run release:rehearsal`) runs the
+# whole pipeline with every publish neutered: npm publish --dry-run, the GitHub
+# release is created as a DRAFT (invisible without repo write access), and the
+# registry step validates + performs the OIDC login but never publishes.
+# Use it to validate workflow changes end-to-end before a real release —
+# rehearsal tags run the workflow file at the tagged commit, so a feature
+# branch's copy can be tested before it ever reaches main. Clean up after:
+# delete the draft release and the test tag.
+#
 # Re-running after a mid-way failure: use the "Re-run failed jobs" button on
 # the failed run, or Run workflow with `tag` = the existing tag (dispatch from
 # main). Every publish step skips targets that already have the version, so
@@ -29,7 +38,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'test-v*']
   workflow_dispatch:
     inputs:
       bump:
@@ -79,8 +88,9 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Three entry paths:
-      #   push of a v* tag        → mode=tag, release that tag
+      # Four entry paths:
+      #   push of a v* tag         → mode=tag, release that tag
+      #   push of a test-v* tag    → mode=tag + rehearsal (nothing publishes)
       #   dispatch with tag=vX.Y.Z → mode=tag, re-release that tag
       #   dispatch with bump=...   → mode=cut, bump+tag main here in CI
       - name: Resolve release mode
@@ -101,20 +111,37 @@ jobs:
           else
             echo "Provide 'tag' (re-release an existing tag) or 'bump' (cut a new release)"; exit 1
           fi
+          REHEARSAL=false
+          case "$TAG" in
+            test-v*) REHEARSAL=true ;;
+          esac
           if [ "$MODE" = "tag" ]; then
-            case "$TAG" in
-              v[0-9]*.[0-9]*.[0-9]*) ;;
-              *) echo "'$TAG' is not a release tag (expected vX.Y.Z)"; exit 1 ;;
-            esac
-            case "$TAG" in
-              *-*) echo "'$TAG' looks like a pre-release; this workflow publishes stable releases only"; exit 1 ;;
-            esac
+            if [ "$REHEARSAL" = "true" ]; then
+              case "$TAG" in
+                test-v[0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "'$TAG' is not a rehearsal tag (expected test-vX.Y.Z)"; exit 1 ;;
+              esac
+            else
+              case "$TAG" in
+                v[0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "'$TAG' is not a release tag (expected vX.Y.Z)"; exit 1 ;;
+              esac
+              case "$TAG" in
+                *-*) echo "'$TAG' looks like a pre-release; this workflow publishes stable releases only"; exit 1 ;;
+              esac
+            fi
             echo "ref=$TAG" >> "$GITHUB_OUTPUT"
           else
             echo "ref=main" >> "$GITHUB_OUTPUT"
           fi
-          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "::notice::REHEARSAL MODE — nothing will be published"
+          fi
+          {
+            echo "mode=$MODE"
+            echo "tag=$TAG"
+            echo "rehearsal=$REHEARSAL"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -173,14 +200,20 @@ jobs:
 
       # Single source of truth for the rest of the job. In tag mode this also
       # asserts the tag was cut correctly — stop before anything publishes.
+      # A rehearsal tag test-vX.Y.Z must match version X.Y.Z the same way.
       - name: Determine release version
         id: ver
         env:
           MODE: ${{ steps.mode.outputs.mode }}
           EXPECTED_TAG: ${{ steps.mode.outputs.tag }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          TAG="v$VERSION"
+          if [ "$REHEARSAL" = "true" ]; then
+            TAG="test-v$VERSION"
+          else
+            TAG="v$VERSION"
+          fi
           if [ "$MODE" = "tag" ] && [ "$TAG" != "$EXPECTED_TAG" ]; then
             echo "Version mismatch: tag=$EXPECTED_TAG but package.json=$VERSION"; exit 1
           fi
@@ -206,7 +239,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: npm publish --dry-run (packs the tarball, uploads nothing)"
+            npm publish --dry-run
+            exit 0
+          fi
           if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
             echo "npm already has $VERSION — skipping publish"
           else
@@ -217,7 +256,11 @@ jobs:
         if: ${{ !inputs.skip_npm }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: nothing was published, skipping npm verification"; exit 0
+          fi
           for i in 1 2 3 4 5; do
             if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
               echo "npm has $VERSION"; exit 0
@@ -231,9 +274,20 @@ jobs:
         env:
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
           MCPB="desktop-commander-$VERSION.mcpb"
           test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
+          if [ "$REHEARSAL" = "true" ]; then
+            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                --title "REHEARSAL — $TAG" \
+                --notes "Rehearsal run — draft only, never publish this release. Delete it (and the $TAG tag) after inspecting the .mcpb asset."
+            fi
+            gh release upload "$TAG" "$MCPB" --repo "$GITHUB_REPOSITORY" --clobber
+            echo "REHEARSAL: draft release with .mcpb at https://github.com/$GITHUB_REPOSITORY/releases (visible to repo collaborators only)"
+            exit 0
+          fi
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "Release Notes — $TAG" --generate-notes --verify-tag
@@ -253,7 +307,15 @@ jobs:
         if: ${{ !inputs.skip_registry }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: validate + OIDC login only, no publish"
+            ./mcp-publisher validate server.json
+            ./mcp-publisher login github-oidc
+            echo "REHEARSAL: OIDC login succeeded — skipping publish"
+            exit 0
+          fi
           # Registry versions are immutable; a re-run after a successful publish
           # must skip instead of failing on the duplicate. The exact-version
           # endpoint returns 200 when the version exists, 404 when it doesn't.
@@ -269,7 +331,11 @@ jobs:
         if: ${{ !inputs.skip_registry }}
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: nothing was published, skipping registry verification"; exit 0
+          fi
           for i in 1 2 3 4 5; do
             if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
               echo "registry has $VERSION"; exit 0
@@ -282,11 +348,20 @@ jobs:
         env:
           TAG: ${{ steps.ver.outputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
         run: |
           {
-            echo "## Release $TAG"
-            echo "- npm: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander/v/$VERSION"
-            echo "- GitHub release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
-            echo "- MCPB asset: desktop-commander-$VERSION.mcpb (picked up by the Claude directory scanner)"
-            echo "- MCP Registry: io.github.wonderwhy-er/desktop-commander @ $VERSION"
+            if [ "$REHEARSAL" = "true" ]; then
+              echo "## 🎭 REHEARSAL $TAG — nothing was published"
+              echo "- npm: dry-run only (tarball contents in the publish step log)"
+              echo "- GitHub release: DRAFT with the .mcpb asset — inspect, then delete it and the tag:"
+              echo "  \`gh release delete $TAG --yes && git push origin :refs/tags/$TAG\`"
+              echo "- MCP Registry: validated + OIDC login proven, not published"
+            else
+              echo "## Release $TAG"
+              echo "- npm: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander/v/$VERSION"
+              echo "- GitHub release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+              echo "- MCPB asset: desktop-commander-$VERSION.mcpb (picked up by the Claude directory scanner)"
+              echo "- MCP Registry: io.github.wonderwhy-er/desktop-commander @ $VERSION"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
