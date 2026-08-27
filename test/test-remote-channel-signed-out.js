@@ -62,6 +62,19 @@ class FakeAuth {
   async getSession() {
     return { data: { session: this.session }, error: null };
   }
+  /** Queue of results for refreshSession(); each call shifts one. */
+  refreshSessionResults = [];
+  refreshSessionCalls = [];
+  async refreshSession(payload) {
+    this.refreshSessionCalls.push(payload);
+    const next = this.refreshSessionResults.shift();
+    if (next && next.error) {
+      this.session = null;
+      return { data: { session: null, user: null }, error: next.error };
+    }
+    this.session = { access_token: 'eyJ-refreshed', refresh_token: 'rt-refreshed' };
+    return { data: { session: this.session, user: { id: 'user-1' } }, error: null };
+  }
   async getUser() {
     return { data: { user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
   }
@@ -216,6 +229,65 @@ async function main() {
 
     assert.strictEqual(rc.sessionLost, true, 'expected the session to be marked lost');
     assert.strictEqual(client.channels.length, channelsBefore, 'no channel may be created after the session is lost');
+  });
+
+  // --- SIGNED_OUT while the access token is still unexpired (the common case) ---
+  //
+  // auth-js refreshes at <=3 ticks (90s) before expiry, so when the refresh 400s
+  // and SIGNED_OUT fires the cached JWT still has 60-90s left. setSession() with
+  // an unexpired JWT never touches the refresh token: it calls _getUser() and
+  // THROWS on error instead of returning { error }.
+
+  await test('SIGNED_OUT restore that throws (unexpired JWT, revoked session) still ends offline', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.auth.setSession = async (payload) => {
+      client.auth.setSessionCalls.push(payload);
+      throw Object.assign(new Error('session_not_found'), { status: 403, name: 'AuthApiError' });
+    };
+    client.auth.refreshSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
+    const stale = client.channel('user:user-1');
+    stale.state = 'errored';
+    rc.channel = stale;
+
+    const { lines } = await withQuietLogs(async () => {
+      client.auth.emit('SIGNED_OUT');
+      await flush(10);
+    });
+
+    assert.strictEqual(rc.sessionLost, true, 'a thrown restore must count as a failed restore');
+    assert.strictEqual(rc.channel, null, 'channel must be torn down after a thrown restore');
+    assert.strictEqual(lines.filter((l) => l.includes('Remote session expired')).length, 1, 'notice must print');
+  });
+
+  await test('SIGNED_OUT restore must validate the refresh token, not just the unexpired JWT', async () => {
+    // GoTrue may still accept the JWT for /user while the refresh family is
+    // already revoked. Reporting "recovered" here is a false positive: the next
+    // tick 400s again and the process loops until the JWT expires.
+    const { rc, client } = makeRemoteChannel();
+    client.auth.setSessionResults = [{ error: null }]; // JWT accepted, refresh token never checked
+    client.auth.refreshSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
+
+    const { lines } = await withQuietLogs(async () => {
+      client.auth.emit('SIGNED_OUT');
+      await flush(10);
+    });
+
+    assert.strictEqual(rc.sessionLost, true, 'a dead refresh token must not be reported as recovered');
+    assert.strictEqual(lines.filter((l) => l.includes('restored')).length, 0, 'no false "restored" line');
+  });
+
+  await test('SIGNED_OUT restore succeeds only when the refresh token is actually renewed', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.auth.setSessionResults = [{ error: null }];
+    client.auth.refreshSessionResults = [{ error: null }];
+
+    await withQuietLogs(async () => {
+      client.auth.emit('SIGNED_OUT');
+      await flush(10);
+    });
+
+    assert.strictEqual(rc.sessionLost, false);
+    assert.strictEqual(rc.lastKnownSession.refresh_token, 'rt-refreshed', 'cached pair must be the renewed one, not the replayed one');
   });
 
   await test('session loss tears down the existing channel and socket (kills realtime-js rejoin)', async () => {
