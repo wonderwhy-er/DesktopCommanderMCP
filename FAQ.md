@@ -281,9 +281,9 @@ This makes it particularly useful for onboarding to new projects or reviewing un
 
 Claude Desktop Commander has a sophisticated system for managing commands and operations that may take a while to complete:
 
-1. The `execute_command` function returns after a timeout with initial output
+1. The `start_process` function returns after a timeout with initial output
 2. The command continues running in the background
-3. You can use `read_output` with the PID to get new output as it becomes available
+3. You can use `read_process_output` with the PID to get new output as it becomes available
 4. You can use `force_terminate` to stop the command if needed
 
 For search operations:

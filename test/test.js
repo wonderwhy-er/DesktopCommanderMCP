@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { configManager } from '../dist/config-manager.js';
+import { runTest } from './exit-on-failure.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,8 +92,5 @@ export default async function runTests() {
 
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
-runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-});
+runTest(runTests);
 }

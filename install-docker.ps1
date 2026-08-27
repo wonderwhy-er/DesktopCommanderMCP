@@ -731,7 +731,7 @@ function Show-Status {
         Write-Info "Run reset and reinstall to fix this"
     } else {
         Write-Error "No volumes found - please run full installation"
-        Write-Info "Run: .\install-docker-clean.ps1"
+        Write-Info "Run: .\install-docker.ps1"
     }
 }function Reset-Installation {
     Write-Header
@@ -785,7 +785,7 @@ function Show-Status {
         }
         Write-Host ""
         Write-Info "To reinstall after reset:"
-        Write-Info "Run: .\install-docker-clean.ps1"
+        Write-Info "Run: .\install-docker.ps1"
     } else {
         Write-Info "Reset cancelled"
     }
@@ -795,11 +795,11 @@ function Show-Help {
     Write-Host "Desktop Commander Docker Installation (Enhanced)" -ForegroundColor Blue
     Write-Host ""
     Write-Host "Usage:"
-    Write-Host "  .\install-docker-clean.ps1                 - Interactive installation with folder selection"
-    Write-Host "  .\install-docker-clean.ps1 -Status         - Check installation status"
-    Write-Host "  .\install-docker-clean.ps1 -Reset          - Reset all data"
-    Write-Host "  .\install-docker-clean.ps1 -VerboseOutput  - Show detailed output"
-    Write-Host "  .\install-docker-clean.ps1 -Help           - Show this help"
+    Write-Host "  .\install-docker.ps1                 - Interactive installation with folder selection"
+    Write-Host "  .\install-docker.ps1 -Status         - Check installation status"
+    Write-Host "  .\install-docker.ps1 -Reset          - Reset all data"
+    Write-Host "  .\install-docker.ps1 -VerboseOutput  - Show detailed output"
+    Write-Host "  .\install-docker.ps1 -Help           - Show this help"
     Write-Host ""
     Write-Host "Features:"
     Write-Host "  - Interactive folder selection (like Mac version)"
@@ -809,8 +809,8 @@ function Show-Help {
     Write-Host ""
     Write-Host "Troubleshooting:"
     Write-Host "If you broke the Docker container or need a fresh start:"
-    Write-Host "  .\install-docker-clean.ps1 -Reset"
-    Write-Host "  .\install-docker-clean.ps1"
+    Write-Host "  .\install-docker.ps1 -Reset"
+    Write-Host "  .\install-docker.ps1"
     Write-Host ""
     Write-Host "This will completely reset your persistent environment and reinstall everything fresh."
 }
@@ -873,12 +873,12 @@ function Start-Installation {
     
     Write-Host ""
     Write-Info "To refresh/reset your persistent environment:"
-    Write-Info "- Run: .\install-docker-clean.ps1 -Reset"
+    Write-Info "- Run: .\install-docker.ps1 -Reset"
     Write-Info "- This removes all installed packages and resets everything"
     Write-Host ""
     Write-Info "If you broke the Docker container or need a fresh start:"
-    Write-Info "- Run: .\install-docker-clean.ps1 -Reset"
-    Write-Info "- Then: .\install-docker-clean.ps1"
+    Write-Info "- Run: .\install-docker.ps1 -Reset"
+    Write-Info "- Then: .\install-docker.ps1"
     Write-Info "- This will reset everything and reinstall from scratch"
     Write-Host ""
     Write-Info "Claude Desktop has been automatically restarted (if possible)"

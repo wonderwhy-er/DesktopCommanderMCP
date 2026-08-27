@@ -47,7 +47,7 @@ const TURN_OFF_FEEDBACK_INSTRUCTION = "*This request disappears after you give f
 // Tool categories mapping
 const TOOL_CATEGORIES = {
   filesystem: ['read_file', 'read_multiple_files', 'write_file', 'create_directory', 'list_directory', 'move_file', 'get_file_info'],
-  terminal: ['execute_command', 'read_output', 'force_terminate', 'list_sessions'],
+  terminal: ['start_process', 'read_process_output', 'interact_with_process', 'force_terminate', 'list_sessions'],
   edit: ['edit_block'],
   search: ['start_search', 'get_more_search_results', 'stop_search', 'list_searches'],
   config: ['get_config', 'set_config_value'],

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_COMMAND_TIMEOUT } from "../config.js";
 
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
@@ -26,7 +27,7 @@ export const ListProcessesArgsSchema = z.object({});
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
-  timeout_ms: z.number(),
+  timeout_ms: z.number().optional().default(DEFAULT_COMMAND_TIMEOUT),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
   // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
@@ -35,7 +36,7 @@ export const StartProcessArgsSchema = z.object({
 });
 
 export const ReadProcessOutputArgsSchema = z.object({
-  pid: z.number(),
+  pid: z.number().int().positive(),
   timeout_ms: z.number().optional(),
   offset: z.number().optional(),   // Line offset: 0=from last read, positive=absolute, negative=tail
   length: z.number().optional(),   // Max lines to return (default from config.fileReadLineLimit)
@@ -43,13 +44,13 @@ export const ReadProcessOutputArgsSchema = z.object({
 });
 
 export const ForceTerminateArgsSchema = z.object({
-  pid: z.number(),
+  pid: z.number().int().positive(),
 });
 
 export const ListSessionsArgsSchema = z.object({});
 
 export const KillProcessArgsSchema = z.object({
-  pid: z.number(),
+  pid: z.number().int().positive(),
 });
 
 // Filesystem tools schemas
@@ -57,7 +58,8 @@ export const ReadFileArgsSchema = z.object({
   path: z.string(),
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
-  length: z.number().optional().default(1000),
+  // Leave this unset so the handler can apply config.fileReadLineLimit.
+  length: z.number().optional(),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional(),
