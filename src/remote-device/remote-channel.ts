@@ -82,14 +82,16 @@ const SOCKET_SETTLE_POLL_MS = 20;
 
 // auth-js compares token expiry against this device's own Date.now(), with no
 // clock-skew tolerance — a fast clock treats every fresh token as expired and
-// refreshes forever (confirmed in prod: 9,300+ refreshes/24h on one device,
-// via at least 3 separate check sites, not all gated by autoRefreshToken).
+// refreshes forever (confirmed in prod on one device, via at least 3 separate
+// check sites, not all gated by autoRefreshToken).
 // Rather than chase each check, fix the shared input: every Supabase response
 // carries a `Date` header (RFC 7231, the server's own clock), so a fetch
 // wrapper passed via `global.fetch` corrects Date.now for this process off of
 // that, continuously — covers every current and future check without needing
-// to know where they live. Scoped to Date.now, not `new Date()`, so
-// last_seen/telemetry timestamps stay on the device's real clock.
+// to know where they live. Also shifts capture.ts telemetry timestamps
+// (Date.now-based) onto server time, which is desirable: GA4 drops
+// future-dated events, so a fast-clock device loses its telemetry otherwise.
+// `new Date()` is untouched.
 const rawDateNow = Date.now;
 let clockOffsetMs = 0;
 let clockPatched = false;
