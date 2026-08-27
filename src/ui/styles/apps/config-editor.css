@@ -105,6 +105,19 @@ body {
   gap: 8px;
 }
 
+/* Inline "Saved" confirmation text, shown next to the control that changed. */
+.setting-save-status {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--cfg-muted);
+}
+
+.setting-save-status[hidden] {
+  display: none;
+}
+
 .setting-inline-input {
   width: 120px;
   box-sizing: border-box;

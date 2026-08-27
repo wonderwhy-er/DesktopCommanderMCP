@@ -77,7 +77,7 @@ import {
     FILE_PREVIEW_RESOURCE_URI,
 } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
-import { shouldShowMcpUiPreviews } from './utils/mcp-ui-ab-test.js';
+import { shouldShowMcpUi } from './utils/mcp-ui.js';
 
 // Store startup messages to send after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -300,7 +300,7 @@ function shouldIncludeTool(toolName: string): boolean {
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
-        const showMcpUiPreviews = await shouldShowMcpUiPreviews();
+        const showMcpUiPreviews = await shouldShowMcpUi();
 
         // Build complete tools array
         const allTools = [
@@ -315,6 +315,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (max lines for read_file, default 1000)
                         - fileWriteLineLimit (max lines per write_file call, default 50)
                         - telemetryEnabled (boolean for telemetry opt-in/out)
+                        - showMcpUI (boolean — explicit on/off for interactive UI widgets; shown when unset)
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
@@ -342,7 +343,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
-                        
+                        - showMcpUI (boolean — set false to disable interactive UI widgets, true to always show them; takes effect after the client app restarts the MCP server)
+
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
                         
@@ -1305,6 +1307,12 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
+            // Capture the value only for showMcpUI so we can tell on vs off
+            // (boolean key, no path/PII concern). Other config keys may hold
+            // paths or free text, so we keep tracking key-name only for those.
+            if ((args as any).key === 'showMcpUI') {
+                telemetryData.set_config_value_bool = String((args as any).value);
+            }
         }
         if (name === 'get_prompts' && args && typeof args === 'object') {
             const promptArgs = args as any;
