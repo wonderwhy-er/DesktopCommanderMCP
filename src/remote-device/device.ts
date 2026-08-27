@@ -40,10 +40,9 @@ export class MCPDevice {
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
         // Default ON. Off meant a full re-authorization on every start, and each
-        // one mints a fresh GoTrue session that nothing ever revokes — 364k live
-        // sessions across 21k users, whose orphaned refresh-token families get
-        // replayed, trip GoTrue's reuse detection, and take the whole family down
-        // including the token a healthy connector is holding.
+        // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
+        // refresh-token families get replayed, trip GoTrue's reuse detection, and
+        // take the whole family down including the token a healthy connector holds.
         this.persistSession = options.persistSession ?? true;
 
         // Initialize desktop integration
