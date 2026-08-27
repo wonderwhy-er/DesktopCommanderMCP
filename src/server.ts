@@ -70,6 +70,7 @@ import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/
 
 import { VERSION } from './version.js';
 import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
+import { dedent } from './utils/dedent.js';
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
@@ -307,7 +308,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // Configuration tools
             {
                 name: "get_config",
-                description: `
+                description: dedent`
                         Get the complete server configuration as JSON. Config includes fields for:
                         - blockedCommands (array of blocked shell commands)
                         - defaultShell (shell to use for commands)
@@ -329,7 +330,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "set_config_value",
-                description: `
+                description: dedent`
                         Set a specific configuration value by key.
                         
                         WARNING: Should be used in a separate chat from file operations and 
@@ -359,7 +360,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // Filesystem tools
             {
                 name: "read_file",
-                description: `
+                description: dedent`
                         Read contents from files and URLs.
                         Read PDF files and extract content as markdown and images.
                         
@@ -424,7 +425,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "read_multiple_files",
-                description: `
+                description: dedent`
                         Read the contents of multiple files simultaneously.
                         
                         Each file's content is returned with its path as a reference.
@@ -444,7 +445,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "write_file",
-                description: `
+                description: dedent`
                         Write or append to file contents.
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
@@ -493,7 +494,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "write_pdf",
-                description: `
+                description: dedent`
                         Create a new PDF file or modify an existing one.
 
                         THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING PDF FILES.
@@ -555,7 +556,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "create_directory",
-                description: `
+                description: dedent`
                         Create a new directory or ensure a directory exists.
                         
                         Can create multiple nested directories in one operation.
@@ -572,7 +573,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "list_directory",
-                description: `
+                description: dedent`
                         Get a detailed listing of all files and directories in a specified path.
                         
                         Use this instead of 'execute_command' with ls/dir commands.
@@ -612,7 +613,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "move_file",
-                description: `
+                description: dedent`
                         Move or rename files and directories.
                         
                         Can move files between directories and rename them in a single operation.
@@ -630,7 +631,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "start_search",
-                description: `
+                description: dedent`
                         Start a streaming search that can return results progressively.
                         
                         SEARCH STRATEGY GUIDE:
@@ -717,7 +718,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "get_more_search_results",
-                description: `
+                description: dedent`
                         Get more results from an active search with offset-based pagination.
                         
                         Supports partial result reading with:
@@ -747,7 +748,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "stop_search",
-                description: `
+                description: dedent`
                         Stop an active search.
                         
                         Stops the background search process gracefully. Use this when you've found
@@ -767,7 +768,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "list_searches",
-                description: `
+                description: dedent`
                         List all active searches.
                         
                         Shows search IDs, search types, patterns, status, and runtime.
@@ -783,7 +784,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "get_file_info",
-                description: `
+                description: dedent`
                         Retrieve detailed metadata about a file or directory including:
                         - size
                         - creation time
@@ -810,7 +811,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // Editing tools
             {
                 name: "edit_block",
-                description: `
+                description: dedent`
                         Apply surgical edits to files.
 
                         BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
@@ -876,7 +877,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             // Terminal tools
             {
                 name: "start_process",
-                description: `
+                description: dedent`
                         Start a new terminal process with intelligent state detection.
                         
                         PRIMARY TOOL FOR FILE ANALYSIS AND DATA PROCESSING
@@ -949,7 +950,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "read_process_output",
-                description: `
+                description: dedent`
                         Read output from a running process with file-like pagination support.
                         
                         Supports partial output reading with offset and length parameters (like read_file):
@@ -990,7 +991,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "interact_with_process",
-                description: `
+                description: dedent`
                         Send input to a running process and automatically receive the response.
                         
                         CRITICAL: THIS IS THE PRIMARY TOOL FOR ALL LOCAL FILE ANALYSIS
@@ -1057,7 +1058,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "force_terminate",
-                description: `
+                description: dedent`
                         Force terminate a running terminal session.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -1071,7 +1072,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "list_sessions",
-                description: `
+                description: dedent`
                         List all active terminal sessions.
                         
                         Shows session status including:
@@ -1093,7 +1094,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "list_processes",
-                description: `
+                description: dedent`
                         List all running processes.
                         
                         Returns process information including PID, command name, CPU usage, and memory usage.
@@ -1107,7 +1108,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "kill_process",
-                description: `
+                description: dedent`
                         Terminate a running process by PID.
 
                         Use with caution as this will forcefully terminate the specified process.
@@ -1123,7 +1124,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "get_usage_stats",
-                description: `
+                description: dedent`
                         Get usage statistics for debugging and analysis.
                         
                         Returns summary of tool usage, success/failure rates, and performance metrics.
@@ -1137,7 +1138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "get_recent_tool_calls",
-                description: `
+                description: dedent`
                         Get recent tool call history with their arguments and outputs.
                         Returns chronological list of tool calls made during this session.
                         
@@ -1158,7 +1159,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "give_feedback_to_desktop_commander",
-                description: `
+                description: dedent`
                         Open feedback form in browser to provide feedback about Desktop Commander.
                         
                         IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
@@ -1200,7 +1201,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "get_prompts",
-                description: `
+                description: dedent`
                         Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
                         
                         SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
