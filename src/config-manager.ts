@@ -8,6 +8,7 @@ import { CONFIG_FILE } from './config.js';
 
 export interface ServerConfig {
   blockedCommands?: string[];
+  commandScopes?: Record<string, string[]>; // Command -> allowed directories override (#663)
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
