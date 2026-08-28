@@ -176,6 +176,10 @@ function parseArgs() {
             default:
                 if (arg.startsWith('--tag=')) {
                     options.tag = arg.slice('--tag='.length);
+                    if (!options.tag) {
+                        printError('--tag= requires a value, e.g. --tag=v0.2.48');
+                        process.exit(1);
+                    }
                     break;
                 }
                 printError(`Unknown option: ${arg}`);

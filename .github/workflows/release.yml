@@ -83,7 +83,7 @@ env:
   GITHUB_TOKEN: ${{ github.token }}
   # Chrome is never launched in this workflow (puppeteer is a transitive dep).
   PUPPETEER_SKIP_DOWNLOAD: '1'
-  REGISTRY_VERSION_URL: 'https://registry.modelcontextprotocol.io/v0/servers/io.github.wonderwhy-er%2Fdesktop-commander/versions'
+  REGISTRY_VERSION_URL: 'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.wonderwhy-er%2Fdesktop-commander/versions'
 
 jobs:
   release:
