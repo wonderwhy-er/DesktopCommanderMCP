@@ -219,21 +219,45 @@ export class RemoteChannel {
             const cached = this.lastKnownSession;
             if (cached?.refresh_token && this.client) {
                 console.debug('[DEBUG] SIGNED_OUT — attempting one session restore');
-                const { error } = await this.client.auth.setSession({
-                    access_token: cached.access_token,
-                    refresh_token: cached.refresh_token,
-                });
-                if (!error) {
-                    console.log('   - ✅ Remote session restored after a transient sign-out');
-                    await captureRemote('remote_channel_signed_out_recovered', {});
-                    return;
+                let restoreError: any = null;
+                try {
+                    const { error } = await this.client.auth.setSession({
+                        access_token: cached.access_token,
+                        refresh_token: cached.refresh_token,
+                    });
+                    restoreError = error ?? null;
+                    if (!restoreError) {
+                        // auth-js refreshes ahead of expiry, so on SIGNED_OUT the cached
+                        // JWT is usually still unexpired — setSession() then never touches
+                        // the refresh endpoint, and a revoked refresh token would come back
+                        // "restored" only to 400 again on the next tick. Force a real
+                        // refresh so restore succeeds only with a live refresh token.
+                        const { data, error: refreshError } = await this.client.auth.refreshSession();
+                        restoreError = refreshError ?? null;
+                        if (!restoreError) {
+                            const renewed = data?.session;
+                            if (renewed?.access_token) {
+                                this.lastKnownSession = {
+                                    access_token: renewed.access_token,
+                                    refresh_token: renewed.refresh_token ?? cached.refresh_token,
+                                };
+                            }
+                            console.log('   - ✅ Remote session restored after a transient sign-out');
+                            await captureRemote('remote_channel_signed_out_recovered', {});
+                            return;
+                        }
+                    }
+                } catch (thrown: any) {
+                    // setSession() with an unexpired JWT validates via _getUser() and
+                    // THROWS on error instead of returning { error }.
+                    restoreError = thrown;
                 }
                 await captureRemote('remote_channel_session_restore_failed', {
-                    errorName: (error as any)?.name ?? null,
-                    errorStatus: (error as any)?.status ?? null,
-                    errorMessage: error.message ?? null,
+                    errorName: restoreError?.name ?? null,
+                    errorStatus: restoreError?.status ?? null,
+                    errorMessage: restoreError?.message ?? null,
                 });
-                console.debug(`[DEBUG] Session restore failed: ${error.message}`);
+                console.debug(`[DEBUG] Session restore failed: ${restoreError?.message}`);
             }
 
             this.sessionLost = true;
