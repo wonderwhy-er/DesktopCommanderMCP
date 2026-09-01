@@ -75,9 +75,6 @@ const SOCKET_SETTLE_POLL_MS = 20;
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
     private channel: RealtimeChannel | null = null;
-    /** Legacy listener, on its own public channel so a private-channel auth
-     * failure can't take both transports down. Removed at the flip (009). */
-    private legacyChannel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private connectionCheckInterval: NodeJS.Timeout | null = null;
     /** Device the heartbeat timer maintains; null = stopped, so re-arm is inert. */
@@ -273,9 +270,6 @@ export class RemoteChannel {
             // Create and subscribe to the channel
             console.debug('[DEBUG] Calling createChannel()');
 
-            // Independent safety net for the doorbell transport.
-            this.createLegacyChannel();
-
             await this.createChannel().catch((error) => {
                 console.debug(`[DEBUG] Failed to create channel, will retry after socket reconnect: ${error?.message || error} — ${this.connState()}`);
             });
@@ -333,10 +327,11 @@ export class RemoteChannel {
         }
 
         this.presenceTracked = false;
-        console.error('❌ Presence track failed after retries — reverting to the legacy transport tier');
+        console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
         captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
         // Withdraw: a stale flag with no presence makes the server refuse to
-        // dispatch at all. The legacy tier keeps the device usable.
+        // dispatch at all. The faster heartbeat tier keeps the device's status
+        // accurate for the DB-status fallback while it recovers.
         await this.setTransportCapable(false);
     }
 
@@ -371,7 +366,7 @@ export class RemoteChannel {
                 return;
             }
             this.transportCapableWritten = capable;
-            console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'legacy'}`);
+            console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
             // Tier changed — move last_seen onto the cadence that tier's sweep
             // threshold expects (no-op if the heartbeat hasn't started yet).
             this.scheduleHeartbeat();
@@ -383,45 +378,6 @@ export class RemoteChannel {
         } catch (error: any) {
             console.error('[DEBUG] Transport capability update threw:', error?.message);
         }
-    }
-
-    /**
-     * Legacy postgres_changes listener on its own public channel. Best-effort:
-     * failures are logged, never thrown. Removed at the flip (009).
-     */
-    private createLegacyChannel(): void {
-        if (!this.client || !this.user?.id) return;
-        try {
-            this.legacyChannel = this.client
-                .channel('device_tool_call_queue')
-                .on(
-                    'postgres_changes' as any,
-                    {
-                        event: 'INSERT',
-                        schema: 'public',
-                        table: 'mcp_remote_calls',
-                        filter: `user_id=eq.${this.user.id}`
-                    },
-                    (payload: any) => {
-                        console.debug('[DEBUG] Realtime event received, payload:', payload?.new?.id);
-                        this.dispatchToolCall(payload);
-                    }
-                )
-                .subscribe((status: string) => {
-                    console.debug(`[DEBUG] Legacy channel status: ${status}`);
-                });
-        } catch (error: any) {
-            console.debug('[DEBUG] Legacy channel subscribe failed (doorbell path unaffected):', error?.message);
-        }
-    }
-
-    /** Tear down the legacy channel (best effort). */
-    private async removeLegacyChannel(): Promise<void> {
-        if (!this.legacyChannel || !this.client) return;
-        try {
-            await this.client.removeChannel(this.legacyChannel);
-        } catch { /* best effort */ }
-        this.legacyChannel = null;
     }
 
     /** Create and subscribe the private channel (initial join and recreation). */
@@ -565,14 +521,13 @@ export class RemoteChannel {
             await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
             return;
         }
-        // Optimization, not a guard — saves a hop when the legacy path already
-        // claimed this. Exactly-once lives in device.ts (seenCallIds + DB claim).
+        // Optimization, not a guard — saves a hop on a duplicate doorbell
+        // (retry, reconnect). Exactly-once lives in device.ts (seenCallIds + DB claim).
         if (row.status !== 'pending') {
-            console.debug('[DEBUG] Doorbell call already claimed via legacy path:', callId);
+            console.debug('[DEBUG] Doorbell call already claimed:', callId);
             return;
         }
 
-        // Same payload shape as postgres_changes ({ new: row }).
         this.dispatchToolCall({ new: row });
     }
 
@@ -762,9 +717,6 @@ export class RemoteChannel {
                     await this.client!.removeChannel(this.channel);
                     this.channel = null;
                 }
-                // Rebuild the legacy channel too: it shares the socket, so a
-                // socket-level wedge takes it down with the private channel.
-                await this.removeLegacyChannel();
 
                 // FIX (core): force a brand-new WebSocket. After idle / wifi-loss the socket can
                 // be HALF-OPEN (readyState OPEN but dead); reusing it made every join TIME_OUT
@@ -776,19 +728,12 @@ export class RemoteChannel {
                 // _teardownConnection() nulls the conn.onclose that would clear
                 // it, so only an internal ~100ms fallback timer does. connect()
                 // early-returns for that whole window, so rebuilding here makes
-                // subscribe()'s socket.connect() a silent no-op and BOTH
-                // channels sit in 'joining' until the 10s join timeout — the
-                // wasted-first-recreate that left the device dark on the legacy
-                // channel too. Wait for the state to settle before rebuilding.
+                // subscribe()'s socket.connect() a silent no-op and the channel
+                // sits in 'joining' until the 10s join timeout — a wasted first
+                // recreate. Wait for the state to settle before rebuilding.
                 await this.waitForSocketSettled();
 
                 console.debug('[DEBUG] Calling createChannel() for recreation');
-                // Rebuild the legacy safety net FIRST and unconditionally: if
-                // createChannel() throws or exceeds RECREATE_TIMEOUT_MS, anything
-                // after it is skipped, which used to leave the fallback dead for
-                // the entire duration of a private-channel outage — every
-                // subsequent health tick repeating the same teardown.
-                this.createLegacyChannel();
                 await this.createChannel();
             }, RECREATE_TIMEOUT_MS, 'recreateChannel');
         } catch (err: any) {
@@ -905,15 +850,9 @@ export class RemoteChannel {
         }
     }
 
-    /**
-     * Reachable by SOME transport — the private channel or, during the
-     * transition, the independent legacy one. Gates the heartbeat and `status`:
-     * asking only about the private channel starves last_seen for a device whose
-     * legacy channel is fine, and the 45s sweep then blacks it out.
-     * Collapses to a single check at the flip (009).
-     */
+    /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined' || this.legacyChannel?.state === 'joined';
+        return this.channel?.state === 'joined';
     }
 
     /**
@@ -1175,7 +1114,7 @@ export class RemoteChannel {
         // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
         // Budget against device.ts's 5s force-exit, worst case:
-        //   250 drain + 3x300 leave + 500 session + 3000 spawnSync = 4650ms.
+        //   250 drain + 2x300 leave + 500 session + 3000 spawnSync = 4350ms.
         // In practice only the untrack bound binds — removeChannel/unsubscribe
         // set state='leaving' first, so their leave push resolves inline.
         const LEAVE_BOUND_MS = 300;
@@ -1183,7 +1122,6 @@ export class RemoteChannel {
         // heartbeat PATCH (it doesn't use the chain), but the gate above stops
         // any new one and an in-flight one started earlier.
         await Promise.race([this.statusWriteChain, this.sleep(250)]);
-        await Promise.race([this.removeLegacyChannel(), this.sleep(LEAVE_BOUND_MS)]);
         if (this.channel) {
             // Leave presence on the graceful path (socket close covers the abrupt
             // one). Bounded: a half-open socket still reports 'joined', so the
