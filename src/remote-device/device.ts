@@ -39,7 +39,11 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-        this.persistSession = options.persistSession || false;
+        // Default ON. Off meant a full re-authorization on every start, and each
+        // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
+        // refresh-token families get replayed, trip GoTrue's reuse detection, and
+        // take the whole family down including the token a healthy connector holds.
+        this.persistSession = options.persistSession ?? true;
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -202,13 +206,21 @@ export class MCPDevice {
             this.deviceId = config?.deviceId;
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
-            console.log('💾 Found persisted session for device ' + this.deviceId);
-            if (config.session) {
+            if (config.session && this.persistSession) {
+                console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
             }
 
-            console.debug('[DEBUG] No session in config');
+            // A previously saved session must not be reused on an opted-out run:
+            // it would skip the re-authorization the flag promises, and the save
+            // at the end of start() then discards a possibly-rotated refresh
+            // token — orphaning one more live server-side session.
+            if (config.session) {
+                console.debug('[DEBUG] Ignoring persisted session (--no-persist-session)');
+            } else {
+                console.debug('[DEBUG] No session in config');
+            }
             return null;
         } catch (error: any) {
 
@@ -427,11 +439,13 @@ if (isMainModule) {
     // Parse command-line arguments
     const args = process.argv.slice(2);
     const options = {
-        persistSession: args.includes('--persist-session')
+        // --persist-session is kept as an accepted no-op so existing invocations
+        // and docs keep working; --no-persist-session opts back out.
+        persistSession: !args.includes('--no-persist-session')
     };
 
-    if (options.persistSession) {
-        console.log('🔒 Session persistence enabled');
+    if (!options.persistSession) {
+        console.log('🔓 Session persistence disabled — re-authorization required on every start');
     }
 
     const device = new MCPDevice(options);
