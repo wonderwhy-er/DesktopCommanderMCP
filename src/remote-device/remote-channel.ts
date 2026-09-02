@@ -351,7 +351,6 @@ export class RemoteChannel {
                     await this.client?.removeChannel(this.channel);
                     this.channel = null;
                 }
-                await this.removeLegacyChannel();
                 try { await (this.client as any)?.realtime?.disconnect?.(); } catch { /* best effort */ }
             } catch (teardownError: any) {
                 console.debug(`[DEBUG] Session-lost channel teardown failed: ${teardownError?.message}`);
