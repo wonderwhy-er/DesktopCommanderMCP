@@ -1094,10 +1094,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "list_processes",
                 description: `
-                        List all running processes.
-                        
-                        Returns process information including PID, command name, CPU usage, and memory usage.
-                        
+                        List running processes with bounded, offset-based pagination.
+
+                        By default, command-line arguments are omitted because they may contain credentials.
+                        Set includeArgs=true only when needed; sensitive values are redacted and each command
+                        line is truncated. Use offset and limit to page through results.
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
                 annotations: {
@@ -1466,7 +1468,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Process tools
             case "list_processes":
-                result = await handlers.handleListProcesses();
+                result = await handlers.handleListProcesses(args);
                 break;
 
             case "kill_process":

@@ -1,14 +1,19 @@
 import { execFile, spawn } from 'child_process';
-import os from 'os';
 import { logToStderr } from './logger.js';
+import { isHeadlessEnvironment } from '../platform/runtime.js';
 
 /**
  * Open a URL in the default browser (cross-platform)
  * Uses execFile/spawn with args array to avoid shell injection
  */
 export async function openBrowser(url: string): Promise<void> {
-  const platform = os.platform();
-  
+  const platform = process.platform;
+
+  if (isHeadlessEnvironment(platform)) {
+    logToStderr('info', `Headless environment detected. Open this URL manually: ${url}`);
+    return;
+  }
+
   return new Promise((resolve, reject) => {
     const callback = (error: Error | null) => {
       if (error) {

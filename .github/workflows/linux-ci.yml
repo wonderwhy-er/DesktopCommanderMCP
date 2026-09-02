@@ -1,0 +1,75 @@
+name: Linux CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  DESKTOP_COMMANDER_DISABLE_TELEMETRY: "true"
+  DESKTOP_COMMANDER_HEADLESS: "true"
+
+jobs:
+  ubuntu-matrix:
+    name: Ubuntu ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y procps ripgrep
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: node dist/npm-scripts/verify-ripgrep.js
+      - run: node test/test-linux-platform.js
+      - run: node test/test-linux-service-installer.js
+
+  debian-12:
+    name: Debian 12 / Node 20
+    runs-on: ubuntu-24.04
+    container: node:20-bookworm
+
+    steps:
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends git procps ripgrep bash ca-certificates systemd
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: node dist/npm-scripts/verify-ripgrep.js
+      - run: node test/test-linux-platform.js
+      - run: node test/test-linux-service-installer.js
+      - name: Validate systemd installer syntax
+        run: bash -n scripts/install-linux-service.sh
+
+  full-linux-suite:
+    name: Full Linux test suite
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3 procps ripgrep
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test

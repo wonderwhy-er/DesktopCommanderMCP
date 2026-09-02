@@ -1,4 +1,4 @@
-import open from 'open';
+import { openBrowser } from '../utils/open-browser.js';
 import os from 'os';
 import crypto from 'crypto';
 import { captureRemote } from '../utils/capture.js';
@@ -101,7 +101,7 @@ export class DeviceAuthenticator {
         console.log(`   Code expires in ${Math.floor(deviceAuth.expires_in / 60)} minutes.\n`);
 
         // Try to open browser automatically
-        open(deviceAuth.verification_uri_complete).catch(() => {
+        openBrowser(deviceAuth.verification_uri_complete).catch(() => {
             console.log('   - Could not open browser automatically.');
             console.log(`   - Please visit: ${deviceAuth.verification_uri}\n`);
         });

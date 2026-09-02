@@ -21,7 +21,11 @@ export const SetConfigValueArgsSchema = z.object({
 });
 
 // Empty schemas
-export const ListProcessesArgsSchema = z.object({});
+export const ListProcessesArgsSchema = z.object({
+  includeArgs: z.boolean().optional().default(false),
+  offset: z.number().int().min(0).optional().default(0),
+  limit: z.number().int().min(1).max(200).optional().default(100),
+});
 
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({
