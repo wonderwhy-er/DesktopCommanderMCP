@@ -1,25 +1,31 @@
 #!/usr/bin/env node
 
 /**
- * Desktop Commander - Complete Release Publishing Script with State Tracking
- * 
- * This script handles the entire release process:
- * 1. Version bump
- * 2. Build project and MCPB bundle
- * 3. Commit and tag
- * 4. Publish to NPM
- * 5. Publish to MCP Registry
- * 6. Verify publications
- * 
- * Features automatic resume from failed steps and state tracking.
+ * Desktop Commander - Release Trigger Script
+ *
+ * Publishing is done by CI (.github/workflows/release.yml), triggered by
+ * pushing a version tag. This script prepares and fires that trigger:
+ *
+ * 1. Run tests (or just build with --skip-tests)
+ * 2. Bump version (package.json, server.json, src/version.ts)
+ * 3. Commit, tag vX.Y.Z, push main + tag  ← this starts the CI release
+ *
+ * CI then builds the MCPB, creates the GitHub release with the .mcpb asset
+ * (picked up by Anthropic's directory scanner), publishes to npm, and
+ * publishes to the MCP Registry via OIDC. No local npm login or
+ * mcp-publisher setup is needed for a normal release.
+ *
+ * Alpha releases (--alpha) are the exception: they publish to npm directly
+ * from this machine under the `alpha` dist-tag, with no git tag and no CI
+ * involvement (CI intentionally rejects pre-release tags).
  */
 
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
-// State file path
-const STATE_FILE = path.join(process.cwd(), '.release-state.json');
+const REPO_URL = 'https://github.com/wonderwhy-er/DesktopCommanderMCP';
 
 // Colors for output
 const colors = {
@@ -31,7 +37,6 @@ const colors = {
     cyan: '\x1b[36m',
 };
 
-// Helper functions for colored output
 function printStep(message) {
     console.log(`${colors.blue}==>${colors.reset} ${message}`);
 }
@@ -52,94 +57,74 @@ function printInfo(message) {
     console.log(`${colors.cyan}ℹ${colors.reset} ${message}`);
 }
 
-// State management functions
-function loadState() {
-    if (fs.existsSync(STATE_FILE)) {
-        try {
-            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-        } catch (error) {
-            printWarning('Could not parse state file, starting fresh');
-            return null;
-        }
-    }
-    return null;
-}
-
-function saveState(state) {
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-}
-function clearState() {
-    if (fs.existsSync(STATE_FILE)) {
-        fs.unlinkSync(STATE_FILE);
-        printSuccess('Release state cleared');
-    } else {
-        printInfo('No release state to clear');
-    }
-}
-
-function markStepComplete(state, step) {
-    state.completedSteps.push(step);
-    state.lastStep = step;
-    saveState(state);
-}
-
-function isStepComplete(state, step) {
-    return state && state.completedSteps.includes(step);
-}
-
-// Execute command with error handling
 function exec(command, options = {}) {
+    return execSync(command, {
+        encoding: 'utf8',
+        stdio: options.silent ? 'pipe' : 'inherit',
+        ...options,
+    });
+}
+
+function execSilent(command, options = {}) {
     try {
-        return execSync(command, { 
-            encoding: 'utf8', 
-            stdio: options.silent ? 'pipe' : 'inherit',
-            ...options 
-        });
+        return exec(command, { silent: true, ...options });
     } catch (error) {
-        if (options.ignoreError) {
-            return options.silent ? '' : null;
-        }
+        if (options.ignoreError) return '';
         throw error;
     }
 }
 
-// Execute command silently and return output
-function execSilent(command, options = {}) {
-    return exec(command, { silent: true, ...options });
+/**
+ * Ask the user to confirm before doing anything irreversible.
+ * Skipped with --yes. Non-interactive runs (no TTY) must pass --yes.
+ */
+function confirm(question) {
+    if (!process.stdin.isTTY) {
+        printError('Not an interactive terminal. Pass --yes to confirm automatically.');
+        process.exit(1);
+    }
+    return new Promise(resolve => {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question(`${question} [y/N] `, answer => {
+            rl.close();
+            resolve(/^y(es)?$/i.test(answer.trim()));
+        });
+    });
+}
+
+/**
+ * Preview the next version for a bump type without changing anything.
+ */
+function bumpPreview(version, type) {
+    const [major, minor, patch] = version.split('.').map(Number);
+    if (type === 'major') return `${major + 1}.0.0`;
+    if (type === 'minor') return `${major}.${minor + 1}.0`;
+    return `${major}.${minor}.${patch + 1}`;
 }
 
 /**
  * Calculate alpha version from current version
  * - "0.2.28" → "0.2.29-alpha.0"
  * - "0.2.29-alpha.0" → "0.2.29-alpha.1"
- * - "0.2.29-alpha.5" → "0.2.29-alpha.6"
  */
 function getAlphaVersion(currentVersion) {
     const alphaMatch = currentVersion.match(/^(\d+\.\d+\.\d+)-alpha\.(\d+)$/);
-    
     if (alphaMatch) {
-        // Already an alpha, increment the alpha number
-        const baseVersion = alphaMatch[1];
-        const alphaNum = parseInt(alphaMatch[2], 10) + 1;
-        return `${baseVersion}-alpha.${alphaNum}`;
-    } else {
-        // Regular version, bump patch and add -alpha.0
-        const [major, minor, patch] = currentVersion.split('.').map(Number);
-        return `${major}.${minor}.${patch + 1}-alpha.0`;
+        return `${alphaMatch[1]}-alpha.${parseInt(alphaMatch[2], 10) + 1}`;
     }
+    const [major, minor, patch] = currentVersion.split('.').map(Number);
+    return `${major}.${minor}.${patch + 1}-alpha.0`;
 }
 
 /**
  * Update version in package.json, server.json, and version.ts
  */
 function updateVersionFiles(newVersion) {
-    // Update package.json
     const pkgPath = path.join(process.cwd(), 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     pkg.version = newVersion;
     fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-    
-    // Update server.json
+
     const serverJsonPath = path.join(process.cwd(), 'server.json');
     const serverJson = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
     serverJson.version = newVersion;
@@ -151,87 +136,52 @@ function updateVersionFiles(newVersion) {
         });
     }
     fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
-    
-    // Update version.ts
-    const versionTsPath = path.join(process.cwd(), 'src', 'version.ts');
-    fs.writeFileSync(versionTsPath, `export const VERSION = '${newVersion}';\n`);
+
+    fs.writeFileSync(path.join(process.cwd(), 'src', 'version.ts'), `export const VERSION = '${newVersion}';\n`);
 }
 
-// Parse command line arguments
 function parseArgs() {
     const args = process.argv.slice(2);
     const options = {
         bumpType: 'patch',
         skipTests: false,
         dryRun: false,
-        help: false,
-        clearState: false,
-        skipBump: false,
-        skipBuild: false,
-        skipMcpb: false,
-        skipGit: false,
-        skipNpm: false,
-        skipMcp: false,
         alpha: false,
+        help: false,
+        yes: false,
+        rehearsal: false,
+        // These switch to dispatch mode: the release runs in CI via
+        // `gh workflow run` so the skip flags reach the workflow inputs.
+        skipNpm: false,
+        skipRegistry: false,
+        skipGithubRelease: false,
+        tag: '',
     };
 
     for (const arg of args) {
         switch (arg) {
-            case '--minor':
-                options.bumpType = 'minor';
-                break;
-            case '--major':
-                options.bumpType = 'major';
-                break;
-            case '--skip-tests':
-                options.skipTests = true;
-                break;
-            case '--skip-bump':
-                options.skipBump = true;
-                break;
-            case '--skip-build':
-                options.skipBuild = true;
-                break;
-            case '--skip-mcpb':
-                options.skipMcpb = true;
-                break;
-            case '--skip-git':
-                options.skipGit = true;
-                break;
-            case '--skip-npm':
-                options.skipNpm = true;
-                break;
-            case '--skip-mcp':
-                options.skipMcp = true;
-                break;
-            case '--npm-only':
-                // Skip everything except NPM publish
-                options.skipMcpb = true;
-                options.skipGit = true;
-                options.skipMcp = true;
-                break;
-            case '--alpha':
-                options.alpha = true;
-                break;
-            case '--mcp-only':
-                // Skip everything except MCP Registry publish
-                options.skipBump = true;
-                options.skipBuild = true;
-                options.skipMcpb = true;
-                options.skipGit = true;
-                options.skipNpm = true;
-                break;
-            case '--clear-state':
-                options.clearState = true;
-                break;
-            case '--dry-run':
-                options.dryRun = true;
-                break;
+            case '--minor': options.bumpType = 'minor'; break;
+            case '--major': options.bumpType = 'major'; break;
+            case '--skip-tests': options.skipTests = true; break;
+            case '--alpha': options.alpha = true; break;
+            case '--dry-run': options.dryRun = true; break;
+            case '--yes':
+            case '-y': options.yes = true; break;
+            case '--rehearsal': options.rehearsal = true; break;
+            case '--skip-npm': options.skipNpm = true; break;
+            case '--skip-registry': options.skipRegistry = true; break;
+            case '--skip-github-release': options.skipGithubRelease = true; break;
             case '--help':
-            case '-h':
-                options.help = true;
-                break;
+            case '-h': options.help = true; break;
             default:
+                if (arg.startsWith('--tag=')) {
+                    options.tag = arg.slice('--tag='.length);
+                    if (!options.tag) {
+                        printError('--tag= requires a value, e.g. --tag=v0.2.48');
+                        process.exit(1);
+                    }
+                    break;
+                }
                 printError(`Unknown option: ${arg}`);
                 console.log("Run 'node scripts/publish-release.cjs --help' for usage information.");
                 process.exit(1);
@@ -241,323 +191,151 @@ function parseArgs() {
     return options;
 }
 
-// Show help message
 function showHelp() {
     console.log('Usage: node scripts/publish-release.cjs [OPTIONS]');
+    console.log('');
+    console.log('Prepares a release and pushes the version tag that triggers the CI');
+    console.log('release pipeline (.github/workflows/release.yml). CI does all');
+    console.log('publishing: GitHub release + MCPB asset, npm, MCP Registry.');
     console.log('');
     console.log('Options:');
     console.log('  --minor         Bump minor version (default: patch)');
     console.log('  --major         Bump major version (default: patch)');
-    console.log('  --skip-tests    Skip running tests');
-    console.log('  --skip-bump     Skip version bumping');
-    console.log('  --skip-build    Skip building (if tests also skipped)');
-    console.log('  --skip-mcpb     Skip building MCPB bundle');
-    console.log('  --skip-git      Skip git commit and tag');
-    console.log('  --skip-npm      Skip NPM publishing');
-    console.log('  --skip-mcp      Skip MCP Registry publishing');
-    console.log('  --npm-only      Only publish to NPM (skip MCPB, git, MCP Registry)');
-    console.log('  --alpha         Publish as alpha version (e.g., 0.2.29-alpha.0)');
-    console.log('  --mcp-only      Only publish to MCP Registry (skip all other steps)');
-    console.log('  --clear-state   Clear release state and start fresh');
-    console.log('  --dry-run       Simulate the release without publishing');
+    console.log('  --skip-tests    Build only instead of running the test suite');
+    console.log('  --alpha         Alpha release: publish to npm (alpha tag) from this');
+    console.log('                  machine, no git tag, no CI (needs npm login)');
+    console.log('  --dry-run       Show what would happen without changing anything');
+    console.log('  --rehearsal     Push a test-vX.Y.Z tag: CI runs the whole pipeline in');
+    console.log('                  safety mode (npm dry-run, DRAFT release, registry');
+    console.log('                  validate+login only) — nothing is published');
+    console.log('  --yes, -y       Skip the confirmation prompt');
     console.log('  --help, -h      Show this help message');
     console.log('');
-    console.log('State Management:');
-    console.log('  The script automatically tracks completed steps and resumes from failures.');
-    console.log('  Use --clear-state to reset and start from the beginning.');
+    console.log('Partial releases (run in CI via gh workflow dispatch, needs gh login):');
+    console.log('  --skip-npm             Skip npm publish');
+    console.log('  --skip-registry        Skip MCP Registry publish');
+    console.log('  --skip-github-release  Skip GitHub release + MCPB asset');
+    console.log('  --tag=vX.Y.Z           Re-release an existing tag instead of cutting a new one');
+    console.log('  Any of these switches to dispatch mode: CI runs the tests, bumps,');
+    console.log('  tags, and publishes the non-skipped targets.');
     console.log('');
     console.log('Examples:');
     console.log('  node scripts/publish-release.cjs              # Patch release (0.2.16 -> 0.2.17)');
     console.log('  node scripts/publish-release.cjs --minor      # Minor release (0.2.16 -> 0.3.0)');
-    console.log('  node scripts/publish-release.cjs --major      # Major release (0.2.16 -> 1.0.0)');
-    console.log('  node scripts/publish-release.cjs --dry-run    # Test without publishing');
-    console.log('  node scripts/publish-release.cjs --mcp-only   # Only publish to MCP Registry');
-    console.log('  node scripts/publish-release.cjs --npm-only --alpha  # Alpha release to NPM only');
-    console.log('  node scripts/publish-release.cjs --clear-state # Reset state and start over');
-}
-
-// =============================================================================
-// PRE-FLIGHT CHECKS - Run before any publishing to catch issues early
-// =============================================================================
-
-/**
- * Check if mcp-publisher is installed and check for updates
- */
-function checkMcpPublisher() {
-    printInfo('Checking mcp-publisher...');
-    
-    const mcpPublisherPath = execSilent('which mcp-publisher', { ignoreError: true }).trim();
-    if (!mcpPublisherPath) {
-        printError('mcp-publisher not found. Install it with: brew install mcp-publisher');
-        return false;
-    }
-    
-    // Get current version (output goes to stderr with timestamp prefix)
-    const versionOutput = execSilent('mcp-publisher --version 2>&1', { ignoreError: true });
-    const versionMatch = versionOutput.match(/mcp-publisher\s+(\d+\.\d+\.\d+)/);
-    const currentVersion = versionMatch ? versionMatch[1] : 'unknown';
-    printSuccess(`mcp-publisher found: v${currentVersion}`);
-    
-    // Check for updates via brew
-    try {
-        const brewInfo = execSilent('brew info --json=v2 mcp-publisher 2>/dev/null', { ignoreError: true });
-        if (brewInfo) {
-            const info = JSON.parse(brewInfo);
-            const latestVersion = info.formulae?.[0]?.versions?.stable;
-            if (latestVersion && latestVersion !== currentVersion && currentVersion !== 'unknown') {
-                printWarning(`mcp-publisher update available: v${currentVersion} → v${latestVersion}`);
-                printWarning('Run: brew upgrade mcp-publisher');
-            }
-        }
-    } catch (e) {
-        // Ignore errors checking for updates
-    }
-    
-    return true;
+    console.log('  node scripts/publish-release.cjs --dry-run    # Preview without releasing');
+    console.log('  node scripts/publish-release.cjs --alpha      # Alpha to npm only');
+    console.log('  node scripts/publish-release.cjs --skip-registry        # New release, npm + GitHub only');
+    console.log('  node scripts/publish-release.cjs --tag=v0.2.48          # Re-run a failed release');
+    console.log('  node scripts/publish-release.cjs --tag=v0.2.48 --skip-npm  # Re-run, registry/release only');
 }
 
 /**
- * Get the latest schema version from mcp-publisher
+ * Dispatch the release to CI with workflow inputs (skip flags and/or an
+ * existing tag). Used whenever a flag can't ride on a plain tag push.
  */
-function getLatestSchemaVersion() {
-    // Create a temp file to get the schema version mcp-publisher uses
-    const tempDir = execSilent('mktemp -d', { ignoreError: true }).trim();
-    if (!tempDir) return null;
-    
-    try {
-        execSilent(`cd ${tempDir} && mcp-publisher init 2>/dev/null`, { ignoreError: true });
-        const tempServerJson = path.join(tempDir, 'server.json');
-        if (fs.existsSync(tempServerJson)) {
-            const content = JSON.parse(fs.readFileSync(tempServerJson, 'utf8'));
-            execSilent(`rm -rf ${tempDir}`, { ignoreError: true });
-            return content.$schema;
-        }
-    } catch (e) {
-        // Ignore errors
+async function dispatchRelease(options) {
+    if (options.alpha) {
+        printError('--alpha cannot be combined with skip flags or --tag (alpha releases are local npm-only).');
+        process.exit(1);
     }
-    
-    execSilent(`rm -rf ${tempDir}`, { ignoreError: true });
-    return null;
-}
-
-/**
- * Update server.json schema version if needed
- */
-function updateServerJsonSchema() {
-    const serverJsonPath = path.join(process.cwd(), 'server.json');
-    if (!fs.existsSync(serverJsonPath)) {
-        printError('server.json not found');
-        return false;
+    if (options.tag && !/^v\d+\.\d+\.\d+$/.test(options.tag)) {
+        printError(`--tag must look like vX.Y.Z (got "${options.tag}")`);
+        process.exit(1);
     }
-    
-    const serverJson = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
-    const currentSchema = serverJson.$schema;
-    
-    printInfo('Checking server.json schema version...');
-    
-    // Get latest schema from mcp-publisher
-    const latestSchema = getLatestSchemaVersion();
-    
-    if (latestSchema && currentSchema !== latestSchema) {
-        printWarning(`Updating server.json schema:`);
-        printWarning(`  Old: ${currentSchema}`);
-        printWarning(`  New: ${latestSchema}`);
-        serverJson.$schema = latestSchema;
-        fs.writeFileSync(serverJsonPath, JSON.stringify(serverJson, null, 2) + '\n');
-        printSuccess('server.json schema updated');
-        return true; // Schema was updated
-    }
-    
-    printSuccess(`server.json schema is current`);
-    return false; // No update needed
-}
 
-/**
- * Validate server.json using mcp-publisher
- */
-function validateServerJson() {
-    printInfo('Validating server.json...');
-    
-    try {
-        const result = execSilent('mcp-publisher validate 2>&1', { ignoreError: true });
-        
-        // Check for errors in output
-        if (result.toLowerCase().includes('error') || 
-            result.toLowerCase().includes('failed') ||
-            result.toLowerCase().includes('invalid')) {
-            printError('server.json validation failed:');
-            console.log(result);
-            return false;
-        }
-        
-        printSuccess('server.json validation passed');
-        return true;
-    } catch (error) {
-        printError('Failed to validate server.json');
-        return false;
-    }
-}
-
-/**
- * Check MCP Registry authentication and token expiration
- */
-function checkMcpAuth() {
-    printInfo('Checking MCP Registry authentication...');
-    
-    // First check if we can validate locally
-    const validateResult = execSilent('mcp-publisher validate 2>&1', { ignoreError: true });
-    
-    // If validation mentions auth issues, warn about it
-    if (validateResult.toLowerCase().includes('unauthorized') || 
-        validateResult.toLowerCase().includes('not logged in') ||
-        validateResult.toLowerCase().includes('authentication')) {
-        printWarning('MCP Registry authentication may be required.');
-        printWarning('If publish fails, run: mcp-publisher login github');
-        return false;
-    }
-    
-    printSuccess('Local validation passed');
-    return true;
-}
-
-/**
- * Check if MCP Registry JWT token is valid and not expired
- * Makes a lightweight API call to verify the token works
- */
-function checkMcpTokenExpiration() {
-    printInfo('Checking MCP Registry token validity...');
-    
-    try {
-        const homeDir = process.env.HOME || process.env.USERPROFILE;
-        const tokenPath = path.join(homeDir, '.config', 'mcp-publisher', 'token.json');
-
-        if (!fs.existsSync(tokenPath)) {
-            printError('MCP Registry token not found. Please run: mcp-publisher login github');
-            return false;
-        }
-
-        const authData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-        const token = authData.token;
-        
-        if (!token) {
-            printError('No token found in auth file. Run: mcp-publisher login github');
-            return false;
-        }
-        
-        // Decode JWT to check expiration (JWT format: header.payload.signature)
-        const parts = token.split('.');
-        if (parts.length !== 3) {
-            printWarning('Invalid token format. Run: mcp-publisher login github');
-            return false;
-        }
-        
-        // Decode the payload (second part) - handle base64url encoding
-        const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-        const payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'));
-        
-        if (payload.exp) {
-            const expirationDate = new Date(payload.exp * 1000);
-            const now = new Date();
-            const hoursUntilExpiry = (expirationDate - now) / (1000 * 60 * 60);
-            
-            if (expirationDate <= now) {
-                printError(`MCP Registry token expired on ${expirationDate.toLocaleString()}`);
-                printError('Please refresh your token: mcp-publisher login github');
-                return false;
-            }
-            
-            if (hoursUntilExpiry < 1) {
-                printWarning(`MCP Registry token expires in ${Math.round(hoursUntilExpiry * 60)} minutes`);
-                printWarning('Consider refreshing: mcp-publisher login github');
-            } else if (hoursUntilExpiry < 24) {
-                printWarning(`MCP Registry token expires in ${Math.round(hoursUntilExpiry)} hours`);
-            }
-            
-            printSuccess(`MCP Registry token valid until ${expirationDate.toLocaleString()}`);
-            return true;
-        }
-        
-        // No expiration in token - assume it's valid
-        printSuccess('MCP Registry token found (no expiration set)');
-        return true;
-        
-    } catch (error) {
-        printWarning(`Could not check token: ${error.message}`);
-        printWarning('Publish may fail if token is expired. If so, run: mcp-publisher login github');
-        return true; // Don't block, just warn
-    }
-}
-
-/**
- * Run all pre-flight checks
- * Returns true if all critical checks pass
- */
-function runPreFlightChecks(options) {
-    console.log('');
-    console.log('╔══════════════════════════════════════════════════════════╗');
-    console.log('║              🔍 PRE-FLIGHT CHECKS                        ║');
-    console.log('╚══════════════════════════════════════════════════════════╝');
-    console.log('');
-    
-    let allPassed = true;
-    let schemaUpdated = false;
-    
-    // Check mcp-publisher installation and version (skip if not publishing to MCP)
-    if (!options.skipMcp) {
-        if (!checkMcpPublisher()) {
-            allPassed = false;
-        }
-        
-        // Update schema if needed
-        if (allPassed) {
-            schemaUpdated = updateServerJsonSchema();
-        }
-        
-        // Validate server.json
-        if (allPassed && !validateServerJson()) {
-            allPassed = false;
-        }
-        
-        // Check MCP auth and token expiration
-        if (allPassed) {
-            checkMcpAuth();
-            if (!checkMcpTokenExpiration()) {
-                allPassed = false;
-            }
-        }
+    const ghArgs = ['workflow', 'run', 'release.yml', '--ref', 'main'];
+    if (options.tag) {
+        ghArgs.push('-f', `tag=${options.tag}`);
     } else {
-        printInfo('Skipping MCP Registry checks (--skip-mcp or --npm-only)');
+        ghArgs.push('-f', `bump=${options.bumpType}`);
     }
-    
-    // Check NPM auth
-    if (allPassed && !options.skipNpm) {
-        printInfo('Checking NPM authentication...');
-        const npmUser = execSilent('npm whoami 2>/dev/null', { ignoreError: true }).trim();
-        if (!npmUser) {
-            printError('Not logged into NPM. Please run: npm login');
-            allPassed = false;
-        } else {
-            printSuccess(`NPM authenticated as: ${npmUser}`);
-        }
-    }
-    
-    console.log('');
-    
-    if (allPassed) {
-        printSuccess('All pre-flight checks passed!');
-        if (schemaUpdated) {
-            printWarning('Note: server.json schema was updated - this will be included in the release commit');
-        }
+    if (options.skipNpm) ghArgs.push('-f', 'skip_npm=true');
+    if (options.skipRegistry) ghArgs.push('-f', 'skip_registry=true');
+    if (options.skipGithubRelease) ghArgs.push('-f', 'skip_github_release=true');
+
+    const command = `gh ${ghArgs.join(' ')}`;
+
+    printStep('Dispatch mode: the release will run in CI with the requested options.');
+    if (options.tag) {
+        printInfo(`Re-releasing existing tag ${options.tag}`);
     } else {
-        printError('Pre-flight checks failed. Please fix the issues above before releasing.');
+        printInfo(`CI will run tests, bump (${options.bumpType}), commit, tag, and publish.`);
     }
-    
-    console.log('');
-    
-    return allPassed;
+
+    const skips = [
+        options.skipNpm && 'npm publish',
+        options.skipRegistry && 'MCP Registry publish',
+        options.skipGithubRelease && 'GitHub release + MCPB asset',
+    ].filter(Boolean);
+    if (skips.length) {
+        printInfo(`CI will SKIP: ${skips.join(', ')}`);
+    }
+    printInfo(`Command: ${command}`);
+
+    if (options.dryRun) {
+        printWarning('DRY RUN - not dispatching');
+        return;
+    }
+
+    if (!options.yes && !(await confirm('Dispatch this release to CI?'))) {
+        printWarning('Aborted, nothing was done.');
+        return;
+    }
+
+    if (!execSilent('command -v gh', { ignoreError: true }).trim()) {
+        printError('gh CLI not found. Install it (brew install gh) and run "gh auth login",');
+        printError('or start the release from the GitHub UI: Actions → Release → Run workflow.');
+        process.exit(1);
+    }
+
+    exec(command);
+    printSuccess('Release dispatched to CI');
+    printInfo(`Watch it: ${REPO_URL}/actions/workflows/release.yml`);
 }
 
-// Main release function
+/**
+ * Rehearsal: force-push a test-v<version> tag at the current HEAD. CI runs the
+ * full pipeline in safety mode — npm publish --dry-run, DRAFT GitHub release,
+ * registry validate + OIDC login without publish. Works from any branch, so a
+ * changed workflow can be tested before it reaches main (tag-triggered runs
+ * use the workflow file at the tagged commit).
+ */
+async function rehearsalRelease(options) {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    const tag = `test-v${pkg.version}`;
+    const branch = execSilent('git rev-parse --abbrev-ref HEAD', { ignoreError: true }).trim();
+    const dirty = execSilent('git status --porcelain', { ignoreError: true }).trim();
+
+    printStep(`Rehearsal: run the release pipeline in CI without publishing anything.`);
+    printInfo(`Tag ${tag} will be force-pushed at HEAD of "${branch}" — CI runs THAT commit's workflow.`);
+    printInfo('CI will: build the MCPB, npm publish --dry-run, create a DRAFT release');
+    printInfo('with the .mcpb attached, validate server.json, and prove the registry');
+    printInfo('OIDC login. Nothing is published anywhere.');
+    if (dirty) {
+        printWarning('Working tree has uncommitted changes — they will NOT be part of the rehearsal (the tag points at the last commit).');
+    }
+    console.log('');
+
+    if (options.dryRun) {
+        printWarning(`DRY RUN - would run: git tag -f ${tag} && git push -f origin ${tag}`);
+        return;
+    }
+
+    if (!options.yes && !(await confirm(`Push rehearsal tag ${tag} now?`))) {
+        printWarning('Aborted, nothing was done.');
+        return;
+    }
+
+    exec(`git tag -f ${tag}`);
+    exec(`git push -f origin ${tag}`);
+    printSuccess(`Rehearsal started for ${tag}`);
+    printInfo(`Watch it: ${REPO_URL}/actions/workflows/release.yml`);
+    console.log('');
+    console.log('When done, inspect the draft release and the npm dry-run log, then clean up:');
+    console.log(`  gh release delete ${tag} --yes`);
+    console.log(`  git push origin :refs/tags/${tag} && git tag -d ${tag}`);
+}
+
 async function publishRelease() {
     const options = parseArgs();
 
@@ -566,396 +344,194 @@ async function publishRelease() {
         return;
     }
 
-    // Handle clear state command
-    if (options.clearState) {
-        clearState();
+    if (options.rehearsal) {
+        if (options.alpha || options.tag || options.skipNpm || options.skipRegistry || options.skipGithubRelease) {
+            printError('--rehearsal cannot be combined with --alpha, --tag, or skip flags.');
+            process.exit(1);
+        }
+        await rehearsalRelease(options);
         return;
     }
 
-    // Check if we're in the right directory
+    // Skip flags and --tag can't ride on a plain tag push — hand the release
+    // to CI through workflow dispatch instead.
+    if (options.skipNpm || options.skipRegistry || options.skipGithubRelease || options.tag) {
+        await dispatchRelease(options);
+        return;
+    }
+
     const packageJsonPath = path.join(process.cwd(), 'package.json');
     if (!fs.existsSync(packageJsonPath)) {
         printError('package.json not found. Please run this script from the project root.');
         process.exit(1);
     }
 
-    // Run pre-flight checks before anything else (unless resuming)
-    const existingState = loadState();
-    if (!existingState) {
-        if (!runPreFlightChecks(options)) {
-            process.exit(1);
-        }
-    }
-
-    // Load or create state
-    let state = loadState();
-    const isResume = state !== null;
-    
-    if (!state) {
-        state = {
-            startTime: new Date().toISOString(),
-            completedSteps: [],
-            lastStep: null,
-            version: null,
-            bumpType: options.bumpType,
-        };
-    }
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const currentVersion = packageJson.version;
 
     console.log('');
     console.log('╔══════════════════════════════════════════════════════════╗');
     console.log('║         Desktop Commander Release Publisher             ║');
     console.log('╚══════════════════════════════════════════════════════════╝');
     console.log('');
-
-    // Show resume information
-    if (isResume) {
-        console.log(`${colors.cyan}╔══════════════════════════════════════════════════════════╗${colors.reset}`);
-        console.log(`${colors.cyan}║              📋 RESUMING FROM PREVIOUS RUN              ║${colors.reset}`);
-        console.log(`${colors.cyan}╚══════════════════════════════════════════════════════════╝${colors.reset}`);
-        console.log('');
-        printInfo(`Started: ${state.startTime}`);
-        printInfo(`Last completed step: ${state.lastStep || 'none'}`);
-        printInfo(`Completed steps: ${state.completedSteps.join(', ') || 'none'}`);
-        if (state.version) {
-            printInfo(`Target version: ${state.version}`);
-        }
-        console.log('');
-        printWarning('Will skip already completed steps automatically');
-        printInfo('Use --clear-state to start fresh');
-        console.log('');
-    }
-
-    // Get current version
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-    const currentVersion = packageJson.version;
     printStep(`Current version: ${currentVersion}`);
-    
-    if (!isResume) {
-        printStep(`Bump type: ${options.alpha ? 'alpha' : options.bumpType}`);
-    }
-
-    if (options.alpha) {
-        printWarning('ALPHA MODE - Will publish with alpha tag');
-    }
-
+    printStep(`Release type: ${options.alpha ? 'alpha (npm only, local)' : options.bumpType + ' (via CI)'}`);
     if (options.dryRun) {
-        printWarning('DRY RUN MODE - No changes will be published');
-        console.log('');
+        printWarning('DRY RUN MODE - no changes will be made');
     }
+    console.log('');
 
-    try {
-        let newVersion = state.version || currentVersion;
-        
-        // Step 1: Bump version
-        const shouldSkipBump = options.skipBump || isStepComplete(state, 'bump');
-        if (!shouldSkipBump) {
-            printStep('Step 1/6: Bumping version...');
-            
-            if (options.alpha) {
-                // Alpha version: calculate and update directly
-                newVersion = getAlphaVersion(currentVersion);
-                updateVersionFiles(newVersion);
-            } else {
-                // Guard: fail fast if current version is alpha but --alpha flag not provided
-                if (currentVersion.includes('-alpha')) {
-                    printError(`Current version "${currentVersion}" is an alpha version.`);
-                    printError('Use --alpha for alpha releases, or manually set a stable version in package.json first.');
-                    process.exit(1);
-                }
-                // Regular version: use npm run bump
-                const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
-                                   options.bumpType === 'major' ? 'npm run bump:major' :
-                                   'npm run bump';
-                exec(bumpCommand);
-                const newPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
-                newVersion = newPackageJson.version;
-            }
+    // ---------------------------------------------------------------- alpha --
+    if (options.alpha) {
+        const newVersion = getAlphaVersion(currentVersion);
 
-            state.version = newVersion;
-            markStepComplete(state, 'bump');
-            printSuccess(`Version bumped: ${currentVersion} → ${newVersion}`);
-        } else if (isStepComplete(state, 'bump')) {
-            printInfo('Step 1/6: Version bump already completed ✓');
-        } else {
-            printWarning('Step 1/6: Version bump skipped (manual override)');
+        const npmUser = execSilent('npm whoami', { ignoreError: true }).trim();
+        if (!npmUser && !options.dryRun) {
+            printError('Not logged into npm. Please run "npm login" first.');
+            process.exit(1);
         }
-        console.log('');
+        if (npmUser) printSuccess(`npm authenticated as: ${npmUser}`);
 
-        // Step 2: Run tests or build
-        const shouldSkipBuild = options.skipBuild || isStepComplete(state, 'build');
-        if (!shouldSkipBuild) {
-            if (!options.skipTests) {
-                printStep('Step 2/6: Running tests (includes build)...');
-                exec('npm test');
-                printSuccess('All tests passed');
-            } else {
-                printStep('Step 2/6: Building project...');
-                exec('npm run build');
-                printSuccess('Project built successfully');
-            }
-            markStepComplete(state, 'build');
-        } else if (isStepComplete(state, 'build')) {
-            printInfo('Step 2/6: Build already completed ✓');
-        } else {
-            printWarning('Step 2/6: Build skipped (manual override)');
-        }
-        console.log('');
-
-        // Step 3: Build MCPB bundle
-        const shouldSkipMcpb = options.skipMcpb || isStepComplete(state, 'mcpb');
-        if (!shouldSkipMcpb) {
-            printStep('Step 3/6: Building MCPB bundle...');
-            exec('npm run build:mcpb');
-            markStepComplete(state, 'mcpb');
-            printSuccess('MCPB bundle created');
-        } else if (isStepComplete(state, 'mcpb')) {
-            printInfo('Step 3/6: MCPB bundle already created ✓');
-        } else {
-            printWarning('Step 3/6: MCPB bundle build skipped (manual override)');
-        }
-        console.log('');
-
-        // Step 4: Commit and tag
-        const shouldSkipGit = options.skipGit || isStepComplete(state, 'git');
-        if (!shouldSkipGit) {
-            printStep('Step 4/6: Creating git commit and tag...');
-        
-            // Check if there are changes to commit
-            const gitStatus = execSilent('git status --porcelain', { ignoreError: true });
-            const hasChanges = gitStatus.includes('package.json') || 
-                              gitStatus.includes('server.json') || 
-                              gitStatus.includes('src/version.ts');
-
-            if (!hasChanges) {
-                printWarning('No changes to commit (version files already committed)');
-            } else {
-                exec('git add package.json server.json src/version.ts');
-                
-                const commitMsg = `Release v${newVersion}
-
-Automated release commit with version bump from ${currentVersion} to ${newVersion}`;
-
-                if (options.dryRun) {
-                    printWarning(`Would commit: ${commitMsg.split('\n')[0]}`);
-                } else {
-                    exec(`git commit -m "${commitMsg}"`);
-                    printSuccess('Changes committed');
-                }
-            }
-
-            // Create and push tag
-            const tagName = `v${newVersion}`;
-            
-            if (options.dryRun) {
-                printWarning(`Would create tag: ${tagName}`);
-                printWarning(`Would push to origin: main and ${tagName}`);
-            } else {
-                // Check if tag already exists locally
-                const existingTag = execSilent(`git tag -l "${tagName}"`, { ignoreError: true }).trim();
-                if (existingTag === tagName) {
-                    printWarning(`Tag ${tagName} already exists locally`);
-                } else {
-                    exec(`git tag ${tagName}`);
-                    printSuccess(`Tag ${tagName} created`);
-                }
-                
-                // Push main (ignore error if already up to date)
-                exec('git push origin main', { ignoreError: true });
-                
-                // Push tag (check if already on remote first)
-                const remoteTag = execSilent(`git ls-remote --tags origin refs/tags/${tagName}`, { ignoreError: true }).trim();
-                if (remoteTag) {
-                    printWarning(`Tag ${tagName} already exists on remote`);
-                } else {
-                    exec(`git push origin ${tagName}`);
-                    printSuccess(`Tag ${tagName} pushed to remote`);
-                }
-            }
-            
-            markStepComplete(state, 'git');
-        } else if (isStepComplete(state, 'git')) {
-            printInfo('Step 4/6: Git commit and tag already completed ✓');
-        } else {
-            printWarning('Step 4/6: Git commit and tag skipped (manual override)');
-        }
-        console.log('');
-
-        // Step 5: Publish to NPM
-        const shouldSkipNpm = options.skipNpm || isStepComplete(state, 'npm');
-        if (!shouldSkipNpm) {
-            printStep('Step 5/6: Publishing to NPM...');
-            
-            // Check NPM authentication
-            const npmUser = execSilent('npm whoami', { ignoreError: true }).trim();
-            if (!npmUser) {
-                printError('Not logged into NPM. Please run "npm login" first.');
-                printError('After logging in, run the script again to resume from this step.');
-                process.exit(1);
-            }
-            printSuccess(`NPM user: ${npmUser}`);
-
-            if (options.dryRun) {
-                const publishCmd = options.alpha ? 'npm publish --tag alpha' : 'npm publish';
-                printWarning(`Would publish to NPM: ${publishCmd}`);
-                printWarning('Skipping NPM publish (dry run)');
-            } else {
-                const publishCmd = options.alpha ? 'npm publish --tag alpha' : 'npm publish';
-                exec(publishCmd);
-                markStepComplete(state, 'npm');
-                printSuccess(`Published to NPM${options.alpha ? ' (alpha tag)' : ''}`);
-                
-                // Verify NPM publication
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                const viewCmd = options.alpha 
-                    ? 'npm view @wonderwhy-er/desktop-commander dist-tags.alpha'
-                    : 'npm view @wonderwhy-er/desktop-commander version';
-                const npmVersion = execSilent(viewCmd, { ignoreError: true }).trim();
-                if (npmVersion === newVersion) {
-                    printSuccess(`NPM publication verified: v${npmVersion}${options.alpha ? ' (alpha)' : ''}`);
-                } else {
-                    printWarning(`NPM version mismatch: expected ${newVersion}, got ${npmVersion} (may take a moment to propagate)`);
-                }
-            }
-        } else if (isStepComplete(state, 'npm')) {
-            printInfo('Step 5/6: NPM publish already completed ✓');
-        } else {
-            printWarning('Step 5/6: NPM publish skipped (manual override)');
-        }
-        console.log('');
-
-        // Step 6: Publish to MCP Registry
-        const shouldSkipMcp = options.skipMcp || isStepComplete(state, 'mcp');
-        if (!shouldSkipMcp) {
-            printStep('Step 6/6: Publishing to MCP Registry...');
-            
-            // Check if mcp-publisher is installed
-            const hasMcpPublisher = execSilent('which mcp-publisher', { ignoreError: true });
-            if (!hasMcpPublisher) {
-                printError('mcp-publisher not found. Install it with: brew install mcp-publisher');
-                printError('Or check your PATH if already installed.');
-                printError('After installing, run the script again to resume from this step.');
-                process.exit(1);
-            }
-
-            if (options.dryRun) {
-                printWarning('Would publish to MCP Registry: mcp-publisher publish');
-                printWarning('Skipping MCP Registry publish (dry run)');
-            } else {
-                let publishSuccess = false;
-                let retryCount = 0;
-                const maxRetries = 2;
-                
-                while (!publishSuccess && retryCount < maxRetries) {
-                    try {
-                        exec('mcp-publisher publish');
-                        publishSuccess = true;
-                        markStepComplete(state, 'mcp');
-                        printSuccess('Published to MCP Registry');
-                    } catch (error) {
-                        const errorMsg = error.message || error.toString();
-                        retryCount++;
-                        
-                        // Handle expired token - attempt auto-refresh
-                        if (errorMsg.includes('401') || errorMsg.includes('expired') || errorMsg.includes('Unauthorized')) {
-                            if (retryCount < maxRetries) {
-                                printWarning('Authentication token expired. Attempting to refresh...');
-                                try {
-                                    exec('mcp-publisher login github', { stdio: 'inherit' });
-                                    printSuccess('Token refreshed. Retrying publish...');
-                                    continue;
-                                } catch (loginError) {
-                                    printError('Could not refresh token automatically.');
-                                    printError('Please run manually: mcp-publisher login github');
-                                    throw error;
-                                }
-                            }
-                        }
-                        
-                        // Handle deprecated schema - attempt auto-update
-                        if (errorMsg.includes('deprecated schema')) {
-                            if (retryCount < maxRetries) {
-                                printWarning('Schema version deprecated. Attempting to update...');
-                                if (updateServerJsonSchema()) {
-                                    printSuccess('Schema updated. Retrying publish...');
-                                    continue;
-                                }
-                            }
-                        }
-                        
-                        // Other errors
-                        printError('MCP Registry publish failed!');
-                        if (errorMsg.includes('422')) {
-                            printError('Validation error in server.json. Check the error message above for details.');
-                        }
-                        throw error;
-                    }
-                }
-                
-                // Verify MCP Registry publication
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                try {
-                    const mcpResponse = execSilent('curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.wonderwhy-er/desktop-commander"');
-                    const mcpData = JSON.parse(mcpResponse);
-                    const mcpVersion = mcpData.servers?.[0]?.version || 'unknown';
-                    
-                    if (mcpVersion === newVersion) {
-                        printSuccess(`MCP Registry publication verified: v${mcpVersion}`);
-                    } else {
-                        printWarning(`MCP Registry version: ${mcpVersion} (expected ${newVersion}, may take a moment to propagate)`);
-                    }
-                } catch (verifyError) {
-                    printWarning('Could not verify MCP Registry publication');
-                }
-            }
-        } else if (isStepComplete(state, 'mcp')) {
-            printInfo('Step 6/6: MCP Registry publish already completed ✓');
-        } else {
-            printWarning('Step 6/6: MCP Registry publish skipped (manual override)');
-        }
-        console.log('');
-
-        // All steps complete - clear state
-        clearState();
-
-        // Success summary
-        const tagName = `v${newVersion}`;
-        console.log('╔══════════════════════════════════════════════════════════╗');
-        console.log('║                  🎉 Release Complete! 🎉                 ║');
-        console.log('╚══════════════════════════════════════════════════════════╝');
-        console.log('');
-        printSuccess(`Version: ${newVersion}`);
-        printSuccess('NPM: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander');
-        printSuccess('MCP Registry: https://registry.modelcontextprotocol.io/');
-        printSuccess(`GitHub Tag: https://github.com/wonderwhy-er/DesktopCommanderMCP/releases/tag/${tagName}`);
-        console.log('');
-        console.log('Next steps:');
-        console.log(`  1. Create GitHub release at: https://github.com/wonderwhy-er/DesktopCommanderMCP/releases/new?tag=${tagName}`);
-        console.log('  2. Add release notes with features and fixes');
-        console.log('  3. Announce on Discord');
+        printInfo(`Plan: bump ${currentVersion} → ${newVersion}, ${options.skipTests ? 'build' : 'run tests'}, npm publish --tag alpha.`);
+        printInfo('No git tag, no CI, no GitHub release, no MCP Registry.');
         console.log('');
 
         if (options.dryRun) {
-            console.log('');
-            printWarning('This was a DRY RUN - no changes were published');
-            printWarning('Run without --dry-run to perform the actual release');
-            console.log('');
+            printWarning('DRY RUN - nothing will be changed');
+            return;
         }
 
-    } catch (error) {
-        console.log('');
-        printError('Release failed at step: ' + (state.lastStep || 'startup'));
-        printError(error.message);
-        console.log('');
-        printInfo('State has been saved. Simply run the script again to resume from where it failed.');
-        printInfo('Use --clear-state to start over from the beginning.');
-        console.log('');
+        if (!options.yes && !(await confirm(`Publish alpha ${newVersion} to npm?`))) {
+            printWarning('Aborted, nothing was done.');
+            return;
+        }
+
+        printStep(`Bumping version: ${currentVersion} → ${newVersion}`);
+        updateVersionFiles(newVersion);
+
+        printStep(options.skipTests ? 'Building project...' : 'Running tests (includes build)...');
+        exec(options.skipTests ? 'npm run build' : 'npm test');
+
+        printStep('Publishing to npm (alpha tag)...');
+        exec('npm publish --tag alpha');
+        printSuccess(`Published ${newVersion} to npm under the alpha dist-tag`);
+        printInfo('Note: version files now hold the alpha version and are uncommitted.');
+        printInfo('Set a stable version before the next regular release.');
+        return;
+    }
+
+    // --------------------------------------------------------------- stable --
+    // Guard: never cut a stable release on top of an alpha version
+    if (currentVersion.includes('-')) {
+        printError(`Current version "${currentVersion}" is a pre-release.`);
+        printError('Set a stable version in package.json (and server.json, src/version.ts) first,');
+        printError('or use --alpha for an alpha release.');
         process.exit(1);
     }
+
+    // Guard: releases are cut from main
+    const branch = execSilent('git rev-parse --abbrev-ref HEAD', { ignoreError: true }).trim();
+    if (branch !== 'main') {
+        printError(`Releases must be cut from main (currently on "${branch}").`);
+        process.exit(1);
+    }
+
+    // Guard: a dirty tree would end up inside the release commit
+    const gitStatus = execSilent('git status --porcelain', { ignoreError: true }).trim();
+    if (gitStatus) {
+        printError('Working tree is not clean. Commit or stash your changes first:');
+        console.log(gitStatus);
+        process.exit(1);
+    }
+
+    // Show the full plan and get one confirmation before anything runs
+    const plannedVersion = bumpPreview(currentVersion, options.bumpType);
+    console.log('Release plan:');
+    console.log(`  1. ${options.skipTests ? 'Build project' : 'Run tests'} (local, nothing changed yet)`);
+    console.log(`  2. Bump version ${currentVersion} → ${plannedVersion} and commit`);
+    console.log(`  3. Push main + tag v${plannedVersion} to origin — this starts the CI release:`);
+    console.log('     build MCPB → publish npm → GitHub release with .mcpb asset');
+    console.log('     (picked up by the Claude directory) → publish MCP Registry');
+    console.log('');
+
+    if (!options.dryRun && !options.yes && !(await confirm(`Release v${plannedVersion} now?`))) {
+        printWarning('Aborted, nothing was done.');
+        return;
+    }
+    console.log('');
+
+    // Step 1: tests/build BEFORE the bump, so a failure leaves nothing behind
+    printStep(`Step 1/3: ${options.skipTests ? 'Building project...' : 'Running tests (includes build)...'}`);
+    if (options.dryRun) {
+        printWarning(`Would run: ${options.skipTests ? 'npm run build' : 'npm test'}`);
+    } else {
+        exec(options.skipTests ? 'npm run build' : 'npm test');
+        printSuccess(options.skipTests ? 'Project built successfully' : 'All tests passed');
+    }
+    console.log('');
+
+    // Step 2: bump version
+    const bumpCommand = options.bumpType === 'minor' ? 'npm run bump:minor' :
+                        options.bumpType === 'major' ? 'npm run bump:major' :
+                        'npm run bump';
+    let newVersion = currentVersion;
+    printStep('Step 2/3: Bumping version...');
+    if (options.dryRun) {
+        printWarning(`Would run: ${bumpCommand}`);
+    } else {
+        exec(bumpCommand);
+        newVersion = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version;
+        printSuccess(`Version bumped: ${currentVersion} → ${newVersion}`);
+    }
+    console.log('');
+
+    // Step 3: commit, tag, push — the tag push triggers the CI release
+    const tagName = `v${newVersion}`;
+    printStep('Step 3/3: Committing, tagging, and pushing...');
+    if (options.dryRun) {
+        printWarning(`Would commit version files and create tag ${tagName}`);
+        printWarning(`Would push main and ${tagName} to origin (tag push triggers CI release)`);
+        console.log('');
+        printWarning('This was a DRY RUN - nothing was changed');
+        return;
+    }
+
+    exec('git add package.json server.json src/version.ts');
+    exec(`git commit -m "Release ${tagName}
+
+Automated release commit with version bump from ${currentVersion} to ${newVersion}"`);
+    printSuccess('Version files committed');
+
+    exec(`git tag ${tagName}`);
+    printSuccess(`Tag ${tagName} created`);
+
+    exec('git push origin main');
+    exec(`git push origin ${tagName}`);
+    printSuccess(`Pushed main and ${tagName} — CI release started`);
+    console.log('');
+
+    console.log('╔══════════════════════════════════════════════════════════╗');
+    console.log('║              🚀 Release handed off to CI 🚀              ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
+    console.log('');
+    printSuccess(`Version: ${newVersion}`);
+    printInfo(`Watch the release run: ${REPO_URL}/actions/workflows/release.yml`);
+    console.log('');
+    console.log('CI will now: build the MCPB → create the GitHub release with the');
+    console.log('.mcpb asset → publish to npm → publish to the MCP Registry.');
+    console.log('');
+    console.log('Next steps:');
+    console.log(`  1. Confirm the run is green: ${REPO_URL}/actions/workflows/release.yml`);
+    console.log(`  2. Polish release notes if needed: ${REPO_URL}/releases/tag/${tagName}`);
+    console.log('  3. Announce on Discord');
+    console.log('');
+    console.log(`If a publish step failed, re-run it with:`);
+    console.log(`  gh workflow run release.yml --ref main -f tag=${tagName}`);
+    console.log('');
 }
 
-// Run the script
 publishRelease().catch(error => {
-    printError('Unexpected error:');
-    console.error(error);
+    printError('Release failed:');
+    console.error(error.message || error);
     process.exit(1);
 });
