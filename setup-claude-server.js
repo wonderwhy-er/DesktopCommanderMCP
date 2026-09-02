@@ -533,6 +533,19 @@ function updateSetupStep(index, status, error = null) {
     }
 }
 
+// Resolve a system utility to an absolute path so it can't be shadowed by a
+// foreign entry prepended to PATH (shell rc files, direnv, tool shims, etc.).
+// Returns the first candidate that exists on disk, falling back to the bare
+// name if none are found (e.g. a distro that installs the tool elsewhere).
+function resolveSystemBinary(candidates, fallback) {
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return fallback;
+}
+
 async function execAsync(command) {
     const execStep = addSetupStep(`exec_${command.substring(0, 20)}...`);
     return new Promise((resolve, reject) => {
@@ -569,16 +582,20 @@ async function restartClaude() {
                         `taskkill /F /IM "Claude.exe"`,
                     );
                     break;
-                case "darwin":
+                case "darwin": {
+                    const killall = resolveSystemBinary(['/usr/bin/killall'], 'killall');
                     await execAsync(
-                        `killall "Claude"`,
+                        `"${killall}" "Claude"`,
                     );
                     break;
-                case "linux":
+                }
+                case "linux": {
+                    const pkill = resolveSystemBinary(['/usr/bin/pkill', '/bin/pkill'], 'pkill');
                     await execAsync(
-                        `pkill -f "claude"`,
+                        `"${pkill}" -f "claude"`,
                     );
                     break;
+                }
             }
             updateSetupStep(killStep, 'completed');
             await trackEvent('npx_setup_kill_claude_success', { platform });
@@ -600,7 +617,8 @@ async function restartClaude() {
                 updateSetupStep(startStep, 'skipped');
                 await trackEvent('npx_setup_start_claude_skipped', { platform });
             } else if (platform === "darwin") {
-                await execAsync(`open -a "Claude"`);
+                const open = resolveSystemBinary(['/usr/bin/open'], 'open');
+                await execAsync(`"${open}" -a "Claude"`);
                 updateSetupStep(startStep, 'completed');
                 logToFile("\n✅ Claude has been restarted automatically!");
                 await trackEvent('npx_setup_start_claude_success', { platform });
