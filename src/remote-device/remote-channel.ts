@@ -56,6 +56,14 @@ const RECREATE_TIMEOUT_MS = 45000;
 // Max continuous time in 'joining' before forcing a recreate — a half-open
 // socket parks the channel there forever, and a genuine join settles in ~10s.
 const JOINING_WEDGE_TIMEOUT_MS = 30000;
+// Backstop for a half-open socket where 'joined' never changes and realtime-js's
+// own heartbeat-close never completes. ~3x the 25s heartbeat interval.
+const HEARTBEAT_STALE_TIMEOUT_MS = 75000;
+// Fixed cadence for our own token refresh, independent of auth-js's internal
+// ticker (disabled in initialize()) — see the clock-skew comment below for why.
+const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
+// Below this, skew is noise — leave Date.now untouched. Above it, correct.
+const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
 // Failed recreates before withdrawing transport_broadcast_v1 — keeping it while
 // unable to join makes the device undispatchable. Not lower than 3: ordinary
 // half-open recovery legitimately costs 2.
@@ -71,6 +79,51 @@ const OFFLINE_SESSION_TIMEOUT_MS = 500;
 // already covers.
 const SOCKET_SETTLE_MAX_MS = 300;
 const SOCKET_SETTLE_POLL_MS = 20;
+
+// auth-js compares token expiry against this device's own Date.now(), with no
+// clock-skew tolerance — a fast clock treats every fresh token as expired and
+// refreshes forever (confirmed in prod on one device, via at least 3 separate
+// check sites, not all gated by autoRefreshToken).
+// Rather than chase each check, fix the shared input: every Supabase response
+// carries a `Date` header (RFC 7231, the server's own clock), so a fetch
+// wrapper passed via `global.fetch` corrects Date.now for this process off of
+// that, continuously — covers every current and future check without needing
+// to know where they live. Also shifts capture.ts telemetry timestamps
+// (Date.now-based) onto server time, which is desirable: GA4 drops
+// future-dated events, so a fast-clock device loses its telemetry otherwise.
+// `new Date()` is untouched.
+const rawDateNow = Date.now;
+let clockOffsetMs = 0;
+let clockPatched = false;
+
+export function observeServerDate(dateHeader: string | null): void {
+    if (!dateHeader) return;
+    const serverMs = Date.parse(dateHeader);
+    if (Number.isNaN(serverMs)) return;
+
+    const offsetMs = serverMs - rawDateNow();
+    if (Math.abs(offsetMs) <= CLOCK_SKEW_CORRECTION_THRESHOLD_MS) {
+        if (clockPatched) {
+            Date.now = rawDateNow;
+            clockPatched = false;
+        }
+        return;
+    }
+
+    clockOffsetMs = offsetMs;
+    if (!clockPatched) {
+        Date.now = () => rawDateNow() + clockOffsetMs;
+        clockPatched = true;
+        console.warn(`⚠️ Device clock skewed ~${Math.round(offsetMs / 1000)}s from Supabase — correcting for this process`);
+        captureRemote('remote_channel_clock_skew_corrected', { offsetMs }).catch(() => { });
+    }
+}
+
+async function clockAwareFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const response = await fetch(input, init);
+    observeServerDate(response.headers.get('date'));
+    return response;
+}
 
 export class RemoteChannel {
     private client: SupabaseClient | null = null;
@@ -117,19 +170,35 @@ export class RemoteChannel {
 
     private reconnectAttempt = 0;        // recreates since the last success
     private isRecreatingChannel = false; // re-entrancy guard
-    private joiningSince: number | null = null; // start of an unbroken 'joining' run
+    private joiningSince: number | null = null; // start of an unbroken 'joining' run (performance.now())
+    /** Last confirmed proof of life (SUBSCRIBED or heartbeat 'ok'); null until the
+     * first one lands. On performance.now(), not Date.now(): the clock-skew
+     * correction above can (un)patch Date.now mid-run, jumping wall-clock math by
+     * the whole offset — a backward jump would suppress stale detection for as
+     * long as the offset. Same for joiningSince. */
+    private lastHeartbeatOkAt: number | null = null;
+    private heartbeatListenerRegistered = false;
+    /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
+    private tokenRefreshInterval: NodeJS.Timeout | null = null;
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
 
     initialize(url: string, key: string): void {
+        // autoRefreshToken:false — we drive refresh ourselves (startTokenRefresh(),
+        // see TOKEN_REFRESH_INTERVAL_MS) instead of auth-js's local-clock-driven
+        // ticker. clockAwareFetch — see the clock-skew correction block above.
         this.client = createClient(url, key, {
+            auth: { autoRefreshToken: false },
+            global: { fetch: clockAwareFetch },
             realtime: {
                 // supabase-js's resolver ends in `?? supabaseKey`, so after SIGNED_OUT
                 // the socket silently re-pins to the anon key and every private-channel
                 // join is refused. Overriding under `realtime` (not the top-level
                 // `accessToken`, which turns client.auth into a throwing Proxy).
+                // getSession() may refresh on-demand when the token reads expired —
+                // that check is clock-skew-safe now (see clockAwareFetch above).
                 accessToken: async (): Promise<string | null> => {
                     try {
                         const { data } = await this.client!.auth.getSession();
@@ -141,6 +210,14 @@ export class RemoteChannel {
                 },
             },
         });
+        if (!this.heartbeatListenerRegistered) {
+            this.heartbeatListenerRegistered = true;
+            try {
+                (this.client as any).realtime?.onHeartbeat?.((status: string) => {
+                    if (status === 'ok') this.lastHeartbeatOkAt = performance.now();
+                });
+            } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
+        }
     }
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
@@ -577,6 +654,7 @@ export class RemoteChannel {
                     if (status === 'SUBSCRIBED') {
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
+                        this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
@@ -749,6 +827,19 @@ export class RemoteChannel {
         // 'joined' = healthy. Clear the joining-overstay timer.
         if (state === 'joined') {
             this.joiningSince = null;
+
+            // 'joined' is a cached string, not proof of a live socket. Cross-check
+            // against the last confirmed heartbeat reply.
+            if (this.lastHeartbeatOkAt !== null) {
+                const staleMs = performance.now() - this.lastHeartbeatOkAt;
+                if (staleMs > HEARTBEAT_STALE_TIMEOUT_MS) {
+                    console.debug(`[DEBUG] ⚠️ Channel reads 'joined' but no confirmed heartbeat in ${Math.round(staleMs / 1000)}s - forcing recreate — ${this.connState()}`);
+                    captureRemote('remote_channel_heartbeat_stale', { staleMs, attempt: this.reconnectAttempt });
+                    this.recreateChannel();
+                    return;
+                }
+            }
+
             // Self-heal a failed presence publish: the channel is up, so nothing
             // else will ever retry (SUBSCRIBED won't fire again), and without
             // presence the server reports this healthy device as offline.
@@ -765,7 +856,7 @@ export class RemoteChannel {
         // JOINING_WEDGE_TIMEOUT_MS force a recreate, the only path that
         // disconnect()s the dead socket.
         if (state === 'joining') {
-            const now = Date.now();
+            const now = performance.now();
             if (this.joiningSince === null) this.joiningSince = now;
             const stuckMs = now - this.joiningSince;
             if (stuckMs < JOINING_WEDGE_TIMEOUT_MS) return;
@@ -859,7 +950,12 @@ export class RemoteChannel {
             // it a window to win: the old channel can come back 'joined' while we
             // slept. Destroying a healthy channel would cause a pointless outage
             // cycle — bail out instead (observed live on staging, 2026-07-23).
-            if (this.channel?.state === 'joined') {
+            // 'joined' alone isn't proof — only bail out when we don't already
+            // know the heartbeat is stale (this recreate may have been triggered
+            // by exactly that).
+            const heartbeatStale = this.lastHeartbeatOkAt !== null
+                && (performance.now() - this.lastHeartbeatOkAt) > HEARTBEAT_STALE_TIMEOUT_MS;
+            if (this.channel?.state === 'joined' && !heartbeatStale) {
                 console.log(`✅ Channel self-healed during backoff — skipping recreate — ${this.connState()}`);
                 return; // finally-block below clears the re-entrancy guard
             }
@@ -1125,7 +1221,38 @@ export class RemoteChannel {
         // withdraws the capability flag must fall back to the fast legacy
         // cadence immediately, not 30 minutes later.
         this.scheduleHeartbeat();
-        console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms`);
+        this.startTokenRefresh();
+        console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
+    }
+
+    private async refreshTokenNow(): Promise<void> {
+        if (!this.client || this.shuttingDown) return;
+        try {
+            const { error } = await this.client.auth.refreshSession();
+            if (error) {
+                console.error('[DEBUG] Manual token refresh failed:', error.message);
+                await captureRemote('remote_channel_token_refresh_error', { error });
+            } else {
+                console.debug('[DEBUG] Manual token refresh ok');
+            }
+        } catch (error: any) {
+            console.error('[DEBUG] Manual token refresh threw:', error?.message);
+            await captureRemote('remote_channel_token_refresh_error', { error });
+        }
+    }
+
+    private startTokenRefresh(): void {
+        if (this.tokenRefreshInterval) return; // already running
+        this.tokenRefreshInterval = setInterval(() => {
+            this.refreshTokenNow().catch(() => { /* logged inside */ });
+        }, TOKEN_REFRESH_INTERVAL_MS);
+    }
+
+    private stopTokenRefresh(): void {
+        if (this.tokenRefreshInterval) {
+            clearInterval(this.tokenRefreshInterval);
+            this.tokenRefreshInterval = null;
+        }
     }
 
     /** Arm (or re-arm) the last_seen timer at the current tier's cadence. */
@@ -1153,6 +1280,7 @@ export class RemoteChannel {
             clearInterval(this.connectionCheckInterval);
             this.connectionCheckInterval = null;
         }
+        this.stopTokenRefresh();
     }
 
     async setOnlineStatus(deviceId: string, status: 'online' | 'offline') {
