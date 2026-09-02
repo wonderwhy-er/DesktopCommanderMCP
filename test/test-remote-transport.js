@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Remote transport tests (Broadcast/Presence + legacy fallback).
+ * Remote transport tests (Broadcast/Presence).
  *
  * Sections:
  *   1. Exactly-once execution under dual delivery
@@ -302,16 +302,16 @@ await test('the result row is written BEFORE the doorbell is rung', async () => 
 // --- 4. Heartbeat cadence tiers ---------------------------------------------
 // The server tiers its offline sweep on the capability FLAG, not the app
 // version, and the flag is only set once presence is proven. So an unproven
-// device is judged by the 45s legacy rule and must heartbeat fast enough to
-// survive it, or it is swept offline while its legacy channel still works.
+// device is judged by the fast 45s rule and must heartbeat fast enough to
+// survive it, or it is swept offline before it ever proves presence.
 
-await test('legacy tier heartbeats inside the server 45s sweep threshold', async () => {
+await test('unproven tier heartbeats inside the server 45s sweep threshold', async () => {
   const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = null; // never written = legacy tier
+  rc.transportCapableWritten = null; // never written = unproven tier
   const cadence = rc.heartbeatIntervalMs();
   assert(
     cadence * 2 < SERVER_LEGACY_OFFLINE_TIMEOUT_MS,
-    `legacy cadence ${cadence}ms must allow >=2 writes inside ${SERVER_LEGACY_OFFLINE_TIMEOUT_MS}ms`
+    `unproven-tier cadence ${cadence}ms must allow >=2 writes inside ${SERVER_LEGACY_OFFLINE_TIMEOUT_MS}ms`
   );
   rc.transportCapableWritten = false; // explicitly withdrawn
   assert(rc.heartbeatIntervalMs() === cadence, 'a withdrawn capability uses the fast cadence');
@@ -367,24 +367,12 @@ await test('stopHeartbeat halts the self-rescheduling timer', async () => {
 });
 
 // --- 5. Reachability and status writes --------------------------------------
-// `status` is what the server's device selection filters on, and it is
-// transport-agnostic — so it must follow "reachable by ANY transport", never the
-// private channel alone.
-
-await test('heartbeat writes when only the legacy channel is joined', async () => {
-  const { rc, client } = makeRemoteChannel();
-  rc.channel = null; // private channel never joined
-  rc.legacyChannel = makeChannelState('joined'); // fallback is up
-  await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 1, 'legacy-only reachable device must still write last_seen');
-  assert(client.writes[0].last_seen, 'write should bump last_seen');
-  assert(client.writes[0].status === 'online', 'write should assert online');
-});
+// `status` is what the server's device selection filters on, so it must
+// follow the private channel's real join state.
 
 await test('heartbeat stays silent when no transport is joined', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('errored');
-  rc.legacyChannel = makeChannelState('closed');
   await rc.updateHeartbeat(DEVICE_ID);
   assert(client.writes.length === 0, 'a deaf device must let the sweep age its row out');
 });
@@ -392,25 +380,13 @@ await test('heartbeat stays silent when no transport is joined', async () => {
 await test('heartbeat writes when the private channel is joined', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.legacyChannel = null;
   await rc.updateHeartbeat(DEVICE_ID);
   assert(client.writes.length === 1, 'private channel joined = reachable');
 });
 
-await test('private-channel failure keeps status online while legacy is joined', async () => {
+await test('status goes offline when the private channel is not joined', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('errored');
-  rc.legacyChannel = makeChannelState('joined');
-  rc.syncReachabilityStatus();
-  await rc.statusWriteChain;
-  assert(client.writes.length === 1, 'one status write');
-  assert(client.writes[0].status === 'online', 'still reachable via legacy = online');
-});
-
-await test('status goes offline when no transport is joined', async () => {
-  const { rc, client } = makeRemoteChannel();
-  rc.channel = makeChannelState('errored');
-  rc.legacyChannel = makeChannelState('closed');
   rc.syncReachabilityStatus();
   await rc.statusWriteChain;
   assert(client.writes[0].status === 'offline', 'genuinely deaf device goes offline');
@@ -446,34 +422,18 @@ await test('concurrent status writes stay ordered', async () => {
 // --- 6. Capability withdrawal -----------------------------------------------
 // For a flagged device the server treats absent presence as authoritative
 // offline and applies that overlay before selection, overriding `status`. So a
-// device that cannot join the private channel must stop advertising the flag or
-// it is undispatchable however healthy its legacy channel is.
+// device that cannot join the private channel must stop advertising the flag
+// or it is undispatchable — there is no other transport to fall back on.
 
 await test('sustained recreate failure withdraws the transport capability', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.transportCapableWritten = true; // previously proven
-  rc.legacyChannel = makeChannelState('joined');
   rc.sleep = () => Promise.resolve(); // skip the jittered backoff
-  const order = [];
-  rc.createChannel = () => {
-    order.push('private');
-    return Promise.reject(new Error('Unauthorized'));
-  };
-  rc.createLegacyChannel = () => { order.push('legacy'); };
+  rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
   rc.channel = makeChannelState('errored');
 
   for (let i = 0; i < 3; i++) await rc.recreateChannel();
 
-  // Also proves the recreate reached createChannel rather than dying earlier,
-  // and that the legacy net is rebuilt first and on every attempt.
-  assert(
-    order.slice(0, 2).join(',') === 'legacy,private',
-    `legacy net must be rebuilt first: ${JSON.stringify(order)}`
-  );
-  assert(
-    order.filter((o) => o === 'legacy').length === 3,
-    'legacy net must be rebuilt on every recreate attempt'
-  );
   assert(rc.transportCapableWritten === false, 'capability must be withdrawn');
   const capWrite = client.writes.find((w) => w.capabilities);
   assert(capWrite, 'a capabilities write should have been issued');
@@ -487,10 +447,8 @@ await test('sustained recreate failure withdraws the transport capability', asyn
 await test('a single recreate failure does not withdraw the capability', async () => {
   const { rc } = makeRemoteChannel();
   rc.transportCapableWritten = true;
-  rc.legacyChannel = makeChannelState('joined');
   rc.sleep = () => Promise.resolve();
   rc.createChannel = () => Promise.reject(new Error('transient'));
-  rc.createLegacyChannel = () => {};
   rc.channel = makeChannelState('errored');
   await rc.recreateChannel();
   assert(rc.transportCapableWritten === true, 'one blip must not withdraw');
@@ -499,10 +457,8 @@ await test('a single recreate failure does not withdraw the capability', async (
 await test('a hanging capability withdrawal cannot pin the recreate guard', async () => {
   const { rc } = makeRemoteChannel();
   rc.transportCapableWritten = true;
-  rc.legacyChannel = makeChannelState('joined');
   rc.sleep = () => Promise.resolve();
   rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
-  rc.createLegacyChannel = () => {};
   rc.channel = makeChannelState('errored');
   rc.setTransportCapable = () => new Promise(() => {}); // never settles
   const realWithTimeout = rc.withTimeout.bind(rc);
@@ -520,7 +476,6 @@ await test('a hanging capability withdrawal cannot pin the recreate guard', asyn
 await test('status writes are suppressed once shutting down', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.legacyChannel = makeChannelState('joined');
   rc.shuttingDown = true;
   rc.syncReachabilityStatus();
   rc.queueStatusWrite('online');
@@ -538,7 +493,6 @@ await test('heartbeat is suppressed once shutting down', async () => {
 
 await test('unsubscribe is bounded and still clears the channel', async () => {
   const { rc } = makeRemoteChannel();
-  rc.legacyChannel = null;
   rc.channel = {
     state: 'joined',
     untrack: () => new Promise(() => {}), // never settles
