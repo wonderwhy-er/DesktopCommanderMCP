@@ -31,6 +31,15 @@ const ROOT_PATH = '/';
 const isWindows = process.platform === 'win32';
 const TEST_ROOT_PATH = isWindows ? 'C:/' : '/';
 
+function isWithinDirectory(basePath, targetPath) {
+  const relative = path.relative(basePath, targetPath);
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
 /**
  * Helper function to clean up test directories
  */
@@ -239,8 +248,8 @@ async function testHomeAllowedDirectory() {
     console.log(`DEBUG Test4 - Config: ${JSON.stringify(config.allowedDirectories)}`);
     assert.deepStrictEqual(config.allowedDirectories, [HOME_DIR], 'allowedDirectories should contain only the home directory');
     
-    // Check if OUTSIDE_DIR is inside the home directory
-    const isOutsideDirInHome = OUTSIDE_DIR.toLowerCase().startsWith(HOME_DIR.toLowerCase());
+    const isTestDirInHome = isWithinDirectory(HOME_DIR, TEST_DIR);
+    const isOutsideDirInHome = isWithinDirectory(HOME_DIR, OUTSIDE_DIR);
 
     // Test access to various locations
     const testDirAccess = await isPathAccessible(TEST_DIR);
@@ -250,9 +259,9 @@ async function testHomeAllowedDirectory() {
     const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
     const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
     
-    // Only test directory and its contents should be accessible
-    assert.strictEqual(testDirAccess, true, 'Test directory should be accessible');
-    assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
+    // Only the home directory and paths inside it should be accessible
+    assert.strictEqual(testDirAccess, isTestDirInHome, 'Test directory access should match whether it is inside home');
+    assert.strictEqual(testFileAccess, isTestDirInHome, 'Test file access should match whether it is inside home');
     assert.strictEqual(homeDirAccess, true, 'Home directory should be accessible');
     assert.strictEqual(homeTildaDirAccess, true, 'HOME TILDA directory should be accessible');
     
@@ -404,8 +413,10 @@ export default async function runTests() {
 
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
+  runTests().then(success => {
+    process.exitCode = success ? 0 : 1;
+  }).catch(error => {
     console.error('❌ Unhandled error:', error);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }
