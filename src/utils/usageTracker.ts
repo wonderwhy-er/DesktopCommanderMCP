@@ -92,17 +92,6 @@ class UsageTracker {
   }
 
   /**
-   * Save usage stats to config.
-   * Non-blocking: the tool-call return path must not wait on a disk write. The
-   * in-memory stats are already updated by the caller (getStats returns the live
-   * config object), so persistence is coalesced in the background. This is what
-   * keeps a saturated libuv threadpool from gating tool responses on every call.
-   */
-  private async saveStats(stats: ToolUsageStats): Promise<void> {
-    await configManager.setValueNonBlocking('usageStats', stats);
-  }
-
-  /**
    * Determine which category a tool belongs to
    */
   private getToolCategory(toolName: string): keyof Omit<ToolUsageStats, 'totalToolCalls' | 'successfulCalls' | 'failedCalls' | 'toolCounts' | 'firstUsed' | 'lastUsed' | 'totalSessions' | 'lastFeedbackPrompt'> | null {
@@ -156,64 +145,46 @@ class UsageTracker {
    * Track a successful tool call
    */
   async trackSuccess(toolName: string): Promise<ToolUsageStats> {
-    const stats = await this.getStats();
-
-    // Update session
     this.updateSession();
-
-    // Update counters
-    stats.totalToolCalls++;
-    stats.successfulCalls++;
-    stats.lastUsed = Date.now();
-
-    // Update tool-specific counter
-    stats.toolCounts[toolName] = (stats.toolCounts[toolName] || 0) + 1;
-
-    // Update category counter
+    const now = Date.now();
     const category = this.getToolCategory(toolName);
-    if (category) {
-      stats[category]++;
-    }
+    const newSession = this.currentSession?.commandsInSession === 1;
 
-    // Update session count if this is a new session
-    if (this.currentSession?.commandsInSession === 1) {
-      stats.totalSessions++;
-    }
-
-    await this.saveStats(stats);
-    return stats;
+    return await configManager.updateValueNonBlocking('usageStats', (stored) => {
+      const stats: ToolUsageStats = stored
+        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
+        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      stats.totalToolCalls++;
+      stats.successfulCalls++;
+      stats.lastUsed = Math.max(stats.lastUsed || 0, now);
+      stats.toolCounts[toolName] = (stats.toolCounts[toolName] || 0) + 1;
+      if (category) stats[category]++;
+      if (newSession) stats.totalSessions++;
+      return stats;
+    });
   }
 
   /**
    * Track a failed tool call
    */
   async trackFailure(toolName: string): Promise<ToolUsageStats> {
-    const stats = await this.getStats();
-
-    // Update session
     this.updateSession();
-
-    // Update counters
-    stats.totalToolCalls++;
-    stats.failedCalls++;
-    stats.lastUsed = Date.now();
-
-    // Update tool-specific counter (we count failures too)
-    stats.toolCounts[toolName] = (stats.toolCounts[toolName] || 0) + 1;
-
-    // Update category counter
+    const now = Date.now();
     const category = this.getToolCategory(toolName);
-    if (category) {
-      stats[category]++;
-    }
+    const newSession = this.currentSession?.commandsInSession === 1;
 
-    // Update session count if this is a new session
-    if (this.currentSession?.commandsInSession === 1) {
-      stats.totalSessions++;
-    }
-
-    await this.saveStats(stats);
-    return stats;
+    return await configManager.updateValueNonBlocking('usageStats', (stored) => {
+      const stats: ToolUsageStats = stored
+        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
+        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      stats.totalToolCalls++;
+      stats.failedCalls++;
+      stats.lastUsed = Math.max(stats.lastUsed || 0, now);
+      stats.toolCounts[toolName] = (stats.toolCounts[toolName] || 0) + 1;
+      if (category) stats[category]++;
+      if (newSession) stats.totalSessions++;
+      return stats;
+    });
   }
 
   /**
@@ -340,19 +311,22 @@ class UsageTracker {
    * Mark that user was prompted for feedback
    */
   async markFeedbackPrompted(): Promise<void> {
-    const stats = await this.getStats();
-    const today = new Date().toISOString().split('T')[0]; // '2025-10-20'
+    const now = Date.now();
+    const today = new Date(now).toISOString().split('T')[0];
 
-    stats.lastFeedbackPrompt = Date.now();
-    stats.lastFeedbackPromptDate = today;
-    stats.feedbackAttempts = (stats.feedbackAttempts || 0) + 1;
-
-    // Mark session so we don't prompt again this session
     if (this.currentSession) {
       this.currentSession.promptedThisSession = true;
     }
 
-    await this.saveStats(stats);
+    await configManager.updateValueNonBlocking('usageStats', (stored) => {
+      const stats: ToolUsageStats = stored
+        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
+        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      stats.lastFeedbackPrompt = Math.max(stats.lastFeedbackPrompt || 0, now);
+      stats.lastFeedbackPromptDate = today;
+      stats.feedbackAttempts = (stats.feedbackAttempts || 0) + 1;
+      return stats;
+    });
   }
 
   /**

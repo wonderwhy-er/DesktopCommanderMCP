@@ -93,8 +93,12 @@ function callToolOnFreshServer({ home, flagUrl, followUpDelayMs = null }) {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutHandle);
+      if (child.exitCode !== null) {
+        resolve(result);
+        return;
+      }
+      child.once('exit', () => resolve(result));
       child.kill('SIGTERM');
-      resolve(result);
     };
 
     const timeoutHandle = setTimeout(
