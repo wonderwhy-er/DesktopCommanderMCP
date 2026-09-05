@@ -39,6 +39,15 @@ const READ_PERFORMANCE_THRESHOLDS = {
     CHUNK_SIZE: 8192,             // 8KB chunks for reverse reading
 } as const;
 
+async function destroyReadStream(stream: ReturnType<typeof createReadStream>): Promise<void> {
+    if (stream.closed) return;
+
+    await new Promise<void>((resolve) => {
+        stream.once('close', resolve);
+        stream.destroy();
+    });
+}
+
 /**
  * Text file handler implementation
  * Binary detection is done at the factory level - this handler assumes file is text
@@ -372,7 +381,7 @@ export class TextFileHandler implements FileHandler {
             }
         } finally {
             rl.close();
-            stream.destroy();
+            await destroyReadStream(stream);
         }
 
         if (includeStatusMessage) {
@@ -415,7 +424,7 @@ export class TextFileHandler implements FileHandler {
             }
         } finally {
             rl.close();
-            sampleStream.destroy();
+            await destroyReadStream(sampleStream);
         }
 
         if (sampleLines === 0) {
@@ -455,7 +464,7 @@ export class TextFileHandler implements FileHandler {
                 }
             } finally {
                 rl2.close();
-                stream.destroy();
+                await destroyReadStream(stream);
             }
 
             const content = includeStatusMessage
