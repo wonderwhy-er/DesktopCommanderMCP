@@ -353,23 +353,27 @@ export class TextFileHandler implements FileHandler {
         fileTotalLines?: number,
         signal?: AbortSignal
     ): Promise<FileResult> {
+        const stream = createReadStream(filePath, { signal });
         const rl = createInterface({
-            input: createReadStream(filePath, { signal }),
+            input: stream,
             crlfDelay: Infinity
         });
 
         const result: string[] = [];
         let lineNumber = 0;
 
-        for await (const line of rl) {
-            if (lineNumber >= offset && result.length < length) {
-                result.push(line);
+        try {
+            for await (const line of rl) {
+                if (lineNumber >= offset && result.length < length) {
+                    result.push(line);
+                }
+                if (result.length >= length) break;
+                lineNumber++;
             }
-            if (result.length >= length) break;
-            lineNumber++;
+        } finally {
+            rl.close();
+            stream.destroy();
         }
-
-        rl.close();
 
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
@@ -394,21 +398,25 @@ export class TextFileHandler implements FileHandler {
         signal?: AbortSignal
     ): Promise<FileResult> {
         // First, do a quick scan to estimate lines per byte
+        const sampleStream = createReadStream(filePath, { signal });
         const rl = createInterface({
-            input: createReadStream(filePath, { signal }),
+            input: sampleStream,
             crlfDelay: Infinity
         });
 
         let sampleLines = 0;
         let bytesRead = 0;
 
-        for await (const line of rl) {
-            bytesRead += Buffer.byteLength(line, 'utf-8') + 1;
-            sampleLines++;
-            if (bytesRead >= READ_PERFORMANCE_THRESHOLDS.SAMPLE_SIZE) break;
+        try {
+            for await (const line of rl) {
+                bytesRead += Buffer.byteLength(line, 'utf-8') + 1;
+                sampleLines++;
+                if (bytesRead >= READ_PERFORMANCE_THRESHOLDS.SAMPLE_SIZE) break;
+            }
+        } finally {
+            rl.close();
+            sampleStream.destroy();
         }
-
-        rl.close();
 
         if (sampleLines === 0) {
             return await this.readFromStartWithReadline(filePath, offset, length, mimeType, includeStatusMessage, fileTotalLines, signal);
@@ -432,20 +440,23 @@ export class TextFileHandler implements FileHandler {
             const result: string[] = [];
             let firstLineSkipped = false;
 
-            for await (const line of rl2) {
-                if (!firstLineSkipped && startPosition > 0) {
-                    firstLineSkipped = true;
-                    continue;
-                }
+            try {
+                for await (const line of rl2) {
+                    if (!firstLineSkipped && startPosition > 0) {
+                        firstLineSkipped = true;
+                        continue;
+                    }
 
-                if (result.length < length) {
-                    result.push(line);
-                } else {
-                    break;
+                    if (result.length < length) {
+                        result.push(line);
+                    } else {
+                        break;
+                    }
                 }
+            } finally {
+                rl2.close();
+                stream.destroy();
             }
-
-            rl2.close();
 
             const content = includeStatusMessage
                 ? `${this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false)}\n\n${result.join('\n')}`
