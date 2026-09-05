@@ -5,6 +5,7 @@ import { mdToPdf } from 'md-to-pdf';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 import { CONFIG_FILE } from '../../config.js';
+import { fetchUrlValidated } from '../../utils/urlSafety.js';
 
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
@@ -259,9 +260,14 @@ export function ensureChromeAvailable(): void {
     });
 }
 
-async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
+async function loadPdfToBuffer(source: string | Uint8Array): Promise<Buffer | ArrayBuffer | Uint8Array> {
+    if (typeof source !== 'string') {
+        return source;
+    }
     if (isUrl(source)) {
-        const response = await fetch(source);
+        // Same SSRF guard as read_file's URL path — this parser must not be a
+        // way to fetch URLs that the guard would refuse.
+        const { response } = await fetchUrlValidated(source);
         return await response.arrayBuffer();
     } else {
         return await fs.readFile(source);
@@ -270,8 +276,13 @@ async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
 
 /**
  * Convert PDF to Markdown using @opendocsg/pdf2md
+ *
+ * Callers that already downloaded the PDF should pass the bytes rather than the
+ * URL — it avoids a second fetch, and the original request's validation stays
+ * authoritative. URL sources are fetched through the same SSRF guard as
+ * read_file.
  */
-export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
+export async function parsePdfToMarkdown(source: string | Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
 
