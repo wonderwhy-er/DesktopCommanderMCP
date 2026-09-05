@@ -14,7 +14,7 @@ async function test(name, fn) {
   catch (e) { failures++; console.log(`🔴 FAIL  ${name}\n   ${e.message}`); }
 }
 
-// CRLF line endings and quoted CSV, exactly as tasklist /fo csv /nh emits.
+// CRLF line endings and quoted CSV, exactly as tasklist /FO CSV /NH emits.
 const TASKLIST_CSV = [
   '"System Idle Process","0","Services","0","8 K"',
   '"System","4","Services","0","21,436 K"',
@@ -55,7 +55,7 @@ await test('tasklist CSV: session name/number never leak into cpu/memory', () =>
 
 await test('tasklist table output (the old command) yields no NaN garbage rows', () => {
   // Regression guard for the header/separator symptom from #662: even if fed
-  // the wrong format, the parser must drop unparseable rows, not emit NaN.
+  // the wrong format, the parser must drop unparsable rows, not emit NaN.
   const legacyTable = 'Image Name  PID Session Name  Session#  Mem Usage\r\n=========== === ============ ========= =========\r\nSystem   4 Services 0 21,436 K\r\n';
   const rows = parseWindowsTasklistCsv(legacyTable);
   assert.ok(rows.every(r => !Number.isNaN(r.pid)));

@@ -7,7 +7,7 @@ import { KillProcessArgsSchema } from './schemas.js';
 const execAsync = promisify(exec);
 
 /**
- * Parse `tasklist /fo csv /nh` output (#662). Fields per row, all quoted:
+ * Parse `tasklist /FO CSV /NH` output (#662). Fields per row, all quoted:
  * [Image Name, PID, Session Name, Session#, Mem Usage]. CSV instead of the
  * default table: image names can contain spaces and Mem Usage contains
  * thousands separators, so positional whitespace splitting can't work.
@@ -51,7 +51,7 @@ export function parsePsAux(stdout: string): ProcessInfo[] {
 
 export async function listProcesses(): Promise<ServerResult> {
   const isWindows = os.platform() === 'win32';
-  const command = isWindows ? 'tasklist /fo csv /nh' : 'ps aux';
+  const command = isWindows ? 'tasklist /FO CSV /NH' : 'ps aux';
   try {
     const { stdout } = await execAsync(command);
     const processes = isWindows ? parseWindowsTasklistCsv(stdout) : parsePsAux(stdout);
