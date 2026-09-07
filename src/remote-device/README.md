@@ -152,7 +152,7 @@ This enables verbose logging and ensures the device picks up usage of a local MC
 
 *   **You are in control**: The device runs on *your* machine. You can stop it at any time (`Ctrl+C`) to cut off access.
 *   **Local Execution**: Commands are executed locally under your user permissions.
-*   **Audit Logs**: The local MCP server logs all actions (see the main Desktop Commander README for log locations).
+*   **Local audit/history logs**: The local MCP server records tool calls on the device. See the main Desktop Commander README for exactly what is stored, log locations, and retention/rotation behavior. The Remote service does not currently retain command arguments/results as a historical server-side audit trail.
 
 ---
 *Powered by Desktop Commander MCP*
