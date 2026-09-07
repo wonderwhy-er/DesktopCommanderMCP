@@ -1,8 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { existsSync } from 'fs';
+import { existsSync, watch, type FSWatcher } from 'fs';
 import { mkdir } from 'fs/promises';
 import os from 'os';
+import lockfile from 'proper-lockfile';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 
@@ -56,6 +57,9 @@ class ConfigManager {
   private writeChain: Promise<void> = Promise.resolve();
   // True while a coalesced background write is already queued (see scheduleSave).
   private saveScheduled = false;
+  private pendingMutations: Array<(config: ServerConfig) => void> = [];
+  private watcher: FSWatcher | null = null;
+  private reloadTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     // Get user's home directory
@@ -64,49 +68,51 @@ class ConfigManager {
   }
 
   /**
-   * Initialize configuration - load from disk or create default
+   * Initialize configuration - load from disk or create default.
+   * Creation and legacy migration use the same cross-process mutation path as
+   * normal writes so two processes starting together cannot clobber each other.
    */
   async init() {
     if (this.initialized) return;
 
     try {
-      // Ensure config directory exists
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
         await mkdir(configDir, { recursive: true });
       }
 
-      // Check if config file exists
       try {
-        await fs.access(this.configPath);
-        // Load existing config
-        const configData = await fs.readFile(this.configPath, 'utf8');
-        this.config = JSON.parse(configData);
+        this.config = await this.readConfigFromDisk();
         this._isFirstRun = false;
 
-        // Configs created before this marker existed must not receive the
-        // welcome page retroactively when client eligibility changes later.
-        // New configs get this field from getDefaultConfig() and remain
-        // eligible across restarts until their first initialization.
         if (this.config['welcomeOnboardingEligible'] === undefined) {
-          this.config['welcomeOnboardingEligible'] = false;
-          this.config['pendingWelcomeOnboarding'] = false;
-          await this.saveConfig();
+          await this.performConfigMutation((latest) => {
+            if (latest['welcomeOnboardingEligible'] === undefined) {
+              latest['welcomeOnboardingEligible'] = false;
+              latest['pendingWelcomeOnboarding'] = false;
+            }
+          });
         }
-      } catch (error) {
-        // Config file doesn't exist, create default
-        this.config = this.getDefaultConfig();
-        this._isFirstRun = true; // This is a first run!
-        await this.saveConfig();
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error;
+        let created = false;
+        await this.performConfigMutation((latest, existed) => {
+          if (!existed) {
+            Object.assign(latest, this.getDefaultConfig());
+            created = true;
+          }
+        });
+        this._isFirstRun = created;
       }
-      this.config['version'] = VERSION;
 
+      this.config['version'] = VERSION;
       this.initialized = true;
+      this.startConfigWatcher();
     } catch (error) {
       console.error('Failed to initialize config:', error);
-      // Fall back to default config in memory
       this.config = this.getDefaultConfig();
       this.initialized = true;
+      this.startConfigWatcher();
     }
   }
 
@@ -188,46 +194,122 @@ class ConfigManager {
     };
   }
 
-  /**
-   * Write the current in-memory config to disk. All writes funnel through
-   * writeChain (see saveConfig / scheduleSave) so overlapping saves can never
-   * interleave and corrupt the file. Previously every tool call could fire its
-   * own independent fs.writeFile of the same path.
-   */
-  private async writeConfigToDisk(): Promise<void> {
-    await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
-  }
-
-  /**
-   * Awaitable save, serialized on writeChain. Use for explicit, user-driven
-   * config changes where the caller wants on-disk confirmation.
-   */
-  private async saveConfig(): Promise<void> {
-    const write = this.writeChain.then(() => this.writeConfigToDisk());
-    // Keep the chain alive even if this write rejects, so later writes still run.
-    this.writeChain = write.catch(() => {});
-    return write;
-  }
-
-  /**
-   * Non-blocking, coalesced save. Returns immediately; the write runs in the
-   * background. A burst of calls collapses to at most one queued write behind
-   * the in-flight one, so a storm of tool calls can't storm the disk — and,
-   * critically, can't pile up behind a saturated libuv threadpool and gate the
-   * tool-call response path. Used for high-frequency, non-critical persistence
-   * such as usage stats.
-   */
-  scheduleSave(): void {
-    if (this.saveScheduled) return; // a queued write will capture the latest config
-    this.saveScheduled = true;
-    this.writeChain = this.writeChain.then(async () => {
-      this.saveScheduled = false; // let the next burst queue a fresh write
+  private async readConfigFromDisk(): Promise<ServerConfig> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        await this.writeConfigToDisk();
+        return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+      } catch (error: any) {
+        lastError = error;
+        if (error?.code === 'ENOENT') throw error;
+        if (!(error instanceof SyntaxError) || attempt === 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    throw lastError;
+  }
+
+  private async writeConfigAtomically(config: ServerConfig): Promise<void> {
+    const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+    try {
+      await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
+      await fs.rename(tempPath, this.configPath);
+    } finally {
+      await fs.unlink(tempPath).catch(() => {});
+    }
+  }
+
+  private async acquireConfigLock(): Promise<() => Promise<void>> {
+    return lockfile.lock(this.configPath, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 100 }
+    });
+  }
+
+  private async performConfigMutation(
+    mutate: (config: ServerConfig, existed: boolean) => void
+  ): Promise<ServerConfig> {
+    const release = await this.acquireConfigLock();
+    try {
+      let latest: ServerConfig;
+      let existed = true;
+      try {
+        latest = await this.readConfigFromDisk();
+      } catch (error: any) {
+        if (error?.code !== 'ENOENT') throw error;
+        latest = {};
+        existed = false;
+      }
+      mutate(latest, existed);
+      await this.writeConfigAtomically(latest);
+      this.config = { ...latest, version: VERSION };
+      return latest;
+    } finally {
+      try {
+        await release();
       } catch (error) {
-        console.error('Failed to save config (background):', error);
+        // The atomic rename is the commit boundary. A release failure after it
+        // must not make callers replay a mutation that already persisted.
+        console.error('Failed to release config lock:', error);
+      }
+    }
+  }
+
+  private queueMutation(mutate: (config: ServerConfig) => void): void {
+    this.pendingMutations.push(mutate);
+    this.scheduleSave();
+  }
+
+  /** Non-blocking, coalesced persistence for high-frequency state updates. */
+  scheduleSave(): void {
+    if (this.saveScheduled) return;
+    this.saveScheduled = true;
+    const write = this.writeChain.then(async () => {
+      this.saveScheduled = false;
+      const mutations = this.pendingMutations.splice(0);
+      if (mutations.length === 0) return;
+      try {
+        await this.performConfigMutation((latest) => {
+          for (const mutate of mutations) mutate(latest);
+        });
+      } catch (error) {
+        // Persistence failed before commit, so keep these mutations for a later retry.
+        this.pendingMutations.unshift(...mutations);
+        console.error('Failed to save config (background), will retry:', error);
+        const retry = setTimeout(() => this.scheduleSave(), 250);
+        retry.unref?.();
       }
     });
+    this.writeChain = write.catch(() => {});
+  }
+
+  private startConfigWatcher(): void {
+    if (this.watcher) return;
+    try {
+      const dir = path.dirname(this.configPath);
+      const filename = path.basename(this.configPath);
+      this.watcher = watch(dir, { persistent: false }, (_event, changed) => {
+        if (changed && changed.toString() !== filename) return;
+        if (this.reloadTimer) clearTimeout(this.reloadTimer);
+        this.reloadTimer = setTimeout(() => void this.reloadConfigFromDisk(), 20);
+      });
+      this.watcher.on('error', (error) => console.error('Config watcher error:', error));
+    } catch (error) {
+      console.error('Failed to watch config:', error);
+    }
+  }
+
+  private async reloadConfigFromDisk(): Promise<void> {
+    try {
+      const latest = await this.readConfigFromDisk();
+      for (const mutate of this.pendingMutations) mutate(latest);
+      latest['version'] = VERSION;
+      this.config = latest;
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') console.error('Failed to reload config:', error);
+    }
   }
 
   /**
@@ -246,73 +328,83 @@ class ConfigManager {
     return this.config[key];
   }
 
-  /**
-   * Set a specific configuration value
-   */
+  /** Set a specific configuration value and wait for durable persistence. */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
+    if (key === 'telemetryEnabled') value = normalizeTelemetryEnabledValue(value);
 
-    if (key === 'telemetryEnabled') {
-      value = normalizeTelemetryEnabledValue(value);
-    }
-    
-    // Special handling for telemetry opt-out
     if (key === 'telemetryEnabled' && isTelemetryDisabledValue(value)) {
-      // Get the current value before changing it
       const currentValue: unknown = this.config[key];
-      const telemetryAlreadyDisabled = isTelemetryDisabledValue(currentValue);
-      
-      // Only capture the opt-out event if telemetry was previously enabled
-      if (!telemetryAlreadyDisabled) {
-        // Import the capture function dynamically to avoid circular dependencies
+      if (!isTelemetryDisabledValue(currentValue)) {
         const { capture } = await import('./utils/capture.js');
-        
-        // Send a final telemetry event noting that the user has opted out
-        // This helps us track opt-out rates while respecting the user's choice
-        await capture('server_telemetry_opt_out', {
-          reason: 'user_disabled',
-          prev_value: currentValue
-        });
+        await capture('server_telemetry_opt_out', { reason: 'user_disabled', prev_value: currentValue });
       }
     }
-    
-    // Update the value
-    this.config[key] = value;
-    await this.saveConfig();
+
+    const nextValue = value;
+    const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
+      latest[key] = nextValue;
+    }));
+    this.writeChain = write.then(() => {}, () => {});
+    await write;
+  }
+
+  /** Update one value under the cross-process lock and return the durable value. */
+  async updateValue(key: string, updater: (current: any) => any): Promise<any> {
+    await this.init();
+    let updatedValue: any;
+    const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
+      updatedValue = updater(latest[key]);
+      latest[key] = updatedValue;
+    }));
+    this.writeChain = write.then(() => {}, () => {});
+    await write;
+    return updatedValue;
   }
 
   /**
-   * Update a value in memory and persist it WITHOUT blocking the caller.
-   * The tool-call response path must never wait on a disk write: when the libuv
-   * threadpool is saturated (e.g. many parallel reads stalled on a slow/cloud
-   * filesystem) an awaited write can't get a thread and would hang the response
-   * of even pure-memory tools. The in-memory value is updated synchronously so
-   * subsequent reads see it immediately; the write is coalesced in the
-   * background. Callers needing on-disk confirmation should use setValue.
+   * Set a value without waiting on disk. The queued operation is applied to the
+   * latest on-disk config while holding the cross-process lock.
    */
   async setValueNonBlocking(key: string, value: any): Promise<void> {
     await this.init();
     this.config[key] = value;
-    this.scheduleSave();
+    this.queueMutation((latest) => { latest[key] = value; });
   }
 
   /**
-   * Update multiple configuration values at once
+   * Atomically update one value without blocking the caller on persistence.
+   * The updater is replayed against the latest disk value under the lock, which
+   * makes counter-style updates safe across multiple Desktop Commander processes.
    */
+  async updateValueNonBlocking(key: string, updater: (current: any) => any): Promise<any> {
+    await this.init();
+    const next = updater(this.config[key]);
+    this.config[key] = next;
+    this.queueMutation((latest) => { latest[key] = updater(latest[key]); });
+    return next;
+  }
+
+  /** Update multiple configuration values at once. */
   async updateConfig(updates: Partial<ServerConfig>): Promise<ServerConfig> {
     await this.init();
-    this.config = { ...this.config, ...updates };
-    await this.saveConfig();
-    return { ...this.config };
+    const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
+      Object.assign(latest, updates);
+    }));
+    this.writeChain = write.then(() => {}, () => {});
+    return { ...(await write) };
   }
 
-  /**
-   * Reset configuration to defaults
-   */
+  /** Reset configuration to defaults. This intentionally replaces all keys. */
   async resetConfig(): Promise<ServerConfig> {
-    this.config = this.getDefaultConfig();
-    await this.saveConfig();
-    return { ...this.config };
+    await this.init();
+    const defaults = this.getDefaultConfig();
+    const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
+      for (const key of Object.keys(latest)) delete latest[key];
+      Object.assign(latest, defaults);
+    }));
+    this.writeChain = write.then(() => {}, () => {});
+    return { ...(await write) };
   }
 
   /**
@@ -326,13 +418,8 @@ class ConfigManager {
    * Get or create a persistent client ID for analytics and A/B tests
    */
   async getOrCreateClientId(): Promise<string> {
-    let clientId = await this.getValue('clientId');
-    if (!clientId) {
-      const { randomUUID } = await import('crypto');
-      clientId = randomUUID();
-      await this.setValue('clientId', clientId);
-    }
-    return clientId;
+    const { randomUUID } = await import('crypto');
+    return await this.updateValue('clientId', (current) => current || randomUUID());
   }
 }
 
