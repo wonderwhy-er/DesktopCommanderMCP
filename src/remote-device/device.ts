@@ -133,6 +133,20 @@ export class MCPDevice {
                     session = null;
                 } else {
                     console.log('   - ✅ Session restored');
+
+                    // Revoking a device removes its server-side mcp_devices row, but the
+                    // local config can still hold a valid user session + the now-deleted
+                    // device ID. Do not silently recreate the revoked device with that
+                    // old session: revocation must require a fresh browser authorization.
+                    if (this.deviceId) {
+                        const persistedDevice = await this.remoteChannel.findDevice(this.deviceId);
+                        if (!persistedDevice) {
+                            console.log(`   - ⚠️ Persisted device ${this.deviceId} was revoked or removed`);
+                            await this.clearPersistedConfig();
+                            this.deviceId = undefined;
+                            session = null;
+                        }
+                    }
                 }
             }
 
@@ -234,6 +248,16 @@ export class MCPDevice {
             return null;
         } finally {
             // No need to ensure device ID here
+        }
+    }
+
+    async clearPersistedConfig() {
+        try {
+            await fs.rm(this.configPath, { force: true });
+            console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
+        } catch (error: any) {
+            console.warn('⚠️ Failed to clear stale config:', error.message);
+            await captureRemote('remote_device_config_clear_error', { error });
         }
     }
 
