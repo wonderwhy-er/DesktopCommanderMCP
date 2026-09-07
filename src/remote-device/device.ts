@@ -21,6 +21,12 @@ export interface MCPDeviceOptions {
  * (the device process, not the shared server).
  */
 const SEEN_CALL_IDS_MAX = 100;
+const PERSISTED_DEVICE_LOOKUP_ATTEMPTS = 3;
+const PERSISTED_DEVICE_LOOKUP_RETRY_MS = 250;
+
+export function getRemoteDeviceConfigPath() {
+    return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+}
 
 export class MCPDevice {
     private baseServerUrl: string;
@@ -38,7 +44,7 @@ export class MCPDevice {
         this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
         this.isShuttingDown = false;
-        this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+        this.configPath = getRemoteDeviceConfigPath();
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
         // refresh-token families get replayed, trip GoTrue's reuse detection, and
@@ -133,13 +139,14 @@ export class MCPDevice {
                     session = null;
                 } else {
                     console.log('   - ✅ Session restored');
+                    console.log('   - ℹ️  To log out locally: npx @wonderwhy-er/desktop-commander@latest remote --logout');
 
                     // Revoking a device removes its server-side mcp_devices row, but the
                     // local config can still hold a valid user session + the now-deleted
                     // device ID. Do not silently recreate the revoked device with that
                     // old session: revocation must require a fresh browser authorization.
                     if (this.deviceId) {
-                        const persistedDevice = await this.remoteChannel.findDevice(this.deviceId);
+                        const persistedDevice = await this.findPersistedDeviceWithRetry(this.deviceId);
                         if (!persistedDevice) {
                             console.log(`   - ⚠️ Persisted device ${this.deviceId} was revoked or removed`);
                             await this.clearPersistedConfig();
@@ -211,6 +218,22 @@ export class MCPDevice {
         }
     }
 
+
+
+    private async findPersistedDeviceWithRetry(deviceId: string) {
+        let lastError: any;
+        for (let attempt = 1; attempt <= PERSISTED_DEVICE_LOOKUP_ATTEMPTS; attempt++) {
+            try {
+                return await this.remoteChannel.findDevice(deviceId);
+            } catch (error: any) {
+                lastError = error;
+                if (attempt === PERSISTED_DEVICE_LOOKUP_ATTEMPTS) break;
+                console.warn(`   - ⚠️ Device lookup failed (${attempt}/${PERSISTED_DEVICE_LOOKUP_ATTEMPTS}); retrying...`);
+                await new Promise((resolve) => setTimeout(resolve, PERSISTED_DEVICE_LOOKUP_RETRY_MS * attempt));
+            }
+        }
+        throw lastError;
+    }
 
     async loadPersistedConfig() {
         try {

@@ -91,6 +91,13 @@ desktop-commander-device --no-persist-session
 
 > **Note**: The device ID and authentication tokens are persisted by default to `~/.desktop-commander-device/device.json` (mode 0600), so the device reconnects without re-authorization. Pass `--no-persist-session` to keep tokens in memory only — the device then requires a full browser re-authorization on every start, and each one leaves a live server-side session behind.
 
+**Log out locally and remove the saved device credentials:**
+```bash
+desktop-commander remote --logout
+```
+
+This removes `~/.desktop-commander-device/device.json` from the current machine. It does not revoke the device from the Remote MCP dashboard; use **Revoke** there if you also want to invalidate the remote device authorization.
+
 **If using local installation** from the project root directory:
 
 ```bash
