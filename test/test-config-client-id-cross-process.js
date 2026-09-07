@@ -50,7 +50,11 @@ async function parent() {
     assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).clientId, ids[0]);
     console.log(`✓ ${WORKERS} simultaneous processes converge on one persistent clientId`);
   } finally {
+    const exits = children.map((child) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once('exit', resolve)));
     children.forEach((child) => child.kill('SIGTERM'));
+    await Promise.all(exits);
     rmSync(home, { recursive: true, force: true });
   }
 }

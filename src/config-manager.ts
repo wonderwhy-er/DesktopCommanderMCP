@@ -244,10 +244,16 @@ class ConfigManager {
       }
       mutate(latest, existed);
       await this.writeConfigAtomically(latest);
-      this.config = latest;
+      this.config = { ...latest, version: VERSION };
       return latest;
     } finally {
-      await release();
+      try {
+        await release();
+      } catch (error) {
+        // The atomic rename is the commit boundary. A release failure after it
+        // must not make callers replay a mutation that already persisted.
+        console.error('Failed to release config lock:', error);
+      }
     }
   }
 
@@ -269,7 +275,11 @@ class ConfigManager {
           for (const mutate of mutations) mutate(latest);
         });
       } catch (error) {
-        console.error('Failed to save config (background):', error);
+        // Persistence failed before commit, so keep these mutations for a later retry.
+        this.pendingMutations.unshift(...mutations);
+        console.error('Failed to save config (background), will retry:', error);
+        const retry = setTimeout(() => this.scheduleSave(), 250);
+        retry.unref?.();
       }
     });
     this.writeChain = write.catch(() => {});

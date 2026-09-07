@@ -114,10 +114,15 @@ async function runParent() {
     );
     console.log('✓ stale usageStats save preserves another process config change');
   } finally {
-    for (const child of [a, b]) {
+    const children = [a, b];
+    const exits = children.map((child) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once('exit', resolve)));
+    for (const child of children) {
       if (child.connected) child.send({ type: 'exit' });
       child.kill('SIGTERM');
     }
+    await Promise.all(exits);
     rmSync(home, { recursive: true, force: true });
   }
 }

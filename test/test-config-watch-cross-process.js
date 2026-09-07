@@ -8,7 +8,6 @@ import { fileURLToPath } from 'node:url';
 const TEST_FILE = fileURLToPath(import.meta.url);
 const TIMEOUT_MS = 5_000;
 const KEY = '__crossProcessWatchTest';
-const VALUE = `watch-${Date.now()}`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function worker() {
@@ -18,12 +17,12 @@ async function worker() {
   process.on('message', async (message) => {
     try {
       if (message.type === 'set') {
-        await configManager.setValue(KEY, VALUE);
+        await configManager.setValue(KEY, message.value);
         process.send?.({ type: 'set-done' });
       } else if (message.type === 'await-value') {
         const deadline = Date.now() + TIMEOUT_MS;
         while (Date.now() < deadline) {
-          if (await configManager.getValue(KEY) === VALUE) {
+          if (await configManager.getValue(KEY) === message.value) {
             process.send?.({ type: 'observed' });
             return;
           }
@@ -57,6 +56,7 @@ function spawnWorker(home) {
 }
 
 async function parent() {
+  const value = `watch-${Date.now()}`;
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc-watch-'));
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
   mkdirSync(path.dirname(configPath), { recursive: true });
@@ -65,9 +65,9 @@ async function parent() {
   try {
     await Promise.all([waitFor(a, 'ready'), waitFor(b, 'ready')]);
     const observed = waitFor(a, 'observed');
-    a.send({ type: 'await-value' });
+    a.send({ type: 'await-value', value });
     const setDone = waitFor(b, 'set-done');
-    b.send({ type: 'set' });
+    b.send({ type: 'set', value });
     await setDone;
     await observed;
     const afterReload = statSync(configPath).mtimeMs;
@@ -75,7 +75,11 @@ async function parent() {
     assert.equal(statSync(configPath).mtimeMs, afterReload, 'watch reload must not write config back or create a loop');
     console.log('✓ running process reloads config after another process changes it without a write loop');
   } finally {
+    const exits = [a, b].map((child) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise((resolve) => child.once('exit', resolve)));
     a.kill('SIGTERM'); b.kill('SIGTERM');
+    await Promise.all(exits);
     rmSync(home, { recursive: true, force: true });
   }
 }

@@ -93,7 +93,7 @@ function callToolOnFreshServer({ home, flagUrl, followUpDelayMs = null }) {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutHandle);
-      if (child.exitCode !== null) {
+      if (child.exitCode !== null || child.signalCode !== null) {
         resolve(result);
         return;
       }

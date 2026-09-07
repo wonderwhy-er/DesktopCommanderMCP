@@ -151,9 +151,12 @@ class UsageTracker {
     const newSession = this.currentSession?.commandsInSession === 1;
 
     return await configManager.updateValueNonBlocking('usageStats', (stored) => {
-      const stats: ToolUsageStats = stored
-        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
-        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const defaults = { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const stats: ToolUsageStats = {
+        ...defaults,
+        ...(stored || {}),
+        toolCounts: { ...(stored?.toolCounts || {}) },
+      };
       stats.totalToolCalls++;
       stats.successfulCalls++;
       stats.lastUsed = Math.max(stats.lastUsed || 0, now);
@@ -174,9 +177,12 @@ class UsageTracker {
     const newSession = this.currentSession?.commandsInSession === 1;
 
     return await configManager.updateValueNonBlocking('usageStats', (stored) => {
-      const stats: ToolUsageStats = stored
-        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
-        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const defaults = { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const stats: ToolUsageStats = {
+        ...defaults,
+        ...(stored || {}),
+        toolCounts: { ...(stored?.toolCounts || {}) },
+      };
       stats.totalToolCalls++;
       stats.failedCalls++;
       stats.lastUsed = Math.max(stats.lastUsed || 0, now);
@@ -319,9 +325,12 @@ class UsageTracker {
     }
 
     await configManager.updateValueNonBlocking('usageStats', (stored) => {
-      const stats: ToolUsageStats = stored
-        ? { ...stored, toolCounts: { ...(stored.toolCounts || {}) } }
-        : { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const defaults = { ...this.getDefaultStats(), firstUsed: now, lastUsed: now };
+      const stats: ToolUsageStats = {
+        ...defaults,
+        ...(stored || {}),
+        toolCounts: { ...(stored?.toolCounts || {}) },
+      };
       stats.lastFeedbackPrompt = Math.max(stats.lastFeedbackPrompt || 0, now);
       stats.lastFeedbackPromptDate = today;
       stats.feedbackAttempts = (stats.feedbackAttempts || 0) + 1;
