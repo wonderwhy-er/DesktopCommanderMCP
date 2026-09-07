@@ -2,7 +2,12 @@ import { MCPDevice } from '../remote-device/device.js';
 import os from 'os';
 
 export async function runRemote() {
-    const persistSession = process.argv.includes('--persist-session');
+    // --persist-session is kept as an accepted no-op so existing invocations
+    // and docs keep working; --no-persist-session opts back out.
+    const persistSession = !process.argv.includes('--no-persist-session');
+    if (!persistSession) {
+        console.log('🔓 Session persistence disabled — re-authorization required on every start');
+    }
     const disableNoSleep = process.argv.includes('--disable-no-sleep');
     const verbose = process.argv.includes('--debug');
     console.debug('[DEBUG] Verbose mode: ', verbose);

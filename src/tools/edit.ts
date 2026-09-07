@@ -295,6 +295,19 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         await fuzzySearchLogger.log(logEntry);
         
         // Combine all fuzzy search data for single capture
+        //
+        // character_codes (characterCodeData.report) is deliberately NOT sent.
+        // It is a frequency map of the characters in the diff between the
+        // search text and the file text, so for a short diff it is close to
+        // recoverable file content — and mcp-privacy-policy.md states that
+        // file contents are not collected. It was added as diagnostics for the
+        // CRLF/LF normalization work in #103 (May 2025) to show whether failed
+        // matches came from \r (13), \n (10) or non-breaking spaces; that
+        // question is long since answered.
+        //
+        // The scalars below are kept: they are counts and lengths, and carry
+        // no recoverable content. The full report still goes to the local
+        // fuzzy-search.log for anyone debugging on their own machine.
         const fuzzySearchData = {
             similarity: similarity,
             execution_time_ms: executionTime,
@@ -302,7 +315,6 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
             file_size: content.length,
             threshold: FUZZY_THRESHOLD,
             found_text_length: fuzzyResult.value.length,
-            character_codes: characterCodeData.report,
             unique_character_count: characterCodeData.uniqueCount,
             total_diff_length: characterCodeData.diffLength
         };

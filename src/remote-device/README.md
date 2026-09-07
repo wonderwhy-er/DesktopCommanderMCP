@@ -84,12 +84,12 @@ Run from the project repository without global installation:
 desktop-commander-device
 ```
 
-**With session persistence** (optional):
+**Without session persistence** (opt out):
 ```bash
-desktop-commander-device --persist-session
+desktop-commander-device --no-persist-session
 ```
 
-> **Note**: By default, only the device ID is persisted. Use `--persist-session` to also save authentication tokens between restarts. This allows the device to reconnect automatically without re-authentication.
+> **Note**: The device ID and authentication tokens are persisted by default to `~/.desktop-commander-device/device.json` (mode 0600), so the device reconnects without re-authorization. Pass `--no-persist-session` to keep tokens in memory only — the device then requires a full browser re-authorization on every start, and each one leaves a live server-side session behind.
 
 **If using local installation** from the project root directory:
 

@@ -13,6 +13,15 @@ export interface MCPDeviceOptions {
     persistSession?: boolean;
 }
 
+/**
+ * How many recently-handled call ids to remember for duplicate-delivery
+ * suppression. The two transports deliver a call within MILLISECONDS of each
+ * other, so this only has to outlive that window — 100 ids is several minutes
+ * of even the heaviest agent traffic, and costs ~10 KB on the user's machine
+ * (the device process, not the shared server).
+ */
+const SEEN_CALL_IDS_MAX = 100;
+
 export class MCPDevice {
     private baseServerUrl: string;
     private remoteChannel: RemoteChannel;
@@ -21,6 +30,8 @@ export class MCPDevice {
     private configPath: string;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
+    /** Call ids already handled by THIS process (insertion-ordered, bounded). */
+    private seenCallIds: Set<string> = new Set();
 
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
@@ -28,7 +39,11 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-        this.persistSession = options.persistSession || false;
+        // Default ON. Off meant a full re-authorization on every start, and each
+        // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
+        // refresh-token families get replayed, trip GoTrue's reuse detection, and
+        // take the whole family down including the token a healthy connector holds.
+        this.persistSession = options.persistSession ?? true;
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -192,13 +207,21 @@ export class MCPDevice {
             this.deviceId = config?.deviceId;
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
-            console.log('💾 Found persisted session for device ' + this.deviceId);
-            if (config.session) {
+            if (config.session && this.persistSession) {
+                console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
             }
 
-            console.debug('[DEBUG] No session in config');
+            // A previously saved session must not be reused on an opted-out run:
+            // it would skip the re-authorization the flag promises, and the save
+            // at the end of start() then discards a possibly-rotated refresh
+            // token — orphaning one more live server-side session.
+            if (config.session) {
+                console.debug('[DEBUG] Ignoring persisted session (--no-persist-session)');
+            } else {
+                console.debug('[DEBUG] No session in config');
+            }
             return null;
         } catch (error: any) {
 
@@ -287,6 +310,16 @@ export class MCPDevice {
         }
     }
 
+    /** Record a handled call id, evicting the oldest once the cap is reached. */
+    private rememberCallId(callId: string) {
+        this.seenCallIds.add(callId);
+        if (this.seenCallIds.size > SEEN_CALL_IDS_MAX) {
+            // Sets iterate in insertion order — drop the oldest entry.
+            const oldest = this.seenCallIds.values().next().value;
+            if (oldest !== undefined) this.seenCallIds.delete(oldest);
+        }
+    }
+
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
         // Expect toolCall to include a device_id field used to route calls to this device instance.
@@ -302,9 +335,28 @@ export class MCPDevice {
 
         console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
 
+        // LOCAL claim first — this is the authoritative guard against executing
+        // a call twice. During the transition both transports deliver every call
+        // to THIS SAME PROCESS, so an in-memory check is sufficient and, unlike
+        // the DB claim below, cannot fail open: a transient REST error made
+        // markCallExecuting return true for both deliveries, which could run a
+        // side-effecting command twice (found in review, 2026-07-24).
+        if (this.seenCallIds.has(call_id)) {
+            console.debug('[DEBUG] Duplicate delivery for call already handled here, skipping:', call_id);
+            return;
+        }
+        this.rememberCallId(call_id);
+
         try {
-            // Update call status to executing
-            await this.remoteChannel.markCallExecuting(call_id);
+            // DB claim second — keeps the row state machine honest, gives
+            // cross-restart/cross-process protection, and is observable. It may
+            // fail open (returns true on a transient write error); the local
+            // guard above is what makes execution exactly-once.
+            const claimed = await this.remoteChannel.markCallExecuting(call_id);
+            if (!claimed) {
+                // markCallExecuting already logged the duplicate-delivery skip.
+                return;
+            }
 
             let result;
 
@@ -337,13 +389,23 @@ export class MCPDevice {
 
             console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
-            // Update database with result
+            // Update database with result, THEN ring the doorbell — the server
+            // fetches the row by id on the doorbell, so the write must land first.
             await this.remoteChannel.updateCallResult(call_id, 'completed', result);
+            await this.remoteChannel.notifyResult(call_id);
 
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+            // The failure path must not fail: this method's promise is discarded
+            // at every call site, so a throw here becomes an unhandled rejection
+            // and takes the device process down.
+            try {
+                await captureRemote('remote_device_tool_call_failed', { error, tool_name });
+                await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+                await this.remoteChannel.notifyResult(call_id);
+            } catch (reportError: any) {
+                console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
+            }
         }
     }
 
@@ -405,11 +467,13 @@ if (isMainModule) {
     // Parse command-line arguments
     const args = process.argv.slice(2);
     const options = {
-        persistSession: args.includes('--persist-session')
+        // --persist-session is kept as an accepted no-op so existing invocations
+        // and docs keep working; --no-persist-session opts back out.
+        persistSession: !args.includes('--no-persist-session')
     };
 
-    if (options.persistSession) {
-        console.log('🔒 Session persistence enabled');
+    if (!options.persistSession) {
+        console.log('🔓 Session persistence disabled — re-authorization required on every start');
     }
 
     const device = new MCPDevice(options);

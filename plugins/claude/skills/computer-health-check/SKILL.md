@@ -58,9 +58,9 @@ Determine the platform before doing anything else, because the commands differ.
 
 Then open the matching reference file and use its command set:
 
-- macOS → `references/macos.md`
-- Windows → `references/windows.md`
-- Linux → `references/linux.md`
+- macOS → [`references/macos.md`](references/macos.md)
+- Windows → [`references/windows.md`](references/windows.md)
+- Linux → [`references/linux.md`](references/linux.md)
 
 Read **only** the one that matches. Each file contains a single batched collection script
 plus interpretation notes and cleanup commands.
