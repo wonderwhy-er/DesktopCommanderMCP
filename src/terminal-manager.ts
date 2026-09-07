@@ -256,6 +256,28 @@ export class TerminalManager {
     const childProcess = spawn(spawnConfig.executable, spawnConfig.args, spawnOptions);
     let output = '';
 
+    // spawn() reports failure asynchronously via an 'error' event; it does not
+    // throw. Node rethrows an 'error' that has no listener as an uncaught
+    // exception, and our process-level handler (src/index.ts) turns that into
+    // process.exit(1). So an unresolvable executable — e.g. shell: "/usr/bin/bash"
+    // on Windows — used to kill the entire MCP server one tick AFTER this
+    // function had already returned "Failed to get process ID", making the crash
+    // look unrelated to the command that caused it. Under `remote` the parent
+    // then kept accepting tool calls over a dead stdio pipe ("Not connected").
+    //
+    // Attach before any return path below, and keep it for the session lifetime
+    // so a later runtime error (EPIPE on a closed stdin, ...) can't crash us either.
+    let forwardProcessError: ((err: Error) => void) | null = null;
+    let pendingProcessError: Error | null = null;
+    childProcess.on('error', (err: Error) => {
+      if (forwardProcessError) {
+        forwardProcessError(err);
+      } else {
+        pendingProcessError = err;
+        console.error(`Process error for "${command}": ${err.message}`);
+      }
+    });
+
     // Ensure childProcess.pid is defined before proceeding
     if (!childProcess.pid) {
       // Return a consistent error object instead of throwing
@@ -316,6 +338,24 @@ export class TerminalManager {
 
         resolve(result);
       };
+
+      // Now that resolveOnce exists, route process errors into it: an error after
+      // a successful spawn means the process is gone, so the caller must not sit
+      // waiting for output that will never arrive.
+      forwardProcessError = (err: Error) => {
+        this.sessions.delete(childProcess.pid!);
+        exitReason = 'process_exit';
+        resolveOnce({
+          pid: childProcess.pid!,
+          output: output + `\nProcess error: ${err.message}`,
+          isBlocked: false
+        });
+      };
+      // An error emitted between spawn and here (the common case — spawn errors
+      // land on the next tick) is replayed rather than dropped.
+      if (pendingProcessError) {
+        forwardProcessError(pendingProcessError);
+      }
 
       childProcess.stdout.on('data', (data: any) => {
         const text = data.toString();
