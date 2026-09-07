@@ -117,7 +117,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     });
   }
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command);
+  const isAllowed = await commandManager.validateCommand(parsed.data.command, parsed.data.working_directory);
   if (!isAllowed) {
     return {
       content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
