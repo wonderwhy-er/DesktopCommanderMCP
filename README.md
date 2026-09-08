@@ -468,6 +468,19 @@ Or add to `.qwen/settings.json` (project) or `~/.qwen/settings.json` (global). S
 </details>
 
 <details>
+<summary><b>FLUJO</b></summary>
+
+In [FLUJO](https://flujo.com.co/), open **Connected Apps > Connect App > I'm an expert > Configure & Test**.
+
+1. With Node.js 18 or newer installed, prepare a directory for Desktop Commander and run `npm install @wonderwhy-er/desktop-commander@latest` there. Installing first avoids spending the connection test's timeout downloading dependencies.
+2. Set **Server name** to `desktop-commander` and **MCP server root path** to that directory.
+3. Select **Standard IO**, set **Run command** to `npx`, and use **Add argument** to enter `-y` and `@wonderwhy-er/desktop-commander@latest` as two separate arguments.
+4. Click **3) Test run**. After the MCP handshake passes, click **Add server**.
+5. Open the saved server's **Tools** tab, select `list_directory`, enter an absolute path within one of the server's configured allowed directories and a depth of `1`, then click **Test tool** to verify access.
+
+</details>
+
+<details>
 <summary><b>ChatGPT / Claude Web (Remote MCP)</b></summary>
 
 Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services via Remote MCP — no desktop app required.
