@@ -93,11 +93,32 @@ async function testLinkResolution() {
     anchor: 'Intro',
   });
 
+  assert.deepStrictEqual(resolveMarkdownLink(currentPath, '/relative/path'), {
+    kind: 'file',
+    href: '/relative/path',
+    targetPath: '/relative/path',
+  });
+
   assert.deepStrictEqual(resolveMarkdownLink(currentPath, 'https://example.com/docs'), {
     kind: 'external',
     href: 'https://example.com/docs',
     url: 'https://example.com/docs',
   });
+
+  for (const href of ['http://example.com/docs', 'HTTPS://example.com/docs', 'mailto:a@b.com', 'ftp://example.com/docs']) {
+    assert.deepStrictEqual(resolveMarkdownLink(currentPath, href), {
+      kind: 'external',
+      href,
+      url: href,
+    });
+  }
+
+  for (const href of ['javascript:alert(1)', 'data:text/html,<h1>x</h1>', 'vbscript:msgbox(1)', 'file:///etc/passwd', 'blob:https://x']) {
+    const resolved = resolveMarkdownLink(currentPath, href);
+    assert.strictEqual(resolved.kind, 'file', `${href} should not resolve as an external link`);
+    assert.strictEqual(resolved.href, href);
+    assert.strictEqual(resolved.url, undefined, `${href} should not expose an external URL`);
+  }
 
   assert.deepStrictEqual(resolveMarkdownLink(currentPath, '[[Meeting Notes#Action Items|Actions]]'), {
     kind: 'file',
