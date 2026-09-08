@@ -926,6 +926,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Process finished execution
                         Process running (use read_process_output)
 
+                        PARAMETERS:
+                        - command: Command to execute (required)
+                        - timeout_ms: Max wait for initial process state, in ms (REQUIRED - pass a JSON number, e.g. 5000; omitting it or passing a string fails schema validation before the command runs)
+                        - shell: Shell to use (optional, defaults to config.defaultShell)
+                        - verbose_timing: Enable detailed performance telemetry (default: false)
+
                         PERFORMANCE DEBUGGING (verbose_timing parameter):
                         Set verbose_timing: true to get detailed timing information including:
                         - Exit reason (early_exit_quick_pattern, early_exit_periodic_check, process_exit, timeout)
