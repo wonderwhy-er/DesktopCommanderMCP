@@ -12,6 +12,8 @@ const isUrl = (source: string): boolean =>
 // Cached Chrome path to avoid repeated lookups
 let cachedChromePath: string | undefined | null = null; // null = not checked yet
 let chromeCheckPromise: Promise<string | undefined> | null = null;
+// Last Chrome acquisition error, surfaced to the caller when PDF generation can't proceed.
+let lastChromeError: string | undefined;
 
 interface CachedPuppeteerChrome {
     executablePath: string;
@@ -174,7 +176,19 @@ async function installChrome(): Promise<CachedPuppeteerChrome> {
     
     const cacheDir = getPuppeteerCacheDir();
     const platform = detectBrowserPlatform()!;
-    const buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
+    // Prefer the exact Chrome build pinned by the bundled puppeteer-core so the
+    // downloaded browser is guaranteed compatible with the launcher md-to-pdf uses.
+    // Fall back to the current stable channel if the pin can't be read.
+    let buildId: string;
+    try {
+        const { PUPPETEER_REVISIONS } = await import('puppeteer-core/internal/revisions.js');
+        const pinned = PUPPETEER_REVISIONS?.chrome as string | undefined;
+        buildId = pinned && pinned !== 'latest'
+            ? pinned
+            : await resolveBuildId(Browser.CHROME, platform, 'stable');
+    } catch {
+        buildId = await resolveBuildId(Browser.CHROME, platform, 'stable');
+    }
     
     console.error('Downloading Chrome for PDF generation (this may take a few minutes)...');
     await fs.mkdir(cacheDir, { recursive: true });
@@ -234,10 +248,15 @@ async function getChromePath(): Promise<string | undefined> {
             const installedChrome = await installChrome();
             await pruneOldPuppeteerChromeBuilds(installedChrome.executablePath);
             cachedChromePath = installedChrome.executablePath;
+            lastChromeError = undefined;
             return installedChrome.executablePath;
         } catch (error) {
+            // Do NOT cache undefined here. A transient failure (offline, proxy, or a
+            // locked-down network) must not permanently disable PDF generation for the
+            // lifetime of the process. Leaving cachedChromePath as null lets the next
+            // write_pdf call retry the download instead of short-circuiting forever.
+            lastChromeError = error instanceof Error ? error.message : String(error);
             console.error('Failed to install Chrome:', error);
-            cachedChromePath = undefined;
             return undefined;
         }
     })();
@@ -289,15 +308,26 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
         // Find Chrome: puppeteer cache -> system Chrome -> install
         const chromePath = await getChromePath();
         
-        if (chromePath) {
-            options = {
-                ...options,
-                launch_options: {
-                    ...options.launch_options,
-                    executablePath: chromePath,
-                }
-            };
+        if (!chromePath) {
+            // Do not silently fall through to md-to-pdf's bundled Puppeteer. It resolves
+            // a different (pinned) Chrome build in a different cache directory that
+            // Desktop Commander never populates, which surfaces to the user as an opaque
+            // "Failed to launch the browser process". Fail with an actionable message.
+            const detail = lastChromeError ? ` (last error: ${lastChromeError})` : '';
+            throw new Error(
+                'PDF generation requires Chrome, and Desktop Commander could not find or ' +
+                `download it${detail}. Install Google Chrome from ` +
+                'https://www.google.com/chrome/ and try again.'
+            );
         }
+
+        options = {
+            ...options,
+            launch_options: {
+                ...options.launch_options,
+                executablePath: chromePath,
+            }
+        };
         
         const pdf = await mdToPdf({ content: markdown }, options);
 
