@@ -71,7 +71,7 @@ const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
 // Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
 // does not cover.
 const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
-// Cap on the shutdown session fetch, which races device.ts's 5s force-exit.
+// Cap on the shutdown session fetch, which races device.ts's 10s force-exit.
 const OFFLINE_SESSION_TIMEOUT_MS = 500;
 // realtime-js parks in 'disconnecting' for ~100ms after a disconnect and
 // connect() early-returns for that whole window (see waitForSocketSettled).
@@ -136,6 +136,9 @@ export class RemoteChannel {
     private statusWriteChain: Promise<void> = Promise.resolve();
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
+    /** Optional device-owned persistence observer. It receives the exact rotated
+     * token snapshot but is never awaited by auth-js's callback. */
+    private sessionRotatedObserver: ((session: AuthSession) => void | Promise<void>) | null = null;
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
      * land after setOffline()'s durable write. */
     private shuttingDown = false;
@@ -177,6 +180,9 @@ export class RemoteChannel {
     private heartbeatListenerRegistered = false;
     /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
     private tokenRefreshInterval: NodeJS.Timeout | null = null;
+    /** Manual refresh currently executing. Tracked so graceful shutdown can wait
+     * for a rotation that already reached the server before the timer was stopped. */
+    private tokenRefreshInFlight: Promise<void> | null = null;
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -214,6 +220,29 @@ export class RemoteChannel {
                     if (status === 'ok') this.lastHeartbeatOkAt = performance.now();
                 });
             } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
+        }
+    }
+
+    onSessionRotated(observer: ((session: AuthSession) => void | Promise<void>) | null): void {
+        this.sessionRotatedObserver = observer;
+    }
+
+    private notifySessionRotated(session: AuthSession): void {
+        const observer = this.sessionRotatedObserver;
+        if (!observer) return;
+        const snapshot: AuthSession = {
+            access_token: session.access_token,
+            refresh_token: session.refresh_token ?? null,
+        };
+        try {
+            const result = observer(snapshot);
+            void Promise.resolve(result).catch((error) => {
+                console.debug('[DEBUG] Session-rotated observer rejected:', error?.message ?? error);
+                captureRemote('remote_channel_session_rotated_observer_error', { error }).catch(() => { });
+            });
+        } catch (error: any) {
+            console.debug('[DEBUG] Session-rotated observer threw:', error?.message ?? error);
+            captureRemote('remote_channel_session_rotated_observer_error', { error }).catch(() => { });
         }
     }
 
@@ -266,10 +295,16 @@ export class RemoteChannel {
                 if (event === 'TOKEN_REFRESHED' && newSession?.access_token && this.client) {
                     console.debug('[DEBUG] Token refreshed — re-authorizing realtime socket');
                     this.client.realtime.setAuth(newSession.access_token);
-                    this.lastKnownSession = {
+                    const freshRefreshToken = newSession.refresh_token ?? null;
+                    const rotatedSession: AuthSession = {
                         access_token: newSession.access_token,
-                        refresh_token: newSession.refresh_token ?? this.lastKnownSession?.refresh_token ?? null,
+                        refresh_token: freshRefreshToken ?? this.lastKnownSession?.refresh_token ?? null,
                     };
+                    this.lastKnownSession = rotatedSession;
+                    // Persist only a refresh token delivered by THIS refresh event.
+                    // Falling back to the previous token is useful in-memory for
+                    // setOffline(), but that previous token may already be consumed.
+                    if (freshRefreshToken) this.notifySessionRotated(rotatedSession);
                 } else if (event === 'SIGNED_OUT') {
                     void this.handleSignedOut();
                 }
@@ -1163,20 +1198,29 @@ export class RemoteChannel {
         console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
     }
 
-    private async refreshTokenNow(): Promise<void> {
-        if (!this.client || this.shuttingDown) return;
-        try {
-            const { error } = await this.client.auth.refreshSession();
-            if (error) {
-                console.error('[DEBUG] Manual token refresh failed:', error.message);
-                await captureRemote('remote_channel_token_refresh_error', { error });
-            } else {
-                console.debug('[DEBUG] Manual token refresh ok');
+    private refreshTokenNow(): Promise<void> {
+        if (!this.client || this.shuttingDown) return Promise.resolve();
+        if (this.tokenRefreshInFlight) return this.tokenRefreshInFlight;
+        const run = (async () => {
+            try {
+                const { error } = await this.client!.auth.refreshSession();
+                if (error) {
+                    console.error('[DEBUG] Manual token refresh failed:', error.message);
+                    await captureRemote('remote_channel_token_refresh_error', { error }).catch(() => { });
+                } else {
+                    console.debug('[DEBUG] Manual token refresh ok');
+                }
+            } catch (error: any) {
+                console.error('[DEBUG] Manual token refresh threw:', error?.message);
+                await captureRemote('remote_channel_token_refresh_error', { error }).catch(() => { });
             }
-        } catch (error: any) {
-            console.error('[DEBUG] Manual token refresh threw:', error?.message);
-            await captureRemote('remote_channel_token_refresh_error', { error });
-        }
+        })();
+        this.tokenRefreshInFlight = run;
+        const clearInFlight = () => {
+            if (this.tokenRefreshInFlight === run) this.tokenRefreshInFlight = null;
+        };
+        void run.then(clearInFlight, clearInFlight);
+        return run;
     }
 
     private startTokenRefresh(): void {
@@ -1190,6 +1234,23 @@ export class RemoteChannel {
         if (this.tokenRefreshInterval) {
             clearInterval(this.tokenRefreshInterval);
             this.tokenRefreshInterval = null;
+        }
+    }
+
+    async waitForTokenRefresh(timeoutMs = 1500): Promise<boolean> {
+        const inFlight = this.tokenRefreshInFlight;
+        if (!inFlight) return true;
+        let timer: NodeJS.Timeout | undefined;
+        try {
+            const timedOut = await Promise.race([
+                inFlight.then(() => false, () => false),
+                new Promise<boolean>((resolve) => {
+                    timer = setTimeout(() => resolve(true), timeoutMs);
+                }),
+            ]);
+            return !timedOut;
+        } finally {
+            if (timer) clearTimeout(timer);
         }
     }
 
@@ -1262,7 +1323,7 @@ export class RemoteChannel {
             // getSession() is not a cheap read: it takes a lock (10s acquire
             // timeout) and refreshes when the token is within ~90s of expiry,
             // POSTing /token with its own ~30s retry budget. On a just-woken
-            // machine that outlasts device.ts's 5s force-exit, and then spawnSync
+            // machine that outlasts device.ts's 10s force-exit, and then spawnSync
             // never runs and the offline write is lost. The subprocess calls
             // setSession() itself, so a slightly stale access_token is fine.
             const live = await Promise.race([
@@ -1354,7 +1415,7 @@ export class RemoteChannel {
         // SIGINT during recreateChannel()'s backoff, where the later join's
         // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
-        // Budget against device.ts's 5s force-exit, worst case:
+        // Budget against device.ts's 10s force-exit, worst case:
         //   250 drain + 2x300 leave + 500 session + 3000 spawnSync = 4350ms.
         // In practice only the untrack bound binds — removeChannel/unsubscribe
         // set state='leaving' first, so their leave push resolves inline.

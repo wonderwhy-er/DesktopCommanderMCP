@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel } from './remote-channel.js';
+import { RemoteChannel, type AuthSession } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -36,6 +36,9 @@ export class MCPDevice {
     private configPath: string;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
+    private configWriteChain: Promise<void> = Promise.resolve();
+    private configWriteSequence = 0;
+    private sessionPersistenceEnabled = false;
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
 
@@ -58,6 +61,18 @@ export class MCPDevice {
         this.setupShutdownHandlers();
     }
 
+    private enableSessionPersistence(): void {
+        if (!this.persistSession || this.sessionPersistenceEnabled) return;
+        this.sessionPersistenceEnabled = true;
+        this.remoteChannel.onSessionRotated((session) => this.queuePersistedSession(session));
+    }
+
+    private disableSessionPersistence(): void {
+        if (!this.sessionPersistenceEnabled) return;
+        this.remoteChannel.onSessionRotated(null);
+        this.sessionPersistenceEnabled = false;
+    }
+
     private setupShutdownHandlers() {
         const handleShutdown = async (signal: string) => {
             if (this.isShuttingDown) {
@@ -69,11 +84,11 @@ export class MCPDevice {
 
             console.log(`\n${signal} received, initiating graceful shutdown...`);
 
-            // Force exit after 5 seconds if graceful shutdown hangs
+            // Force exit after 10 seconds if graceful shutdown hangs
             const forceExit = setTimeout(() => {
                 console.error('\n⚠️ Graceful shutdown timed out, forcing exit...');
                 process.exit(1);
-            }, 5000);
+            }, 10000);
 
             try {
                 await this.shutdown();
@@ -186,8 +201,14 @@ export class MCPDevice {
             }
 
 
-            // Force save the current session immediately to ensure it's persisted
+            // Save only after a restored device has passed the #684 revoked-device
+            // lookup. Then arm rotation persistence so an internal startup refresh
+            // cannot recreate a config we just cleared for a revoked device.
+            await this.removeStalePersistedConfigTemps().catch((error: any) => {
+                console.debug('[DEBUG] Stale config temp cleanup failed:', error?.message ?? error);
+            });
             await this.savePersistedConfig();
+            this.enableSessionPersistence();
 
             const deviceName = os.hostname();
 
@@ -274,9 +295,33 @@ export class MCPDevice {
         }
     }
 
+    private async removeStalePersistedConfigTemps(): Promise<void> {
+        const dir = path.dirname(this.configPath);
+        const prefix = `${path.basename(this.configPath)}.tmp-`;
+        let names: string[];
+        try {
+            names = await fs.readdir(dir);
+        } catch (error: any) {
+            if (error?.code === 'ENOENT') return;
+            throw error;
+        }
+        for (const name of names) {
+            if (!name.startsWith(prefix)) continue;
+            const pid = Number(name.slice(prefix.length).split('-')[0]);
+            let alive = pid === process.pid;
+            if (!alive && Number.isInteger(pid) && pid > 0) {
+                try { process.kill(pid, 0); alive = true; }
+                catch (error: any) { alive = error?.code === 'EPERM'; }
+            }
+            if (alive) continue;
+            await fs.rm(path.join(dir, name), { force: true }).catch(() => { });
+        }
+    }
+
     async clearPersistedConfig() {
         try {
             await fs.rm(this.configPath, { force: true });
+            await this.removeStalePersistedConfigTemps();
             console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
         } catch (error: any) {
             console.warn('⚠️ Failed to clear stale config:', error.message);
@@ -284,29 +329,140 @@ export class MCPDevice {
         }
     }
 
+    private async writePersistedConfigSnapshot(config: {
+        deviceId?: string;
+        session: { access_token: string; refresh_token: string } | null;
+    }): Promise<void> {
+        const configDir = path.dirname(this.configPath);
+        const tempPath = `${this.configPath}.tmp-${process.pid}-${++this.configWriteSequence}`;
+        console.debug('[DEBUG] Creating config directory:', configDir);
+        await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
+        try {
+            await fs.writeFile(tempPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+            const deadline = performance.now() + 2000;
+            let delayMs = 10;
+            while (true) {
+                try {
+                    await fs.rename(tempPath, this.configPath);
+                    break;
+                } catch (error: any) {
+                    const retryable = error?.code === 'EPERM' || error?.code === 'EACCES' || error?.code === 'EBUSY';
+                    const remaining = deadline - performance.now();
+                    if (!retryable || remaining <= 0) throw error;
+                    await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remaining)));
+                    delayMs = Math.min(delayMs * 2, 100);
+                }
+            }
+            console.debug('[DEBUG] Config saved atomically to:', this.configPath);
+        } finally {
+            await fs.rm(tempPath, { force: true }).catch(() => { });
+        }
+    }
+
+    private enqueueConfigWrite(operation: () => Promise<void>): Promise<void> {
+        const write = this.configWriteChain.then(operation);
+        this.configWriteChain = write.catch(() => { });
+        return write;
+    }
+
+    private queuePersistedConfig(config: {
+        deviceId?: string;
+        session: { access_token: string; refresh_token: string } | null;
+    }): Promise<void> {
+        return this.enqueueConfigWrite(() => this.writePersistedConfigSnapshot(config));
+    }
+
+    private queuePersistedIdentityOnly(): Promise<void> {
+        if (!this.deviceId) return Promise.resolve();
+        return this.enqueueConfigWrite(async () => {
+            try {
+                const existing = JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+                if (existing?.session?.access_token && existing?.session?.refresh_token) return;
+            } catch (error: any) {
+                if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+            }
+            await this.writePersistedConfigSnapshot({ deviceId: this.deviceId, session: null });
+        });
+    }
+
+    private queuePersistedSession(session: AuthSession): Promise<void> {
+        if (!this.persistSession) return Promise.resolve();
+        if (!this.deviceId) {
+            console.warn('⚠️ Refusing to persist refreshed credentials without a device ID');
+            void captureRemote('remote_device_config_incomplete_session_skipped', {
+                hasDeviceId: false,
+                hasAccessToken: !!session.access_token,
+                hasRefreshToken: !!session.refresh_token,
+            }).catch(() => { });
+            return Promise.resolve();
+        }
+        if (!session.access_token || !session.refresh_token) {
+            console.warn('⚠️ Refusing to overwrite persisted credentials with an incomplete refreshed session');
+            void captureRemote('remote_device_config_incomplete_session_skipped', {
+                hasDeviceId: true,
+                hasAccessToken: !!session.access_token,
+                hasRefreshToken: !!session.refresh_token,
+            }).catch(() => { });
+            return Promise.resolve();
+        }
+        return this.queuePersistedConfig({
+            deviceId: this.deviceId,
+            session: {
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+            },
+        });
+    }
+    private async flushPersistedConfigWrites(timeoutMs = 2500): Promise<boolean> {
+        const deadline = performance.now() + timeoutMs;
+        while (true) {
+            const observed = this.configWriteChain;
+            const remaining = deadline - performance.now();
+            if (remaining <= 0) {
+                console.warn('⚠️ Timed out while draining persisted-session writes');
+                return false;
+            }
+            let timer: NodeJS.Timeout | undefined;
+            const timedOut = await Promise.race([
+                observed.then(() => false),
+                new Promise<boolean>((resolve) => {
+                    timer = setTimeout(() => resolve(true), remaining);
+                }),
+            ]);
+            if (timer) clearTimeout(timer);
+            if (timedOut) {
+                console.warn('⚠️ Timed out while draining persisted-session writes');
+                return false;
+            }
+            if (observed === this.configWriteChain) return true;
+        }
+    }
     async savePersistedConfig() {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             const currentSessionStore = await this.remoteChannel.getSession();
             const session = currentSessionStore.data.session;
-
-            const config = {
-                deviceId: this.deviceId,
-                // Only save session if --persist-session flag is set
-                session: (session && this.persistSession) ? {
-                    access_token: session.access_token,
-                    refresh_token: session.refresh_token
-                } : null
-            };
-            // Ensure the config directory exists
-            console.debug('[DEBUG] Creating config directory:', path.dirname(this.configPath));
-            await fs.mkdir(path.dirname(this.configPath), { recursive: true });
-            await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            console.debug('[DEBUG] Config saved to:', this.configPath);
+            if (!this.persistSession) {
+                await this.queuePersistedConfig({ deviceId: this.deviceId, session: null });
+                return;
+            }
+            if (!session?.access_token || !session.refresh_token) {
+                console.warn('⚠️ Refusing to overwrite persisted credentials with an incomplete current session');
+                void captureRemote('remote_device_config_incomplete_session_skipped', {
+                    hasDeviceId: !!this.deviceId,
+                    hasAccessToken: !!session?.access_token,
+                    hasRefreshToken: !!session?.refresh_token,
+                }).catch(() => { });
+                await this.queuePersistedIdentityOnly();
+                return;
+            }
+            await this.queuePersistedSession({
+                access_token: session.access_token,
+                refresh_token: session.refresh_token,
+            });
         } catch (error: any) {
-            console.error(' - ❌ Failed to save config:', error.message);
-            console.debug('[DEBUG] Config save error details:', error);
-            await captureRemote('remote_device_config_save_error', { error });
+            console.error(' - ❌ Failed to persist current session:', error.message);
+            void captureRemote('remote_device_config_save_error', { error }).catch(() => { });
         }
     }
 
@@ -467,11 +623,32 @@ export class MCPDevice {
         console.debug('[DEBUG] Shutdown initiated for device:', this.deviceId);
 
         try {
-            // Stop heartbeat first to prevent new operations
+            // Stop future heartbeat/token-refresh ticks first. Keep the persistence
+            // observer armed while a refresh already in flight is given a bounded
+            // chance to finish and enqueue its rotated token snapshot.
             console.log('  → Stopping heartbeat...');
             console.debug('[DEBUG] Calling stopHeartbeat()');
             this.remoteChannel.stopHeartbeat();
             console.log('  ✓ Heartbeat stopped');
+
+            console.log('  → Waiting for in-flight token refresh...');
+            const refreshSettled = await this.remoteChannel.waitForTokenRefresh(1500);
+            console.log(refreshSettled
+                ? '  ✓ No token refresh pending at shutdown'
+                : '  ⚠️ Token refresh still in flight after shutdown bound');
+            if (!refreshSettled) {
+                void captureRemote('remote_device_token_refresh_shutdown_timeout', {}).catch(() => { });
+            }
+
+            console.log('  → Flushing persisted session...');
+            const persistedDrained = await this.flushPersistedConfigWrites();
+            this.disableSessionPersistence();
+            console.log(persistedDrained
+                ? '  ✓ Persisted-session writes drained'
+                : '  ⚠️ Persisted-session writes did not drain in time');
+            if (!persistedDrained) {
+                void captureRemote('remote_device_config_drain_timeout', {}).catch(() => { });
+            }
 
             // Unsubscribe from channel
             console.log('  → Unsubscribing from channel...');
