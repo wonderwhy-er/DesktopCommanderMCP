@@ -662,11 +662,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - searchType="content": Search inside files for text patterns
                         
                         PATTERN MATCHING MODES:
-                        - Default (literalSearch=false): Patterns are treated as regular expressions
-                        - Literal (literalSearch=true): Patterns are treated as exact strings
+                        - File-name searches use glob semantics, not regular expressions:
+                          * Glob patterns such as "*.txt" are used as-is.
+                          * Plain patterns such as "target" are treated as substring matches.
+                          * literalSearch is ignored for searchType="files".
+                        - Text content searches use regular expressions by default.
+                          * Set literalSearch=true for fixed-string matching when searching text content.
+                        - Excel and DOCX content searches always use literal substring matching.
                         
                         WHEN TO USE literalSearch=true:
-                        Use literal search when searching for code patterns with special characters:
+                        literalSearch only affects text content searches. Use it for code or text that
+                        contains regex metacharacters you want to match literally, such as:
                         - Function calls with parentheses and quotes
                         - Array access with brackets
                         - Object methods with dots and parentheses
@@ -674,9 +680,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Any pattern containing: . * + ? ^ $ { } [ ] | \\ ( )
                         
                         IMPORTANT PARAMETERS:
-                        - pattern: What to search for (file names OR content text)
-                        - literalSearch: Use exact string matching instead of regex (default: false)
-                        - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
+                        - pattern: File searches use glob/exact/substring semantics; text content uses regex by default
+                        - literalSearch: Fixed-string mode for text content only; ignored for file searches
+                        - filePattern: Optional glob filter to limit search to specific file types (e.g., "*.js", "package.json")
                         - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         - earlyTermination: Stop search early when exact filename match is found (optional: defaults to true for file searches, false for content searches)
                         
