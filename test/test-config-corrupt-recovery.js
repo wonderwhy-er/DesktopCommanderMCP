@@ -21,6 +21,8 @@ async function worker() {
   assert.equal(config.welcomeOnboardingEligible, false);
   assert.equal(config.pendingWelcomeOnboarding, false);
   assert.equal(config.clientId, '11111111-1111-4111-8111-111111111111');
+  assert.deepEqual(config.blockedCommands, ['rm', 'sudo']);
+  assert.deepEqual(config.allowedDirectories, ['/safe/project']);
   assert.doesNotThrow(() => JSON.parse(readFileSync(CONFIG_FILE, 'utf8')));
   assert.equal(events.length, 1);
   assert.equal(events[0].phase, 'startup');
@@ -44,6 +46,8 @@ async function worker() {
   const finalConfig = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
   assert.equal(finalConfig.__afterRecovery, 42);
   assert.equal(finalConfig.telemetryEnabled, false, 'explicit telemetry opt-out survives recoverable malformed JSON');
+  assert.deepEqual(finalConfig.blockedCommands, ['rm', 'sudo'], 'runtime recovery preserves last parsed blocklist');
+  assert.deepEqual(finalConfig.allowedDirectories, ['/safe/project'], 'runtime recovery preserves last parsed allowlist');
   const mutationEvent = events.slice(1).find((event) => event.phase === 'mutation');
   assert.ok(mutationEvent, 'mutation should recover the corrupt config');
   assert.equal(mutationEvent.parse_error_kind, 'invalid_json');
@@ -77,7 +81,7 @@ async function parent() {
   const dir = path.join(home, '.claude-server-commander');
   const configPath = path.join(dir, 'config.json');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(configPath, '{"telemetryEnabled": true, "clientId": "11111111-1111-4111-8111-111111111111", "version": "0.2.48", "usageStats": {');
+  writeFileSync(configPath, '{"blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"telemetryEnabled": true, "clientId": "11111111-1111-4111-8111-111111111111", "version": "0.2.48", "usageStats": {');
   writeFileSync(`${configPath}.999.123.tmp`, 'leftover temp');
 
   const child = fork(TEST_FILE, [], {
