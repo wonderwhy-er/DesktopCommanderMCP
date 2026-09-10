@@ -54,6 +54,28 @@ async function worker() {
   assert.equal(JSON.parse(readFileSync(CONFIG_FILE, 'utf8')).__postCommitCounter, 1);
   configManager.acquireConfigLock = originalAcquire;
   assert.equal((await configManager.getConfig()).version, VERSION);
+
+  // Recovery telemetry must survive a later mutation write failure.
+  configManager.watcher?.close();
+  configManager.watcher = null;
+  const recoveryEvents = [];
+  configManager.emitCorruptConfigTelemetry = async (telemetry) => { recoveryEvents.push(telemetry); };
+  writeFileSync(CONFIG_FILE, '{"blockedCommands":["sudo"],"allowedDirectories":["/safe"],BROKEN}');
+  const originalWriteConfigAtomically = configManager.writeConfigAtomically.bind(configManager);
+  let recoveryWriteCount = 0;
+  configManager.writeConfigAtomically = async (...args) => {
+    recoveryWriteCount++;
+    if (recoveryWriteCount === 2) throw new Error('synthetic post-recovery mutation write failure');
+    return originalWriteConfigAtomically(...args);
+  };
+  await assert.rejects(
+    configManager.setValue('__postRecoveryFailure', 1),
+    /synthetic post-recovery mutation write failure/
+  );
+  configManager.writeConfigAtomically = originalWriteConfigAtomically;
+  assert.ok(recoveryEvents.some((event) => event.phase === 'mutation'),
+    'mutation recovery telemetry should be recorded even when the later write fails');
+
   process.send?.({ type: 'done' });
 }
 

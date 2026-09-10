@@ -58,6 +58,38 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
+function extractRecoverableStringArray(text: string, key: string): string[] | null {
+  const marker = new RegExp(`(?:^|[,{])\\s*"${key}"\\s*:\\s*\\[`);
+  const match = marker.exec(text);
+  if (!match) return null;
+
+  const start = match.index + match[0].lastIndexOf('[');
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === '[') depth++;
+    else if (char === ']' && --depth === 0) {
+      try {
+        const value = JSON.parse(text.slice(start, i + 1));
+        return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Singleton config manager for the server
  */
@@ -300,7 +332,7 @@ class ConfigManager {
   private async emitCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): Promise<void> {
     try {
       const { capture } = await import('./utils/capture.js');
-      await capture('server_config_parse_error_recovered', telemetry);
+      await capture('config_parse_error_recovered', telemetry);
     } catch {
       // Recovery must never depend on telemetry delivery.
     }
@@ -312,13 +344,23 @@ class ConfigManager {
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
     const forensics = await this.inspectCorruptConfig(error, phase);
 
-    // Preserve the two values that matter for privacy and analytics continuity
-    // when they are still intact before the damaged portion of the JSON. Do not
-    // attempt to salvage arbitrary settings from malformed JSON.
+    // Prefer the last parsed in-memory policy during runtime recovery. On startup,
+    // salvage only complete string-array policy fields from the damaged JSON.
+    // This keeps recovery narrow without introducing a persistent shadow config.
     const corruptText = await fs.readFile(this.configPath, 'utf8').catch(() => '');
     const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
     const preservedClientId = clientIdMatch?.[1];
     const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
+    const inMemoryBlockedCommands = Array.isArray(this.config.blockedCommands)
+      && this.config.blockedCommands.every((item) => typeof item === 'string')
+      ? this.config.blockedCommands : null;
+    const inMemoryAllowedDirectories = Array.isArray(this.config.allowedDirectories)
+      && this.config.allowedDirectories.every((item) => typeof item === 'string')
+      ? this.config.allowedDirectories : null;
+    const preservedBlockedCommands = inMemoryBlockedCommands
+      ?? extractRecoverableStringArray(corruptText, 'blockedCommands');
+    const preservedAllowedDirectories = inMemoryAllowedDirectories
+      ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
 
     let backupCreated = false;
     if (existsSync(this.configPath)) {
@@ -328,12 +370,26 @@ class ConfigManager {
         backupCreated = true;
       } catch (backupError) {
         console.error('Failed to preserve corrupt config before recovery:', backupError);
+        throw backupError;
       }
     }
 
     const defaults = this.getDefaultConfig();
     if (preservedClientId) defaults['clientId'] = preservedClientId;
     if (telemetryWasDisabled) defaults['telemetryEnabled'] = false;
+    if (preservedBlockedCommands !== null) {
+      defaults['blockedCommands'] = [...preservedBlockedCommands];
+    } else {
+      // We cannot know a user's custom blocklist from an incomplete value.
+      // `*` is treated by command validation as deny-all until the user resets it.
+      defaults['blockedCommands'] = ['*'];
+    }
+    if (preservedAllowedDirectories !== null) {
+      defaults['allowedDirectories'] = [...preservedAllowedDirectories];
+    } else {
+      // Never turn an unknown prior allowlist into unrestricted filesystem access.
+      defaults['allowedDirectories'] = [path.dirname(this.configPath)];
+    }
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
     defaults['pendingWelcomeOnboarding'] = false;
@@ -444,8 +500,8 @@ class ConfigManager {
         // must not make callers replay a mutation that already persisted.
         console.error('Failed to release config lock:', error);
       }
+      if (corruptConfigTelemetry) this.recordCorruptConfigTelemetry(corruptConfigTelemetry);
     }
-    if (corruptConfigTelemetry) this.recordCorruptConfigTelemetry(corruptConfigTelemetry);
     if (!result) throw new Error('Config mutation completed without a result');
     return result;
   }

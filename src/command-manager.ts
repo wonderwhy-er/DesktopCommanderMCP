@@ -231,6 +231,7 @@ class CommandManager {
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
+            if (blockedCommands.includes('*')) return false;
             
             // Extract all commands from the command string
             const allCommands = this.extractCommands(command);
