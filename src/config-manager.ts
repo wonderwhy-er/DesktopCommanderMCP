@@ -134,12 +134,13 @@ class ConfigManager {
       this.initialized = true;
       this.startConfigWatcher();
       if (corruptConfigTelemetry) this.pendingCorruptConfigTelemetry.push(corruptConfigTelemetry);
-      this.flushCorruptConfigTelemetry();
     } catch (error) {
       console.error('Failed to initialize config:', error);
       this.config = this.getDefaultConfig();
       this.initialized = true;
       this.startConfigWatcher();
+    } finally {
+      this.flushCorruptConfigTelemetry();
     }
   }
 

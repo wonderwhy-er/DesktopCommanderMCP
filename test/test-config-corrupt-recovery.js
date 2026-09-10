@@ -44,11 +44,11 @@ async function worker() {
   const finalConfig = JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
   assert.equal(finalConfig.__afterRecovery, 42);
   assert.equal(finalConfig.telemetryEnabled, false, 'explicit telemetry opt-out survives recoverable malformed JSON');
-  assert.equal(events.length, 2);
-  assert.equal(events[1].phase, 'mutation');
-  assert.equal(events[1].parse_error_kind, 'invalid_json');
-  assert.equal(events[1].backup_created, true);
-  assert.equal(events[1].recovered_by_other_process, false);
+  const mutationEvent = events.slice(1).find((event) => event.phase === 'mutation');
+  assert.ok(mutationEvent, 'mutation should recover the corrupt config');
+  assert.equal(mutationEvent.parse_error_kind, 'invalid_json');
+  assert.equal(mutationEvent.backup_created, true);
+  assert.equal(mutationEvent.recovered_by_other_process, false);
 
   // A malformed external edit must be recovered by the file watcher even if no
   // tool/config mutation happens afterward. Let watcher notifications from the
