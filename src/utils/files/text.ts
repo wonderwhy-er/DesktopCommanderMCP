@@ -50,6 +50,20 @@ export class TextFileHandler implements FileHandler {
         return true;
     }
 
+    private async detectTextEncoding(filePath: string): Promise<'utf8' | 'utf16le'> {
+        const fd = await fs.open(filePath, 'r');
+        try {
+            const bom = Buffer.alloc(2);
+            const { bytesRead } = await fd.read(bom, 0, bom.length, 0);
+            if (bytesRead === 2 && bom[0] === 0xff && bom[1] === 0xfe) {
+                return 'utf16le';
+            }
+            return 'utf8';
+        } finally {
+            await fd.close();
+        }
+    }
+
     async read(filePath: string, options?: ReadOptions): Promise<FileResult> {
         const offset = options?.offset ?? 0;
         const length = options?.length ?? 1000; // Default from config
@@ -85,7 +99,11 @@ export class TextFileHandler implements FileHandler {
         // For text files that aren't too large, count lines
         if (stats.isFile() && stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
             try {
-                const content = await fs.readFile(path, 'utf8');
+                const encoding = await this.detectTextEncoding(path);
+                let content = await fs.readFile(path, encoding);
+                if (encoding === 'utf16le' && content.charCodeAt(0) === 0xfeff) {
+                    content = content.slice(1);
+                }
                 const lineCount = TextFileHandler.countLines(content);
                 info.metadata!.lineCount = lineCount;
             } catch (error) {
@@ -118,11 +136,18 @@ export class TextFileHandler implements FileHandler {
     /**
      * Get file line count (for files under size limit)
      */
-    private async getFileLineCount(filePath: string, signal?: AbortSignal): Promise<number | undefined> {
+    private async getFileLineCount(
+        filePath: string,
+        signal?: AbortSignal,
+        encoding: 'utf8' | 'utf16le' = 'utf8'
+    ): Promise<number | undefined> {
         try {
             const stats = await fs.stat(filePath);
             if (stats.size < FILE_SIZE_LIMITS.LINE_COUNT_LIMIT) {
-                const content = await fs.readFile(filePath, { encoding: 'utf8', signal });
+                let content = await fs.readFile(filePath, { encoding, signal });
+                if (encoding === 'utf16le' && content.charCodeAt(0) === 0xfeff) {
+                    content = content.slice(1);
+                }
                 return TextFileHandler.countLines(content);
             }
         } catch (error) {
@@ -213,8 +238,23 @@ export class TextFileHandler implements FileHandler {
     ): Promise<FileResult> {
         const stats = await fs.stat(filePath);
         const fileSize = stats.size;
+        const encoding = await this.detectTextEncoding(filePath);
+        const totalLines = await this.getFileLineCount(filePath, signal, encoding);
 
-        const totalLines = await this.getFileLineCount(filePath, signal);
+        // UTF-16LE needs character-aware streaming. Skip the two-byte BOM and keep
+        // the same line pagination/status semantics as ordinary text reads.
+        if (encoding === 'utf16le') {
+            if (offset < 0) {
+                return await this.readFromEndWithReadline(
+                    filePath, Math.abs(offset), mimeType, includeStatusMessage,
+                    totalLines, signal, 'utf16le', 2
+                );
+            }
+            return await this.readFromStartWithReadline(
+                filePath, offset, length, mimeType, includeStatusMessage,
+                totalLines, signal, 'utf16le', 2
+            );
+        }
 
         // For negative offsets (tail behavior), use reverse reading
         if (offset < 0) {
@@ -305,10 +345,12 @@ export class TextFileHandler implements FileHandler {
         mimeType: string,
         includeStatusMessage: boolean = true,
         fileTotalLines?: number,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        encoding?: BufferEncoding,
+        start?: number
     ): Promise<FileResult> {
         const rl = createInterface({
-            input: createReadStream(filePath, { signal }),
+            input: createReadStream(filePath, { signal, encoding, start }),
             crlfDelay: Infinity
         });
 
@@ -351,10 +393,12 @@ export class TextFileHandler implements FileHandler {
         mimeType: string,
         includeStatusMessage: boolean = true,
         fileTotalLines?: number,
-        signal?: AbortSignal
+        signal?: AbortSignal,
+        encoding?: BufferEncoding,
+        start?: number
     ): Promise<FileResult> {
         const rl = createInterface({
-            input: createReadStream(filePath, { signal }),
+            input: createReadStream(filePath, { signal, encoding, start }),
             crlfDelay: Infinity
         });
 

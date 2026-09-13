@@ -21,6 +21,12 @@ export interface MCPDeviceOptions {
  * (the device process, not the shared server).
  */
 const SEEN_CALL_IDS_MAX = 100;
+const PERSISTED_DEVICE_LOOKUP_ATTEMPTS = 3;
+const PERSISTED_DEVICE_LOOKUP_RETRY_MS = 250;
+
+export function getRemoteDeviceConfigPath() {
+    return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+}
 
 export class MCPDevice {
     private baseServerUrl: string;
@@ -38,8 +44,12 @@ export class MCPDevice {
         this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
         this.isShuttingDown = false;
-        this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-        this.persistSession = options.persistSession || false;
+        this.configPath = getRemoteDeviceConfigPath();
+        // Default ON. Off meant a full re-authorization on every start, and each
+        // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
+        // refresh-token families get replayed, trip GoTrue's reuse detection, and
+        // take the whole family down including the token a healthy connector holds.
+        this.persistSession = options.persistSession ?? true;
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -108,6 +118,7 @@ export class MCPDevice {
 
             // Initialize desktop integration
             await this.desktop.initialize();
+            this.desktop.onDisconnect((reason) => void this.handleLocalMcpLoss(reason));
 
             console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
             const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
@@ -128,6 +139,21 @@ export class MCPDevice {
                     session = null;
                 } else {
                     console.log('   - ✅ Session restored');
+                    console.log('   - ℹ️  To log out locally: npx @wonderwhy-er/desktop-commander@latest remote --logout');
+
+                    // Revoking a device removes its server-side mcp_devices row, but the
+                    // local config can still hold a valid user session + the now-deleted
+                    // device ID. Do not silently recreate the revoked device with that
+                    // old session: revocation must require a fresh browser authorization.
+                    if (this.deviceId) {
+                        const persistedDevice = await this.findPersistedDeviceWithRetry(this.deviceId);
+                        if (!persistedDevice) {
+                            console.log(`   - ⚠️ Persisted device ${this.deviceId} was revoked or removed`);
+                            await this.clearPersistedConfig();
+                            this.deviceId = undefined;
+                            session = null;
+                        }
+                    }
                 }
             }
 
@@ -193,6 +219,22 @@ export class MCPDevice {
     }
 
 
+
+    private async findPersistedDeviceWithRetry(deviceId: string) {
+        let lastError: any;
+        for (let attempt = 1; attempt <= PERSISTED_DEVICE_LOOKUP_ATTEMPTS; attempt++) {
+            try {
+                return await this.remoteChannel.findDevice(deviceId);
+            } catch (error: any) {
+                lastError = error;
+                if (attempt === PERSISTED_DEVICE_LOOKUP_ATTEMPTS) break;
+                console.warn(`   - ⚠️ Device lookup failed (${attempt}/${PERSISTED_DEVICE_LOOKUP_ATTEMPTS}); retrying...`);
+                await new Promise((resolve) => setTimeout(resolve, PERSISTED_DEVICE_LOOKUP_RETRY_MS * attempt));
+            }
+        }
+        throw lastError;
+    }
+
     async loadPersistedConfig() {
         try {
             console.debug('[DEBUG] Loading persisted config from:', this.configPath);
@@ -202,13 +244,21 @@ export class MCPDevice {
             this.deviceId = config?.deviceId;
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
-            console.log('💾 Found persisted session for device ' + this.deviceId);
-            if (config.session) {
+            if (config.session && this.persistSession) {
+                console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
             }
 
-            console.debug('[DEBUG] No session in config');
+            // A previously saved session must not be reused on an opted-out run:
+            // it would skip the re-authorization the flag promises, and the save
+            // at the end of start() then discards a possibly-rotated refresh
+            // token — orphaning one more live server-side session.
+            if (config.session) {
+                console.debug('[DEBUG] Ignoring persisted session (--no-persist-session)');
+            } else {
+                console.debug('[DEBUG] No session in config');
+            }
             return null;
         } catch (error: any) {
 
@@ -221,6 +271,16 @@ export class MCPDevice {
             return null;
         } finally {
             // No need to ensure device ID here
+        }
+    }
+
+    async clearPersistedConfig() {
+        try {
+            await fs.rm(this.configPath, { force: true });
+            console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
+        } catch (error: any) {
+            console.warn('⚠️ Failed to clear stale config:', error.message);
+            await captureRemote('remote_device_config_clear_error', { error });
         }
     }
 
@@ -270,6 +330,33 @@ export class MCPDevice {
 
     // Methods moved to RemoteChannel
 
+    /**
+     * The local Desktop Commander child died. A healthy remote channel says
+     * nothing about the local half being alive, so without this the device kept
+     * reporting itself online and every routed tool call came back "Not
+     * connected" until someone restarted the process by hand.
+     */
+    private async handleLocalMcpLoss(reason: string) {
+        if (this.deviceId) {
+            await this.remoteChannel.setOnlineStatus(this.deviceId, 'offline')
+                .catch((e: any) => console.error('Failed to mark device offline:', e.message));
+        }
+
+        // Recover proactively rather than waiting for the next tool call to
+        // trigger the lazy restart: we just went offline, so no further calls
+        // would be routed here and that wait would never end.
+        try {
+            await this.desktop.ensureReady();
+            if (this.deviceId) {
+                await this.remoteChannel.setOnlineStatus(this.deviceId, 'online');
+            }
+            console.log('♻️  Local Desktop Commander MCP restarted; device is online again');
+        } catch (error: any) {
+            console.error(`❌ Could not restart local Desktop Commander MCP: ${error.message}`);
+            await captureRemote('remote_device_local_mcp_restart_failed', { error, reason });
+        }
+    }
+
     /** Record a handled call id, evicting the oldest once the cap is reached. */
     private rememberCallId(callId: string) {
         this.seenCallIds.add(callId);
@@ -282,9 +369,9 @@ export class MCPDevice {
 
     async handleNewToolCall(payload: any) {
         const toolCall = payload.new;
-        // Which pipe actually delivered this call (doorbell / legacy) —
-        // written back onto the row so server-side analytics can tell actual
-        // delivery apart from dispatch intent (metadata.transport).
+        // Which transport actually delivered this call. Written back onto the
+        // row so server-side analytics can tell actual delivery apart from
+        // dispatch intent (metadata.transport).
         const delivered_via = payload.__delivered_via ?? null;
         // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
@@ -431,11 +518,13 @@ if (isMainModule) {
     // Parse command-line arguments
     const args = process.argv.slice(2);
     const options = {
-        persistSession: args.includes('--persist-session')
+        // --persist-session is kept as an accepted no-op so existing invocations
+        // and docs keep working; --no-persist-session opts back out.
+        persistSession: !args.includes('--no-persist-session')
     };
 
-    if (options.persistSession) {
-        console.log('🔒 Session persistence enabled');
+    if (!options.persistSession) {
+        console.log('🔓 Session persistence disabled — re-authorization required on every start');
     }
 
     const device = new MCPDevice(options);

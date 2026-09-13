@@ -3,4 +3,4 @@
 skip = .git*,*.svg,package-lock.json,*.css,.codespellrc
 check-hidden = true
 # ignore-regex = 
-# ignore-words-list =
+ignore-words-list = fo

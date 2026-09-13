@@ -693,12 +693,6 @@ export default async function uninstall() {
             logToFile('\nIf you want to reinstall later, you can run:');
             logToFile('npx @wonderwhy-er/desktop-commander@latest setup');
 
-            logToFile('\n🎁 We\'re sorry to see you leaving, we’d love to understand your decision not to use Desktop Commander.')
-            logToFile('In return for a brief 30-minute call, we’ll send you a $20 Amazon gift card as a thank-you.');
-            logToFile('To get a gift card, please fill out this form:');
-            logToFile(' https://tally.so/r/w8lyRo');
-
-
             logToFile('\nThank you for using Desktop Commander! 👋\n');
             
             // Send final tracking event
@@ -712,11 +706,6 @@ export default async function uninstall() {
             logToFile('You may need to manually remove Desktop Commander from Claude\'s configuration.');
             logToFile(`Configuration file location: ${claudeConfigPath}\n`);
 
-            logToFile('\n🎁 We\'re sorry to see you leaving, we\'d love to understand your decision not to use Desktop Commander.')
-            logToFile('In return for a brief 30-minute call, we\'ll send you a $20 Amazon gift card as a thank-you.');
-            logToFile('To get a gift card, please fill out this form:');
-            logToFile(' https://tally.so/r/w8lyRo');
-            
             await ensureTrackingCompleted('uninstall_partial_failure');
             
             return false;
@@ -735,10 +724,6 @@ export default async function uninstall() {
         logToFile('You may need to manually remove Desktop Commander from Claude\'s configuration.');
         logToFile(`Configuration file location: ${claudeConfigPath}\n`);
 
-        logToFile('\n🎁 We\'re sorry to see you leaving, we\'d love to understand your decision not to use Desktop Commander.')
-        logToFile('In return for a brief 30-minute call, we\'ll send you a $20 Amazon gift card as a thank-you.');
-        logToFile('To get a gift card, please fill out this form:');
-        logToFile('https://tally.so/r/w8lyRo');
         return false;
     }
 }

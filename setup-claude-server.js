@@ -166,7 +166,7 @@ const getVersion = async () => {
     }
 };
 
-// Function to detect shell environmen
+// Function to detect shell environment
 function detectShell() {
   // Check for Windows shells
   if (process.platform === 'win32') {

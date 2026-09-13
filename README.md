@@ -84,10 +84,10 @@ Execute long-running terminal commands on your computer and manage processes thr
   - Multiple file support
   - Pattern-based replacements
   - vscode-ripgrep based recursive code or text search in folders
-- Comprehensive audit logging:
-  - All tool calls are automatically logged
-  - Log rotation with 10MB size limit
-  - Detailed timestamps and arguments
+- Local tool-call history and audit logs:
+  - Tool calls and arguments are recorded locally on the machine running Desktop Commander
+  - Recent call history with bounded output previews is available through `get_recent_tool_calls`
+  - Size-based rotation/trimming keeps the active history files bounded
 - Safety guardrails (not a sandbox — see [SECURITY.md](SECURITY.md)):
   - Symlink traversal prevention on file operations
   - Command blocklist for accidental execution
@@ -792,20 +792,40 @@ The fuzzy search logs help you understand:
 3. **File type issues**: Which file extensions commonly have matching problems
 4. **Character encoding problems**: Specific character codes that cause diffs
 
-## Audit Logging
+## Local Tool History and Audit Logs
 
-Desktop Commander now includes comprehensive logging for all tool calls:
+Desktop Commander keeps tool-call records **locally on the machine running the MCP server**. These local files are separate from optional telemetry and are not a server-side historical audit log.
 
-### What Gets Logged
-- Every tool call is logged with timestamp, tool name, and arguments (sanitized for privacy)
-- Logs are rotated automatically when they reach 10MB in size
+### `claude_tool_call.log` — local argument log
 
-### Log Location
-Logs are saved to:
+Every tool call handled by the local MCP server is appended as a text line containing an ISO timestamp, the tool name, and the JSON-serialized arguments. Arguments are **not redacted or sanitized before being written to this local file**, so it may contain command text, file paths, or other sensitive values passed to tools. Tool outputs are not written to this file.
+
+The active file rotates when it reaches 10 MB. The previous file is renamed using a timestamp, for example `claude_tool_call_2026-09-07_14-32-10.log`, and a new `claude_tool_call.log` is created. Rotated files are not automatically deleted by the logger.
+
+Locations:
 - **macOS/Linux**: `~/.claude-server-commander/claude_tool_call.log`
 - **Windows**: `%USERPROFILE%\.claude-server-commander\claude_tool_call.log`
 
-This audit trail helps with debugging, security monitoring, and understanding how Claude is interacting with your system.
+### `tool-history.jsonl` — recent tool-call history
+
+Desktop Commander also keeps a JSON Lines history used by `get_recent_tool_calls`. Each record contains the timestamp, tool name, arguments, duration, and the returned result. This history is loaded from disk on startup, so recent history can survive an MCP server restart.
+
+To keep this history bounded:
+- At most the most recent 1,000 calls are kept in memory.
+- Stored output is capped at 4 KiB per record; larger outputs are replaced with an omission marker.
+- The on-disk file is trimmed when it grows beyond 5 MiB, keeping roughly the newest 4 MiB.
+- On startup, a history with more than 2,000 records is rewritten to the most recent 1,000 records.
+- `get_recent_tool_calls` and `track_ui_event` are excluded from this JSONL history.
+
+Locations:
+- **macOS/Linux**: `~/.claude-server-commander/tool-history.jsonl`
+- **Windows**: `%USERPROFILE%\.claude-server-commander\tool-history.jsonl`
+
+### Remote calls and server-side retention
+
+Calls executed through Remote Desktop Commander are still handled by the local MCP server and use the same local history files above. The Remote Desktop Commander service does **not currently retain command arguments or command results as a historical server-side audit trail after execution is complete**.
+
+These local history files are also separate from Desktop Commander's optional telemetry. The files themselves are not uploaded as telemetry. See [Data Collection & Privacy](#data-collection--privacy) and [PRIVACY.md](PRIVACY.md) for telemetry details.
 
 ## Handling Long-Running Commands
 
@@ -1126,7 +1146,9 @@ Please create a [GitHub Issue](https://github.com/wonderwhy-er/DesktopCommanderM
 
 ## Data Collection & Privacy
 
-Desktop Commander collects limited, pseudonymous telemetry to improve the tool. We do not collect file contents, file paths, or command arguments.
+Desktop Commander collects limited, pseudonymous telemetry to improve the tool. We do not collect file contents, file paths, or command arguments as telemetry.
+
+This is separate from the [local tool history and audit logs](#local-tool-history-and-audit-logs), which stay on the machine running Desktop Commander and may contain tool arguments and bounded result previews.
 
 **Opt-out:** Ask Claude to "disable Desktop Commander telemetry" or set `"telemetryEnabled": false` in your config.
 
