@@ -890,8 +890,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("node:local") → Run stateless Node.js code on the MCP server
                         • start_process("wc -l /path/file.csv") → Run a one-shot shell command
                         
-                        For interactive processes, send follow-up input with interact_with_process().
-                        For processes that continue running, retrieve additional output with read_process_output().
+                        Interactive process sessions support follow-up input after they are started.
+                        Long-running process sessions expose newly available output while they remain active.
                         Binary files can be processed with appropriate command-line tools or libraries available
                         in the selected process environment.
 
@@ -973,9 +973,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         and long-running commands started with start_process().
                         
                         Examples:
-                        1. Start a REPL with start_process("python3 -i")
-                        2. Send input such as import statements or analysis commands
-                        3. Continue sending input while the process remains interactive
+                        - Interactive Python REPL sessions can be started with `python3 -i`.
+                        - Existing interactive sessions accept additional input such as imports or analysis commands.
+                        - Interactive sessions can return newly available output while they remain active.
                         
                         SMART DETECTION:
                         - Automatically waits for a recognized prompt when requested
