@@ -973,7 +973,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         and long-running commands started with start_process().
                         
                         Examples:
-                        - Interactive Python REPL sessions can be started with `python3 -i`.
+                        - Interactive Python REPL sessions can be started with \`python3 -i\`.
                         - Existing interactive sessions accept additional input such as imports or analysis commands.
                         - Interactive sessions can return newly available output while they remain active.
                         
