@@ -68,7 +68,6 @@ function makeDevice({ claimResults = [] } = {}) {
     // transient DB error, which makes the claim return true (fail open).
     markCallExecuting: async () => (claims.length ? claims.shift() : true),
     updateCallResult: async () => {},
-    notifyResult: async () => {},
   };
   return { device, executed };
 }
@@ -285,18 +284,17 @@ await test('a synchronously throwing handler is contained too', async () => {
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID }); // must not reject
 });
 
-// --- 3. Result ordering -----------------------------------------------------
-// The server fetches the row by id when the doorbell arrives, so the write must
-// land first or it sees a non-terminal row and waits for the recovery poll.
+// --- 3. Result write ---------------------------------------------------------
+// The result write is the only notification the server needs: a DB trigger on
+// mcp_remote_calls sends it to the instance that dispatched the call.
 
-await test('the result row is written BEFORE the doorbell is rung', async () => {
-  const order = [];
+await test('a completed call writes exactly one completed result row', async () => {
+  const writes = [];
   const { device, executed } = makeDevice();
-  device.remoteChannel.updateCallResult = async () => { order.push('write'); };
-  device.remoteChannel.notifyResult = async () => { order.push('doorbell'); };
-  await device.handleNewToolCall(payloadFor('call-order'));
+  device.remoteChannel.updateCallResult = async (id, status) => { writes.push(`${id}:${status}`); };
+  await device.handleNewToolCall(payloadFor('call-result'));
   assert(executed.length === 1, 'tool should have run');
-  assert(order.join(',') === 'write,doorbell', `expected write,doorbell — got ${order.join(',')}`);
+  assert(writes.join(',') === 'call-result:completed', `expected one completed write — got ${writes.join(',')}`);
 });
 
 // --- 4. Heartbeat cadence tiers ---------------------------------------------

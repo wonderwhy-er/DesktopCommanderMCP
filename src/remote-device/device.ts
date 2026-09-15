@@ -436,10 +436,8 @@ export class MCPDevice {
 
             console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
-            // Update database with result, THEN ring the doorbell — the server
-            // fetches the row by id on the doorbell, so the write must land first.
+            // The result write itself notifies the server (a DB trigger).
             await this.remoteChannel.updateCallResult(call_id, 'completed', result);
-            await this.remoteChannel.notifyResult(call_id);
 
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
@@ -449,7 +447,6 @@ export class MCPDevice {
             try {
                 await captureRemote('remote_device_tool_call_failed', { error, tool_name });
                 await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
-                await this.remoteChannel.notifyResult(call_id);
             } catch (reportError: any) {
                 console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
             }

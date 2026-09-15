@@ -473,7 +473,7 @@ export class RemoteChannel {
     /**
      * Publish presence, retrying a non-'ok' result — track() resolves with a
      * status rather than rejecting, and absent presence reads as offline on the
-     * server. `presenceTracked` lets the health check retry later.
+     * dashboard. `presenceTracked` lets the health check retry later.
      */
     private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
         if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
@@ -506,7 +506,7 @@ export class RemoteChannel {
                 // Reconnect attempts preceding this join (0 on a first join).
                 captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
                 // Proven end-to-end (joined AND presence published) — only now
-                // may the server treat our presence as authoritative.
+                // advertise the capability dispatch requires.
                 await this.setTransportCapable(true);
                 return;
             }
@@ -518,9 +518,9 @@ export class RemoteChannel {
         this.presenceTracked = false;
         console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
         captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
-        // Withdraw: a stale flag with no presence makes the server refuse to
-        // dispatch at all. The faster heartbeat tier keeps the device's status
-        // accurate for the DB-status fallback while it recovers.
+        // Withdraw: the dashboard reads a flagged device with no presence as
+        // offline. The faster heartbeat tier keeps the device's DB status
+        // accurate while it recovers.
         await this.setTransportCapable(false);
     }
 
@@ -537,9 +537,8 @@ export class RemoteChannel {
 
     /**
      * Advertise (or withdraw) the broadcast capability. Only true while genuinely
-     * reachable that way — the server uses it to pick a transport, to read absent
-     * presence as offline, and to choose the sweep tier, so every change must
-     * re-arm the heartbeat.
+     * reachable that way — the server fails dispatch fast without it and picks
+     * the offline-sweep tier from it, so every change must re-arm the heartbeat.
      */
     private async setTransportCapable(capable: boolean): Promise<void> {
         if (!this.client || !this.deviceId) return;
@@ -574,7 +573,7 @@ export class RemoteChannel {
         return new Promise((resolve, reject) => {
             if (!this.client || !this.user?.id || !this.onToolCall || !this.deviceId) {
                 // deviceId is the presence KEY; a null key gets a random one and
-                // the server's lookup by device id silently misses.
+                // the dashboard's lookup by device id silently misses.
                 console.debug('[DEBUG] createChannel() failed - missing prerequisites');
                 return reject(new Error('Client not initialized or missing subscription parameters'));
             }
@@ -584,11 +583,8 @@ export class RemoteChannel {
             const channelName = `user:${this.user.id}`;
             console.debug(`[DEBUG] Creating channel: ${channelName}`);
             this.channel = this.client.channel(channelName, {
-                // ack: true — without it send() resolves 'ok' once the frame hits
-                // the socket, making notifyResult's status check dead code.
                 config: {
                     private: true,
-                    broadcast: { ack: true },
                     // Non-null: the guard above rejects when !deviceId.
                     presence: { key: this.deviceId, enabled: true }
                 }
@@ -614,9 +610,10 @@ export class RemoteChannel {
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
                         this.queueStatusWrite('online');
-                        // Presence is the live signal dispatch reads, so resolve
-                        // only once it lands — otherwise registerDevice() reports
-                        // "Device ready" while still undispatchable.
+                        // The capability flag dispatch requires is written only
+                        // once presence lands, so resolve then — otherwise
+                        // registerDevice() reports "Device ready" while still
+                        // undispatchable.
                         this.trackPresenceWithRetry(recovered)
                             .catch(() => { /* logged inside */ })
                             .finally(() => resolve());
@@ -662,8 +659,7 @@ export class RemoteChannel {
 
     /**
      * Handle a 'new_call' doorbell. It carries ids only; the row is fetched by
-     * primary key and fed through the same handler as a postgres_changes
-     * payload, so device.ts stays transport-agnostic.
+     * primary key and handed to device.ts.
      */
     private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
@@ -722,32 +718,6 @@ export class RemoteChannel {
     }
 
     /**
-     * Tell the server a result row is written. Fire-and-forget: a failed send
-     * just falls back to the server's 10s recovery poll. MUST run only after
-     * updateCallResult() resolves, so the server's fetch-by-id sees a terminal row.
-     */
-    async notifyResult(callId: string): Promise<void> {
-        if (!this.channel || this.channel.state !== 'joined') {
-            console.debug('[DEBUG] Result doorbell skipped — channel not joined (recovery poll covers)');
-            return;
-        }
-        try {
-            // realtime-js send() RESOLVES with 'ok' | 'timed out' | 'error' —
-            // it does not reject, so check the status or failures are invisible.
-            const result = await this.channel.send({ type: 'broadcast', event: 'result', payload: { call_id: callId } });
-            if (result === 'ok') {
-                console.debug('[DEBUG] Result doorbell sent:', callId);
-            } else {
-                console.debug(`[DEBUG] Result doorbell not acknowledged (${result}) — recovery poll covers:`, callId);
-                captureRemote('remote_channel_result_doorbell_send_failed', { result }).catch(() => { });
-            }
-        } catch (error: any) {
-            console.debug('[DEBUG] Result doorbell send failed (recovery poll covers):', error?.message);
-            captureRemote('remote_channel_result_doorbell_send_failed', { error: error?.message }).catch(() => { });
-        }
-    }
-
-    /**
      * Compact connection state for logs — e.g. "socket=open(1) ch=errored attempt=3".
      * readyState 1=OPEN (a 1 while joins keep failing = a half-open socket being reused),
      * 3=CLOSED, '-'=no socket. Reads realtime-js internals defensively; never throws.
@@ -796,7 +766,8 @@ export class RemoteChannel {
 
             // Self-heal a failed presence publish: the channel is up, so nothing
             // else will ever retry (SUBSCRIBED won't fire again), and without
-            // presence the server reports this healthy device as offline.
+            // presence the capability stays withdrawn, so the server refuses
+            // to dispatch to this healthy device.
             if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
@@ -948,9 +919,8 @@ export class RemoteChannel {
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
             console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);
-            // Sustained failure: stop promising a transport we can't deliver, or
-            // the server's presence overlay reports this device offline
-            // authoritatively and overrides `status`.
+            // Sustained failure: stop promising a transport we can't deliver, so
+            // dispatch fails fast instead of every call waiting out the timeout.
             if (this.reconnectAttempt >= TRANSPORT_WITHDRAW_AFTER_ATTEMPTS) {
                 // Bounded, in its own try: this catch block is outside
                 // RECREATE_TIMEOUT_MS, so a hanging PATCH would pin
@@ -1122,9 +1092,8 @@ export class RemoteChannel {
             // Skip the write entirely when no transport is up. Bumping last_seen
             // on a deaf device would keep its row perpetually young, so the
             // server's staleness sweep could never age it out and correct a
-            // stale 'online' — and whenever presence is unavailable (kill
-            // switch, wedged socket) that stale row is exactly what dispatch
-            // falls back to. Staying silent lets the sweep do its job.
+            // stale 'online' — and that row is what dispatch reads. Staying
+            // silent lets the sweep do its job.
             if (!this.isReachable()) {
                 console.debug('[DEBUG] Skipping heartbeat write — no transport joined; letting the row age out');
                 return;
