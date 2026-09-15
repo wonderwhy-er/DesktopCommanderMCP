@@ -25,11 +25,27 @@ const timeoutHandle = setTimeout(() => {
     process.exit(2); // Exit code 2 for timeout
 }, TIMEOUT_MS);
 
-try {
-    // Create Supabase client
-    const client = createClient(supabaseUrl, supabaseKey);
+const auth = { persistSession: false, autoRefreshToken: false };
 
-    // Set session using access token and refresh token
+// Update device status to offline, stamping the exact shutdown moment so
+// "last seen X ago" is precise for clean shutdowns (the periodic
+// bookkeeping write only runs on the slow capable cadence).
+const markOffline = (client) => client
+    .from('mcp_devices')
+    .update({ status: 'offline', last_seen: new Date().toISOString() })
+    .eq('id', deviceId);
+
+function tokenLooksLive(token) {
+    try {
+        const { exp } = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+        return typeof exp === 'number' && exp * 1000 > Date.now() + 5000;
+    } catch {
+        return false;
+    }
+}
+
+async function refreshedClient() {
+    const client = createClient(supabaseUrl, supabaseKey, { auth });
     const { error: authError } = await client.auth.setSession({
         access_token: accessToken,
         refresh_token: refreshToken
@@ -40,14 +56,21 @@ try {
         clearTimeout(timeoutHandle);
         process.exit(3); // Exit code 3 for auth error
     }
+    return client;
+}
 
-    // Update device status to offline, stamping the exact shutdown moment so
-    // "last seen X ago" is precise for clean shutdowns (the periodic
-    // bookkeeping write only runs on the slow capable cadence).
-    const { error } = await client
-        .from('mcp_devices')
-        .update({ status: 'offline', last_seen: new Date().toISOString() })
-        .eq('id', deviceId);
+try {
+    // A live token goes straight to PostgREST as a Bearer header: setSession()
+    // would first spend a GoTrue round trip of the budget re-validating it.
+    // An expired one (e.g. the machine just woke) is refreshed via setSession().
+    const client = tokenLooksLive(accessToken)
+        ? createClient(supabaseUrl, supabaseKey, {
+            auth,
+            global: { headers: { Authorization: `Bearer ${accessToken}` } }
+        })
+        : await refreshedClient();
+
+    const { error } = await markOffline(client);
 
     clearTimeout(timeoutHandle);
 

@@ -161,6 +161,7 @@ function freshServerToken(n = 0) {
  */
 class FakeAuth {
   static EXPIRY_MARGIN_MS = 90 * 1000; // @supabase/auth-js's real EXPIRY_MARGIN_MS
+  static USER = { id: 'user-1', email: 'tester@example.com' };
 
   session = null;
   refreshCalls = 0;
@@ -176,7 +177,7 @@ class FakeAuth {
       return this._refresh(refresh_token);
     }
     this.session = { access_token, refresh_token, expires_at: exp };
-    return { error: null };
+    return { data: { user: FakeAuth.USER, session: this.session }, error: null };
   }
   async getUser() {
     return { data: { user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
@@ -216,7 +217,7 @@ class FakeAuth {
     const { exp } = decodeJwtPayload(token);
     this.session = { access_token: token, refresh_token: refreshToken, expires_at: exp };
     for (const cb of this.listeners) cb('TOKEN_REFRESHED', this.session);
-    return { data: { session: this.session }, error: null };
+    return { data: { user: FakeAuth.USER, session: this.session }, error: null };
   }
 }
 
