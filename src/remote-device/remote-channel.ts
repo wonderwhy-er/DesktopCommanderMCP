@@ -220,7 +220,8 @@ export class RemoteChannel {
     async setSession(session: AuthSession): Promise<{ error: any }> {
         if (!this.client) throw new Error('Client not initialized');
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
-        const { error } = await this.client.auth.setSession({
+        // setSession() already fetches the user from GoTrue (or refreshes), so no getUser() after it.
+        const { data: { user }, error } = await this.client.auth.setSession({
             access_token: session.access_token,
             refresh_token: session.refresh_token || ''
         });
@@ -229,14 +230,6 @@ export class RemoteChannel {
             console.error('[DEBUG] Failed to set session:', error.message);
             await captureRemote('remote_channel_set_session_error', { error });
             return { error };
-        }
-
-        // Get user info
-        const { data: { user }, error: userError } = await this.client.auth.getUser();
-        if (userError) {
-            console.error('[DEBUG] Failed to get user:', userError.message);
-            await captureRemote('remote_channel_get_user_error', { error: userError });
-            throw userError;
         }
 
         if (!user) {
@@ -1277,8 +1270,8 @@ export class RemoteChannel {
             // timeout) and refreshes when the token is within ~90s of expiry,
             // POSTing /token with its own ~30s retry budget. On a just-woken
             // machine that outlasts device.ts's 5s force-exit, and then spawnSync
-            // never runs and the offline write is lost. The subprocess calls
-            // setSession() itself, so a slightly stale access_token is fine.
+            // never runs and the offline write is lost. The subprocess refreshes
+            // an expired access_token itself, so a stale one is fine.
             const live = await Promise.race([
                 this.client.auth.getSession().then((r) => r.data?.session ?? null),
                 this.sleep(OFFLINE_SESSION_TIMEOUT_MS).then(() => null),
@@ -1323,7 +1316,9 @@ export class RemoteChannel {
                 supabaseUrl,
                 supabaseKey,
                 session.access_token,
-                session.refresh_token || ''
+                // A lost session's refresh token already failed to refresh;
+                // presenting it again can trip GoTrue's reuse detection.
+                this.sessionLost ? '' : session.refresh_token || ''
             ], {
                 timeout: 3000,
                 stdio: 'pipe', // Capture output to prevent blocking
