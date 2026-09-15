@@ -889,7 +889,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         • start_process("node -i") → Start an interactive Node.js REPL
                         • start_process("node:local") → Run stateless Node.js code on the MCP server
                         • start_process("wc -l /path/file.csv") → Run a one-shot shell command
-                        
+
                         Interactive process sessions support follow-up input after they are started.
                         Long-running process sessions expose newly available output while they remain active.
                         Binary files can be processed with appropriate command-line tools or libraries available
