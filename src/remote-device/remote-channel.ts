@@ -718,10 +718,7 @@ export class RemoteChannel {
             return;
         }
 
-        // Tag the actual request-delivery path. The legacy postgres_changes
-        // transport has been removed; successful live deliveries now arrive
-        // through this broadcast doorbell path.
-        this.dispatchToolCall({ new: row, __delivered_via: 'doorbell' });
+        this.dispatchToolCall({ new: row });
     }
 
     /**
@@ -1007,23 +1004,12 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(
-        callId: string,
-        status: string,
-        result: any = null,
-        errorMessage: string | null = null,
-        attribution: { metadata: any; deliveredVia: string | null } | null = null
-    ) {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
             completed_at: new Date().toISOString()
         };
-        // Preserve dispatch-time metadata and stamp the path that actually
-        // delivered the request to this device.
-        if (attribution?.deliveredVia) {
-            updateData.metadata = { ...(attribution.metadata ?? {}), delivered_via: attribution.deliveredVia };
-        }
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
         // jsonb cannot store  and rejects the whole write (Postgres 22P05),
