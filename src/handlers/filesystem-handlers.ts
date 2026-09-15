@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import {
     readFile,
     readMultipleFiles,
@@ -154,7 +155,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         if (fileResult.metadata?.isImage) {
             // Return the image bytes in the MCP content array so the host model can
             // actually see the image. The preview widget gets its copy from its own
-            // origin:'ui' read — structuredContent stays metadata-only.
+            // origin:'ui' read 鈥?structuredContent stays metadata-only.
             const imageData = typeof fileResult.content === 'string'
                 ? fileResult.content
                 : fileResult.content.toString('base64');
@@ -167,7 +168,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                         {
                             type: "resource",
                             resource: {
-                                uri: `file://${resolvedFilePath.replace(/\\/g, '/')}`,
+                                uri: pathToFileURL(resolvedFilePath).href,
                                 blob: imageData,
                                 mimeType: fileResult.mimeType
                             }
@@ -185,7 +186,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             // Widget pull (origin: 'ui'): return the base64 in a TEXT block, never
             // an image block. An image content block makes the host inline-vision-
             // render the result, which preempts delivery of this RPC response to
-            // the widget — leaving the preview stuck on "Preparing preview…" for
+            // the widget 鈥?leaving the preview stuck on "Preparing preview鈥? for
             // exactly the host-rendered types (png/jpeg/gif/webp). Text-only lets
             // the RPC response through so the widget can draw the <img>.
             if (parsed.origin === 'ui') {
@@ -195,7 +196,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                 };
             }
             // Model-facing read: keep the image block so the host/model sees it.
-            // No structuredContent — the widget renders from its own origin:'ui'
+            // No structuredContent 鈥?the widget renders from its own origin:'ui'
             // read, and nothing else consumes it.
             return {
                 content: [
@@ -220,7 +221,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             const fileType = fileResult.metadata?.isDirectory ? 'directory' as const : resolvePreviewFileType(resolvedFilePath);
             // The directory fallback prefixes a "use list_directory instead" hint
             // for the LLM. The widget's own read (a list_directory preview pulls
-            // read_file on the dir path) would render that hint as a notice — strip it.
+            // read_file on the dir path) would render that hint as a notice 鈥?strip it.
             if (parsed.origin === 'ui' && fileType === 'directory') {
                 textContent = textContent.replace(/^This is a directory, not a file\.[^\n]*\n+/, '');
             }
@@ -333,13 +334,13 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
             try {
                 existing = await getFileInfo(parsed.path);
             } catch {
-                // Missing file or invalid path — nothing to protect; the write
+                // Missing file or invalid path 鈥?nothing to protect; the write
                 // itself will surface any real path error.
             }
             if (existing?.isFile && existing.size > 0) {
                 return createErrorResponse(
                     `Write rejected to prevent accidental data loss: ${parsed.path} already exists ` +
-                    `with content (${existing.size} bytes), and no 'mode' was specified — the default ` +
+                    `with content (${existing.size} bytes), and no 'mode' was specified 鈥?the default ` +
                     `mode 'rewrite' would REPLACE the entire file. Retry with an explicit mode: ` +
                     `'append' to add your content to the end of the existing file, or 'rewrite' ` +
                     `to replace all existing content.`
@@ -356,9 +357,9 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const lineCount = lines.length;
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
-            errorMessage = `✅ File written successfully! (${lineCount} lines)
+            errorMessage = `鉁?File written successfully! (${lineCount} lines)
             
-💡 Performance tip: For optimal speed, consider chunking files into ≤30 line pieces in future operations.`;
+馃挕 Performance tip: For optimal speed, consider chunking files into 鈮?0 line pieces in future operations.`;
         }
 
         // Pass the mode parameter to writeFile
