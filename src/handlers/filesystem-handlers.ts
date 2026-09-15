@@ -159,6 +159,22 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                 ? fileResult.content
                 : fileResult.content.toString('base64');
             const imageSummary = `Image file: ${parsed.path} (${fileResult.mimeType})\n`;
+            const responseFormat = parsed.options?.responseFormat;
+            if (responseFormat === 'resource' && parsed.origin !== 'ui') {
+                return {
+                    content: [
+                        { type: "text", text: imageSummary },
+                        {
+                            type: "resource",
+                            resource: {
+                                uri: `file://${resolvedFilePath.replace(/\\/g, '/')}`,
+                                blob: imageData,
+                                mimeType: fileResult.mimeType
+                            }
+                        }
+                    ]
+                };
+            }
             const imageStructuredContent = {
                 fileName: path.basename(resolvedFilePath),
                 filePath: resolvedFilePath,
