@@ -65,8 +65,8 @@ const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
 // Below this, skew is noise — leave Date.now untouched. Above it, correct.
 const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
 // Failed recreates before withdrawing transport_broadcast_v1 — keeping it while
-// unable to join makes the device undispatchable. Not lower than 3: ordinary
-// half-open recovery legitimately costs 2.
+// unable to join leaves the server dispatching calls this device can't
+// receive. Not lower than 3: ordinary half-open recovery legitimately costs 2.
 const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
 // Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
 // does not cover.
@@ -765,9 +765,10 @@ export class RemoteChannel {
             }
 
             // Self-heal a failed presence publish: the channel is up, so nothing
-            // else will ever retry (SUBSCRIBED won't fire again), and without
-            // presence the capability stays withdrawn, so the server refuses
-            // to dispatch to this healthy device.
+            // else will ever retry (SUBSCRIBED won't fire again). Until it
+            // lands the dashboard shows this device offline, and if track()
+            // already failed its retries the capability is withdrawn too, so
+            // the server fails every dispatch to it fast.
             if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
