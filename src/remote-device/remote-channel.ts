@@ -1316,7 +1316,9 @@ export class RemoteChannel {
                 supabaseUrl,
                 supabaseKey,
                 session.access_token,
-                session.refresh_token || ''
+                // A lost session's refresh token already failed to refresh;
+                // presenting it again can trip GoTrue's reuse detection.
+                this.sessionLost ? '' : session.refresh_token || ''
             ], {
                 timeout: 3000,
                 stdio: 'pipe', // Capture output to prevent blocking

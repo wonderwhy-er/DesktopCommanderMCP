@@ -144,7 +144,7 @@ function freshServerToken(n = 0) {
 
 /**
  * Models the subset of supabase-js's `client.auth` that remote-channel.ts
- * actually calls: setSession()/getUser()/getSession()/onAuthStateChange()
+ * actually calls: setSession()/getSession()/onAuthStateChange()
  * from RemoteChannel.setSession(), and refreshSession() for the manual-refresh
  * fix under test (see the clock-skew regression tests below).
  *
@@ -165,6 +165,7 @@ class FakeAuth {
 
   session = null;
   refreshCalls = 0;
+  getUserCalls = 0;
   listeners = [];
 
   /** Mirrors GoTrueClient.js's _setSession() (~L1363): decides "expired" from
@@ -179,8 +180,11 @@ class FakeAuth {
     this.session = { access_token, refresh_token, expires_at: exp };
     return { data: { user: FakeAuth.USER, session: this.session }, error: null };
   }
+  /** Only counted: setSession() already returns the user, so any getUser()
+   * call is a redundant GoTrue /user round trip. */
   async getUser() {
-    return { data: { user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
+    this.getUserCalls++;
+    return { data: { user: FakeAuth.USER }, error: null };
   }
   /** Mirrors GoTrueClient.js's __loadSession() (~L1201), invoked by EVERY
    * getSession() call — and so, via supabase-js's fetchWithAuth ->
@@ -716,6 +720,15 @@ async function main() {
       Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
       `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
+  });
+
+  await test('setSession() takes the user from auth.setSession(), with no getUser() round trip', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(() =>
+      rc.setSession({ access_token: freshServerToken(), refresh_token: 'seed-refresh' })
+    );
+    assert.strictEqual(rc.user?.id, FakeAuth.USER.id, 'user must come from setSession()');
+    assert.strictEqual(client.auth.getUserCalls, 0, 'setSession() must not call getUser()');
   });
 
   console.log(

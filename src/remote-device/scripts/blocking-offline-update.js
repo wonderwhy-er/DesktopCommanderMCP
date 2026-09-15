@@ -4,7 +4,8 @@
  * Blocking script to update device status to offline
  * Runs synchronously during shutdown to ensure DB update completes
  * 
- * Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> <refreshToken>
+ * Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> [refreshToken]
+ * Without a refreshToken only a still-valid accessToken can be used.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -12,9 +13,9 @@ import { createClient } from '@supabase/supabase-js';
 // Parse command line arguments
 const [deviceId, supabaseUrl, supabaseKey, accessToken, refreshToken] = process.argv.slice(2);
 
-if (!deviceId || !supabaseUrl || !supabaseKey || !accessToken || !refreshToken) {
+if (!deviceId || !supabaseUrl || !supabaseKey || !accessToken) {
     console.error('❌ Missing required arguments');
-    console.error('Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> <refreshToken>');
+    console.error('Usage: node blocking-offline-update.js <deviceId> <supabaseUrl> <supabaseKey> <accessToken> [refreshToken]');
     process.exit(1);
 }
 
@@ -30,7 +31,12 @@ const auth = { persistSession: false, autoRefreshToken: false };
 // Update device status to offline, stamping the exact shutdown moment so
 // "last seen X ago" is precise for clean shutdowns (the periodic
 // bookkeeping write only runs on the slow capable cadence).
-const markOffline = (client) => client
+// The token goes straight to PostgREST as a Bearer header: setSession()
+// would first spend a GoTrue round trip of the budget re-validating it.
+const markOffline = (token) => createClient(supabaseUrl, supabaseKey, {
+    auth,
+    global: { headers: { Authorization: `Bearer ${token}` } }
+})
     .from('mcp_devices')
     .update({ status: 'offline', last_seen: new Date().toISOString() })
     .eq('id', deviceId);
@@ -44,33 +50,34 @@ function tokenLooksLive(token) {
     }
 }
 
-async function refreshedClient() {
-    const client = createClient(supabaseUrl, supabaseKey, { auth });
-    const { error: authError } = await client.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-    });
-
-    if (authError) {
-        console.error('❌ Auth error:', authError.message);
+// refreshSession(), not setSession(): setSession() validates a token that
+// looks live on this machine's clock via /user instead of refreshing it.
+async function refreshedToken() {
+    if (!refreshToken) {
+        console.error('❌ Auth error: access token not usable and no refresh token');
         clearTimeout(timeoutHandle);
         process.exit(3); // Exit code 3 for auth error
     }
-    return client;
+    const client = createClient(supabaseUrl, supabaseKey, { auth });
+    const { data, error: authError } = await client.auth.refreshSession({ refresh_token: refreshToken });
+
+    if (authError || !data.session) {
+        console.error('❌ Auth error:', authError?.message ?? 'no session returned');
+        clearTimeout(timeoutHandle);
+        process.exit(3); // Exit code 3 for auth error
+    }
+    return data.session.access_token;
 }
 
 try {
-    // A live token goes straight to PostgREST as a Bearer header: setSession()
-    // would first spend a GoTrue round trip of the budget re-validating it.
-    // An expired one (e.g. the machine just woke) is refreshed via setSession().
-    const client = tokenLooksLive(accessToken)
-        ? createClient(supabaseUrl, supabaseKey, {
-            auth,
-            global: { headers: { Authorization: `Bearer ${accessToken}` } }
-        })
-        : await refreshedClient();
+    // An expired token (e.g. the machine just woke) is refreshed first. A 401
+    // means it only looked live on this machine's clock: refresh and retry once.
+    let result = tokenLooksLive(accessToken) ? await markOffline(accessToken) : null;
+    if (!result || result.status === 401) {
+        result = await markOffline(await refreshedToken());
+    }
 
-    const { error } = await markOffline(client);
+    const { error } = result;
 
     clearTimeout(timeoutHandle);
 
