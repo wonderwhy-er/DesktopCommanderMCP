@@ -98,8 +98,18 @@ export class DesktopCommanderIntegration {
             // Supervise the local half. Without these, a child crash is silent:
             // the SDK clears its transport and every subsequent call throws
             // "Not connected" with nothing tying it back to the death.
-            this.mcpTransport.onclose = () => this.handleLocalDisconnect('stdio transport closed');
-            this.mcpTransport.onerror = (err: Error) =>
+            //
+            // These MUST hang off the client, not the transport. connect() wraps
+            // transport.onclose/onerror with its own handlers and the SDK states
+            // that "The Protocol object assumes ownership of the Transport,
+            // replacing any callbacks that have already been set". Assigning to
+            // the transport here instead would drop the SDK's wrapper, and with
+            // it Protocol._onclose() — the only place a pending response is
+            // rejected with ConnectionClosed. The call in flight when the child
+            // died would then hang for the SDK's 60s default request timeout
+            // before the user heard anything.
+            this.mcpClient.onclose = () => this.handleLocalDisconnect('stdio transport closed');
+            this.mcpClient.onerror = (err: Error) =>
                 this.handleLocalDisconnect(`stdio transport error: ${err?.message ?? String(err)}`);
 
             console.log(' - 🔌 Connected to Desktop Commander MCP');
