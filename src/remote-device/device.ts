@@ -51,6 +51,12 @@ export class MCPDevice {
         // take the whole family down including the token a healthy connector holds.
         this.persistSession = options.persistSession ?? true;
 
+        // The session refreshes every 45 minutes and auth-js rotates the refresh
+        // token each time. Without this the config keeps whichever token the
+        // process started with, and a restart hours later replays a spent one -
+        // GoTrue refuses it and an unattended device waits for a browser.
+        this.remoteChannel.onSessionRefreshed(() => void this.savePersistedConfig());
+
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
 
