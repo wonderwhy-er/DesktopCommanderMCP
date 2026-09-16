@@ -2,6 +2,7 @@ import open from 'open';
 import os from 'os';
 import crypto from 'crypto';
 import { captureRemote } from '../utils/capture.js';
+import { observeServerDate } from './remote-channel.js';
 
 interface AuthSession {
     access_token: string;
@@ -79,6 +80,7 @@ export class DeviceAuthenticator {
                 code_challenge_method: 'S256',
             }),
         });
+        observeServerDate(response.headers.get('date'));
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -130,6 +132,9 @@ export class DeviceAuthenticator {
                         code_verifier: codeVerifier,
                     }),
                 });
+                // The response that delivers the session states the server's
+                // time; correct the clock before that session is used.
+                observeServerDate(response.headers.get('date'));
 
                 // Parse response body exactly once
                 const data: PollResponse = await response.json().catch(() => ({ error: 'unknown' }));
