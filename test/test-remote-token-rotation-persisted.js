@@ -19,14 +19,23 @@
  * sits waiting for someone to complete a browser flow. Reproduced independently
  * on Linux and Windows against 0.2.47/0.2.48.
  *
- * Both cases drive the real RemoteChannel and MCPDevice against a fake Supabase
- * client and a temp config file — no network, no browser, no Supabase.
+ * Persisting on every rotation raises three questions the first version of this
+ * fix did not answer, all raised in review on #710:
+ *
+ *   - a rotation landing as the process exits must not be dropped on the floor
+ *   - two saves in flight must not let a slow earlier one overwrite a newer one
+ *   - a write that cannot complete must not destroy the config that was there
+ *
+ * Everything drives the real RemoteChannel and MCPDevice against a fake Supabase
+ * client and a temp config file — no network, no browser, no Supabase. The fake
+ * snapshots its session at call time and can delay the reply, which is how a
+ * slow save is modelled deterministically instead of with a sleep.
  *
  * Runs as part of `npm test`, or standalone:
  *   npm run build && node test/test-remote-token-rotation-persisted.js
  */
 import assert from 'node:assert';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MCPDevice } from '../dist/remote-device/device.js';
@@ -35,14 +44,24 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 const DEVICE_ID = 'device-1';
 
+/** Cap on waiting for a write to land; far above any healthy save. */
+const PERSIST_DEADLINE_MS = 5000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Stands in for the Supabase client. It owns a `currentSession` the way auth-js
  * does, so a rotation changes what getSession() reports — which is exactly what
  * savePersistedConfig() reads when it decides what to write.
+ *
+ * getSession() snapshots the session BEFORE its optional delay. That models the
+ * real hazard: a save reads the session it is going to write, then takes time
+ * to get it onto disk, during which a newer save can overtake it.
  */
 function makeFakeClient() {
     let currentSession = null;
     let authListener = null;
+    const sessionDelays = [];
 
     return {
         auth: {
@@ -50,13 +69,23 @@ function makeFakeClient() {
                 currentSession = { access_token, refresh_token };
                 return { data: { user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
             },
-            getSession: async () => ({ data: { session: currentSession }, error: null }),
+            getSession: async () => {
+                const snapshot = currentSession;
+                const delay = sessionDelays.shift() ?? 0;
+                if (delay) await sleep(delay);
+                return { data: { session: snapshot }, error: null };
+            },
             onAuthStateChange: (cb) => {
                 authListener = cb;
                 return { data: { subscription: { unsubscribe() { } } } };
             },
         },
         realtime: { setAuth: () => { } },
+
+        /** How long the NEXT save should take to read its session, in order. */
+        delaySaves(...msPerSave) {
+            sessionDelays.push(...msPerSave);
+        },
 
         /** What the 45-minute refresh does: rotate, then announce it. */
         rotate(access_token, refresh_token) {
@@ -73,7 +102,14 @@ async function makeDevice(configPath) {
     device.configPath = configPath;
 
     const client = makeFakeClient();
-    device.remoteChannel.client = client; // private in TS, plain property at runtime
+    const rc = device.remoteChannel;
+    rc.client = client; // private in TS, plain property at runtime
+
+    // shutdown() walks the teardown path; none of it is under test here.
+    rc.stopHeartbeat = () => { };
+    rc.unsubscribe = async () => { };
+    rc.setOffline = async () => { };
+    device.desktop = { shutdown: async () => { }, listClientTools: async () => ({ tools: [] }) };
 
     // Registers the TOKEN_REFRESHED listener, as start() does.
     await device.remoteChannel.setSession({ access_token: 'access-1', refresh_token: 'refresh-1' });
@@ -85,8 +121,26 @@ async function makeDevice(configPath) {
 
 const readPersisted = (configPath) => JSON.parse(readFileSync(configPath, 'utf8'));
 
-/** Let the un-awaited auth callback and anything it starts settle. */
-const settle = () => new Promise((r) => setTimeout(r, 100));
+/**
+ * Wait for the config to satisfy `predicate`, or give up. Polling rather than a
+ * fixed sleep: a sleep only gives an async save time to finish, it never
+ * confirms that it did, and on a loaded machine that reads the old token and
+ * fails a correct implementation (raised in review on #710).
+ */
+async function waitForPersisted(configPath, predicate, timeoutMs = PERSIST_DEADLINE_MS) {
+    const deadline = Date.now() + timeoutMs;
+    let last = null;
+    while (Date.now() < deadline) {
+        try {
+            last = JSON.parse(readFileSync(configPath, 'utf8'));
+            if (predicate(last)) return last;
+        } catch { /* absent, or caught mid-write */ }
+        await sleep(10);
+    }
+    return last;
+}
+
+const tokenIs = (want) => (config) => config?.session?.refresh_token === want;
 
 let failures = 0;
 async function test(name, fn) {
@@ -110,10 +164,10 @@ await test('a rotated refresh token reaches the persisted config', async (config
     );
 
     client.rotate('access-2', 'refresh-2');
-    await settle();
+    const config = await waitForPersisted(configPath, tokenIs('refresh-2'));
 
     assert.strictEqual(
-        readPersisted(configPath).session.refresh_token, 'refresh-2',
+        config?.session?.refresh_token, 'refresh-2',
         'the rotation stayed in memory; disk still holds a refresh token that has already been spent'
     );
 });
@@ -121,7 +175,7 @@ await test('a rotated refresh token reaches the persisted config', async (config
 await test('a restart loads the rotated token, not the one the process started with', async (configPath) => {
     const { client } = await makeDevice(configPath);
     client.rotate('access-2', 'refresh-2');
-    await settle();
+    await waitForPersisted(configPath, tokenIs('refresh-2'));
 
     // A fresh process reading the same config file — what a restart does.
     const restarted = new MCPDevice();
@@ -132,6 +186,57 @@ await test('a restart loads the rotated token, not the one the process started w
     assert.strictEqual(
         loaded.refresh_token, 'refresh-2',
         'the restart replays a spent refresh token, so GoTrue refuses it and the device demands browser authorization'
+    );
+});
+
+await test('a rotation landing as the process exits is not lost', async (configPath) => {
+    const { device, client } = await makeDevice(configPath);
+
+    // The save is in flight when teardown begins.
+    client.delaySaves(300);
+    client.rotate('access-2', 'refresh-2');
+    await device.shutdown();
+
+    assert.strictEqual(
+        readPersisted(configPath).session.refresh_token, 'refresh-2',
+        'shutdown finished while the write was still in flight, so the rotation was dropped ' +
+        'and the next start replays a spent token'
+    );
+});
+
+await test('a slow save cannot overwrite a newer one', async (configPath) => {
+    const { client } = await makeDevice(configPath);
+
+    // First save reads refresh-2 then stalls; second reads refresh-3 and is quick.
+    client.delaySaves(300, 0);
+    client.rotate('access-2', 'refresh-2');
+    client.rotate('access-3', 'refresh-3');
+
+    await waitForPersisted(configPath, tokenIs('refresh-3'));
+    await sleep(500); // let the stalled save land, if it is going to
+
+    assert.strictEqual(
+        readPersisted(configPath).session.refresh_token, 'refresh-3',
+        'the stalled earlier save overtook the newer one and persisted a token that is already spent'
+    );
+});
+
+await test('a write that cannot complete leaves the previous config intact', async (configPath) => {
+    const { client } = await makeDevice(configPath);
+
+    // Block the temporary file the save commits through, so the write fails
+    // after the previous config is already on disk. This pins the mechanism:
+    // without a temp file there is nothing to block, the save overwrites the
+    // live config directly, and an interruption would leave it truncated.
+    mkdirSync(`${configPath}.${process.pid}.tmp`);
+
+    client.rotate('access-2', 'refresh-2');
+    await sleep(300);
+
+    const config = readPersisted(configPath); // must still parse
+    assert.strictEqual(
+        config.session.refresh_token, 'refresh-1',
+        'a failed write must leave the previous complete session, never a partial file'
     );
 });
 
