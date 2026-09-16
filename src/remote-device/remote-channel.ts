@@ -658,7 +658,7 @@ export class RemoteChannel {
     private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
         if (!callId) return;
-        if (payload?.device_id && payload.device_id !== this.deviceId) {
+        if (payload?.device_id !== this.deviceId) {
             console.debug('[DEBUG] Ignoring doorbell for different device');
             return;
         }
@@ -687,6 +687,8 @@ export class RemoteChannel {
                 row = data?.[0] ?? null;
                 break;
             }
+            // Left set on purpose: a later clean empty result may still mean our
+            // own attempt committed, so the read-back below must run.
             claimError = error;
             console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
@@ -698,6 +700,7 @@ export class RemoteChannel {
         if (!claimError) {
             // Claimed by a duplicate doorbell or another process, or cleaned up.
             console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
+            await captureRemote('remote_channel_doorbell_claim_no_row', { call_id: callId });
             return;
         }
 
@@ -720,8 +723,10 @@ export class RemoteChannel {
             // No claim landed; device.ts claims it.
             this.dispatchToolCall({ new: current });
         } else if (current?.status === 'executing') {
-            // Probably our own lost claim. Like markCallExecuting's error path,
-            // this runs twice only if another process claimed it.
+            // Probably our own lost claim, so run it rather than strand the call.
+            // It runs twice only when a second connector process shares this
+            // device_id and claimed the same call.
+            await captureRemote('remote_channel_doorbell_claim_recovered', { call_id: callId });
             this.dispatchToolCall({ new: current, claimed: true });
         } else {
             console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
