@@ -651,8 +651,9 @@ export class RemoteChannel {
     }
 
     /**
-     * Handle a 'new_call' doorbell. It carries ids only; the row is fetched by
-     * primary key and handed to device.ts.
+     * Handle a 'new_call' doorbell. It carries ids only; one conditional update
+     * claims the row (pending -> executing) and returns it, and it is handed to
+     * device.ts marked as claimed.
      */
     private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
@@ -669,45 +670,62 @@ export class RemoteChannel {
         if (!this.client) return;
 
         // Retry on transient failures (a REST blip while the socket stays
-        // healthy). Post-flip this fetch is the only way we learn about a call,
+        // healthy). This claim is the only way we learn about a call,
         // so a hiccup must not cost a 5-minute timeout.
         let row: any = null;
-        let lastError: any = null;
+        let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
             if (delayMs > 0) await this.sleep(delayMs);
             const { data, error } = await this.client
                 .from('mcp_remote_calls')
-                .select('*')
+                .update({ status: 'executing' })
                 .eq('id', callId)
-                .maybeSingle();
+                .eq('device_id', this.deviceId)
+                .eq('status', 'pending')
+                .select('*');
             if (!error) {
-                row = data;
-                lastError = null;
+                row = data?.[0] ?? null;
                 break;
             }
-            lastError = error;
-            console.debug(`[DEBUG] Doorbell row fetch attempt failed for ${callId}: ${error.message} — retrying`);
+            claimError = error;
+            console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
 
-        if (lastError) {
-            console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after retries:`, lastError.message);
-            await captureRemote('remote_channel_doorbell_fetch_error', { error: lastError });
+        if (row) {
+            this.dispatchToolCall({ new: row, claimed: true });
             return;
         }
-        if (!row) {
-            // Already claimed and deleted, or cleanup raced delivery. Not
-            // retried: the row is always inserted before the doorbell is sent.
-            await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
-            return;
-        }
-        // Optimization, not a guard — saves a hop on a duplicate doorbell
-        // (retry, reconnect). Exactly-once lives in device.ts (seenCallIds + DB claim).
-        if (row.status !== 'pending') {
-            console.debug('[DEBUG] Doorbell call already claimed:', callId);
+        if (!claimError) {
+            // Claimed by a duplicate doorbell or another process, or cleaned up.
+            console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
             return;
         }
 
-        this.dispatchToolCall({ new: row });
+        await captureRemote('remote_channel_mark_call_executing_error', { error: claimError });
+
+        // A failed claim may have committed with its response lost, so read
+        // the row back rather than strand the call.
+        const { data: current, error } = await this.client
+            .from('mcp_remote_calls')
+            .select('*')
+            .eq('id', callId)
+            .eq('device_id', this.deviceId)
+            .maybeSingle();
+        if (error) {
+            console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after claim errors:`, error.message);
+            await captureRemote('remote_channel_doorbell_fetch_error', { error });
+            return;
+        }
+        if (current?.status === 'pending') {
+            // No claim landed; device.ts claims it.
+            this.dispatchToolCall({ new: current });
+        } else if (current?.status === 'executing') {
+            // Probably our own lost claim. Like markCallExecuting's error path,
+            // this runs twice only if another process claimed it.
+            this.dispatchToolCall({ new: current, claimed: true });
+        } else {
+            console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
+        }
     }
 
     /**

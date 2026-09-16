@@ -398,8 +398,9 @@ export class MCPDevice {
             // DB claim second — keeps the row state machine honest, gives
             // cross-restart/cross-process protection, and is observable. It may
             // fail open (returns true on a transient write error); the local
-            // guard above is what makes execution exactly-once.
-            const claimed = await this.remoteChannel.markCallExecuting(call_id);
+            // guard above is what makes execution exactly-once. The doorbell
+            // path claims before dispatch and marks the payload `claimed`.
+            const claimed = payload.claimed === true || await this.remoteChannel.markCallExecuting(call_id);
             if (!claimed) {
                 // markCallExecuting already logged the duplicate-delivery skip.
                 return;

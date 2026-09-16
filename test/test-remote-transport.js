@@ -77,7 +77,7 @@ function makeDevice({ claimResults = [] } = {}) {
  * `update(...).eq(...)` (awaited) and `select(...).eq(...).maybeSingle()`.
  * Records every mcp_devices write in `writes`.
  */
-function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {}) {
+function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaims = 0, writeLatencies = [] } = {}) {
   const writes = [];
   // Recorded when a write COMPLETES, not when it is issued. `writes` alone
   // cannot test ordering: setOnlineStatus evaluates .update() synchronously
@@ -85,7 +85,24 @@ function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {
   // statusWriteChain serialisation.
   const completions = [];
   let fetchAttempts = 0;
+  let claimAttempts = 0;
   let pendingWrite = null;
+
+  // The doorbell claim, update({status:'executing'}).eq().eq().select('*'):
+  // returns the row only while it is still pending. The first `lostClaims`
+  // failed attempts still commit, like a response lost after the write.
+  const claim = () => {
+    claimAttempts++;
+    const failed = claimAttempts <= failClaims;
+    const won = row?.status === 'pending' && (!failed || claimAttempts <= lostClaims);
+    if (won) row.status = 'executing';
+    const p = Promise.resolve(failed
+      ? { data: null, error: { message: 'claim failed' } }
+      : { data: won ? [row] : [], error: null });
+    p.eq = () => p;
+    p.select = () => p;
+    return p;
+  };
 
   const result = () => {
     const p = Promise.resolve({ data: null, error: null });
@@ -118,6 +135,7 @@ function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {
       if (!pendingWrite) return result();
       const { payload, delay } = pendingWrite;
       pendingWrite = null;
+      if (payload.status === 'executing') return claim();
       const p = new Promise((resolve) => {
         const settle = () => {
           completions.push(payload);
@@ -142,6 +160,7 @@ function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {
     writes,
     completions,
     attempts: () => fetchAttempts,
+    claims: () => claimAttempts,
     // Required by recreateChannel(); without them it dies on a TypeError before
     // reaching anything the recreate tests stub.
     removeChannel: () => Promise.resolve('ok'),
@@ -199,6 +218,15 @@ await test('a lost DB claim (another process won) skips execution', async () => 
   assert(executed.length === 0, `expected no execution, got ${executed.length}`);
 });
 
+await test('a delivery the doorbell already claimed executes once without claiming again', async () => {
+  const { device, executed } = makeDevice();
+  let dbClaims = 0;
+  device.remoteChannel.markCallExecuting = async () => { dbClaims++; return true; };
+  await device.handleNewToolCall({ ...payloadFor('call-e'), claimed: true });
+  assert(executed.length === 1, `expected 1 execution, got ${executed.length}`);
+  assert(dbClaims === 0, `expected no DB claim, got ${dbClaims}`);
+});
+
 await test('calls for another device are ignored and do not poison the dedupe set', async () => {
   const { device, executed } = makeDevice();
   await device.handleNewToolCall(payloadFor('call-d', OTHER_DEVICE));
@@ -219,35 +247,61 @@ await test('the seen-call-id set stays bounded', async () => {
 await test('doorbell for another device is ignored without fetching', async () => {
   const { rc, client } = makeRemoteChannel();
   await rc.onDoorbell({ call_id: 'x', device_id: OTHER_DEVICE });
-  assert(client.attempts() === 0, 'must not even fetch the row');
+  assert(client.attempts() === 0 && client.claims() === 0, 'must not even fetch the row');
 });
 
 await test('doorbell delivers a pending row through the shared handler', async () => {
   const row = { id: 'x', status: 'pending', tool_name: 'start_process' };
-  const { rc } = makeRemoteChannel({ row });
+  const { rc, client } = makeRemoteChannel({ row });
   const delivered = [];
   rc.onToolCall = (p) => delivered.push(p);
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
   assert(delivered.length === 1, 'expected one delivery');
-  assert(delivered[0].new === row, 'must pass the fetched row as {new: row}');
+  assert(delivered[0].new === row, 'must pass the claimed row as {new: row}');
+  assert(delivered[0].claimed === true, 'must mark the delivery claimed');
+  assert(client.claims() === 1 && client.attempts() === 0, 'one claim, no separate fetch');
 });
 
 await test('doorbell for an already-claimed row does not re-deliver', async () => {
-  const { rc } = makeRemoteChannel({ row: { id: 'x', status: 'executing' } });
+  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'executing' } });
   const delivered = [];
   rc.onToolCall = (p) => delivered.push(p);
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
   assert(delivered.length === 0, 'non-pending rows must not be re-delivered');
+  assert(client.attempts() === 0, 'a clean empty claim needs no fetch');
 });
 
-await test('doorbell row fetch retries a transient failure', async () => {
-  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failFetches: 2 });
+await test('doorbell claim retries a transient failure', async () => {
+  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failClaims: 2 });
   const delivered = [];
   rc.onToolCall = (p) => delivered.push(p);
   rc.sleep = () => Promise.resolve();
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
-  assert(client.attempts() === 3, `expected 3 attempts, got ${client.attempts()}`);
+  assert(client.claims() === 3, `expected 3 attempts, got ${client.claims()}`);
   assert(delivered.length === 1, 'should deliver after the retry succeeds');
+  assert(delivered[0].claimed === true, 'the successful retry claimed it');
+});
+
+await test('a claim that committed despite an error is read back and delivered once', async () => {
+  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failClaims: 1, lostClaims: 1 });
+  const delivered = [];
+  rc.onToolCall = (p) => delivered.push(p);
+  rc.sleep = () => Promise.resolve();
+  await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+  assert(client.attempts() === 1, `expected one read-back, got ${client.attempts()}`);
+  assert(delivered.length === 1, 'the call must not be stranded');
+  assert(delivered[0].claimed === true, 'the lost claim was ours');
+});
+
+await test('every claim failing falls back to an unclaimed delivery', async () => {
+  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failClaims: 3 });
+  const delivered = [];
+  rc.onToolCall = (p) => delivered.push(p);
+  rc.sleep = () => Promise.resolve();
+  await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+  assert(client.claims() === 3 && client.attempts() === 1, 'three claims, then one fetch');
+  assert(delivered.length === 1, 'the fetched pending row must be delivered');
+  assert(delivered[0].claimed !== true, 'device.ts must still claim it');
 });
 
 await test('doorbell with a missing row is a no-op', async () => {
