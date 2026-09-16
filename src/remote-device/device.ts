@@ -36,6 +36,13 @@ export class MCPDevice {
     private configPath: string;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
+    /**
+     * Serialises config writes. Rotations are 45 minutes apart in normal
+     * running, but a save that stalls must not land after a newer one and
+     * persist a token that is already spent. Shutdown awaits this to drain
+     * whatever is still in flight.
+     */
+    private configWriteChain: Promise<void> = Promise.resolve();
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
 
@@ -290,7 +297,16 @@ export class MCPDevice {
         }
     }
 
-    async savePersistedConfig() {
+    /**
+     * Queue a config write. Returns the queued write, so a caller that must not
+     * outlive it - shutdown() - can await it.
+     */
+    async savePersistedConfig(): Promise<void> {
+        this.configWriteChain = this.configWriteChain.then(() => this.writePersistedConfig());
+        return this.configWriteChain;
+    }
+
+    private async writePersistedConfig(): Promise<void> {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             const currentSessionStore = await this.remoteChannel.getSession();
@@ -307,7 +323,16 @@ export class MCPDevice {
             // Ensure the config directory exists
             console.debug('[DEBUG] Creating config directory:', path.dirname(this.configPath));
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
-            await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+            // Write then rename: the rename is the commit boundary, so a write
+            // cut short leaves the previous complete session rather than a
+            // truncated file. loadPersistedConfig() answers a JSON.parse
+            // failure with null, which costs a full browser reauthorization.
+            // Same shape as ConfigManager's atomic save; the pid keeps two
+            // processes off each other's temp file, and configWriteChain keeps
+            // this one off its own.
+            const tempPath = `${this.configPath}.${process.pid}.tmp`;
+            await fs.writeFile(tempPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+            await fs.rename(tempPath, this.configPath);
             console.debug('[DEBUG] Config saved to:', this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
@@ -485,6 +510,11 @@ export class MCPDevice {
             console.log('  → Marking device offline...');
             console.debug('[DEBUG] Calling setOffline() with deviceId:', this.deviceId);
             await this.remoteChannel.setOffline(this.deviceId);
+
+            // Drain any config write still in flight - a rotation can land as
+            // teardown begins, and losing it costs the next start a browser.
+            console.debug('[DEBUG] Draining pending config writes');
+            await this.configWriteChain;
 
             // Shutdown desktop integration
             console.log('  → Shutting down desktop integration...');
