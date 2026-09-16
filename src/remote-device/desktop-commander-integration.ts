@@ -109,8 +109,16 @@ export class DesktopCommanderIntegration {
             // died would then hang for the SDK's 60s default request timeout
             // before the user heard anything.
             this.mcpClient.onclose = () => this.handleLocalDisconnect('stdio transport closed');
+
+            // Diagnostics only. Protocol.onerror is raised for eleven non-fatal
+            // conditions that say nothing about the child's health — a response
+            // for an unknown message id, an unknown progress token, a failed
+            // cancellation send, an uncaught notification-handler error — and
+            // treating any of those as death takes a working device offline and
+            // respawns a live child. Real death arrives through onclose, which
+            // only fires once the transport has actually closed.
             this.mcpClient.onerror = (err: Error) =>
-                this.handleLocalDisconnect(`stdio transport error: ${err?.message ?? String(err)}`);
+                console.error(` - ⚠️  Local Desktop Commander MCP error: ${err?.message ?? String(err)}`);
 
             console.log(' - 🔌 Connected to Desktop Commander MCP');
             console.debug('[DEBUG] Desktop Commander MCP connection successful');
