@@ -94,9 +94,9 @@ export class DeviceAuthenticator {
 
     private displayUserInstructions(deviceAuth: DeviceAuthResponse): void {
         console.log('📋 Please complete authentication:\n');
-        console.log('   1. Open this URL in your browser:');
-        console.log(`      ${deviceAuth.verification_uri}\n`);
-        console.log('   2. Enter this code when prompted:');
+        console.log('   1. Verify this device in your browser:');
+        console.log(`      ${deviceAuth.verification_uri_complete}\n`);
+        console.log('   2. Make sure the code matches:');
         console.log(`      ${deviceAuth.user_code}\n`);
         console.log(`   Code expires in ${Math.floor(deviceAuth.expires_in / 60)} minutes.\n`);
 

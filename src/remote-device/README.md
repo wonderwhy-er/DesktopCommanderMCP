@@ -125,9 +125,9 @@ On first run, the device uses the **OAuth 2.0 Device Authorization Flow** for se
    - ✅ Device code received
 
 📋 Please complete authentication:
-   1. Open this URL in your browser:
-      https://test.acidpictures.org/device/verify
-   2. Enter this code when prompted:
+   1. Verify this device in your browser:
+      https://test.acidpictures.org/verify-device?user_code=BLPU-9E9R
+   2. Make sure the code matches:
       BLPU-9E9R
    Code expires in 15 minutes.
    - ⏳ Waiting for authorization...
