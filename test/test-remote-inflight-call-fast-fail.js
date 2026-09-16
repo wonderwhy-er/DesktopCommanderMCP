@@ -21,9 +21,16 @@
  *
  * Cases:
  *   - a call in flight when the child dies rejects fast, not at the 60s timeout
- *   - it rejects because the connection closed, not because the request expired
+ *   - it rejects with the SDK's ConnectionClosed, not some other immediate error
  *   - the disconnect is reported to the device via onDisconnect()
  *   - the next call still works — PR #598's restart path must stay intact
+ *   - a protocol-level error on a HEALTHY child is not mistaken for a disconnect
+ *
+ * That last case guards the widened blast radius of moving the hooks onto the
+ * client: Protocol.onerror fires for eleven non-fatal conditions the transport's
+ * own onerror never saw (a response for an unknown message id, an unknown
+ * progress token, a failed cancellation send, ...). Treating those as death
+ * would take a working device offline and respawn a live child.
  *
  * Runs as part of `npm test`, or standalone:
  *   npm run build && node test/test-remote-inflight-call-fast-fail.js
@@ -40,6 +47,12 @@ const FIXTURE = path.join(__dirname, 'fixtures', 'dying-mcp-server.js');
 
 /** Must match CRASH_TOOL in test/fixtures/dying-mcp-server.js. */
 const CRASH_TOOL = 'crash-mid-call';
+
+/** Must match NOISE_TOOL in test/fixtures/dying-mcp-server.js. */
+const NOISE_TOOL = 'protocol-noise';
+
+/** ErrorCode.ConnectionClosed from the MCP SDK. */
+const CONNECTION_CLOSED = -32000;
 
 /**
  * A connection-closed rejection lands in milliseconds. The SDK's default
@@ -59,7 +72,11 @@ const WATCHDOG_MS = 15_000;
  * production code under test.
  */
 class FixtureIntegration extends DesktopCommanderIntegration {
+    /** initialize() calls this exactly once per spawned child. */
+    spawns = 0;
+
     async resolveMcpConfig() {
+        this.spawns++;
         return { command: process.execPath, args: [FIXTURE], cwd: __dirname };
     }
 }
@@ -105,6 +122,20 @@ async function test(name, fn) {
     }
 }
 
+// --- a protocol-level error must not look like a dead child --------------
+// Runs on its own child, before anything is deliberately crashed.
+const healthy = new FixtureIntegration();
+const healthyDisconnects = [];
+healthy.onDisconnect((reason) => healthyDisconnects.push(reason));
+await healthy.initialize();
+const noisy = await callAndMeasure(healthy, NOISE_TOOL);
+// Let a mistaken disconnect and the restart it triggers actually land.
+await new Promise((r) => setTimeout(r, 500));
+const healthySpawns = healthy.spawns;
+const healthyStillReady = healthy.ready;
+await healthy.shutdown().catch(() => { });
+
+// --- the child dies mid-call ---------------------------------------------
 const integration = new FixtureIntegration();
 const disconnectReasons = [];
 integration.onDisconnect((reason) => disconnectReasons.push(reason));
@@ -117,7 +148,9 @@ const recovered = await callAndMeasure(integration, 'healthy-tool');
 console.log(
     `
 in-flight call settled after ${(crashed.elapsedMs / 1000).toFixed(1)}s ` +
-    `(budget ${FAST_FAIL_LIMIT_MS / 1000}s, SDK default request timeout 60s)
+    `(budget ${FAST_FAIL_LIMIT_MS / 1000}s, SDK default request timeout 60s)` +
+    `
+  rejection: ${crashed.error?.code ?? '-'} ${crashed.error?.message ?? '(none)'}
 `
 );
 
@@ -135,12 +168,19 @@ await test('a call in flight when the local child dies rejects fast', async () =
     );
 });
 
-await test('it rejects because the connection closed, not because it timed out', async () => {
+await test('it rejects with ConnectionClosed, not a timeout or some other error', async () => {
     assert(crashed.rejected, 'no rejection to inspect — the call never failed on its own');
     const message = crashed.error?.message ?? String(crashed.error);
     assert(
         !/timed out|timeout/i.test(message),
         `a timeout hides the real cause from the user: ${message}`
+    );
+    // Excluding timeouts alone would pass on any immediate rejection, including
+    // a wrong one. Pin the SDK's code rather than its wording, which moves
+    // between versions.
+    assert(
+        crashed.error?.code === CONNECTION_CLOSED,
+        `expected ConnectionClosed (${CONNECTION_CLOSED}), got ${crashed.error?.code}: ${message}`
     );
 });
 
@@ -155,6 +195,16 @@ await test('the next call still works (PR #598 restart path intact)', async () =
     assert(!recovered.rejected, `restart failed: ${recovered.error?.message}`);
     const text = JSON.stringify(recovered.result);
     assert(/fixture-ok/.test(text), `expected a real result from the restarted child, got ${text}`);
+});
+
+await test('a protocol error on a healthy child is not treated as a disconnect', async () => {
+    assert(!noisy.rejected, `the call itself must still succeed: ${noisy.error?.message}`);
+    assert.deepStrictEqual(
+        healthyDisconnects, [],
+        `a live child was reported dead: ${healthyDisconnects.join('; ')}`
+    );
+    assert.strictEqual(healthySpawns, 1, `the child was respawned ${healthySpawns - 1} time(s) for nothing`);
+    assert(healthyStillReady, 'the integration must still be ready after harmless protocol noise');
 });
 
 await integration.shutdown().catch(() => { });
