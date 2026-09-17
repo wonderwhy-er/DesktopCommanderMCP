@@ -54,6 +54,11 @@ export class MCPDevice {
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
 
+        // Readiness is a claim about executing, so it has to consult the local
+        // executor too. Read through a probe rather than a cached flag: there
+        // is then no state to keep in step, and `desktop` can be replaced.
+        this.remoteChannel.setLocalExecutorProbe(() => this.desktop.ready);
+
         // Graceful shutdown handlers (only set once)
         this.setupShutdownHandlers();
     }

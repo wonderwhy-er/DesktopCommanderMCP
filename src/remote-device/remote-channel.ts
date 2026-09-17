@@ -134,6 +134,12 @@ export class RemoteChannel {
     private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
+    /**
+     * Answers whether the local execution child is alive. Default yes, so a
+     * RemoteChannel used without a device (tests, other callers) behaves as
+     * before; MCPDevice installs the real probe.
+     */
+    private localExecutorProbe: () => boolean = () => true;
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
@@ -215,6 +221,15 @@ export class RemoteChannel {
                 });
             } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
         }
+    }
+
+    /**
+     * Teach the channel how to ask whether the local executor is alive.
+     * `status` is a claim that this device will run a tool call right now, and
+     * a joined channel alone cannot support that claim - issue #4.
+     */
+    setLocalExecutorProbe(probe: () => boolean) {
+        this.localExecutorProbe = probe;
     }
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
@@ -1025,7 +1040,9 @@ export class RemoteChannel {
 
     /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined';
+        // Both halves. A healthy channel on a device whose executor is dead is
+        // exactly the false-online state issue #4 was opened for.
+        return this.channel?.state === 'joined' && this.localExecutorProbe();
     }
 
     /**
