@@ -6,12 +6,19 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 
-// Restart pacing. Same shape as RemoteChannel.recreateChannel's jittered
-// backoff: grows with consecutive failures, caps so a device can still come
-// back, and jitters so a fleet-wide fault does not stampede.
-const RESTART_BACKOFF_CAP_MS = 30_000;
+// Restart pacing: grows with consecutive failures, caps, and jitters so a
+// fleet-wide fault does not stampede.
+//
+// The cap is what a user waits after fixing whatever broke the child, so it is
+// deliberately short. It can be: readiness now keeps an unusable device out of
+// the server's selection, so no routed calls arrive to spawn anything, and the
+// only thing asking for a restart is this connector's own recovery loop. The
+// cost of the short cap is one short-lived spawn every few seconds while a
+// child stays broken; the cost of a long one is a device that sits dead for
+// most a minute after it could have come back.
+const RESTART_BACKOFF_CAP_MS = 5_000;
 const restartBackoffMs = (attempt: number) =>
-    Math.min(RESTART_BACKOFF_CAP_MS, 1000 * 2 ** Math.min(attempt, 5)) * (0.5 + Math.random());
+    Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5)) * (0.5 + Math.random());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
