@@ -15,12 +15,22 @@
 # (Anthropic's directory scanner ingests it from there) → MCP Registry publish
 # (OIDC, no secrets).
 #
-# ORDERING RULE: in cut mode the bump commit and tag are created locally and
-# pushed only after the MCPB bundle is built and verified. Everything that can
-# fail cheaply — tests, version checks, the bundle — runs before origin is
-# touched, so a failed run leaves no orphan tag and a re-run cuts the same
-# version again. If a run does fail after the push, the next cut-mode run
-# detects the unpublished tag on HEAD and resumes it instead of bumping.
+# TWO JOBS, split at the point of no return:
+#
+#   prepare  — tests, version bump, tag, MCPB build, and the single push that
+#              writes to origin. Everything before that push happens in the
+#              runner's own clone, so a failure here leaves origin untouched.
+#   publish  — npm, the GitHub release and the registry. Starts only once
+#              prepare has pushed, and receives the .mcpb plus the bumped
+#              version files as an artifact (a second runner shares no disk).
+#
+# ORDERING RULE: in cut mode the bump commit and tag are created in the
+# runner's clone and pushed only after the MCPB bundle is built and verified.
+# Everything that can fail cheaply — tests, version checks, the bundle — runs
+# before origin is touched, so a failed run leaves no orphan tag and a re-run
+# cuts the same version again. If a run does fail after the push, the next
+# cut-mode run detects the unpublished tag on HEAD and resumes it instead of
+# bumping.
 #
 # REHEARSAL MODE: a `test-vX.Y.Z` tag (or `npm run release:rehearsal`) runs the
 # whole pipeline with every publish neutered: npm publish --dry-run, the GitHub
@@ -35,9 +45,11 @@
 #
 # Re-running after a mid-way failure: use the "Re-run failed jobs" button on
 # the failed run, or Run workflow with `tag` = the existing tag (dispatch from
-# main). Every publish step skips targets that already have the version, so
-# re-runs are safe. With several runs queued for the same tag, GitHub keeps
-# only the newest pending one.
+# main). A failure in publish re-runs that job alone — prepare's outputs and
+# artifact are reused, so the tests and the bundle build are not repeated.
+# Every publish step skips targets that already have the version, so re-runs
+# are safe. With several runs queued for the same tag, GitHub keeps only the
+# newest pending one.
 #
 # No secrets required. npm auth = OIDC trusted publishing (configured on
 # npmjs.com: package Settings → Trusted Publisher → this repo + release.yml).
@@ -100,8 +112,17 @@ env:
   REGISTRY_VERSION_URL: 'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.wonderwhy-er%2Fdesktop-commander/versions'
 
 jobs:
-  release:
+  # Everything that can fail without consequence, ending in the one push that
+  # writes to origin. The .mcpb and the bumped version files cross to the
+  # publish job as an artifact — a separate runner shares no filesystem.
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      rehearsal: ${{ steps.mode.outputs.rehearsal }}
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      publish_ref: ${{ steps.publishref.outputs.ref }}
     steps:
       # Four entry paths:
       #   push of a v* tag         → mode=tag, release that tag
@@ -316,6 +337,79 @@ jobs:
           git push --atomic origin HEAD:main "refs/tags/$TAG"
           echo "Pushed $TAG (a GITHUB_TOKEN push triggers nothing; this run continues the release)"
 
+      # A real release checks out the tag it just pushed. A cut-mode
+      # rehearsal never pushed one, so publish runs against main with the
+      # bumped version files from the artifact laid over it.
+      - name: Resolve publish ref
+        id: publishref
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG is not on origin — publish will run against main with the bumped version files overlaid"
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            desktop-commander-*.mcpb
+            package.json
+            server.json
+            src/version.ts
+          if-no-files-found: error
+          retention-days: 7
+
+  # Nothing here can be undone, so it only starts once prepare has pushed.
+  # Re-running this job alone after an npm or registry flake skips the tests
+  # and the bundle build; every step below skips a target that already has
+  # the version, so a re-run never double-publishes.
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      MODE: ${{ needs.prepare.outputs.mode }}
+      REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.publish_ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      # Lands the .mcpb next to the checkout and overwrites package.json /
+      # server.json / src/version.ts with the exact files the bundle was built
+      # from. On a real release those are already identical; on a rehearsal
+      # this is what applies the bump.
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+
+      - name: Verify release assets
+        run: |
+          test -f "desktop-commander-$VERSION.mcpb" || { echo "bundle for $VERSION missing from the artifact"; exit 1; }
+          PKG=$(node -p "require('./package.json').version")
+          SRV=$(node -p "require('./server.json').version")
+          if [ "$PKG" != "$VERSION" ] || [ "$SRV" != "$VERSION" ]; then
+            echo "artifact version mismatch: package.json=$PKG server.json=$SRV expected=$VERSION"; exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
       # npm auth: OIDC trusted publishing — no token, no secret. Configured on
       # npmjs.com (package Settings → Trusted Publisher → this repo +
       # release.yml). Needs npm >= 11.5.1; Node 22 bundles npm 10, so upgrade.
@@ -326,8 +420,8 @@ jobs:
       - name: Publish to npm
         if: ${{ !inputs.skip_npm }}
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
         run: |
           if [ "$REHEARSAL" = "true" ]; then
             echo "REHEARSAL: npm publish --dry-run (packs the tarball, uploads nothing)"
@@ -343,8 +437,8 @@ jobs:
       - name: Verify npm publish
         if: ${{ !inputs.skip_npm }}
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
         run: |
           if [ "$REHEARSAL" = "true" ]; then
             echo "REHEARSAL: nothing was published, skipping npm verification"; exit 0
@@ -360,9 +454,9 @@ jobs:
       - name: Create GitHub release and attach MCPB
         if: ${{ !inputs.skip_github_release }}
         env:
-          TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
         run: |
           MCPB="desktop-commander-$VERSION.mcpb"
           test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
@@ -399,8 +493,8 @@ jobs:
       - name: Publish to MCP Registry
         if: ${{ !inputs.skip_registry }}
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
         run: |
           if [ "$REHEARSAL" = "true" ]; then
             echo "REHEARSAL: validate + OIDC login only, no publish"
@@ -423,8 +517,8 @@ jobs:
       - name: Verify registry publish
         if: ${{ !inputs.skip_registry }}
         env:
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
         run: |
           if [ "$REHEARSAL" = "true" ]; then
             echo "REHEARSAL: nothing was published, skipping registry verification"; exit 0
@@ -439,10 +533,10 @@ jobs:
 
       - name: Summary
         env:
-          TAG: ${{ steps.ver.outputs.tag }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
-          MODE: ${{ steps.mode.outputs.mode }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+          MODE: ${{ needs.prepare.outputs.mode }}
         run: |
           {
             if [ "$REHEARSAL" = "true" ]; then
