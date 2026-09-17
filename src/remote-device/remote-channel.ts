@@ -1038,7 +1038,10 @@ export class RemoteChannel {
         }
     }
 
-    /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
+    /**
+     * Reachable means BOTH halves are healthy: the private channel is joined and
+     * the local executor answers. Gates the heartbeat and `status`.
+     */
     private isReachable(): boolean {
         // Both halves. A healthy channel on a device whose executor is dead is
         // exactly the false-online state issue #4 was opened for.

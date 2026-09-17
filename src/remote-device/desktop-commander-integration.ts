@@ -175,22 +175,47 @@ export class DesktopCommanderIntegration {
                 );
             }
             console.log(' - ♻️  Local Desktop Commander MCP is not running; restarting it...');
-            this.reinitPromise = this.initialize()
-                .then(() => {
-                    this.restartAttempts = 0;
-                    this.nextRestartAt = 0;
-                })
-                .catch((error) => {
-                    this.restartAttempts++;
-                    this.nextRestartAt = Date.now() + restartBackoffMs(this.restartAttempts);
-                    throw error;
-                })
-                .finally(() => {
-                    this.reinitPromise = null;
-                });
+            this.reinitPromise = this.restartChild().finally(() => {
+                this.reinitPromise = null;
+            });
         }
         // Concurrent calls share the single in-flight restart.
         await this.reinitPromise;
+    }
+
+    /** One restart, with the pacing bookkeeping around it. */
+    private async restartChild(): Promise<void> {
+        try {
+            await this.initialize();
+            // Not restarted until it has served a request. connect() only
+            // exchanges `initialize`, and a child that speaks MCP but cannot run
+            // a tool is not a working child - counting it as one would hand the
+            // caller a corpse and leave nothing to back off from.
+            await this.verifyExecution();
+            this.restartAttempts = 0;
+            this.nextRestartAt = 0;
+        } catch (error) {
+            await this.discardChild();
+            this.restartAttempts++;
+            this.nextRestartAt = Date.now() + restartBackoffMs(this.restartAttempts);
+            throw error;
+        }
+    }
+
+    /** Drop an unusable child so `ready` is false and the next attempt rebuilds. */
+    private async discardChild(): Promise<void> {
+        this.isReady = false;
+        const client = this.mcpClient;
+        const transport = this.mcpTransport;
+        this.mcpClient = null;
+        this.mcpTransport = null;
+        try { await client?.close(); } catch { /* already dead */ }
+        try { await transport?.close(); } catch { /* already dead */ }
+    }
+
+    /** How long ensureReady() will refuse for. 0 when it will try immediately. */
+    get msUntilRestartAllowed(): number {
+        return Math.max(0, this.nextRestartAt - Date.now());
     }
 
     async resolveMcpConfig(): Promise<McpConfig | null> {

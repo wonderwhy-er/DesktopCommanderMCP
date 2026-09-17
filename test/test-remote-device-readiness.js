@@ -38,6 +38,10 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROKEN_TOOLS_FIXTURE = path.join(__dirname, 'fixtures', 'broken-tools-mcp-server.js');
 const NO_SUCH_SERVER = path.join(__dirname, 'fixtures', 'this-server-does-not-exist.js');
+const WORKING_FIXTURE = path.join(__dirname, 'fixtures', 'dying-mcp-server.js');
+
+/** Generous: the first backoff is ~1-3s, and recovery must land inside it. */
+const RECOVERY_DEADLINE_MS = 10_000;
 
 const DEVICE_ID = 'device-1';
 
@@ -59,6 +63,11 @@ class FixtureIntegration extends DesktopCommanderIntegration {
 
     constructor(serverPath) {
         super();
+        this.serverPath = serverPath;
+    }
+
+    /** Let a case make a broken child startable again mid-flight. */
+    useServer(serverPath) {
         this.serverPath = serverPath;
     }
 
@@ -158,13 +167,46 @@ await test('online is withheld until the tool layer answers, not just the handsh
     // Connects and speaks MCP, but fails everything at the tool layer.
     device.desktop = new FixtureIntegration(BROKEN_TOOLS_FIXTURE);
 
-    await device.handleLocalMcpLoss('test');
+    // Not awaited to completion: recovery keeps retrying a child that never
+    // becomes usable, which is the intended production behaviour.
+    const recovery = device.handleLocalMcpLoss('test');
+    await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
     await device.desktop.shutdown().catch(() => { });
 
     assert(
         !statuses.includes('online'),
         `device announced ${JSON.stringify(statuses)}; a completed MCP handshake proves the child ` +
         'speaks the protocol, not that it can run a tool'
+    );
+});
+
+await test('a device whose restart failed recovers without an incoming tool call', async () => {
+    const device = new MCPDevice();
+    const statuses = [];
+    device.deviceId = DEVICE_ID;
+    device.remoteChannel = {
+        setOnlineStatus: async (_id, status) => { statuses.push(status); },
+    };
+    const integration = new FixtureIntegration(NO_SUCH_SERVER);
+    device.desktop = integration;
+
+    // Not awaited: recovery has to keep trying on its own.
+    const recovery = device.handleLocalMcpLoss('test');
+
+    // The child becomes startable again a moment later — a dependency that came
+    // back, a machine that finished waking up.
+    await new Promise((r) => setTimeout(r, 150));
+    integration.useServer(WORKING_FIXTURE);
+
+    await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
+    await integration.shutdown().catch(() => { });
+
+    assert(
+        statuses.includes('online'),
+        `device announced ${JSON.stringify(statuses)} and stopped after one failed attempt. ` +
+        'Verified live on 0.2.50: nothing retries, and the hosted service answers a call for an ' +
+        'offline device with "No devices available", so the lazy restart never fires either — ' +
+        'the device is stuck until a human restarts the connector'
     );
 });
 
