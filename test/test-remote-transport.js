@@ -324,15 +324,16 @@ await test('doorbell claim retries a transient failure', async () => {
   assert(delivered[0].claimed === true, 'the successful retry claimed it');
 });
 
-await test('a claim that committed despite an error is read back and delivered once', async () => {
+await test('a claim that reads back executing is never delivered — the claimant is unknowable', async () => {
   const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failClaims: 1, lostClaims: 1 });
   const delivered = [];
   rc.onToolCall = (p) => delivered.push(p);
   rc.sleep = () => Promise.resolve();
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
   assert(client.attempts() === 1, `expected one read-back, got ${client.attempts()}`);
-  assert(delivered.length === 1, 'the call must not be stranded');
-  assert(delivered[0].claimed === true, 'the lost claim was ours');
+  // Our own committed claim and another process's claim both read 'executing',
+  // so delivering on that guess runs a side-effecting tool twice.
+  assert(delivered.length === 0, `an executing row must not be delivered, got ${delivered.length}`);
 });
 
 await test('every claim failing falls back to an unclaimed delivery', async () => {

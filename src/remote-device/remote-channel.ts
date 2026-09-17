@@ -706,8 +706,8 @@ export class RemoteChannel {
 
         await captureRemote('remote_channel_mark_call_executing_error', { error: claimError });
 
-        // A failed claim may have committed with its response lost, so read
-        // the row back rather than strand the call.
+        // A failed claim may never have reached the database, so read the row
+        // back: still 'pending' means nobody holds it and it can be delivered.
         const { data: current, error } = await this.client
             .from('mcp_remote_calls')
             .select('*')
@@ -722,14 +722,17 @@ export class RemoteChannel {
         if (current?.status === 'pending') {
             // No claim landed; device.ts claims it.
             this.dispatchToolCall({ new: current });
-        } else if (current?.status === 'executing') {
-            // Probably our own lost claim, so run it rather than strand the call.
-            // It runs twice only when a second connector process shares this
-            // device_id and claimed the same call.
-            await captureRemote('remote_channel_doorbell_claim_recovered', { call_id: callId });
-            this.dispatchToolCall({ new: current, claimed: true });
         } else {
+            // 'executing' reads the same whether our own claim committed with its
+            // response lost or another process holding this device_id won it, and
+            // the row carries no claimant. Running it on that guess executes a
+            // side-effecting tool twice; skipping costs one call its timeout, which
+            // is what a failed doorbell read already cost before the claim path.
             console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
+            await captureRemote('remote_channel_doorbell_claim_unresolved', {
+                call_id: callId,
+                status: current?.status ?? null,
+            });
         }
     }
 
