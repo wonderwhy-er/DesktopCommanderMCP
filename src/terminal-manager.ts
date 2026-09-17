@@ -205,6 +205,8 @@ export class TerminalManager {
       // Use shell-specific configuration with login flags where appropriate
       spawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
       spawnOptions = {
+        stdio: ['pipe', 'pipe', 'pipe'] as const,
+        windowsHide: true,  // Prevent .NET-based shells (pwsh.exe) from allocating a new console
         env: {
           ...process.env,
           TERM: 'xterm-256color'  // Better terminal compatibility
@@ -225,6 +227,8 @@ export class TerminalManager {
       };
       spawnOptions = {
         shell: shellToUse,
+        stdio: ['pipe', 'pipe', 'pipe'] as const,
+        windowsHide: true,
         env: {
           ...process.env,
           TERM: 'xterm-256color'
