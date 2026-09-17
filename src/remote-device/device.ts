@@ -352,6 +352,9 @@ export class MCPDevice {
         // would be routed here and that wait would never end.
         try {
             await this.desktop.ensureReady();
+            // A completed handshake is not proof of execution. Ask the child to
+            // serve one request before claiming this device will run tool calls.
+            await this.desktop.verifyExecution();
             if (this.deviceId) {
                 await this.remoteChannel.setOnlineStatus(this.deviceId, 'online');
             }

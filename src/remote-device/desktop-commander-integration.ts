@@ -270,6 +270,18 @@ export class DesktopCommanderIntegration {
         }
     }
 
+    /**
+     * Prove the child can serve a request, not merely that it completed the
+     * handshake. connect() only exchanges `initialize`, which says the process
+     * is up and speaks MCP - the same substitution issue #4 is about, one level
+     * down. Throws so a caller can withhold readiness; listClientTools() keeps
+     * swallowing, because registerDevice() wants a tool list or nothing.
+     */
+    async verifyExecution(): Promise<void> {
+        if (!this.mcpClient) throw new Error('Local Desktop Commander MCP is not connected');
+        await this.mcpClient.listTools();
+    }
+
     async listClientTools() {
         if (!this.mcpClient) return { tools: [] };
 
