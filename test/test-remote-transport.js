@@ -365,8 +365,12 @@ await test('stopHeartbeat halts the self-rescheduling timer', async () => {
 });
 
 // --- 5. Reachability and status writes --------------------------------------
-// `status` is what the server's device selection filters on, so it must
-// follow the private channel's real join state.
+// `status` is what the server's device selection filters on, so it is a claim
+// that this device will run a tool call right now. It follows the private
+// channel's join state AND the local executor probe MCPDevice installs (issue
+// #4). These cases build a bare RemoteChannel, which has no device and so no
+// probe, leaving the join state the only thing under test here; the executor
+// half is covered in test-remote-device-readiness.js.
 
 await test('heartbeat stays silent when no transport is joined', async () => {
   const { rc, client } = makeRemoteChannel();
@@ -379,7 +383,7 @@ await test('heartbeat writes when the private channel is joined', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
   await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 1, 'private channel joined = reachable');
+  assert(client.writes.length === 1, 'joined channel, no executor probe registered = reachable');
 });
 
 await test('status goes offline when the private channel is not joined', async () => {

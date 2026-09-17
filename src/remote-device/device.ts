@@ -23,6 +23,12 @@ export interface MCPDeviceOptions {
 const SEEN_CALL_IDS_MAX = 100;
 const PERSISTED_DEVICE_LOOKUP_ATTEMPTS = 3;
 const PERSISTED_DEVICE_LOOKUP_RETRY_MS = 250;
+/**
+ * Floor between recovery attempts. ensureReady()'s own backoff covers a child
+ * that fails to start; this covers one that starts and then fails verification,
+ * where no restart backoff was armed and the loop would otherwise spin.
+ */
+const RECOVERY_MIN_DELAY_MS = 1000;
 
 export function getRemoteDeviceConfigPath() {
     return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
@@ -53,6 +59,11 @@ export class MCPDevice {
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
+
+        // Readiness is a claim about executing, so it has to consult the local
+        // executor too. Read through a probe rather than a cached flag: there
+        // is then no state to keep in step, and `desktop` can be replaced.
+        this.remoteChannel.setLocalExecutorProbe(() => this.desktop.ready);
 
         // Graceful shutdown handlers (only set once)
         this.setupShutdownHandlers();
@@ -342,18 +353,40 @@ export class MCPDevice {
                 .catch((e: any) => console.error('Failed to mark device offline:', e.message));
         }
 
-        // Recover proactively rather than waiting for the next tool call to
-        // trigger the lazy restart: we just went offline, so no further calls
-        // would be routed here and that wait would never end.
-        try {
-            await this.desktop.ensureReady();
-            if (this.deviceId) {
-                await this.remoteChannel.setOnlineStatus(this.deviceId, 'online');
+        // Keep trying, rather than attempting once. The lazy restart in
+        // ensureReady() fires on an incoming tool call, and this device is now
+        // offline — the hosted service answers a call for an offline device
+        // with "No devices available" (confirmed live on 0.2.50), so no call
+        // will ever arrive to trigger it. One failed attempt used to mean the
+        // device stayed dead until a human restarted the connector.
+        let reported = false;
+        while (!this.isShuttingDown) {
+            try {
+                // ensureReady() only reports success once the child has served a
+                // request, so reaching here is proof of execution, not just of a
+                // completed handshake.
+                await this.desktop.ensureReady();
+                // Not setOnlineStatus('online'): the executor recovering says
+                // nothing about the channel. Let the predicate decide, or this
+                // repeats the one-sided claim this whole change removes.
+                this.remoteChannel.syncReachabilityStatus();
+                console.log('♻️  Local Desktop Commander MCP restarted; device is online again');
+                return;
+            } catch (error: any) {
+                console.error(`❌ Could not restart local Desktop Commander MCP: ${error.message}`);
+                // Once per outage, not once per attempt: a device that never
+                // recovers would otherwise emit this every backoff window for
+                // as long as it runs.
+                if (!reported) {
+                    reported = true;
+                    await captureRemote('remote_device_local_mcp_restart_failed', { error, reason });
+                }
+                // ensureReady() refuses inside its backoff window; wait it out.
+                // The floor covers a child that starts but fails verification,
+                // where no restart backoff was armed.
+                const waitMs = Math.max(this.desktop.msUntilRestartAllowed, RECOVERY_MIN_DELAY_MS);
+                await new Promise((resolve) => setTimeout(resolve, waitMs));
             }
-            console.log('♻️  Local Desktop Commander MCP restarted; device is online again');
-        } catch (error: any) {
-            console.error(`❌ Could not restart local Desktop Commander MCP: ${error.message}`);
-            await captureRemote('remote_device_local_mcp_restart_failed', { error, reason });
         }
     }
 

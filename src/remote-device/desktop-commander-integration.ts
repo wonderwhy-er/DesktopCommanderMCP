@@ -6,6 +6,21 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 
+// Restart pacing: grows with consecutive failures, caps, and jitters so a
+// fleet-wide fault does not stampede.
+//
+// The cap is what a user waits after fixing whatever broke the child, so it is
+// deliberately short. It can be: readiness now keeps an unusable device out of
+// the server's selection, so no routed calls arrive to spawn anything, and the
+// only thing asking for a restart is this connector's own recovery loop. The
+// cost of the short cap is one short-lived spawn every few seconds while a
+// child stays broken; the cost of a long one is a device that sits dead for
+// most a minute after it could have come back.
+const RESTART_BACKOFF_CAP_MS = 5_000;
+const restartBackoffMs = (attempt: number) =>
+    // Cap AFTER jitter, so the cap is the wait this comment claims it is.
+    Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5) * (0.5 + Math.random()));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,6 +38,10 @@ export class DesktopCommanderIntegration {
     private isShuttingDown: boolean = false;
     private disconnectHandler: ((reason: string) => void) | null = null;
     private reinitPromise: Promise<void> | null = null;
+    /** Consecutive failed restarts; reset by a successful one. */
+    private restartAttempts: number = 0;
+    /** Before this, ensureReady() refuses rather than spawning again. */
+    private nextRestartAt: number = 0;
 
     /** True only while the local stdio child is actually reachable. */
     get ready(): boolean {
@@ -153,13 +172,58 @@ export class DesktopCommanderIntegration {
             throw new Error('Desktop Commander integration is shutting down');
         }
         if (!this.reinitPromise) {
+            // A child that crashes on start would otherwise be respawned once
+            // per routed tool call. Refuse inside the window instead, so the
+            // caller gets the real reason and the machine is left alone.
+            const waitMs = this.nextRestartAt - Date.now();
+            if (waitMs > 0) {
+                throw new Error(
+                    `Local Desktop Commander MCP failed to start ${this.restartAttempts} time(s); ` +
+                    `next attempt in ${Math.ceil(waitMs / 1000)}s`
+                );
+            }
             console.log(' - ♻️  Local Desktop Commander MCP is not running; restarting it...');
-            this.reinitPromise = this.initialize().finally(() => {
+            this.reinitPromise = this.restartChild().finally(() => {
                 this.reinitPromise = null;
             });
         }
         // Concurrent calls share the single in-flight restart.
         await this.reinitPromise;
+    }
+
+    /** One restart, with the pacing bookkeeping around it. */
+    private async restartChild(): Promise<void> {
+        try {
+            await this.initialize();
+            // Not restarted until it has served a request. connect() only
+            // exchanges `initialize`, and a child that speaks MCP but cannot run
+            // a tool is not a working child - counting it as one would hand the
+            // caller a corpse and leave nothing to back off from.
+            await this.verifyExecution();
+            this.restartAttempts = 0;
+            this.nextRestartAt = 0;
+        } catch (error) {
+            await this.discardChild();
+            this.restartAttempts++;
+            this.nextRestartAt = Date.now() + restartBackoffMs(this.restartAttempts);
+            throw error;
+        }
+    }
+
+    /** Drop an unusable child so `ready` is false and the next attempt rebuilds. */
+    private async discardChild(): Promise<void> {
+        this.isReady = false;
+        const client = this.mcpClient;
+        const transport = this.mcpTransport;
+        this.mcpClient = null;
+        this.mcpTransport = null;
+        try { await client?.close(); } catch { /* already dead */ }
+        try { await transport?.close(); } catch { /* already dead */ }
+    }
+
+    /** How long ensureReady() will refuse for. 0 when it will try immediately. */
+    get msUntilRestartAllowed(): number {
+        return Math.max(0, this.nextRestartAt - Date.now());
     }
 
     async resolveMcpConfig(): Promise<McpConfig | null> {
@@ -237,6 +301,18 @@ export class DesktopCommanderIntegration {
             await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
             throw error;
         }
+    }
+
+    /**
+     * Prove the child can serve a request, not merely that it completed the
+     * handshake. connect() only exchanges `initialize`, which says the process
+     * is up and speaks MCP - the same substitution issue #4 is about, one level
+     * down. Throws so a caller can withhold readiness; listClientTools() keeps
+     * swallowing, because registerDevice() wants a tool list or nothing.
+     */
+    async verifyExecution(): Promise<void> {
+        if (!this.mcpClient) throw new Error('Local Desktop Commander MCP is not connected');
+        await this.mcpClient.listTools();
     }
 
     async listClientTools() {
