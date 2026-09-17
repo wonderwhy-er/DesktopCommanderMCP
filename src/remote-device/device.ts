@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel, type AuthSession } from './remote-channel.js';
+import { RemoteChannel, observeServerDate, type AuthSession } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -355,6 +355,11 @@ export class MCPDevice {
         // No auth header needed for this public endpoint
         console.debug('[DEBUG] Fetching Supabase config from:', `${this.baseServerUrl}/api/mcp-info`);
         const response = await fetch(`${this.baseServerUrl}/api/mcp-info`);
+        // First request of the run, and it already states the server's time.
+        // auth-js judges the session handed to setSession() against this
+        // device's Date.now() with no skew tolerance, so the clock has to be
+        // right BEFORE that call - clockAwareFetch only corrects it afterwards.
+        observeServerDate(response.headers.get('date'));
 
         if (!response.ok) {
             console.debug('[DEBUG] Supabase config fetch failed, status:', response.status, response.statusText);
@@ -439,8 +444,9 @@ export class MCPDevice {
             // DB claim second — keeps the row state machine honest, gives
             // cross-restart/cross-process protection, and is observable. It may
             // fail open (returns true on a transient write error); the local
-            // guard above is what makes execution exactly-once.
-            const claimed = await this.remoteChannel.markCallExecuting(call_id);
+            // guard above is what makes execution exactly-once. The doorbell
+            // path claims before dispatch and marks the payload `claimed`.
+            const claimed = payload.claimed === true || await this.remoteChannel.markCallExecuting(call_id);
             if (!claimed) {
                 // markCallExecuting already logged the duplicate-delivery skip.
                 return;
