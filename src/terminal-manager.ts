@@ -25,14 +25,81 @@ const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC'
  *                      present (preserves any extra extensions, order-stable).
  * - Otherwise       -> leave the inherited value untouched.
  */
-function getRepairedPathExt(): string {
-  const current = process.env.PATHEXT;
+function getRepairedPathExt(current = process.env.PATHEXT): string {
   if (!current) return STANDARD_PATHEXT;
   const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
   if (!exts.includes('.EXE')) {
     return [...new Set([...STANDARD_PATHEXT.split(';'), ...exts])].join(';');
   }
   return current;
+}
+
+/**
+ * process.env is case-insensitive on Windows, but spreading it creates a
+ * regular object whose keys retain their original casing. Look up inherited
+ * values without depending on a particular spelling before normalizing them.
+ */
+function getEnvironmentValueIgnoringCase(
+  environment: NodeJS.ProcessEnv,
+  key: string
+): string | undefined {
+  const matchingEntries = Object.entries(environment).filter(
+    ([candidate]) => candidate.toUpperCase() === key.toUpperCase()
+  );
+
+  return matchingEntries.find(([candidate, value]) => candidate === key && value)?.[1]
+    || matchingEntries.find(([, value]) => value)?.[1];
+}
+
+/**
+ * Child process environments should contain one canonical spelling for each
+ * Windows variable. This prevents conflicting keys after a process.env spread.
+ */
+function setCanonicalWindowsEnvironmentValue(
+  environment: NodeJS.ProcessEnv,
+  key: string,
+  value: string
+): void {
+  for (const candidate of Object.keys(environment)) {
+    if (candidate !== key && candidate.toUpperCase() === key.toUpperCase()) {
+      delete environment[candidate];
+    }
+  }
+  environment[key] = value;
+}
+
+/**
+ * Repair Windows variables required by child shells when an MSIX host has
+ * stripped them from the inherited environment. PATHEXT repair is retained
+ * from #481; WINDIR/SystemRoot repair covers the PowerShell module-loading
+ * failures reported in #480.
+ */
+export function getRepairedWindowsShellEnvironment(
+  environment: NodeJS.ProcessEnv,
+  isWindows = process.platform === 'win32'
+): NodeJS.ProcessEnv {
+  if (!isWindows) return { ...environment };
+
+  const repaired = { ...environment };
+  setCanonicalWindowsEnvironmentValue(
+    repaired,
+    'PATHEXT',
+    getRepairedPathExt(getEnvironmentValueIgnoringCase(environment, 'PATHEXT'))
+  );
+
+  const inheritedWindir = getEnvironmentValueIgnoringCase(environment, 'WINDIR');
+  const inheritedSystemRoot = getEnvironmentValueIgnoringCase(environment, 'SystemRoot');
+  const windowsDirectory = inheritedWindir?.trim()
+    || inheritedSystemRoot?.trim()
+    || 'C:\\Windows';
+  setCanonicalWindowsEnvironmentValue(repaired, 'WINDIR', windowsDirectory);
+  setCanonicalWindowsEnvironmentValue(
+    repaired,
+    'SystemRoot',
+    inheritedSystemRoot?.trim() || windowsDirectory
+  );
+
+  return repaired;
 }
 
 interface CompletedSession {
@@ -205,10 +272,10 @@ export class TerminalManager {
       // Use shell-specific configuration with login flags where appropriate
       spawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
       spawnOptions = {
-        env: {
+        env: getRepairedWindowsShellEnvironment({
           ...process.env,
           TERM: 'xterm-256color'  // Better terminal compatibility
-        },
+        }),
         windowsHide: true  // Prevent visible console windows on Windows
       };
 
@@ -225,20 +292,12 @@ export class TerminalManager {
       };
       spawnOptions = {
         shell: shellToUse,
-        env: {
+        env: getRepairedWindowsShellEnvironment({
           ...process.env,
           TERM: 'xterm-256color'
-        },
+        }),
         windowsHide: true  // Prevent visible console windows on Windows
       };
-    }
-
-    // Repair PATHEXT on Windows before spawning. On some Windows DXT launches
-    // the server process inherits a corrupted PATHEXT (e.g. ".CPL"), which we
-    // would otherwise propagate via { ...process.env } and break command
-    // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
-    if (process.platform === 'win32' && spawnOptions.env) {
-      spawnOptions.env.PATHEXT = getRepairedPathExt();
     }
 
     // On Windows, when we invoke cmd.exe directly and pass the user's command as a
