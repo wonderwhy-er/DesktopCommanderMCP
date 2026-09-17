@@ -114,10 +114,9 @@ export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | Page
                 }
             } catch (e) { }
             try {
-                if (typeof pdfDocument.destroy === 'function') {
-                    await pdfDocument.destroy();
-                }
-            } catch (e) { }
+                // The loading task owns the PDF worker and releases it after extraction completes.
+                await pdfDocument.loadingTask.destroy();
+            } catch (e) { /* Ignore cleanup errors */ }
         }
     }
 }
