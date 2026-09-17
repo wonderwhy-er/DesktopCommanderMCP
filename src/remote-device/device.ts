@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel } from './remote-channel.js';
+import { RemoteChannel, observeServerDate } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -314,6 +314,11 @@ export class MCPDevice {
         // No auth header needed for this public endpoint
         console.debug('[DEBUG] Fetching Supabase config from:', `${this.baseServerUrl}/api/mcp-info`);
         const response = await fetch(`${this.baseServerUrl}/api/mcp-info`);
+        // First request of the run, and it already states the server's time.
+        // auth-js judges the session handed to setSession() against this
+        // device's Date.now() with no skew tolerance, so the clock has to be
+        // right BEFORE that call - clockAwareFetch only corrects it afterwards.
+        observeServerDate(response.headers.get('date'));
 
         if (!response.ok) {
             console.debug('[DEBUG] Supabase config fetch failed, status:', response.status, response.statusText);
