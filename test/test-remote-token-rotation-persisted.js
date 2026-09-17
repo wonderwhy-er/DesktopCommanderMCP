@@ -87,6 +87,11 @@ function makeFakeClient() {
             sessionDelays.push(...msPerSave);
         },
 
+        /** auth-js drops the session: getSession() answers null from here on. */
+        signOut() {
+            currentSession = null;
+        },
+
         /** What the 45-minute refresh does: rotate, then announce it. */
         rotate(access_token, refresh_token) {
             currentSession = { access_token, refresh_token };
@@ -237,6 +242,42 @@ await test('a write that cannot complete leaves the previous config intact', asy
     assert.strictEqual(
         config.session.refresh_token, 'refresh-1',
         'a failed write must leave the previous complete session, never a partial file'
+    );
+});
+
+await test('a rotation is persisted as announced, even if the session is lost right after', async (configPath) => {
+    const { client } = await makeDevice(configPath);
+
+    // The save is queued and slow, so the sign-out lands inside the gap between
+    // the rotation being announced and the save reading the session back.
+    client.delaySaves(200);
+    client.rotate('access-2', 'refresh-2');
+    client.signOut();
+
+    await waitForPersisted(configPath, tokenIs('refresh-2'));
+
+    assert.strictEqual(
+        readPersisted(configPath).session?.refresh_token, 'refresh-2',
+        'the save re-reads the session instead of writing the one TOKEN_REFRESHED handed it, so a ' +
+        'sign-out in that gap wipes a good refresh token off disk - and handleSignedOut() then tells ' +
+        'the user to restart, which reads the file we just emptied'
+    );
+});
+
+await test('a save with no session available does not wipe the token on disk', async (configPath) => {
+    const { device, client } = await makeDevice(configPath);
+    assert.strictEqual(
+        readPersisted(configPath).session.refresh_token, 'refresh-1',
+        'precondition: a good token is on disk'
+    );
+
+    client.signOut();
+    await device.savePersistedConfig();
+
+    assert.strictEqual(
+        readPersisted(configPath).session?.refresh_token, 'refresh-1',
+        'a save that finds no session writes session:null, replacing a usable token with nothing. ' +
+        'Clearing is what clearPersistedConfig() is for'
     );
 });
 
