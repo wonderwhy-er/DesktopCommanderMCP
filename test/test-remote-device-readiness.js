@@ -124,6 +124,18 @@ function makeDevice({ channelState = 'joined' } = {}) {
 
 const advertisedOnline = (client) => client.writes.filter((w) => w.status === 'online');
 
+/**
+ * End a recovery loop a case started but did not let finish. The loop runs
+ * `while (!device.isShuttingDown)`, and `desktop.shutdown()` sets the
+ * integration's flag, not the device's — so without this the loop keeps
+ * rescheduling for the rest of the run. Not device.shutdown(): that reaches
+ * setOffline(), which spawnSync's the real offline-update script.
+ */
+async function stopRecovery(device, recovery) {
+    device.isShuttingDown = true;
+    await recovery;
+}
+
 let failures = 0;
 async function test(name, fn) {
     try {
@@ -185,6 +197,7 @@ await test('online is withheld until the tool layer answers, not just the handsh
     const recovery = device.handleLocalMcpLoss('test');
     await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
     await device.remoteChannel.statusWriteChain;
+    await stopRecovery(device, recovery);
     await device.desktop.shutdown().catch(() => { });
 
     assert.deepStrictEqual(
@@ -208,6 +221,7 @@ await test('a device whose restart failed recovers without an incoming tool call
 
     await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
     await device.remoteChannel.statusWriteChain;
+    await stopRecovery(device, recovery);
     await integration.shutdown().catch(() => { });
 
     assert(
