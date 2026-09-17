@@ -136,6 +136,8 @@ export class RemoteChannel {
     private statusWriteChain: Promise<void> = Promise.resolve();
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
+    /** Notified when auth-js rotates the session; the device persists it. */
+    private sessionRefreshedHandler: ((session: AuthSession) => void) | null = null;
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
      * land after setOffline()'s durable write. */
     private shuttingDown = false;
@@ -217,6 +219,16 @@ export class RemoteChannel {
         }
     }
 
+    /**
+     * Register a callback fired when auth-js rotates the session. auth-js
+     * rotates the refresh token on every refresh and the previous one is spent,
+     * so a config written once at startup replays a dead token on the next
+     * restart and the device demands browser authorization again.
+     */
+    onSessionRefreshed(handler: (session: AuthSession) => void) {
+        this.sessionRefreshedHandler = handler;
+    }
+
     async setSession(session: AuthSession): Promise<{ error: any }> {
         if (!this.client) throw new Error('Client not initialized');
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
@@ -263,6 +275,14 @@ export class RemoteChannel {
                         access_token: newSession.access_token,
                         refresh_token: newSession.refresh_token ?? this.lastKnownSession?.refresh_token ?? null,
                     };
+                    // Memory alone is not enough: the token we just replaced is
+                    // spent, so whatever is on disk is now unusable.
+                    // Hand over the session we were just given. A listener that
+                    // re-read it could find a sign-out instead and persist that.
+                    this.sessionRefreshedHandler?.({
+                        access_token: newSession.access_token,
+                        refresh_token: newSession.refresh_token ?? null,
+                    } as AuthSession);
                 } else if (event === 'SIGNED_OUT') {
                     void this.handleSignedOut();
                 }
