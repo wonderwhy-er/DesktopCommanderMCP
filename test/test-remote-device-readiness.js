@@ -210,5 +210,58 @@ await test('a device whose restart failed recovers without an incoming tool call
     );
 });
 
+// --- every writer of `status` must consult the same predicate ----------------
+// isReachable() is the rule, but it only helps where it is asked. Raised by
+// @coderabbitai on #717: two writers reach `mcp_devices.status` without it.
+
+await test('a joined channel does not announce online while the executor is dead', async () => {
+    const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
+    const rc = new RemoteChannel();
+    const client = makeFakeClient();
+    const channel = {
+        state: 'joined',
+        on: () => channel,
+        subscribe: (cb) => { setImmediate(() => cb('SUBSCRIBED', null)); return channel; },
+        track: async () => 'ok',
+    };
+    client.channel = () => channel;
+    rc.client = client;
+    rc._user = { id: 'user-1' };
+    rc.deviceId = DEVICE_ID;
+    rc.deviceName = 'test-device';
+    rc.onToolCall = () => { };
+    rc.setLocalExecutorProbe(() => false);   // the local half is dead
+
+    await rc.createChannel();
+    await rc.statusWriteChain;
+
+    const advertised = client.writes.filter((w) => w.status === 'online');
+    assert.deepStrictEqual(
+        advertised, [],
+        'the SUBSCRIBED callback writes online directly; a channel coming up says nothing ' +
+        'about the executor being able to run a tool'
+    );
+});
+
+await test('recovery does not announce online while the channel is down', async () => {
+    const device = new MCPDevice();
+    const client = makeFakeClient();
+    device.deviceId = DEVICE_ID;
+    device.remoteChannel.client = client;
+    device.remoteChannel.channel = { state: 'errored' };   // the remote half is down
+    // The executor recovered fine; only the channel is missing.
+    device.desktop = { ready: true, ensureReady: async () => { } };
+
+    await device.handleLocalMcpLoss('test');
+    await device.remoteChannel.statusWriteChain;
+
+    const advertised = client.writes.filter((w) => w.status === 'online');
+    assert.deepStrictEqual(
+        advertised, [],
+        'recovery writes online straight through setOnlineStatus, so a device whose channel ' +
+        'is not joined is announced as ready — the same one-sided claim this branch removes'
+    );
+});
+
 console.log(`\n${failures ? '🔴' : '✅'} remote device readiness: ${failures} failing test(s).`);
 process.exit(failures ? 1 : 0);
