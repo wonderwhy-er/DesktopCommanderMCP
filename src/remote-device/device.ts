@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel } from './remote-channel.js';
+import { RemoteChannel, type AuthSession } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -62,7 +62,7 @@ export class MCPDevice {
         // token each time. Without this the config keeps whichever token the
         // process started with, and a restart hours later replays a spent one -
         // GoTrue refuses it and an unattended device waits for a browser.
-        this.remoteChannel.onSessionRefreshed(() => void this.savePersistedConfig());
+        this.remoteChannel.onSessionRefreshed((session) => void this.savePersistedConfig(session));
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
@@ -301,16 +301,26 @@ export class MCPDevice {
      * Queue a config write. Returns the queued write, so a caller that must not
      * outlive it - shutdown() - can await it.
      */
-    async savePersistedConfig(): Promise<void> {
-        this.configWriteChain = this.configWriteChain.then(() => this.writePersistedConfig());
+    async savePersistedConfig(rotated?: AuthSession): Promise<void> {
+        this.configWriteChain = this.configWriteChain.then(() => this.writePersistedConfig(rotated));
         return this.configWriteChain;
     }
 
-    private async writePersistedConfig(): Promise<void> {
+    private async writePersistedConfig(rotated?: AuthSession): Promise<void> {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
-            const currentSessionStore = await this.remoteChannel.getSession();
-            const session = currentSessionStore.data.session;
+            // Prefer the session TOKEN_REFRESHED handed us over re-reading it. A
+            // sign-out landing in that gap answers null, and the write below would
+            // replace a usable refresh token with nothing.
+            const session = rotated ?? (await this.remoteChannel.getSession()).data.session;
+
+            // Never trade a good token for an empty one. Deliberate clearing is
+            // what clearPersistedConfig() is for; --no-persist-session still
+            // writes null below, because persistSession is false there.
+            if (this.persistSession && !session?.refresh_token) {
+                console.debug('[DEBUG] Skipping config save - nothing to persist');
+                return;
+            }
 
             const config = {
                 deviceId: this.deviceId,

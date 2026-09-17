@@ -137,7 +137,7 @@ export class RemoteChannel {
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
     /** Notified when auth-js rotates the session; the device persists it. */
-    private sessionRefreshedHandler: (() => void) | null = null;
+    private sessionRefreshedHandler: ((session: AuthSession) => void) | null = null;
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
      * land after setOffline()'s durable write. */
     private shuttingDown = false;
@@ -225,7 +225,7 @@ export class RemoteChannel {
      * so a config written once at startup replays a dead token on the next
      * restart and the device demands browser authorization again.
      */
-    onSessionRefreshed(handler: () => void) {
+    onSessionRefreshed(handler: (session: AuthSession) => void) {
         this.sessionRefreshedHandler = handler;
     }
 
@@ -277,7 +277,12 @@ export class RemoteChannel {
                     };
                     // Memory alone is not enough: the token we just replaced is
                     // spent, so whatever is on disk is now unusable.
-                    this.sessionRefreshedHandler?.();
+                    // Hand over the session we were just given. A listener that
+                    // re-read it could find a sign-out instead and persist that.
+                    this.sessionRefreshedHandler?.({
+                        access_token: newSession.access_token,
+                        refresh_token: newSession.refresh_token ?? null,
+                    } as AuthSession);
                 } else if (event === 'SIGNED_OUT') {
                     void this.handleSignedOut();
                 }
