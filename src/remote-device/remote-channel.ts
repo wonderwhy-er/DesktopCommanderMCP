@@ -617,7 +617,9 @@ export class RemoteChannel {
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
-                        this.queueStatusWrite('online');
+                        // Through the predicate, not straight to 'online': a
+                        // channel coming up says nothing about the executor.
+                        this.syncReachabilityStatus();
                         // The capability flag dispatch requires is written only
                         // once presence lands, so resolve then — otherwise
                         // registerDevice() reports "Device ready" while still
@@ -1053,8 +1055,12 @@ export class RemoteChannel {
      * server filters on it), so it must not follow one channel's health — the
      * private channel's error path re-fires on every rejoin and would oscillate
      * the row against the heartbeat. Same predicate as the heartbeat gate.
+     *
+     * Every transition belongs here rather than calling setOnlineStatus(), which
+     * is the write and not the decision. Public so the device can route its
+     * recovery transition through the predicate too.
      */
-    private syncReachabilityStatus(): void {
+    syncReachabilityStatus(): void {
         this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
     }
 

@@ -18,7 +18,8 @@ import { captureRemote } from '../utils/capture.js';
 // most a minute after it could have come back.
 const RESTART_BACKOFF_CAP_MS = 5_000;
 const restartBackoffMs = (attempt: number) =>
-    Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5)) * (0.5 + Math.random());
+    // Cap AFTER jitter, so the cap is the wait this comment claims it is.
+    Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5) * (0.5 + Math.random()));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

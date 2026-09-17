@@ -366,9 +366,10 @@ export class MCPDevice {
                 // request, so reaching here is proof of execution, not just of a
                 // completed handshake.
                 await this.desktop.ensureReady();
-                if (this.deviceId) {
-                    await this.remoteChannel.setOnlineStatus(this.deviceId, 'online');
-                }
+                // Not setOnlineStatus('online'): the executor recovering says
+                // nothing about the channel. Let the predicate decide, or this
+                // repeats the one-sided claim this whole change removes.
+                this.remoteChannel.syncReachabilityStatus();
                 console.log('♻️  Local Desktop Commander MCP restarted; device is online again');
                 return;
             } catch (error: any) {

@@ -106,6 +106,24 @@ async function withQuietLogs(fn) {
     }
 }
 
+/**
+ * A device wired to a real RemoteChannel and a recording client, so status
+ * writes go through the actual predicate instead of a stub that would record
+ * whatever it was handed. Both ids matter: MCPDevice reads its own, and
+ * queueStatusWrite() reads the channel's.
+ */
+function makeDevice({ channelState = 'joined' } = {}) {
+    const device = new MCPDevice();
+    const client = makeFakeClient();
+    device.deviceId = DEVICE_ID;
+    device.remoteChannel.client = client;
+    device.remoteChannel.deviceId = DEVICE_ID;
+    device.remoteChannel.channel = { state: channelState };
+    return { device, client };
+}
+
+const advertisedOnline = (client) => client.writes.filter((w) => w.status === 'online');
+
 let failures = 0;
 async function test(name, fn) {
     try {
@@ -158,12 +176,7 @@ await test('repeated restart failures are spaced, not one spawn per call', async
 });
 
 await test('online is withheld until the tool layer answers, not just the handshake', async () => {
-    const device = new MCPDevice();
-    const statuses = [];
-    device.deviceId = DEVICE_ID;
-    device.remoteChannel = {
-        setOnlineStatus: async (_id, status) => { statuses.push(status); },
-    };
+    const { device, client } = makeDevice();
     // Connects and speaks MCP, but fails everything at the tool layer.
     device.desktop = new FixtureIntegration(BROKEN_TOOLS_FIXTURE);
 
@@ -171,22 +184,17 @@ await test('online is withheld until the tool layer answers, not just the handsh
     // becomes usable, which is the intended production behaviour.
     const recovery = device.handleLocalMcpLoss('test');
     await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
+    await device.remoteChannel.statusWriteChain;
     await device.desktop.shutdown().catch(() => { });
 
-    assert(
-        !statuses.includes('online'),
-        `device announced ${JSON.stringify(statuses)}; a completed MCP handshake proves the child ` +
-        'speaks the protocol, not that it can run a tool'
+    assert.deepStrictEqual(
+        advertisedOnline(client), [],
+        'a completed MCP handshake proves the child speaks the protocol, not that it can run a tool'
     );
 });
 
 await test('a device whose restart failed recovers without an incoming tool call', async () => {
-    const device = new MCPDevice();
-    const statuses = [];
-    device.deviceId = DEVICE_ID;
-    device.remoteChannel = {
-        setOnlineStatus: async (_id, status) => { statuses.push(status); },
-    };
+    const { device, client } = makeDevice();
     const integration = new FixtureIntegration(NO_SUCH_SERVER);
     device.desktop = integration;
 
@@ -199,11 +207,12 @@ await test('a device whose restart failed recovers without an incoming tool call
     integration.useServer(WORKING_FIXTURE);
 
     await Promise.race([recovery, new Promise((r) => setTimeout(r, RECOVERY_DEADLINE_MS))]);
+    await device.remoteChannel.statusWriteChain;
     await integration.shutdown().catch(() => { });
 
     assert(
-        statuses.includes('online'),
-        `device announced ${JSON.stringify(statuses)} and stopped after one failed attempt. ` +
+        advertisedOnline(client).length > 0,
+        'the device never came back online after one failed attempt. ' +
         'Verified live on 0.2.50: nothing retries, and the hosted service answers a call for an ' +
         'offline device with "No devices available", so the lazy restart never fires either — ' +
         'the device is stuck until a human restarts the connector'
@@ -244,12 +253,8 @@ await test('a joined channel does not announce online while the executor is dead
 });
 
 await test('recovery does not announce online while the channel is down', async () => {
-    const device = new MCPDevice();
-    const client = makeFakeClient();
-    device.deviceId = DEVICE_ID;
-    device.remoteChannel.client = client;
-    device.remoteChannel.channel = { state: 'errored' };   // the remote half is down
-    // The executor recovered fine; only the channel is missing.
+    // The remote half is down; the executor recovered fine.
+    const { device, client } = makeDevice({ channelState: 'errored' });
     device.desktop = { ready: true, ensureReady: async () => { } };
 
     await device.handleLocalMcpLoss('test');
