@@ -6,6 +6,13 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 
+// Restart pacing. Same shape as RemoteChannel.recreateChannel's jittered
+// backoff: grows with consecutive failures, caps so a device can still come
+// back, and jitters so a fleet-wide fault does not stampede.
+const RESTART_BACKOFF_CAP_MS = 30_000;
+const restartBackoffMs = (attempt: number) =>
+    Math.min(RESTART_BACKOFF_CAP_MS, 1000 * 2 ** Math.min(attempt, 5)) * (0.5 + Math.random());
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,6 +30,10 @@ export class DesktopCommanderIntegration {
     private isShuttingDown: boolean = false;
     private disconnectHandler: ((reason: string) => void) | null = null;
     private reinitPromise: Promise<void> | null = null;
+    /** Consecutive failed restarts; reset by a successful one. */
+    private restartAttempts: number = 0;
+    /** Before this, ensureReady() refuses rather than spawning again. */
+    private nextRestartAt: number = 0;
 
     /** True only while the local stdio child is actually reachable. */
     get ready(): boolean {
@@ -153,10 +164,30 @@ export class DesktopCommanderIntegration {
             throw new Error('Desktop Commander integration is shutting down');
         }
         if (!this.reinitPromise) {
+            // A child that crashes on start would otherwise be respawned once
+            // per routed tool call. Refuse inside the window instead, so the
+            // caller gets the real reason and the machine is left alone.
+            const waitMs = this.nextRestartAt - Date.now();
+            if (waitMs > 0) {
+                throw new Error(
+                    `Local Desktop Commander MCP failed to start ${this.restartAttempts} time(s); ` +
+                    `next attempt in ${Math.ceil(waitMs / 1000)}s`
+                );
+            }
             console.log(' - ♻️  Local Desktop Commander MCP is not running; restarting it...');
-            this.reinitPromise = this.initialize().finally(() => {
-                this.reinitPromise = null;
-            });
+            this.reinitPromise = this.initialize()
+                .then(() => {
+                    this.restartAttempts = 0;
+                    this.nextRestartAt = 0;
+                })
+                .catch((error) => {
+                    this.restartAttempts++;
+                    this.nextRestartAt = Date.now() + restartBackoffMs(this.restartAttempts);
+                    throw error;
+                })
+                .finally(() => {
+                    this.reinitPromise = null;
+                });
         }
         // Concurrent calls share the single in-flight restart.
         await this.reinitPromise;
