@@ -1,0 +1,240 @@
+/**
+ * Regression test: a device must not present itself as ready — to the user or
+ * to the server — before it can actually receive commands.
+ *
+ * RDC-6. ChatGPT lists every tool, then the first call comes back saying the
+ * tool is disabled while the device sits there looking healthy. Measured in the
+ * hosted service's telemetry on 2026-09-18: in seven days 364 devices (316
+ * users) had at least one dispatch refused and not one single success — 118 of
+ * them on 0.2.50 and 66 on 0.2.51, so this is not an old-client problem.
+ *
+ * The refusal is `not_broadcast_capable` in the hosted tool-call processor: the
+ * device row says `status: 'online'`, so dispatch picks it, but the row carries
+ * no `transport_broadcast_v1` capability, so the call cannot be delivered and
+ * is failed fast with "has no live connection ... Restart the terminal".
+ * Restarting lands in the same state, which is exactly what the reporter saw.
+ *
+ * Both halves of that state are written here, in registerDevice():
+ *
+ *   - it sets `status: 'online'` before the channel is even subscribed, so the
+ *     server treats the device as a dispatch target during the join attempt —
+ *     and for a device that can never join (blocked websockets, proxy), for as
+ *     long as the row takes to age out
+ *   - it swallows a createChannel() rejection into console.debug, so device.ts
+ *     prints "Device ready" over a device that cannot receive anything
+ *
+ * createChannel() already resolves only once presence lands, and says why:
+ * "otherwise registerDevice() reports Device ready while still undispatchable".
+ * The last mile is missing — the rejection never reaches the caller.
+ *
+ * The fakes model only what registerDevice() touches: the mcp_devices row, and
+ * a realtime channel whose subscribe outcome the case picks.
+ *
+ * Runs as part of `npm test` (which builds first), or standalone:
+ *   node test/test-remote-device-ready-requires-channel.js
+ */
+import assert from 'node:assert';
+import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+
+process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
+
+const DEVICE_ID = 'device-1';
+const USER = { id: 'user-1', email: 'tester@example.com' };
+
+/** Realtime channel whose join outcome the test picks. */
+class FakeChannel {
+    state = 'joining';
+    constructor(client) {
+        this.client = client;
+    }
+    on() {
+        return this;
+    }
+    subscribe(cb) {
+        // Record what the row already claimed at the moment the join starts —
+        // this is the window the server dispatches into.
+        this.client.statusWritesBeforeJoin = this.client.statusWrites.slice();
+        Promise.resolve().then(() => {
+            if (this.client.channelJoins) {
+                this.state = 'joined';
+                cb('SUBSCRIBED');
+            } else {
+                // What a blocked websocket looks like to realtime-js.
+                this.state = 'errored';
+                cb('CHANNEL_ERROR', new Error('websocket refused'));
+            }
+        });
+        return this;
+    }
+    track() {
+        this.tracked = true;
+        return Promise.resolve('ok');
+    }
+    untrack() {
+        return Promise.resolve('ok');
+    }
+    unsubscribe() {
+        this.state = 'leaving';
+        return Promise.resolve({ error: null });
+    }
+}
+
+class FakeRealtime {
+    conn = { readyState: 1 };
+    reconnectTimer = { tries: 0 };
+    pendingHeartbeatRef = null;
+    _heartbeatSentAt = null;
+    _manuallySetToken = true;
+    onHeartbeat(cb) {
+        this._heartbeatCb = cb;
+    }
+    connectionState() {
+        return 'open';
+    }
+    isConnected() {
+        return true;
+    }
+    disconnect() {
+        return Promise.resolve();
+    }
+    setAuth() {}
+}
+
+/**
+ * Just the mcp_devices row. Every write is recorded, because the question this
+ * file asks is what the row claims, and when.
+ */
+class FakeClient {
+    realtime = new FakeRealtime();
+    channels = [];
+    writes = []; // every update payload, in order
+    statusWrites = []; // just the `status` values, in order
+    channelJoins = true;
+    statusWritesBeforeJoin = null;
+
+    channel() {
+        const ch = new FakeChannel(this);
+        this.channels.push(ch);
+        return ch;
+    }
+    removeChannel() {
+        return Promise.resolve();
+    }
+    removeAllChannels() {
+        return Promise.resolve();
+    }
+
+    from(table) {
+        assert.equal(table, 'mcp_devices', `unexpected table: ${table}`);
+        const client = this;
+        // One thenable that is also chainable, because the three callers end
+        // the chain differently: findDevice with .maybeSingle(), updateDevice
+        // with .select(), setOnlineStatus with a bare .eq().
+        const node = {
+            select: () => node,
+            update: (updates) => {
+                client.writes.push(updates);
+                if (typeof updates.status === 'string') client.statusWrites.push(updates.status);
+                return node;
+            },
+            insert: () => node,
+            eq: () => node,
+            maybeSingle: () =>
+                Promise.resolve({ data: { id: DEVICE_ID, device_name: 'test-device' }, error: null }),
+            then: (resolve, reject) =>
+                Promise.resolve({ data: [{ id: DEVICE_ID }], error: null }).then(resolve, reject)
+        };
+        return node;
+    }
+}
+
+// The code under test narrates itself to the console, including from async
+// callbacks that land after a case has finished. Keep the original writers for
+// this file's own output and mute the rest, so a run shows results and nothing
+// else. Set DEBUG_TEST=1 to hear it again while working on the fix.
+const out = console.log.bind(console);
+const err = console.error.bind(console);
+if (!process.env.DEBUG_TEST) {
+    const mute = () => {};
+    console.log = mute;
+    console.debug = mute;
+    console.error = mute;
+    console.warn = mute;
+}
+
+const flush = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+function makeRemoteChannel(channelJoins) {
+    const rc = new RemoteChannel();
+    const client = new FakeClient();
+    client.channelJoins = channelJoins;
+    rc.client = client; // private at TS level, a plain property at runtime
+    rc._user = USER;
+    rc.sleep = () => Promise.resolve(); // no real backoff in tests
+    return { rc, client };
+}
+
+function register(rc) {
+    return rc.registerDevice({ tools: [] }, DEVICE_ID, 'test-device', () => {});
+}
+
+let failures = 0;
+async function test(name, fn) {
+    try {
+        await fn();
+        out(`PASS  ${name}`);
+    } catch (error) {
+        failures++;
+        err(`FAIL  ${name}\n     ${error.message}`);
+    }
+}
+
+// Control. The two cases below both demand that registration refuse to succeed,
+// and a fix that simply made registerDevice() always fail would satisfy them
+// while breaking every working device. This is the case that forbids that: a
+// device whose channel joins must still register and end up online.
+await test('a device whose channel joins registers and is marked online', async () => {
+    const { rc, client } = makeRemoteChannel(true);
+    await register(rc);
+    await flush(10);
+
+    assert.equal(client.channels[0].state, 'joined', 'precondition: the channel joined');
+    assert.equal(
+        client.statusWrites.at(-1),
+        'online',
+        `the row should end up online, got writes: ${JSON.stringify(client.statusWrites)}`
+    );
+});
+
+await test('registration fails out loud when the channel cannot join', async () => {
+    const { rc } = makeRemoteChannel(false);
+
+    await assert.rejects(
+        () => register(rc),
+        'registerDevice() resolved although the channel never joined. device.ts prints ' +
+            '"Device ready" on the next line, so the user is told a device that cannot ' +
+            'receive a single command is working — and the hosted service refuses every ' +
+            'call with advice to restart the terminal, which returns to this same state.'
+    );
+});
+
+await test('registration does not claim the device is online before the channel joins', async () => {
+    const { rc, client } = makeRemoteChannel(false);
+    await register(rc).catch(() => {
+        /* the case above owns that failure */
+    });
+    await flush(10);
+
+    // "must not claim online", not "must not write status": writing 'offline'
+    // here is better than writing nothing, because a row left over from a
+    // crashed run would otherwise stay online until the sweep ages it out.
+    assert.ok(
+        !client.statusWritesBeforeJoin.includes('online'),
+        `the row claimed ${JSON.stringify(client.statusWritesBeforeJoin)} before the channel was ` +
+            'even subscribed. The hosted service selects dispatch targets by `status`, so for that ' +
+            'whole window it hands calls to a device with no delivery path and fails them fast.'
+    );
+});
+
+out(`\ndevice readiness requires the channel: ${failures} failing test(s).`);
+process.exitCode = failures ? 1 : 0;
