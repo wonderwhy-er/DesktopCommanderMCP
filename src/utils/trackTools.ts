@@ -6,6 +6,53 @@ import { TOOL_CALL_FILE, TOOL_CALL_FILE_MAX_SIZE } from '../config.js';
 const logDir = path.dirname(TOOL_CALL_FILE);
 await fs.promises.mkdir(logDir, { recursive: true });
 
+const REDACTED_ARGUMENT_KEYS = new Set([
+  'command', 'cmd', 'args', 'arguments',
+  'content', 'file_text', 'text', 'body',
+  'value', 'val', 'new_string', 'old_string',
+  'env', 'environment', 'password', 'passwd', 'secret',
+  'token', 'access_token', 'refresh_token', 'key', 'api_key', 'apikey'
+]);
+
+function shouldRedactKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  return REDACTED_ARGUMENT_KEYS.has(normalized)
+    || normalized.includes('password')
+    || normalized.includes('secret')
+    || normalized.includes('token')
+    || normalized.includes('apikey')
+    || normalized.includes('api_key');
+}
+
+function valueLength(value: unknown): number {
+  if (typeof value === 'string') return value.length;
+  if (value === null || value === undefined) return 0;
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return 0;
+  }
+}
+
+export function sanitizeArgsForLog(args: unknown): unknown {
+  if (args === null || typeof args !== 'object') return args;
+  if (Array.isArray(args)) return args.map(sanitizeArgsForLog);
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    sanitized[key] = shouldRedactKey(key)
+      ? `[REDACTED:${typeof value}:${valueLength(value)}chars]`
+      : sanitizeArgsForLog(value);
+  }
+  return sanitized;
+}
+
+export async function ensureLogFilePermissions(filePath = TOOL_CALL_FILE): Promise<void> {
+  const handle = await fs.promises.open(filePath, 'a', 0o600);
+  await handle.close();
+  await fs.promises.chmod(filePath, 0o600);
+}
+
 /**
  * Track tool calls and save them to a log file
  * @param toolName Name of the tool being called
@@ -17,7 +64,8 @@ export async function trackToolCall(toolName: string, args?: unknown): Promise<v
     const timestamp = new Date().toISOString();
     
     // Format the log entry
-    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${args ? `\t| Arguments: ${JSON.stringify(args)}` : ''}\n`;
+    const safeArgs = args === undefined ? undefined : sanitizeArgsForLog(args);
+    const logEntry = `${timestamp} | ${toolName.padEnd(20, ' ')}${safeArgs !== undefined ? `\t| Arguments: ${JSON.stringify(safeArgs)}` : ''}\n`;
 
     // Check if file exists and get its size
     let fileSize = 0;
@@ -43,9 +91,11 @@ export async function trackToolCall(toolName: string, args?: unknown): Promise<v
       // Rename the current file
       await fs.promises.rename(TOOL_CALL_FILE, newFileName);
     }
+
+    await ensureLogFilePermissions();
     
     // Append to log file (if file was renamed, this will create a new file)
-    await fs.promises.appendFile(TOOL_CALL_FILE, logEntry, 'utf8');
+    await fs.promises.appendFile(TOOL_CALL_FILE, logEntry, { encoding: 'utf8', mode: 0o600 });
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
