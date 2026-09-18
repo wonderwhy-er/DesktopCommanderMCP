@@ -67,6 +67,9 @@ class FakeChannel {
         return this;
     }
     track() {
+        // realtime-js RESOLVES track() with a status string rather than
+        // rejecting, so a refused presence publication looks like this.
+        if (!this.client.presenceAcks) return Promise.resolve('timed out');
         this.tracked = true;
         return Promise.resolve('ok');
     }
@@ -110,7 +113,14 @@ class FakeClient {
     writes = []; // every update payload, in order
     statusWrites = []; // just the `status` values, in order
     channelJoins = true;
+    presenceAcks = true; // does the channel acknowledge track()?
+    deviceExists = true; // is there a row for this device id at all?
     statusWritesBeforeJoin = null;
+
+    /** True once a write advertised the capability dispatch requires. */
+    advertisedBroadcast() {
+        return this.writes.some((w) => w.capabilities?.transport_broadcast_v1 === true);
+    }
 
     channel() {
         const ch = new FakeChannel(this);
@@ -140,7 +150,10 @@ class FakeClient {
             insert: () => node,
             eq: () => node,
             maybeSingle: () =>
-                Promise.resolve({ data: { id: DEVICE_ID, device_name: 'test-device' }, error: null }),
+                Promise.resolve({
+                    data: client.deviceExists ? { id: DEVICE_ID, device_name: 'test-device' } : null,
+                    error: null
+                }),
             then: (resolve, reject) =>
                 Promise.resolve({ data: [{ id: DEVICE_ID }], error: null }).then(resolve, reject)
         };
@@ -164,10 +177,11 @@ if (!process.env.DEBUG_TEST) {
 
 const flush = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
-function makeRemoteChannel(channelJoins) {
+function makeRemoteChannel(channelJoins, overrides = {}) {
     const rc = new RemoteChannel();
     const client = new FakeClient();
     client.channelJoins = channelJoins;
+    Object.assign(client, overrides);
     rc.client = client; // private at TS level, a plain property at runtime
     rc._user = USER;
     rc.sleep = () => Promise.resolve(); // no real backoff in tests
@@ -211,6 +225,19 @@ await test('registration fails out loud when the channel cannot join', async () 
 
     await assert.rejects(
         () => register(rc),
+        (error) => {
+            // device.ts keeps the process alive for this one and promises a
+            // background retry, so it must be told apart from a registration
+            // error nothing can repair — see the missing-row case below.
+            assert.equal(
+                error.name,
+                'ChannelUnreachableError',
+                `registerDevice() reported a failed join as ${error.name}. device.ts cannot ` +
+                    'distinguish it from an unrecoverable registration failure, so it either ' +
+                    'kills a recoverable process or promises a retry that can never happen.'
+            );
+            return true;
+        },
         'registerDevice() resolved although the channel never joined. device.ts prints ' +
             '"Device ready" on the next line, so the user is told a device that cannot ' +
             'receive a single command is working — and the hosted service refuses every ' +
@@ -233,6 +260,56 @@ await test('registration does not claim the device is online before the channel 
         `the row claimed ${JSON.stringify(client.statusWritesBeforeJoin)} before the channel was ` +
             'even subscribed. The hosted service selects dispatch targets by `status`, so for that ' +
             'whole window it hands calls to a device with no delivery path and fails them fast.'
+    );
+});
+
+// The join is only half of what dispatch needs: the server refuses the call
+// without the capability, and the capability is written only once presence is
+// published. A join whose presence is never acknowledged therefore produces
+// exactly the state measured in production — the row online, the capability
+// explicitly withdrawn — and it is the likelier of the two, because it happens
+// AFTER a successful join rather than instead of one.
+await test('a joined channel whose presence is never acknowledged is not ready', async () => {
+    const { rc, client } = makeRemoteChannel(true, { presenceAcks: false });
+
+    await assert.rejects(
+        () => register(rc),
+        'registerDevice() resolved after presence failed. The channel is joined but the device ' +
+            'never published itself, so the capability is withdrawn and the hosted service ' +
+            'refuses every call — while the user is told the device is ready.'
+    );
+    await flush(10);
+
+    assert.ok(
+        !client.statusWrites.includes('online'),
+        `the row claimed ${JSON.stringify(client.statusWrites)} although presence never landed; ` +
+            'dispatch selects by `status`, so this is the row that gets the undeliverable calls'
+    );
+    assert.ok(
+        !client.advertisedBroadcast(),
+        'precondition: the capability must stay withdrawn when presence fails'
+    );
+});
+
+// The catch in device.ts keeps the process alive and promises a background
+// retry. That promise only holds for a channel that can come back: a missing
+// row or a failed lookup happens before the recreation parameters are stored,
+// so nothing in the process can repair it, and it must stay fatal as before.
+await test('a missing device row is a startup failure, not a retryable channel fault', async () => {
+    const { rc } = makeRemoteChannel(true, { deviceExists: false });
+
+    await assert.rejects(
+        () => register(rc),
+        (error) => {
+            assert.notEqual(
+                error.name,
+                'ChannelUnreachableError',
+                `a missing device was reported as ${error.name}, which device.ts treats as ` +
+                    'recoverable — it would print "Retrying in the background" over a process ' +
+                    'that has no way to retry, instead of failing startup'
+            );
+            return true;
+        }
     );
 });
 
