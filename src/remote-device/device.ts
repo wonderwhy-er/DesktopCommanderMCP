@@ -204,18 +204,39 @@ export class MCPDevice {
 
             const deviceName = os.hostname();
 
-            // Register as device
-            await this.remoteChannel.registerDevice(
-                await this.desktop.listClientTools(),
-                this.deviceId,
-                deviceName,
-                (payload: any) => this.handleNewToolCall(payload)
-            );
+            // Register as device. registerDevice() resolves only once the
+            // realtime channel is joined and presence is published, which is
+            // exactly what the hosted service needs to deliver a call — so a
+            // rejection means "running, but nothing can reach this device", and
+            // that has to be said instead of "Device ready".
+            //
+            // Deliberately not fatal, and deliberately not rethrown into the
+            // outer catch, which exits the process: the socket watchdog keeps
+            // retrying and announces "✅ Channel subscribed" when it gets
+            // through, so quitting here would remove the only way back.
+            let reachable = true;
+            try {
+                await this.remoteChannel.registerDevice(
+                    await this.desktop.listClientTools(),
+                    this.deviceId,
+                    deviceName,
+                    (payload: any) => this.handleNewToolCall(payload)
+                );
+            } catch (error: any) {
+                reachable = false;
+                console.error(`   - ❌ Realtime channel is not open: ${error?.message ?? error}`);
+                await captureRemote('remote_device_registered_unreachable', { error });
+            }
 
-            console.log('✅ Device ready:');
+            console.log(reachable
+                ? '✅ Device ready:'
+                : '⚠️  Device registered, but NOT reachable — no command can arrive yet:');
             console.log(`   - User:         ${this.remoteChannel.user!.email}`);
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
+            if (!reachable) {
+                console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
+            }
 
             // Keep process alive
             this.remoteChannel.startHeartbeat(this.deviceId!);
