@@ -37,6 +37,20 @@ export interface AuthSession {
     device_id?: string;
 }
 
+/**
+ * The device registered, but its realtime channel is not usable — the join
+ * failed, or presence was never acknowledged. Distinct from every other
+ * registration failure on purpose: this one the socket watchdog can repair, so
+ * the caller keeps the process alive, while a failed lookup or a missing row
+ * happens before the recreation parameters are stored and nothing can repair it.
+ */
+export class ChannelUnreachableError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ChannelUnreachableError';
+    }
+}
+
 interface DeviceData {
     user_id: string;
     device_name: string;
@@ -461,12 +475,22 @@ export class RemoteChannel {
             // marked online before the channel is up hands every call in that
             // window to a device with no delivery path. SUBSCRIBED writes
             // 'online'; presence writes the capability.
-            await this.updateDevice(existingDevice.id, {
+            const { error: registrationError } = await this.updateDevice(existingDevice.id, {
                 status: 'offline',
                 last_seen: new Date().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
             });
+
+            // updateDevice() logs and returns its error rather than throwing.
+            // Opening the channel anyway would leave a row that still says
+            // whatever the last run left there — including 'online' — while
+            // nothing here can correct it: the channel's own error path queues
+            // an offline write, and setOnlineStatus() only logs when that write
+            // fails too. Stop before the channel instead.
+            if (registrationError) {
+                throw new Error(`Failed to register device: ${registrationError.message}`);
+            }
 
             // Store parameters for channel recreation
             this.deviceId = existingDevice.id;
@@ -531,6 +555,9 @@ export class RemoteChannel {
                 // Proven end-to-end (joined AND presence published) — only now
                 // advertise the capability dispatch requires.
                 await this.setTransportCapable(true);
+                // Same event, same promise: the row may claim reachable
+                // only where the capability is advertised.
+                this.queueStatusWrite('online');
                 return;
             }
 
@@ -630,16 +657,25 @@ export class RemoteChannel {
                         this.reconnectAttempt = 0;
                         this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
-                        // Update device status on successful connection (queued, so
-                        // it can't be overtaken by a teardown's status write).
-                        this.queueStatusWrite('online');
-                        // The capability flag dispatch requires is written only
-                        // once presence lands, so resolve then — otherwise
-                        // registerDevice() reports "Device ready" while still
-                        // undispatchable.
+                        // A join is only half of what dispatch needs. The other
+                        // half is presence, which writes the capability the
+                        // server checks — and when every track() is refused,
+                        // trackPresenceInner() withdraws the capability and
+                        // returns normally. Resolving here regardless left the
+                        // row online with the capability withdrawn: the exact
+                        // state the server refuses as not_broadcast_capable.
+                        // `status` is written on the same event as the
+                        // capability, in trackPresenceInner, so the two can
+                        // never disagree.
                         this.trackPresenceWithRetry(recovered)
                             .catch(() => { /* logged inside */ })
-                            .finally(() => resolve());
+                            .finally(() =>
+                                this.presenceTracked
+                                    ? resolve()
+                                    : reject(new ChannelUnreachableError(
+                                        'channel joined but presence was never acknowledged, so no command can be delivered'
+                                    ))
+                            );
                     } else if (status === 'CHANNEL_ERROR') {
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
@@ -648,18 +684,18 @@ export class RemoteChannel {
                         // Fires on ordinary network faults too — filter on the
                         // error text to isolate an 008 misconfiguration.
                         captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
-                        reject(err || new Error('Failed to initialize tool call channel subscription'));
+                        reject(new ChannelUnreachableError(err?.message || 'failed to subscribe to the tool call channel'));
                     } else if (status === 'TIMED_OUT') {
                         console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
                         this.syncReachabilityStatus();
                         captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
-                        reject(new Error('Tool call channel subscription timed out'));
+                        reject(new ChannelUnreachableError('tool call channel subscription timed out'));
                     } else if (status === 'CLOSED') {
                         // Settle the promise so an in-flight recreateChannel() can't await
                         // forever (which would wedge the re-entrancy guard / watchdog).
                         console.warn(`⚠️ Channel closed — ${this.connState()}`);
                         this.syncReachabilityStatus();
-                        reject(new Error('Tool call channel closed during subscribe'));
+                        reject(new ChannelUnreachableError('tool call channel closed during subscribe'));
                     }
                 });
         });
@@ -1079,9 +1115,15 @@ export class RemoteChannel {
         }
     }
 
-    /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
+    /**
+     * Reachable means the private channel is joined AND this device has
+     * published its presence — the pair the server requires before it will
+     * dispatch. A join alone leaves the capability withdrawn, so a row marked
+     * online on it collects calls that can only be refused. Gates the
+     * heartbeat and `status`.
+     */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined';
+        return this.channel?.state === 'joined' && this.presenceTracked;
     }
 
     /**

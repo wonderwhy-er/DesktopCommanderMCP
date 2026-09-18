@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel, observeServerDate, type AuthSession } from './remote-channel.js';
+import { ChannelUnreachableError, RemoteChannel, observeServerDate, type AuthSession } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -223,8 +223,15 @@ export class MCPDevice {
                     (payload: any) => this.handleNewToolCall(payload)
                 );
             } catch (error: any) {
+                // Only a channel fault is recoverable here. A failed lookup or a
+                // missing device row happens before registerDevice() stores the
+                // recreation parameters, and both checkConnectionHealth() and
+                // recreateChannel() return early without them — so nothing in
+                // this process could repair it, and swallowing it would promise
+                // a retry that can never happen. Those stay fatal, as before.
+                if (!(error instanceof ChannelUnreachableError)) throw error;
                 reachable = false;
-                console.error(`   - ❌ Realtime channel is not open: ${error?.message ?? error}`);
+                console.error(`   - ❌ Realtime channel is not open: ${error.message}`);
                 await captureRemote('remote_device_registered_unreachable', { error });
             }
 
