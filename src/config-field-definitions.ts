@@ -38,6 +38,16 @@ export const CONFIG_FIELD_DEFINITIONS = {
     description: 'Maximum number of lines that can be written in one edit operation. This helps prevent accidental oversized writes and keeps file changes predictable.',
     valueType: 'number',
   },
+  semanticProjectionEnabled: {
+    label: 'Semantic Projection',
+    description: 'When enabled, supported read tools can use Jev to select the most relevant file or process-output chunks before returning them to the AI.',
+    valueType: 'boolean',
+  },
+  semanticProjectionModel: {
+    label: 'Semantic Projection Model',
+    description: 'Jev model used for semantic projection. Leave this at jev-latest unless you are testing another compatible model.',
+    valueType: 'string',
+  },
 } as const satisfies Record<string, ConfigFieldDefinition>;
 
 export type ConfigFieldKey = keyof typeof CONFIG_FIELD_DEFINITIONS;

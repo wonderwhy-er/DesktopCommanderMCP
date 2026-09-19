@@ -40,6 +40,8 @@ import {
     GetFileInfoArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
+    SetSemanticProjectionApiKeyArgsSchema,
+    ImportSemanticProjectionApiKeyArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
     GetUsageStatsArgsSchema,
@@ -58,7 +60,7 @@ import {
     getSupportedParams,
     buildUnsupportedParamsWarning,
 } from './utils/unsupportedParams.js';
-import { getConfig, setConfigValue } from './tools/config.js';
+import { getConfig, setConfigValue, setSemanticProjectionApiKey, importSemanticProjectionApiKey } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -355,6 +357,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     openWorldHint: false,
                 },
             },
+            {
+                name: "set_semantic_projection_api_key",
+                description: `Store the TypeSafe/Jev API key for semantic projection. Prefer entering it through the Desktop Commander config UI so the key does not enter model context. This tool never returns the key.`,
+                inputSchema: zodToJsonSchema(SetSemanticProjectionApiKeyArgsSchema),
+                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true, showMcpUiPreviews),
+                annotations: { title: "Set Semantic Projection API Key", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+            },
+            {
+                name: "import_semantic_projection_api_key",
+                description: `Import the TypeSafe/Jev API key from a local one-line file. Use this from chat when the user wants to configure the key without pasting it into the conversation. The file contents are read internally and never returned.`,
+                inputSchema: zodToJsonSchema(ImportSemanticProjectionApiKeyArgsSchema),
+                annotations: { title: "Import Semantic Projection API Key", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+            },
 
             // Filesystem tools
             {
@@ -387,6 +402,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         When reading from the file system, only works within allowed directories.
                         Can fetch content from URLs when isUrl parameter is set to true
                         (URLs are always read in full regardless of offset/length).
+
+                        SEMANTIC PROJECTION (experimental, optional):
+                        - projection: { mode: "select", instruction, limit?, chunkLines? }
+                        - Instead of returning the entire text read, Desktop Commander chunks it by lines,
+                          sends those chunks to the configured Jev/TypeSafe provider, and returns only the
+                          most relevant chunks with their original line ranges and relevance probabilities.
+                        - Requires semanticProjectionEnabled=true and a configured API key.
+                        - The source content used for projection is sent to the configured external provider.
+                        - Currently applies to text results; image/PDF-specific rendering keeps normal behavior.
                         
                         FORMAT HANDLING (by extension):
                         - Text: Uses offset/length for line-based pagination
@@ -433,6 +457,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
+
+                        SEMANTIC PROJECTION (experimental, optional):
+                        - projection: { mode: "select", instruction, limit? }
+                        - Desktop Commander reads the files internally, sends bounded text samples to the
+                          configured Jev/TypeSafe provider, and returns only the best matching file paths
+                          with relevance probabilities. It does NOT return those files' contents in this mode;
+                          call read_file on selected paths afterward.
+                        - At most 64 files are considered and each file sample is capped at 12,000 characters.
+                        - Requires semanticProjectionEnabled=true and a configured API key.
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -975,6 +1008,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - For offset=0, waits up to timeout_ms for new output to arrive
                         - Detects REPL prompts and process completion
                         - Shows process state (waiting for input, finished, etc.)
+
+                        SEMANTIC PROJECTION (experimental, optional):
+                        - projection: { mode: "select", instruction, limit?, chunkLines? }
+                        - Desktop Commander evaluates the requested output window with Jev/TypeSafe and returns
+                          only the most relevant line chunks, preserving process-output line ranges.
+                        - The evaluated process output is sent to the configured external provider.
+                        - Requires semanticProjectionEnabled=true and a configured API key.
                         
                         DETECTION STATES:
                         Process waiting for input (ready for interact_with_process)
@@ -1320,8 +1360,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
             }
         }
 
-        // Track tool call
-        trackToolCall(name, args);
+        // Track tool call. Never persist secret-bearing arguments.
+        const argsForLogs = name === 'set_semantic_projection_api_key'
+            ? { origin: (args as any)?.origin, apiKey: '[REDACTED]' }
+            : args;
+        trackToolCall(name, argsForLogs);
 
         // Using a more structured approach with dedicated handlers
         // (result is declared above so the finally block can read execution status)
@@ -1348,6 +1391,20 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                         content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,
                     };
+                }
+                break;
+            case "set_semantic_projection_api_key":
+                try {
+                    result = await setSemanticProjectionApiKey(args);
+                } catch (error) {
+                    result = { content: [{ type: "text", text: `Error: Failed to save semantic projection API key` }], isError: true };
+                }
+                break;
+            case "import_semantic_projection_api_key":
+                try {
+                    result = await importSemanticProjectionApiKey(args);
+                } catch (error) {
+                    result = { content: [{ type: "text", text: `Error: Failed to import semantic projection API key: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
                 }
                 break;
 
@@ -1543,7 +1600,8 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         isError = !!result.isError;
         const EXCLUDED_TOOLS = [
             'get_recent_tool_calls',
-            'track_ui_event'
+            'track_ui_event',
+            'set_semantic_projection_api_key'
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
