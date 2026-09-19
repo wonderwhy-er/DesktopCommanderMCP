@@ -31,6 +31,7 @@ import {
 import path from 'path';
 import os from 'os';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
+import { selectRelevantLineChunks, selectRelevantCandidates } from '../semantic-projection/select.js';
 
 /**
  * Expand home directory (~) in a file path
@@ -208,6 +209,16 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             if (parsed.origin === 'ui' && fileType === 'directory') {
                 textContent = textContent.replace(/^This is a directory, not a file\.[^\n]*\n+/, '');
             }
+            if (parsed.projection) {
+                const rawText = textContent.replace(/^\[Reading[^\n]*\]\n\n?/, '');
+                const projected = await selectRelevantLineChunks(rawText, parsed.projection, parsed.offset >= 0 ? parsed.offset : 0);
+                const selectedText = projected.selected.map((chunk) =>
+                    `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
+                ).join('\n\n');
+                return {
+                    content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}` }],
+                };
+            }
             return {
                 content: [{ type: "text", text: textContent }],
                 ...(parsed.origin === 'ui' ? {
@@ -242,6 +253,22 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 export async function handleReadMultipleFiles(args: unknown): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
     const fileResults = await readMultipleFiles(parsed.paths);
+
+    if (parsed.projection) {
+        const candidates = fileResults.flatMap((result) => {
+            if (result.error || result.isImage) return [];
+            const text = result.isPdf
+                ? (result.payload?.pages ?? []).map((page) => page.text).join('\n')
+                : String(result.content ?? '');
+            return [{ id: result.path, label: result.path, text }];
+        });
+        const selected = await selectRelevantCandidates(candidates, parsed.projection);
+        const body = selected.map((item, index) =>
+            `${index + 1}. ${item.label} (relevance ${item.score.toFixed(3)})`
+        ).join('\n');
+        const considered = Math.min(candidates.length, 64);
+        return { content: [{ type: 'text', text: `Semantic projection selected ${selected.length} of ${considered} considered files.\n\n${body}\n\nUse read_file on the selected paths to inspect content.` }] };
+    }
 
     // Create a text summary of all files
     const textSummary = fileResults.map(result => {

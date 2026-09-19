@@ -591,13 +591,28 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         `;
     }).join('');
 
+    const semanticKeyConfigured = state.payload?.config?.semanticProjectionCredentialsConfigured === true;
+    const semanticSecretHtml = `
+      <section class="setting-row">
+        <div class="setting-info">
+          <h3>Semantic Projection API Key</h3>
+          <p>TypeSafe/Jev API key. It is stored separately from normal Desktop Commander config and is never shown back here.</p>
+          <p class="setting-summary" data-semantic-key-status>${semanticKeyConfigured ? 'Configured' : 'Not configured'}</p>
+        </div>
+        <div class="setting-control setting-shell-control">
+          <input class="setting-inline-input" data-semantic-key-input type="password" autocomplete="off" placeholder="Paste key here"/>
+          <button class="setting-inline-action" data-semantic-key-save>${semanticKeyConfigured ? 'Update key' : 'Save key'}</button>
+        </div>
+      </section>
+    `;
+
     container.innerHTML = `
       <main id="tool-shell" class="${shellClasses}">
         ${renderCompactRow({ id: 'compact-toggle', label: 'View config', filename: 'Desktop Commander', variant: 'ready', expandable: true, expanded: chrome.expanded, interactive: true })}
 
         <section class="panel config-card">
           <div class="panel-content-wrapper">
-            <div class="settings-stack" aria-label="Desktop Commander settings">${settingsHtml}</div>
+            <div class="settings-stack" aria-label="Desktop Commander settings">${settingsHtml}${semanticSecretHtml}</div>
           </div>
         </section>
 
@@ -784,6 +799,36 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
                 const latestEntry = getUpdatedEntryByKey(entry.key) ?? entry;
                 arrayModal.open(latestEntry);
             });
+        }
+    });
+
+    const semanticKeyInput = container.querySelector('[data-semantic-key-input]') as HTMLInputElement | null;
+    const semanticKeySave = container.querySelector('[data-semantic-key-save]') as HTMLButtonElement | null;
+    semanticKeySave?.addEventListener('click', async () => {
+        const apiKey = semanticKeyInput?.value.trim() ?? '';
+        if (!apiKey) {
+            hooks.onTooltip?.({ message: 'Enter an API key first.', tone: 'error' });
+            return;
+        }
+        semanticKeySave.disabled = true;
+        try {
+            const result = await controller.callTool('set_config_value', { key: 'semanticProjectionApiKey', value: apiKey, origin: 'ui' });
+            if (isToolErrorResult(result)) {
+                hooks.onTooltip?.({ message: extractToolText(result) ?? 'Failed to save API key.', tone: 'error' });
+                return;
+            }
+            if (semanticKeyInput) semanticKeyInput.value = '';
+            const status = container.querySelector('[data-semantic-key-status]') as HTMLElement | null;
+            if (status) status.textContent = 'Configured';
+            semanticKeySave.textContent = 'Update key';
+            const refreshed = await controller.callTool('get_config', { origin: 'ui' });
+            const payload = controller.extractPayload(refreshed);
+            if (payload) controller.setPayload(payload);
+            hooks.onTooltip?.({ message: 'Semantic projection API key saved.', tone: 'success' });
+        } catch (error) {
+            hooks.onTooltip?.({ message: `Failed to save API key: ${error instanceof Error ? error.message : String(error)}`, tone: 'error' });
+        } finally {
+            semanticKeySave.disabled = false;
         }
     });
 

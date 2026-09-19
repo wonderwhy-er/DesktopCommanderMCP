@@ -189,6 +189,8 @@ class ConfigManager {
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
+      semanticProjectionEnabled: false,
+      semanticProjectionModel: 'jev-latest',
       pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
       welcomeOnboardingEligible: true // Distinguishes new installs from migrated legacy configs
     };

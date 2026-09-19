@@ -7,6 +7,10 @@ export const GetConfigArgsSchema = z.object({
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
+export const ImportSemanticProjectionApiKeyArgsSchema = z.object({
+  path: z.string().min(1),
+});
+
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
   value: z.union([
@@ -18,6 +22,13 @@ export const SetConfigValueArgsSchema = z.object({
   ]),
   // 'ui' marks widget-fired calls; excluded from tool-call telemetry.
   origin: z.enum(['ui', 'llm']).optional(),
+});
+
+export const SemanticProjectionSchema = z.object({
+  mode: z.literal('select'),
+  instruction: z.string().min(1),
+  limit: z.number().int().min(1).max(20).optional().default(5),
+  chunkLines: z.number().int().min(5).max(200).optional().default(40),
 });
 
 // Empty schemas
@@ -40,6 +51,7 @@ export const ReadProcessOutputArgsSchema = z.object({
   offset: z.number().optional(),   // Line offset: 0=from last read, positive=absolute, negative=tail
   length: z.number().optional(),   // Max lines to return (default from config.fileReadLineLimit)
   verbose_timing: z.boolean().optional(),
+  projection: SemanticProjectionSchema.optional(),
 });
 
 export const ForceTerminateArgsSchema = z.object({
@@ -61,6 +73,7 @@ export const ReadFileArgsSchema = z.object({
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional(),
+  projection: SemanticProjectionSchema.optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -69,6 +82,7 @@ export const ReadFileArgsSchema = z.object({
 
 export const ReadMultipleFilesArgsSchema = z.object({
   paths: z.array(z.string()),
+  projection: SemanticProjectionSchema.optional(),
 });
 
 export const WriteFileArgsSchema = z.object({
@@ -249,6 +263,7 @@ export const TrackUiEventArgsSchema = z.object({
 export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
+  import_semantic_projection_api_key: ImportSemanticProjectionApiKeyArgsSchema,
   read_file: ReadFileArgsSchema,
   read_multiple_files: ReadMultipleFilesArgsSchema,
   write_file: WriteFileArgsSchema,

@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { selectRelevantLineChunks } from '../semantic-projection/select.js';
 
 // Get the directory where the MCP is installed (for ES module imports)
 const __filename = fileURLToPath(import.meta.url);
@@ -257,7 +258,8 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     timeout_ms = 5000, 
     offset = 0,                    // 0 = from last read, positive = absolute, negative = tail
     length = defaultLength,        // Default from config, same as file reading
-    verbose_timing = false 
+    verbose_timing = false,
+    projection
   } = parsed.data;
 
   // Timing telemetry
@@ -322,6 +324,16 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
   // Join lines back into string
   const output = result.lines.join('\n');
+
+  if (projection) {
+    const projected = await selectRelevantLineChunks(output, projection, result.readFrom);
+    const selectedText = projected.selected.map((chunk) =>
+      `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
+    ).join('\n\n');
+    return {
+      content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} process-output chunks.\n\n${selectedText}` }],
+    };
+  }
 
   // Generate status message similar to file reading
   let statusMessage = '';
