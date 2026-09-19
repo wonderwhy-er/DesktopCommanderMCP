@@ -40,7 +40,6 @@ import {
     GetFileInfoArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
-    SetSemanticProjectionApiKeyArgsSchema,
     ImportSemanticProjectionApiKeyArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
@@ -60,7 +59,7 @@ import {
     getSupportedParams,
     buildUnsupportedParamsWarning,
 } from './utils/unsupportedParams.js';
-import { getConfig, setConfigValue, setSemanticProjectionApiKey, importSemanticProjectionApiKey } from './tools/config.js';
+import { getConfig, setConfigValue, importSemanticProjectionApiKey } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -358,15 +357,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
             },
             {
-                name: "set_semantic_projection_api_key",
-                description: `Store the TypeSafe/Jev API key for semantic projection. Prefer entering it through the Desktop Commander config UI so the key does not enter model context. This tool never returns the key.`,
-                inputSchema: zodToJsonSchema(SetSemanticProjectionApiKeyArgsSchema),
-                _meta: buildUiToolMeta(CONFIG_EDITOR_RESOURCE_URI, true, showMcpUiPreviews),
-                annotations: { title: "Set Semantic Projection API Key", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-            },
-            {
                 name: "import_semantic_projection_api_key",
-                description: `Import the TypeSafe/Jev API key from a local one-line file. Use this from chat when the user wants to configure the key without pasting it into the conversation. The file contents are read internally and never returned.`,
+                description: `Load a TypeSafe/Jev API credential from a local one-line file without returning the file contents to the host model. Use when the user explicitly asks to load the Jev credential from a file path.`,
                 inputSchema: zodToJsonSchema(ImportSemanticProjectionApiKeyArgsSchema),
                 annotations: { title: "Import Semantic Projection API Key", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
             },
@@ -1361,9 +1353,13 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         }
 
         // Track tool call. Never persist secret-bearing arguments.
-        const argsForLogs = name === 'set_semantic_projection_api_key'
-            ? { origin: (args as any)?.origin, apiKey: '[REDACTED]' }
-            : args;
+        const argsForLogs =
+            name === 'set_config_value'
+            && args
+            && typeof args === 'object'
+            && (args as any).key === 'semanticProjectionApiKey'
+                ? { ...(args as any), value: '[REDACTED]' }
+                : args;
         trackToolCall(name, argsForLogs);
 
         // Using a more structured approach with dedicated handlers
@@ -1391,13 +1387,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                         content: [{ type: "text", text: `Error: Failed to set configuration value` }],
                         isError: true,
                     };
-                }
-                break;
-            case "set_semantic_projection_api_key":
-                try {
-                    result = await setSemanticProjectionApiKey(args);
-                } catch (error) {
-                    result = { content: [{ type: "text", text: `Error: Failed to save semantic projection API key` }], isError: true };
                 }
                 break;
             case "import_semantic_projection_api_key":
@@ -1600,12 +1589,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         isError = !!result.isError;
         const EXCLUDED_TOOLS = [
             'get_recent_tool_calls',
-            'track_ui_event',
-            'set_semantic_projection_api_key'
+            'track_ui_event'
         ];
 
         if (!EXCLUDED_TOOLS.includes(name)) {
-            toolHistory.addCall(name, args, result, duration);
+            toolHistory.addCall(name, argsForLogs, result, duration);
         }
 
         // Track success or failure based on result

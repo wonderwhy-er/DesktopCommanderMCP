@@ -90,7 +90,7 @@ The stored key lives in:
 
 On POSIX systems Desktop Commander creates it with owner-only file permissions (`0600`).
 
-The direct UI secret-setting tool is excluded from Desktop Commander tool history and its arguments are redacted in the plain tool-call log. UI-origin calls are also excluded from analytics telemetry.
+The config UI reuses the existing `set_config_value` tool with the reserved key `semanticProjectionApiKey`. Desktop Commander intercepts that key, stores the value in the separate secret file instead of `config.json`, and redacts the value from stderr/tool logs and tool history. UI-origin calls are also excluded from analytics telemetry.
 
 This experiment does not yet use macOS Keychain or Windows Credential Manager.
 

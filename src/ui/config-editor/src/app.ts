@@ -812,7 +812,7 @@ function render(container: HTMLElement, controller: ReturnType<typeof createConf
         }
         semanticKeySave.disabled = true;
         try {
-            const result = await controller.callTool('set_semantic_projection_api_key', { apiKey, origin: 'ui' });
+            const result = await controller.callTool('set_config_value', { key: 'semanticProjectionApiKey', value: apiKey, origin: 'ui' });
             if (isToolErrorResult(result)) {
                 hooks.onTooltip?.({ message: extractToolText(result) ?? 'Failed to save API key.', tone: 'error' });
                 return;

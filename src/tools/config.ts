@@ -1,5 +1,5 @@
 import { configManager, ServerConfig } from '../config-manager.js';
-import { SetConfigValueArgsSchema, SetSemanticProjectionApiKeyArgsSchema, ImportSemanticProjectionApiKeyArgsSchema } from './schemas.js';
+import { SetConfigValueArgsSchema, ImportSemanticProjectionApiKeyArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
@@ -156,15 +156,6 @@ export async function getConfig() {
   }
 }
 
-export async function setSemanticProjectionApiKey(args: unknown) {
-  const parsed = SetSemanticProjectionApiKeyArgsSchema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Invalid arguments: ${parsed.error}` }], isError: true };
-  }
-  await storeSemanticProjectionApiKey(parsed.data.apiKey);
-  return { content: [{ type: 'text', text: 'Semantic projection API key saved in the local secret store.' }] };
-}
-
 export async function importSemanticProjectionApiKey(args: unknown) {
   const parsed = ImportSemanticProjectionApiKeyArgsSchema.safeParse(args);
   if (!parsed.success) {
@@ -185,7 +176,12 @@ export async function importSemanticProjectionApiKey(args: unknown) {
  * Set a specific config value
  */
 export async function setConfigValue(args: unknown) {
-  console.error(`setConfigValue called with args: ${JSON.stringify(args)}`);
+  const rawArgs = args as Record<string, unknown> | null | undefined;
+  const isSemanticProjectionSecret = rawArgs?.key === 'semanticProjectionApiKey';
+  const argsForLog = isSemanticProjectionSecret
+    ? { ...rawArgs, value: '[REDACTED]' }
+    : args;
+  console.error(`setConfigValue called with args: ${JSON.stringify(argsForLog)}`);
   try {
     const parsed = SetConfigValueArgsSchema.safeParse(args);
     if (!parsed.success) {
@@ -196,6 +192,19 @@ export async function setConfigValue(args: unknown) {
           text: `Invalid arguments: ${parsed.error}`
         }],
         isError: true
+      };
+    }
+
+    if (parsed.data.key === 'semanticProjectionApiKey') {
+      if (typeof parsed.data.value !== 'string' || parsed.data.value.trim().length < 10) {
+        return {
+          content: [{ type: 'text', text: 'Semantic projection API key must be a non-empty string.' }],
+          isError: true,
+        };
+      }
+      await storeSemanticProjectionApiKey(parsed.data.value);
+      return {
+        content: [{ type: 'text', text: 'Semantic projection API key saved in the local secret store.' }],
       };
     }
 
