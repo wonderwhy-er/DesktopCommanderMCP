@@ -70,11 +70,12 @@ A technical user can alternatively set `TYPESAFE_API_KEY` in the environment.
 
 ## Configure from chat without pasting a secret into chat
 
-Save the TypeSafe API key as the only line in a local file, then ask Desktop Commander to import it by path using `import_semantic_projection_api_key`:
+Save the TypeSafe API key as the only line in a local file, then use the existing `set_config_value` tool with the reserved key `semanticProjectionApiKeyFile`:
 
 ```json
 {
-  "path": "/path/to/typesafe-key.txt"
+  "key": "semanticProjectionApiKeyFile",
+  "value": "/path/to/typesafe-key.txt"
 }
 ```
 

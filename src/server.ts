@@ -40,7 +40,6 @@ import {
     GetFileInfoArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
-    ImportSemanticProjectionApiKeyArgsSchema,
     ListProcessesArgsSchema,
     EditBlockArgsSchema,
     GetUsageStatsArgsSchema,
@@ -59,7 +58,7 @@ import {
     getSupportedParams,
     buildUnsupportedParamsWarning,
 } from './utils/unsupportedParams.js';
-import { getConfig, setConfigValue, importSemanticProjectionApiKey } from './tools/config.js';
+import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -343,6 +342,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
+                        - semanticProjectionApiKey (reserved secret key; stores the value outside config.json)
+                        - semanticProjectionApiKeyFile (reserved local file path; imports a one-line secret without returning file contents)
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -356,13 +357,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     openWorldHint: false,
                 },
             },
-            {
-                name: "import_semantic_projection_api_key",
-                description: `Load a TypeSafe/Jev API credential from a local one-line file without returning the file contents to the host model. Use when the user explicitly asks to load the Jev credential from a file path.`,
-                inputSchema: zodToJsonSchema(ImportSemanticProjectionApiKeyArgsSchema),
-                annotations: { title: "Import Semantic Projection API Key", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-            },
-
             // Filesystem tools
             {
                 name: "read_file",
@@ -1389,14 +1383,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                     };
                 }
                 break;
-            case "import_semantic_projection_api_key":
-                try {
-                    result = await importSemanticProjectionApiKey(args);
-                } catch (error) {
-                    result = { content: [{ type: "text", text: `Error: Failed to import semantic projection API key: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
-                }
-                break;
-
             case "get_usage_stats":
                 try {
                     result = await getUsageStats();

@@ -1,5 +1,5 @@
 import { configManager, ServerConfig } from '../config-manager.js';
-import { SetConfigValueArgsSchema, ImportSemanticProjectionApiKeyArgsSchema } from './schemas.js';
+import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
@@ -156,22 +156,6 @@ export async function getConfig() {
   }
 }
 
-export async function importSemanticProjectionApiKey(args: unknown) {
-  const parsed = ImportSemanticProjectionApiKeyArgsSchema.safeParse(args);
-  if (!parsed.success) {
-    return { content: [{ type: 'text', text: `Invalid arguments: ${parsed.error}` }], isError: true };
-  }
-  const key = (await readFileInternal(parsed.data.path, 0, 10)).trim();
-  if (!key) {
-    return { content: [{ type: 'text', text: 'The selected file is empty.' }], isError: true };
-  }
-  if (key.includes('\n')) {
-    return { content: [{ type: 'text', text: 'The key file must contain only the API key on one line.' }], isError: true };
-  }
-  await storeSemanticProjectionApiKey(key);
-  return { content: [{ type: 'text', text: `Semantic projection API key imported from ${parsed.data.path}. The key itself was not returned to the model.` }] };
-}
-
 /**
  * Set a specific config value
  */
@@ -205,6 +189,26 @@ export async function setConfigValue(args: unknown) {
       await storeSemanticProjectionApiKey(parsed.data.value);
       return {
         content: [{ type: 'text', text: 'Semantic projection API key saved in the local secret store.' }],
+      };
+    }
+
+    if (parsed.data.key === 'semanticProjectionApiKeyFile') {
+      if (typeof parsed.data.value !== 'string' || !parsed.data.value.trim()) {
+        return {
+          content: [{ type: 'text', text: 'semanticProjectionApiKeyFile must be a local file path.' }],
+          isError: true,
+        };
+      }
+      const key = (await readFileInternal(parsed.data.value.trim(), 0, 10)).trim();
+      if (!key) {
+        return { content: [{ type: 'text', text: 'The selected key file is empty.' }], isError: true };
+      }
+      if (key.includes('\n')) {
+        return { content: [{ type: 'text', text: 'The key file must contain only the API key on one line.' }], isError: true };
+      }
+      await storeSemanticProjectionApiKey(key);
+      return {
+        content: [{ type: 'text', text: `Semantic projection API key imported from ${parsed.data.value.trim()}. The key itself was not returned.` }],
       };
     }
 

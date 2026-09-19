@@ -7,10 +7,6 @@ export const GetConfigArgsSchema = z.object({
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
-export const ImportSemanticProjectionApiKeyArgsSchema = z.object({
-  path: z.string().min(1),
-});
-
 export const SetConfigValueArgsSchema = z.object({
   key: z.string(),
   value: z.union([
@@ -263,7 +259,6 @@ export const TrackUiEventArgsSchema = z.object({
 export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
-  import_semantic_projection_api_key: ImportSemanticProjectionApiKeyArgsSchema,
   read_file: ReadFileArgsSchema,
   read_multiple_files: ReadMultipleFilesArgsSchema,
   write_file: WriteFileArgsSchema,
