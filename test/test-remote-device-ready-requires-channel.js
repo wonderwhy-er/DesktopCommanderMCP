@@ -34,7 +34,7 @@
  *   node test/test-remote-device-ready-requires-channel.js
  */
 import assert from 'node:assert';
-import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { ChannelUnreachableError, RemoteChannel } from '../dist/remote-device/remote-channel.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -114,6 +114,7 @@ class FakeClient {
     statusWrites = []; // just the `status` values, in order
     channelJoins = true;
     presenceAcks = true; // does the channel acknowledge track()?
+    failCapabilityWrite = false; // does the capability write reach the row?
     deviceExists = true; // is there a row for this device id at all?
     statusWritesBeforeJoin = null;
 
@@ -137,6 +138,7 @@ class FakeClient {
     from(table) {
         assert.equal(table, 'mcp_devices', `unexpected table: ${table}`);
         const client = this;
+        let result = { data: [{ id: DEVICE_ID }], error: null };
         // One thenable that is also chainable, because the three callers end
         // the chain differently: findDevice with .maybeSingle(), updateDevice
         // with .select(), setOnlineStatus with a bare .eq().
@@ -145,6 +147,11 @@ class FakeClient {
             update: (updates) => {
                 client.writes.push(updates);
                 if (typeof updates.status === 'string') client.statusWrites.push(updates.status);
+                // Supabase reports a refused write in the result, not by
+                // throwing — which is how it reaches code that ignores it.
+                if (updates.capabilities?.transport_broadcast_v1 === true && client.failCapabilityWrite) {
+                    result = { data: null, error: { message: 'capability write refused' } };
+                }
                 return node;
             },
             insert: () => node,
@@ -154,8 +161,7 @@ class FakeClient {
                     data: client.deviceExists ? { id: DEVICE_ID, device_name: 'test-device' } : null,
                     error: null
                 }),
-            then: (resolve, reject) =>
-                Promise.resolve({ data: [{ id: DEVICE_ID }], error: null }).then(resolve, reject)
+            then: (resolve, reject) => Promise.resolve(result).then(resolve, reject)
         };
         return node;
     }
@@ -229,9 +235,8 @@ await test('registration fails out loud when the channel cannot join', async () 
             // device.ts keeps the process alive for this one and promises a
             // background retry, so it must be told apart from a registration
             // error nothing can repair — see the missing-row case below.
-            assert.equal(
-                error.name,
-                'ChannelUnreachableError',
+            assert.ok(
+                error instanceof ChannelUnreachableError,
                 `registerDevice() reported a failed join as ${error.name}. device.ts cannot ` +
                     'distinguish it from an unrecoverable registration failure, so it either ' +
                     'kills a recoverable process or promises a retry that can never happen.'
@@ -288,6 +293,34 @@ await test('a joined channel whose presence is never acknowledged is not ready',
     assert.ok(
         !client.advertisedBroadcast(),
         'precondition: the capability must stay withdrawn when presence fails'
+    );
+});
+
+// Presence landing is not the end of it: it only matters because it writes the
+// capability, and Supabase reports a refused write in the result rather than by
+// throwing. A device that publishes presence but cannot record it is in the same
+// place as one that never published — the server will not dispatch to it.
+await test('a device whose readiness write is refused is not ready', async () => {
+    const { rc, client } = makeRemoteChannel(true, { failCapabilityWrite: true });
+
+    await assert.rejects(
+        () => register(rc),
+        (error) => {
+            assert.ok(
+                error instanceof ChannelUnreachableError,
+                `expected a recoverable channel failure, got ${error.name}`
+            );
+            return true;
+        },
+        'registerDevice() resolved although the capability write was refused. Presence was ' +
+            'published, so the device believes it is ready, while the row carries neither the ' +
+            'capability nor online — and the server refuses every call to it.'
+    );
+    await flush(10);
+
+    assert.ok(
+        !client.statusWrites.includes('online'),
+        `the row claimed ${JSON.stringify(client.statusWrites)} although its capability never landed`
     );
 });
 
