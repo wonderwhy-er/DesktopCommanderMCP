@@ -554,10 +554,28 @@ export class RemoteChannel {
                 captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
                 // Proven end-to-end (joined AND presence published) — only now
                 // advertise the capability dispatch requires.
-                await this.setTransportCapable(true);
+                //
+                // Both writes have to land. Supabase reports a refused
+                // write in the result rather than by throwing, and a
+                // device whose row records neither the capability nor
+                // `online` is exactly as undispatchable as one that never
+                // published presence — so it must not report itself ready.
+                // The health check retries presence while presenceTracked
+                // is false, which is the way back.
+                const capabilityWritten = await this.setTransportCapable(true);
                 // Same event, same promise: the row may claim reachable
                 // only where the capability is advertised.
-                this.queueStatusWrite('online');
+                // Strictly after, never alongside: `online` may be claimed only
+                // where the capability is already advertised, or the row lands
+                // back in the state this whole change is about.
+                const statusWritten = capabilityWritten ? await this.queueStatusWrite('online') : false;
+                if (!capabilityWritten || !statusWritten) {
+                    this.presenceTracked = false;
+                    console.error('❌ Presence published but the device row could not be updated — not ready');
+                    captureRemote('remote_channel_readiness_write_failed', {
+                        capabilityWritten, statusWritten
+                    }).catch(() => { });
+                }
                 return;
             }
 
@@ -590,9 +608,9 @@ export class RemoteChannel {
      * reachable that way — the server fails dispatch fast without it and picks
      * the offline-sweep tier from it, so every change must re-arm the heartbeat.
      */
-    private async setTransportCapable(capable: boolean): Promise<void> {
-        if (!this.client || !this.deviceId) return;
-        if (this.transportCapableWritten === capable) return; // no redundant writes
+    private async setTransportCapable(capable: boolean): Promise<boolean> {
+        if (!this.client || !this.deviceId) return false;
+        if (this.transportCapableWritten === capable) return true; // no redundant writes
         try {
             const capabilities = this.capabilitiesPayload(capable);
             const { error } = await this.client
@@ -601,7 +619,7 @@ export class RemoteChannel {
                 .eq('id', this.deviceId);
             if (error) {
                 console.error('[DEBUG] Failed to update transport capability:', error.message);
-                return;
+                return false;
             }
             this.transportCapableWritten = capable;
             console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
@@ -615,7 +633,9 @@ export class RemoteChannel {
             }
         } catch (error: any) {
             console.error('[DEBUG] Transport capability update threw:', error?.message);
+            return false;
         }
+        return true;
     }
 
     /** Create and subscribe the private channel (initial join and recreation). */
@@ -1145,17 +1165,22 @@ export class RemoteChannel {
      * Not the single writer: updateHeartbeat, registerDevice and setOffline's
      * subprocess write status directly, so this is not total ordering.
      */
-    private queueStatusWrite(status: 'online' | 'offline'): void {
+    private queueStatusWrite(status: 'online' | 'offline'): Promise<boolean> {
         // After teardown begins, setOffline() owns the final status write.
         if (this.shuttingDown) {
             console.debug(`[DEBUG] Status write '${status}' suppressed — teardown in progress`);
-            return;
+            return Promise.resolve(false);
         }
-        this.statusWriteChain = this.statusWriteChain
-            .then(() => (this.deviceId ? this.setOnlineStatus(this.deviceId, status) : undefined))
+        // The chain only sequences the writes; whether one landed goes back
+        // to whoever asked, so readiness can depend on it.
+        const write = this.statusWriteChain
+            .then(() => (this.deviceId ? this.setOnlineStatus(this.deviceId, status) : false))
             .catch((e: any) => {
                 console.error('[DEBUG] Status write failed:', e?.message);
+                return false;
             });
+        this.statusWriteChain = write.then(() => undefined);
+        return write;
     }
 
     /**
@@ -1282,8 +1307,9 @@ export class RemoteChannel {
         this.stopTokenRefresh();
     }
 
-    async setOnlineStatus(deviceId: string, status: 'online' | 'offline') {
-        if (!this.client) return;
+    /** @returns whether the row actually took the write. */
+    async setOnlineStatus(deviceId: string, status: 'online' | 'offline'): Promise<boolean> {
+        if (!this.client) return false;
 
         // Only log if status changed
         if (this.lastDeviceStatus !== status) {
@@ -1302,10 +1328,12 @@ export class RemoteChannel {
                 console.error('Failed to update device status:', error.message);
             }
             await captureRemote('remote_channel_status_update_error', { error, status });
-            return;
+            return false;
         } else {
             console.debug(`[DEBUG] Device status set to ${status}`);
         }
+
+        return true;
 
         // console.log(status === 'online' ? `🔌 Device marked as ${status}` : `❌ Device marked as ${status}`);
     }
