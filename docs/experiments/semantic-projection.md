@@ -101,6 +101,22 @@ When semantic projection is used, source content being evaluated is sent from De
 
 That is why the feature is opt-in and disabled by default. Normal reads do not use the provider unless the caller supplies `projection`.
 
+## Projection metrics
+
+Projected reads append a metrics footer that reports:
+
+- source lines/bytes considered by the projection layer;
+- source lines/bytes actually returned to the host model;
+- source lines/bytes withheld from the host model and the resulting reduction percentage;
+- serialized Jev request/response size;
+- provider-reported input/output token usage;
+- estimated Jev cost using the published early-access input rate ($0.042 per million input tokens; Jev output is currently free);
+- Jev HTTP round-trip latency and total projection latency.
+
+The monetary value is an estimate calculated by Desktop Commander from TypeSafe's provider-reported input-token count; TypeSafe does not currently return a monetary cost field.
+
+When Desktop Commander telemetry is enabled, each projected read also emits a `server_semantic_projection` aggregate event containing counts, byte sizes, token usage, estimated cost, and latency. It does **not** include file paths, filenames, instructions, source text, selected text, or API keys.
+
 ## Current limitations
 
 - Only `mode: "select"` is implemented.

@@ -11,6 +11,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { selectRelevantLineChunks } from '../semantic-projection/select.js';
+import { formatProjectionMetrics } from '../semantic-projection/metrics.js';
 
 // Get the directory where the MCP is installed (for ES module imports)
 const __filename = fileURLToPath(import.meta.url);
@@ -330,8 +331,23 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     const selectedText = projected.selected.map((chunk) =>
       `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
     ).join('\n\n');
+    capture('server_semantic_projection', {
+      source_kind: 'process_output',
+      selected_count: projected.selected.length,
+      candidate_count: projected.totalChunks,
+      source_bytes: projected.metrics.source.bytes,
+      exposed_bytes: projected.metrics.exposedToHost.bytes,
+      withheld_percent: projected.metrics.withheldPercent,
+      jev_request_bytes: projected.metrics.jev.requestBytes,
+      jev_response_bytes: projected.metrics.jev.responseBytes,
+      jev_input_tokens: projected.metrics.jev.inputTokens,
+      jev_output_tokens: projected.metrics.jev.outputTokens,
+      jev_estimated_cost_usd: projected.metrics.jev.estimatedCostUsd,
+      jev_latency_ms: projected.metrics.jev.latencyMs,
+      projection_total_ms: projected.metrics.totalProjectionMs,
+    });
     return {
-      content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} process-output chunks.\n\n${selectedText}` }],
+      content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} process-output chunks.\n\n${selectedText}\n\n${formatProjectionMetrics(projected.metrics)}` }],
     };
   }
 

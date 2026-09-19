@@ -29,7 +29,7 @@ try {
         ?? '';
       answers[id] = { type: 'noul', noul: source.includes('NEEDLE') ? 0.97 : 0.08 };
     }
-    return new Response(JSON.stringify({ model: 'jev-latest', answers }), {
+    return new Response(JSON.stringify({ model: 'jev-latest', answers, usage: { input_tokens: 1000, output_tokens: 0 } }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
@@ -59,8 +59,17 @@ try {
   assert.equal(projected.selected[0].score, 0.97);
   assert.equal(lastRequest.model, 'jev-latest');
   assert.match(JSON.stringify(lastRequest.state), /NEEDLE/);
+  assert.equal(projected.metrics.jev.inputTokens, 1000);
+  assert.equal(projected.metrics.jev.outputTokens, 0);
+  assert.equal(projected.metrics.jev.estimatedCostUsd, 0.000042);
+  assert.ok(projected.metrics.jev.requestBytes > 0);
+  assert.ok(projected.metrics.jev.responseBytes > 0);
+  assert.ok(projected.metrics.jev.latencyMs >= 0);
+  assert.ok(projected.metrics.withheldPercent > 0);
+  assert.equal(projected.metrics.source.lines, 8);
+  assert.equal(projected.metrics.exposedToHost.lines, 3);
 
-  const candidates = await selectRelevantCandidates([
+  const candidateProjection = await selectRelevantCandidates([
     { id: 'a', label: 'a.ts', text: 'ordinary implementation' },
     { id: 'b', label: 'b.ts', text: 'NEEDLE relevant implementation' },
   ], {
@@ -69,9 +78,12 @@ try {
     limit: 1,
   });
 
-  assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].id, 'b');
-  assert.equal(candidates[0].score, 0.97);
+  assert.equal(candidateProjection.selected.length, 1);
+  assert.equal(candidateProjection.selected[0].id, 'b');
+  assert.equal(candidateProjection.selected[0].score, 0.97);
+  assert.equal(candidateProjection.metrics.exposedToHost.bytes, 0);
+  assert.equal(candidateProjection.metrics.withheldPercent, 100);
+  assert.equal(candidateProjection.metrics.jev.inputTokens, 1000);
 
   console.log('✅ Semantic projection selection tests passed');
 } finally {

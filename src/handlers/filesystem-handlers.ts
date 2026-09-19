@@ -32,6 +32,8 @@ import path from 'path';
 import os from 'os';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 import { selectRelevantLineChunks, selectRelevantCandidates } from '../semantic-projection/select.js';
+import { formatProjectionMetrics } from '../semantic-projection/metrics.js';
+import { capture } from '../utils/capture.js';
 
 /**
  * Expand home directory (~) in a file path
@@ -215,8 +217,23 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                 const selectedText = projected.selected.map((chunk) =>
                     `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
                 ).join('\n\n');
+                capture('server_semantic_projection', {
+                    source_kind: 'file_lines',
+                    selected_count: projected.selected.length,
+                    candidate_count: projected.totalChunks,
+                    source_bytes: projected.metrics.source.bytes,
+                    exposed_bytes: projected.metrics.exposedToHost.bytes,
+                    withheld_percent: projected.metrics.withheldPercent,
+                    jev_request_bytes: projected.metrics.jev.requestBytes,
+                    jev_response_bytes: projected.metrics.jev.responseBytes,
+                    jev_input_tokens: projected.metrics.jev.inputTokens,
+                    jev_output_tokens: projected.metrics.jev.outputTokens,
+                    jev_estimated_cost_usd: projected.metrics.jev.estimatedCostUsd,
+                    jev_latency_ms: projected.metrics.jev.latencyMs,
+                    projection_total_ms: projected.metrics.totalProjectionMs,
+                });
                 return {
-                    content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}` }],
+                    content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}\n\n${formatProjectionMetrics(projected.metrics)}` }],
                 };
             }
             return {
@@ -262,12 +279,28 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 : String(result.content ?? '');
             return [{ id: result.path, label: result.path, text }];
         });
-        const selected = await selectRelevantCandidates(candidates, parsed.projection);
+        const projected = await selectRelevantCandidates(candidates, parsed.projection);
+        const selected = projected.selected;
         const body = selected.map((item, index) =>
             `${index + 1}. ${item.label} (relevance ${item.score.toFixed(3)})`
         ).join('\n');
-        const considered = Math.min(candidates.length, 64);
-        return { content: [{ type: 'text', text: `Semantic projection selected ${selected.length} of ${considered} considered files.\n\n${body}\n\nUse read_file on the selected paths to inspect content.` }] };
+        const considered = projected.totalCandidates;
+        capture('server_semantic_projection', {
+            source_kind: 'multi_file_candidates',
+            selected_count: selected.length,
+            candidate_count: considered,
+            source_bytes: projected.metrics.source.bytes,
+            exposed_bytes: projected.metrics.exposedToHost.bytes,
+            withheld_percent: projected.metrics.withheldPercent,
+            jev_request_bytes: projected.metrics.jev.requestBytes,
+                    jev_response_bytes: projected.metrics.jev.responseBytes,
+                    jev_input_tokens: projected.metrics.jev.inputTokens,
+            jev_output_tokens: projected.metrics.jev.outputTokens,
+            jev_estimated_cost_usd: projected.metrics.jev.estimatedCostUsd,
+            jev_latency_ms: projected.metrics.jev.latencyMs,
+            projection_total_ms: projected.metrics.totalProjectionMs,
+        });
+        return { content: [{ type: 'text', text: `Semantic projection selected ${selected.length} of ${considered} considered files.\n\n${body}\n\nUse read_file on the selected paths to inspect content.\n\n${formatProjectionMetrics(projected.metrics)}` }] };
     }
 
     // Create a text summary of all files

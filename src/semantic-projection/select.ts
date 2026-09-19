@@ -1,5 +1,6 @@
 import { evaluateWithJev } from './provider.js';
 import { configManager } from '../config-manager.js';
+import { buildProjectionMetrics, sumTextStats, textStats, type ProjectionMetrics } from './metrics.js';
 
 export type ProjectionSelectOptions = {
   mode: 'select';
@@ -28,7 +29,8 @@ export async function selectRelevantLineChunks(
   text: string,
   projection: ProjectionSelectOptions,
   baseLine = 0
-): Promise<{ selected: SelectedChunk[]; totalChunks: number; model?: string }> {
+): Promise<{ selected: SelectedChunk[]; totalChunks: number; model?: string; metrics: ProjectionMetrics }> {
+  const projectionStartedAt = performance.now();
   const lines = text.split(/\r?\n/);
   const chunkLines = Math.max(5, Math.min(200, projection.chunkLines ?? 40));
   const limit = Math.max(1, Math.min(20, projection.limit ?? 5));
@@ -45,7 +47,9 @@ export async function selectRelevantLineChunks(
     });
   }
 
-  if (chunks.length === 0) return { selected: [], totalChunks: 0 };
+  if (chunks.length === 0) {
+    throw new Error('Semantic projection requires non-empty text.');
+  }
 
   const questions = Object.fromEntries(chunks.map((chunk) => [
     chunk.id,
@@ -64,7 +68,7 @@ export async function selectRelevantLineChunks(
     throw new Error('Semantic projection is disabled. Enable it in Desktop Commander settings first.');
   }
 
-  const response = await evaluateWithJev({
+  const evaluation = await evaluateWithJev({
     state: {
       task: projection.instruction,
       chunks: chunks.map(({ index, startLine, endLine, text }) => ({ index, startLine, endLine, text })),
@@ -72,7 +76,7 @@ export async function selectRelevantLineChunks(
     questions,
     model: config.semanticProjectionModel || 'jev-latest',
   });
-
+  const response = evaluation.response;
   const answers = response?.answers ?? {};
   const ranked = chunks
     .map((chunk) => ({ ...chunk, score: probabilityFromAnswer(answers[chunk.id]) }))
@@ -80,7 +84,14 @@ export async function selectRelevantLineChunks(
     .slice(0, limit)
     .map(({ id: _id, ...chunk }) => chunk);
 
-  return { selected: ranked, totalChunks: chunks.length, model: response?.model };
+  const metrics = buildProjectionMetrics(
+    textStats(text),
+    sumTextStats(ranked.map((chunk) => chunk.text)),
+    evaluation.metrics,
+    performance.now() - projectionStartedAt,
+  );
+
+  return { selected: ranked, totalChunks: chunks.length, model: response?.model, metrics };
 }
 
 export type ProjectionCandidate = {
@@ -92,8 +103,11 @@ export type ProjectionCandidate = {
 export async function selectRelevantCandidates(
   candidates: ProjectionCandidate[],
   projection: ProjectionSelectOptions
-): Promise<Array<ProjectionCandidate & { score: number }>> {
-  if (candidates.length === 0) return [];
+): Promise<{ selected: Array<ProjectionCandidate & { score: number }>; totalCandidates: number; metrics: ProjectionMetrics }> {
+  const projectionStartedAt = performance.now();
+  if (candidates.length === 0) {
+    throw new Error('Semantic projection requires at least one candidate.');
+  }
   const limit = Math.max(1, Math.min(20, projection.limit ?? 5));
   const config = await configManager.getConfig();
   if (!config.semanticProjectionEnabled) {
@@ -120,7 +134,7 @@ export async function selectRelevantCandidates(
     },
   ]));
 
-  const response = await evaluateWithJev({
+  const evaluation = await evaluateWithJev({
     state: {
       task: projection.instruction,
       candidates: workingCandidates.map((candidate, index) => ({ index, ...candidate })),
@@ -128,13 +142,23 @@ export async function selectRelevantCandidates(
     questions,
     model: config.semanticProjectionModel || 'jev-latest',
   });
+  const response = evaluation.response;
   const answers = response?.answers ?? {};
 
-  return workingCandidates
+  const selected = workingCandidates
     .map((candidate, index) => ({
       ...candidate,
       score: probabilityFromAnswer(answers[`candidate_${index}`]),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+
+  const metrics = buildProjectionMetrics(
+    sumTextStats(workingCandidates.map((candidate) => candidate.text)),
+    { lines: 0, chars: 0, bytes: 0 },
+    evaluation.metrics,
+    performance.now() - projectionStartedAt,
+  );
+
+  return { selected, totalCandidates: workingCandidates.length, metrics };
 }
