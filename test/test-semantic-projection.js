@@ -13,6 +13,8 @@ try {
   const { configManager } = await import('../dist/config-manager.js');
   const { selectRelevantLineChunks, selectRelevantCandidates } =
     await import('../dist/semantic-projection/select.js');
+  const { formatProjectionCoverage, formatSelectedLineChunks } =
+    await import('../dist/semantic-projection/format.js');
 
   await configManager.setValue('semanticProjectionEnabled', true);
   await configManager.setValue('semanticProjectionModel', 'jev-latest');
@@ -50,7 +52,7 @@ try {
     mode: 'select',
     instruction: 'Find the root cause',
     chunkLines: 5,
-    limit: 1,
+    minRelevance: 0.65,
   });
 
   assert.equal(projected.selected.length, 1);
@@ -69,13 +71,33 @@ try {
   assert.equal(projected.metrics.source.lines, 8);
   assert.equal(projected.metrics.exposedToHost.lines, 3);
 
+  const formattedChunks = formatSelectedLineChunks(projected.selected);
+  assert.match(formattedChunks, /\[lines 5-7, relevance 0\.970\]/);
+  assert.match(formattedChunks, /5: NEEDLE root cause appears here/);
+  assert.match(formattedChunks, /6: important follow-up/);
+  assert.match(formattedChunks, /7: ordinary tail/);
+
+  const coverageMap = formatProjectionCoverage(projected.selected, 0, projected.metrics.source.lines);
+  assert.match(coverageMap, /Selected source ranges: 5-7/);
+  assert.match(coverageMap, /Withheld source ranges: 0-4/);
+
+  const gatedOut = await selectRelevantLineChunks(text, {
+    mode: 'select',
+    instruction: 'Find the root cause',
+    chunkLines: 5,
+    minRelevance: 0.99,
+  });
+  assert.equal(gatedOut.selected.length, 0);
+  assert.equal(gatedOut.metrics.exposedToHost.bytes, 0);
+  assert.equal(gatedOut.metrics.withheldPercent, 100);
+
   const candidateProjection = await selectRelevantCandidates([
     { id: 'a', label: 'a.ts', text: 'ordinary implementation' },
     { id: 'b', label: 'b.ts', text: 'NEEDLE relevant implementation' },
   ], {
     mode: 'select',
     instruction: 'Find relevant implementation',
-    limit: 1,
+    minRelevance: 0.65,
   });
 
   assert.equal(candidateProjection.selected.length, 1);

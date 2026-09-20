@@ -15,6 +15,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
+import { selectRelevantLineChunks } from './semantic-projection/select.js';
+import { formatProjectionMetrics } from './semantic-projection/metrics.js';
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -23,6 +25,20 @@ const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
 const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
+
+function toolInputSchema(schema: any, includeSemanticProjection: boolean, requireSemanticTask = false) {
+    const jsonSchema = zodToJsonSchema(schema) as any;
+    if (!includeSemanticProjection) {
+        if (jsonSchema?.properties?.projection) delete jsonSchema.properties.projection;
+        if (jsonSchema?.properties?.semanticTask) delete jsonSchema.properties.semanticTask;
+        if (Array.isArray(jsonSchema.required)) {
+            jsonSchema.required = jsonSchema.required.filter((name: string) => name !== 'projection' && name !== 'semanticTask');
+        }
+    } else if (requireSemanticTask && jsonSchema?.properties?.semanticTask) {
+        jsonSchema.required = Array.from(new Set([...(jsonSchema.required ?? []), 'semanticTask']));
+    }
+    return jsonSchema;
+}
 
 import {
     StartProcessArgsSchema,
@@ -59,6 +75,7 @@ import {
     buildUnsupportedParamsWarning,
 } from './utils/unsupportedParams.js';
 import { getConfig, setConfigValue } from './tools/config.js';
+import { configManager } from './config-manager.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -301,6 +318,41 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     try {
         // logToStderr('debug', 'Generating tools list...');
         const showMcpUiPreviews = await shouldShowMcpUiPreviews();
+        const semanticProjectionEnabled = (await configManager.getConfig()).semanticProjectionEnabled === true;
+        const semanticProjectionConfigKeys = semanticProjectionEnabled
+            ? `
+                        - semanticProjectionApiKey (reserved secret key; stores the value outside config.json)
+                        - semanticProjectionApiKeyFile (reserved local file path; imports a one-line secret without returning file contents)`
+            : '';
+        const readFileProjectionDescription = semanticProjectionEnabled
+            ? `
+
+                        SEMANTIC PROJECTION (experimental):
+                        - projection: { mode: "select", instruction, minRelevance?, chunkLines? }
+                        - minRelevance is a relevance quality gate from 0 to 1 (default 0.65).
+                        - Desktop Commander evaluates all chunks and returns only chunks meeting the quality gate.
+                        - The source content used for projection is sent to the configured Jev/TypeSafe provider.
+                        - Currently applies to text results; image/PDF-specific rendering keeps normal behavior.`
+            : '';
+        const readMultipleProjectionDescription = semanticProjectionEnabled
+            ? `
+
+                        SEMANTIC PROJECTION (experimental):
+                        - projection: { mode: "select", instruction, minRelevance? }
+                        - minRelevance is a relevance quality gate from 0 to 1 (default 0.65).
+                        - Desktop Commander evaluates candidate file samples and returns only paths meeting the quality gate.
+                        - It does NOT return those files' contents; call read_file on selected paths afterward.
+                        - At most 64 files are considered and each file sample is capped at 12,000 characters.`
+            : '';
+        const processProjectionDescription = semanticProjectionEnabled
+            ? `
+
+                        SEMANTIC PROJECTION (experimental):
+                        - projection: { mode: "select", instruction, minRelevance?, chunkLines? }
+                        - minRelevance is a relevance quality gate from 0 to 1 (default 0.65).
+                        - Desktop Commander evaluates the requested output window and returns only chunks meeting the quality gate.
+                        - The evaluated process output is sent to the configured Jev/TypeSafe provider.`
+            : '';
 
         // Build complete tools array
         const allTools = [
@@ -341,9 +393,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - allowedDirectories (array of paths)
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
-                        - telemetryEnabled (boolean)
-                        - semanticProjectionApiKey (reserved secret key; stores the value outside config.json)
-                        - semanticProjectionApiKeyFile (reserved local file path; imports a one-line secret without returning file contents)
+                        - telemetryEnabled (boolean)${semanticProjectionConfigKeys}
                         
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
@@ -389,14 +439,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Can fetch content from URLs when isUrl parameter is set to true
                         (URLs are always read in full regardless of offset/length).
 
-                        SEMANTIC PROJECTION (experimental, optional):
-                        - projection: { mode: "select", instruction, limit?, chunkLines? }
-                        - Instead of returning the entire text read, Desktop Commander chunks it by lines,
-                          sends those chunks to the configured Jev/TypeSafe provider, and returns only the
-                          most relevant chunks with their original line ranges and relevance probabilities.
-                        - Requires semanticProjectionEnabled=true and a configured API key.
-                        - The source content used for projection is sent to the configured external provider.
-                        - Currently applies to text results; image/PDF-specific rendering keeps normal behavior.
+                        ${readFileProjectionDescription}
                         
                         FORMAT HANDLING (by extension):
                         - Text: Uses offset/length for line-based pagination
@@ -424,7 +467,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadFileArgsSchema),
+                inputSchema: toolInputSchema(ReadFileArgsSchema, semanticProjectionEnabled, true),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "Read File or URL",
@@ -444,18 +487,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
 
-                        SEMANTIC PROJECTION (experimental, optional):
-                        - projection: { mode: "select", instruction, limit? }
-                        - Desktop Commander reads the files internally, sends bounded text samples to the
-                          configured Jev/TypeSafe provider, and returns only the best matching file paths
-                          with relevance probabilities. It does NOT return those files' contents in this mode;
-                          call read_file on selected paths afterward.
-                        - At most 64 files are considered and each file sample is capped at 12,000 characters.
-                        - Requires semanticProjectionEnabled=true and a configured API key.
+                        ${readMultipleProjectionDescription}
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
+                inputSchema: toolInputSchema(ReadMultipleFilesArgsSchema, semanticProjectionEnabled, true),
                 annotations: {
                     title: "Read Multiple Files",
                     readOnlyHint: true,
@@ -622,7 +658,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
+                inputSchema: toolInputSchema(ListDirectoryArgsSchema, semanticProjectionEnabled, true),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
                     title: "List Directory Contents",
@@ -728,7 +764,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(StartSearchArgsSchema),
+                inputSchema: toolInputSchema(StartSearchArgsSchema, semanticProjectionEnabled, true),
                 annotations: {
                     title: "Start Search",
                     readOnlyHint: true,
@@ -758,7 +794,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         results from a search started with start_search.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
+                inputSchema: toolInputSchema(GetMoreSearchResultsArgsSchema, semanticProjectionEnabled, true),
                 annotations: {
                     title: "Get Search Results",
                     readOnlyHint: true,
@@ -958,7 +994,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(StartProcessArgsSchema),
+                inputSchema: toolInputSchema(StartProcessArgsSchema, semanticProjectionEnabled, true),
                 annotations: {
                     title: "Start Terminal Process",
                     readOnlyHint: false,
@@ -995,12 +1031,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Detects REPL prompts and process completion
                         - Shows process state (waiting for input, finished, etc.)
 
-                        SEMANTIC PROJECTION (experimental, optional):
-                        - projection: { mode: "select", instruction, limit?, chunkLines? }
-                        - Desktop Commander evaluates the requested output window with Jev/TypeSafe and returns
-                          only the most relevant line chunks, preserving process-output line ranges.
-                        - The evaluated process output is sent to the configured external provider.
-                        - Requires semanticProjectionEnabled=true and a configured API key.
+                        ${processProjectionDescription}
                         
                         DETECTION STATES:
                         Process waiting for input (ready for interact_with_process)
@@ -1008,7 +1039,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Timeout reached (may still be running)
 
                         ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(ReadProcessOutputArgsSchema),
+                inputSchema: toolInputSchema(ReadProcessOutputArgsSchema, semanticProjectionEnabled, true),
                 annotations: {
                     title: "Read Process Output",
                     readOnlyHint: true,
@@ -1291,9 +1322,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     return handleCallToolRequest(request);
 });
 
+const SMART_SEMANTIC_TOOLS = new Set([
+    'read_file', 'read_multiple_files', 'list_directory', 'start_search',
+    'get_more_search_results', 'start_process', 'read_process_output',
+]);
+
+function getSemanticTask(args: unknown): string | undefined {
+    if (!args || typeof args !== 'object') return undefined;
+    const value = (args as any).semanticTask;
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+async function smartFilterResult(result: ServerResult, semanticTask: string, toolName: string): Promise<ServerResult> {
+    if (result.isError) return result;
+    const textItems = result.content.filter((item) => item.type === 'text' && typeof item.text === 'string');
+    const totalText = textItems.map((item) => item.text ?? '').join('\n');
+    if (totalText.length < 4000) return result;
+    const projected = await selectRelevantLineChunks(totalText, { mode: 'select', instruction: semanticTask, minRelevance: 0.40, chunkLines: 20 });
+    const selectedText = projected.selected.map((chunk) =>
+        `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
+    ).join('\n\n');
+    capture('server_semantic_projection', {
+        source_kind: `tool_result_${toolName}`, selected_count: projected.selected.length, candidate_count: projected.totalChunks,
+        source_bytes: projected.metrics.source.bytes, exposed_bytes: projected.metrics.exposedToHost.bytes, withheld_percent: projected.metrics.withheldPercent,
+        jev_input_tokens: projected.metrics.jev.inputTokens, jev_output_tokens: projected.metrics.jev.outputTokens,
+        jev_estimated_cost_usd: projected.metrics.jev.estimatedCostUsd, jev_latency_ms: projected.metrics.jev.latencyMs, projection_total_ms: projected.metrics.totalProjectionMs,
+    });
+    return { ...result, content: [{ type: 'text', text: `Smart result selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}\n\n${formatProjectionMetrics(projected.metrics)}` }] };
+}
+
 async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
+    const smartEnabled = (await configManager.getConfig()).semanticProjectionEnabled === true;
+    const semanticTask = getSemanticTask(args);
+    if (smartEnabled && SMART_SEMANTIC_TOOLS.has(name) && !semanticTask) {
+        return { content: [{ type: 'text', text: `Smart Context requires semanticTask for ${name}. Describe what evidence this tool result should contribute to.` }], isError: true };
+    }
+    let dispatchArgs: any = args;
+    if (smartEnabled && semanticTask && args && typeof args === 'object') {
+        dispatchArgs = { ...(args as any) };
+        const requestedLength = typeof dispatchArgs.length === 'number' ? dispatchArgs.length : undefined;
+        const shouldProjectPagedRead = requestedLength === undefined || requestedLength > 300;
+        if (name === 'read_multiple_files' && !dispatchArgs.projection) {
+            dispatchArgs.projection = { mode: 'select', instruction: semanticTask, minRelevance: 0.40, chunkLines: 40 };
+        } else if ((name === 'read_file' || name === 'read_process_output') && shouldProjectPagedRead && !dispatchArgs.projection) {
+            dispatchArgs.projection = { mode: 'select', instruction: semanticTask, minRelevance: 0.40, chunkLines: 40 };
+        }
+    }
     // Hoisted above the try so the finally block can read them when emitting the
     // server_call_tool completion event (duration + status), even on the crash path.
     let telemetryData: any = { tool_name: name };
@@ -1479,11 +1555,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Terminal tools
             case "start_process":
-                result = await handlers.handleStartProcess(args);
+                result = await handlers.handleStartProcess(dispatchArgs);
                 break;
 
             case "read_process_output":
-                result = await handlers.handleReadProcessOutput(args);
+                result = await handlers.handleReadProcessOutput(dispatchArgs);
                 break;
 
             case "interact_with_process":
@@ -1511,11 +1587,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Filesystem tools
             case "read_file":
-                result = await handlers.handleReadFile(args);
+                result = await handlers.handleReadFile(dispatchArgs);
                 break;
 
             case "read_multiple_files":
-                result = await handlers.handleReadMultipleFiles(args);
+                result = await handlers.handleReadMultipleFiles(dispatchArgs);
                 break;
 
             case "write_file":
@@ -1531,7 +1607,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 break;
 
             case "list_directory":
-                result = await handlers.handleListDirectory(args);
+                result = await handlers.handleListDirectory(dispatchArgs);
                 break;
 
             case "move_file":
@@ -1539,11 +1615,11 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 break;
 
             case "start_search":
-                result = await handlers.handleStartSearch(args);
+                result = await handlers.handleStartSearch(dispatchArgs);
                 break;
 
             case "get_more_search_results":
-                result = await handlers.handleGetMoreSearchResults(args);
+                result = await handlers.handleGetMoreSearchResults(dispatchArgs);
                 break;
 
             case "stop_search":
@@ -1585,6 +1661,10 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // Track success or failure based on result
         if (name === 'track_ui_event') {
             return result;
+        }
+
+        if (smartEnabled && semanticTask && ['list_directory', 'start_search', 'get_more_search_results', 'start_process'].includes(name)) {
+            result = await smartFilterResult(result, semanticTask, name);
         }
 
         if (result.isError) {

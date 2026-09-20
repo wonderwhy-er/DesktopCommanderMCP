@@ -23,7 +23,7 @@ export const SetConfigValueArgsSchema = z.object({
 export const SemanticProjectionSchema = z.object({
   mode: z.literal('select'),
   instruction: z.string().min(1),
-  limit: z.number().int().min(1).max(20).optional().default(5),
+  minRelevance: z.number().min(0).max(1).optional().default(0.65),
   chunkLines: z.number().int().min(5).max(200).optional().default(40),
 });
 
@@ -33,6 +33,7 @@ export const ListProcessesArgsSchema = z.object({});
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
+  semanticTask: z.string().min(1).optional(),
   timeout_ms: z.number(),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
@@ -43,6 +44,7 @@ export const StartProcessArgsSchema = z.object({
 
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),
+  semanticTask: z.string().min(1).optional(),
   timeout_ms: z.number().optional(),
   offset: z.number().optional(),   // Line offset: 0=from last read, positive=absolute, negative=tail
   length: z.number().optional(),   // Max lines to return (default from config.fileReadLineLimit)
@@ -63,6 +65,7 @@ export const KillProcessArgsSchema = z.object({
 // Filesystem tools schemas
 export const ReadFileArgsSchema = z.object({
   path: z.string(),
+  semanticTask: z.string().min(1).optional(),
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
   length: z.number().optional().default(1000),
@@ -78,6 +81,7 @@ export const ReadFileArgsSchema = z.object({
 
 export const ReadMultipleFilesArgsSchema = z.object({
   paths: z.array(z.string()),
+  semanticTask: z.string().min(1).optional(),
   projection: SemanticProjectionSchema.optional(),
 });
 
@@ -135,6 +139,7 @@ export const CreateDirectoryArgsSchema = z.object({
 
 export const ListDirectoryArgsSchema = z.object({
   path: z.string(),
+  semanticTask: z.string().min(1).optional(),
   depth: z.number().optional().default(2),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
@@ -203,6 +208,7 @@ export const GiveFeedbackArgsSchema = z.object({
 // Search schemas (renamed for natural language)
 export const StartSearchArgsSchema = z.object({
   path: z.string(),
+  semanticTask: z.string().min(1).optional(),
   pattern: z.string(),
   searchType: z.enum(['files', 'content']).default('files'),
   filePattern: z.string().optional(),
@@ -220,6 +226,7 @@ export const StartSearchArgsSchema = z.object({
 
 export const GetMoreSearchResultsArgsSchema = z.object({
   sessionId: z.string(),
+  semanticTask: z.string().min(1).optional(),
   offset: z.number().optional().default(0),    // Same as file reading
   length: z.number().optional().default(100),  // Same as file reading (but smaller default)
 });

@@ -30,9 +30,11 @@ import {
 } from '../tools/schemas.js';
 import path from 'path';
 import os from 'os';
+import fs from 'fs/promises';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
-import { selectRelevantLineChunks, selectRelevantCandidates } from '../semantic-projection/select.js';
+import { selectRelevantLineChunks, selectRelevantCandidates, selectRelevantCorpusChunks } from '../semantic-projection/select.js';
 import { formatProjectionMetrics } from '../semantic-projection/metrics.js';
+import { formatProjectionCoverage, formatSelectedLineChunks } from '../semantic-projection/format.js';
 import { capture } from '../utils/capture.js';
 
 /**
@@ -214,9 +216,13 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             if (parsed.projection) {
                 const rawText = textContent.replace(/^\[Reading[^\n]*\]\n\n?/, '');
                 const projected = await selectRelevantLineChunks(rawText, parsed.projection, parsed.offset >= 0 ? parsed.offset : 0);
-                const selectedText = projected.selected.map((chunk) =>
-                    `[lines ${chunk.startLine}-${chunk.endLine}, relevance ${chunk.score.toFixed(3)}]\n${chunk.text}`
-                ).join('\n\n');
+                const selectedText = formatSelectedLineChunks(projected.selected);
+                const sourceStartLine = parsed.offset >= 0 ? parsed.offset : 0;
+                const coverageMap = formatProjectionCoverage(
+                    projected.selected,
+                    sourceStartLine,
+                    projected.metrics.source.lines,
+                );
                 capture('server_semantic_projection', {
                     source_kind: 'file_lines',
                     selected_count: projected.selected.length,
@@ -233,7 +239,7 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
                     projection_total_ms: projected.metrics.totalProjectionMs,
                 });
                 return {
-                    content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}\n\n${formatProjectionMetrics(projected.metrics)}` }],
+                    content: [{ type: 'text', text: `Semantic projection selected ${projected.selected.length} of ${projected.totalChunks} chunks.\n\n${selectedText}\n\n${coverageMap}\n\n${formatProjectionMetrics(projected.metrics)}` }],
                 };
             }
             return {
@@ -264,12 +270,52 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
     return result;
 }
 
+const SEMANTIC_CORPUS_EXTENSIONS = new Set([
+    '.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.md', '.yaml', '.yml', '.txt', '.sh',
+]);
+const SEMANTIC_CORPUS_SKIP_DIRS = new Set([
+    '.git', 'node_modules', 'dist', 'coverage', '.next', 'build', 'mcpb-bundle', 'test_output',
+]);
+const SEMANTIC_CORPUS_SKIP_FILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml']);
+const SEMANTIC_CORPUS_MAX_FILE_BYTES = 250_000;
+
+async function expandSemanticCorpusPaths(inputPaths: string[]): Promise<string[]> {
+    const files: string[] = [];
+    const seen = new Set<string>();
+    const visit = async (inputPath: string, fromDirectory = false): Promise<void> => {
+        const absolute = resolveAbsolutePath(inputPath);
+        let stats;
+        try { stats = await fs.stat(absolute); } catch { return; }
+        if (stats.isDirectory()) {
+            const entries = await fs.readdir(absolute, { withFileTypes: true });
+            for (const entry of entries) {
+                if (entry.isDirectory() && SEMANTIC_CORPUS_SKIP_DIRS.has(entry.name)) continue;
+                if (SEMANTIC_CORPUS_SKIP_FILES.has(entry.name)) continue;
+                await visit(path.join(absolute, entry.name), true);
+            }
+            return;
+        }
+        if (!stats.isFile() || seen.has(absolute)) return;
+        if (fromDirectory) {
+            if (stats.size > SEMANTIC_CORPUS_MAX_FILE_BYTES) return;
+            if (!SEMANTIC_CORPUS_EXTENSIONS.has(path.extname(absolute).toLowerCase())) return;
+        }
+        seen.add(absolute);
+        files.push(absolute);
+    };
+    for (const inputPath of inputPaths) await visit(inputPath);
+    return files;
+}
+
 /**
  * Handle read_multiple_files command
  */
 export async function handleReadMultipleFiles(args: unknown): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
-    const fileResults = await readMultipleFiles(parsed.paths);
+    const pathsToRead = parsed.projection
+        ? await expandSemanticCorpusPaths(parsed.paths)
+        : parsed.paths;
+    const fileResults = await readMultipleFiles(pathsToRead);
 
     if (parsed.projection) {
         const candidates = fileResults.flatMap((result) => {
@@ -277,30 +323,30 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
             const text = result.isPdf
                 ? (result.payload?.pages ?? []).map((page) => page.text).join('\n')
                 : String(result.content ?? '');
-            return [{ id: result.path, label: result.path, text }];
+            return text ? [{ id: result.path, label: result.path, text }] : [];
         });
-        const projected = await selectRelevantCandidates(candidates, parsed.projection);
+        const projected = await selectRelevantCorpusChunks(candidates, parsed.projection);
         const selected = projected.selected;
-        const body = selected.map((item, index) =>
-            `${index + 1}. ${item.label} (relevance ${item.score.toFixed(3)})`
-        ).join('\n');
-        const considered = projected.totalCandidates;
+        const body = selected.map((item) =>
+            `--- ${item.label} [lines ${item.startLine}-${item.endLine}, relevance ${item.score.toFixed(3)}] ---\n${item.text}`
+        ).join('\n\n');
         capture('server_semantic_projection', {
-            source_kind: 'multi_file_candidates',
+            source_kind: 'multi_file_corpus_chunks',
             selected_count: selected.length,
-            candidate_count: considered,
+            candidate_count: projected.totalChunks,
+            source_files: candidates.length,
             source_bytes: projected.metrics.source.bytes,
             exposed_bytes: projected.metrics.exposedToHost.bytes,
             withheld_percent: projected.metrics.withheldPercent,
             jev_request_bytes: projected.metrics.jev.requestBytes,
-                    jev_response_bytes: projected.metrics.jev.responseBytes,
-                    jev_input_tokens: projected.metrics.jev.inputTokens,
+            jev_response_bytes: projected.metrics.jev.responseBytes,
+            jev_input_tokens: projected.metrics.jev.inputTokens,
             jev_output_tokens: projected.metrics.jev.outputTokens,
             jev_estimated_cost_usd: projected.metrics.jev.estimatedCostUsd,
             jev_latency_ms: projected.metrics.jev.latencyMs,
             projection_total_ms: projected.metrics.totalProjectionMs,
         });
-        return { content: [{ type: 'text', text: `Semantic projection selected ${selected.length} of ${considered} considered files.\n\n${body}\n\nUse read_file on the selected paths to inspect content.\n\n${formatProjectionMetrics(projected.metrics)}` }] };
+        return { content: [{ type: 'text', text: `Semantic corpus projection selected ${selected.length} of ${projected.totalChunks} chunks across ${candidates.length} files.\n\n${body}\n\n${formatProjectionMetrics(projected.metrics)}` }] };
     }
 
     // Create a text summary of all files
