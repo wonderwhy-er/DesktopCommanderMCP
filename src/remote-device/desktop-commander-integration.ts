@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import os from 'os';
+import { constants as fsConstants } from 'fs';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -184,7 +185,9 @@ export class DesktopCommanderIntegration {
             for (const candidate of [homeDir, rootDir]) {
                 if (!candidate) continue;
                 try {
-                    await fs.access(candidate);
+                    const candidateStats = await fs.stat(candidate);
+                    if (!candidateStats.isDirectory()) continue;
+                    await fs.access(candidate, fsConstants.X_OK);
                     stableCwd = candidate;
                     break;
                 } catch {
