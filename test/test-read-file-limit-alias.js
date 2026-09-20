@@ -32,16 +32,22 @@ async function setup() {
   console.log('🔧 Setting up read_file limit alias test...');
 
   const originalConfig = await configManager.getConfig();
-  await configManager.setValue('allowedDirectories', [__dirname]);
-  // Keep a non-default limit so "no page size given" is distinguishable from
-  // "page size applied".
-  await configManager.setValue('fileReadLineLimit', 7);
+  try {
+    await configManager.setValue('allowedDirectories', [__dirname]);
+    // Keep a non-default limit so "no page size given" is distinguishable from
+    // "page size applied".
+    await configManager.setValue('fileReadLineLimit', 7);
 
-  const content = Array.from(
-    { length: TOTAL_LINES },
-    (_, i) => `Line ${i + 1}: alias test content`
-  ).join('\n');
-  await fs.writeFile(TEST_FILE, content, 'utf8');
+    const content = Array.from(
+      { length: TOTAL_LINES },
+      (_, i) => `Line ${i + 1}: alias test content`
+    ).join('\n');
+    await fs.writeFile(TEST_FILE, content, 'utf8');
+  } catch (error) {
+    // Never leave the developer's configuration mutated when setup fails.
+    await configManager.updateConfig(originalConfig);
+    throw error;
+  }
 
   console.log(`✓ Created ${TOTAL_LINES}-line test file, fileReadLineLimit=7`);
   return originalConfig;
@@ -58,11 +64,11 @@ async function teardown(originalConfig) {
   }
 }
 
-/** Count the numbered body lines in a read_file result. */
-function countBodyLines(result) {
+/** Numbered body lines in a read_file result, in order. */
+function bodyLines(result) {
   return result.content[0].text
     .split('\n')
-    .filter(line => line.startsWith('Line ')).length;
+    .filter(line => line.startsWith('Line '));
 }
 
 async function runAllTests() {
@@ -85,9 +91,11 @@ async function runAllTests() {
         expected: 3,
       },
       {
-        name: 'offset: 10, limit: 5 returns 5 lines',
+        name: 'offset: 10, limit: 5 returns lines 11-15',
         args: { path: TEST_FILE, offset: 10, limit: 5 },
         expected: 5,
+        firstLine: 'Line 11:',
+        lastLine: 'Line 15:',
       },
       {
         name: 'length: 4 still returns 4 lines',
@@ -115,13 +123,27 @@ async function runAllTests() {
           allTestsPassed = false;
           continue;
         }
-        const actual = countBodyLines(result);
-        if (actual === testCase.expected) {
-          console.log(`  ✅ PASS: ${actual} line(s)`);
-        } else {
-          console.log(`  ❌ FAIL: expected ${testCase.expected} line(s), got ${actual}`);
+        const lines = bodyLines(result);
+        if (lines.length !== testCase.expected) {
+          console.log(`  ❌ FAIL: expected ${testCase.expected} line(s), got ${lines.length}`);
           allTestsPassed = false;
+          continue;
         }
+        // When the case names a window, assert the window itself: a handler
+        // that ignores `offset` would still return the right count.
+        if (testCase.firstLine && !lines[0].startsWith(testCase.firstLine)) {
+          console.log(`  ❌ FAIL: first line is "${lines[0]}", expected "${testCase.firstLine}..."`);
+          allTestsPassed = false;
+          continue;
+        }
+        if (testCase.lastLine && !lines[lines.length - 1].startsWith(testCase.lastLine)) {
+          console.log(
+            `  ❌ FAIL: last line is "${lines[lines.length - 1]}", expected "${testCase.lastLine}..."`
+          );
+          allTestsPassed = false;
+          continue;
+        }
+        console.log(`  ✅ PASS: ${lines.length} line(s)`);
       } catch (error) {
         console.log(`  ❌ Exception: ${error.message}`);
         allTestsPassed = false;
