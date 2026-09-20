@@ -175,7 +175,9 @@ export class DesktopCommanderIntegration {
             return {
                 command: process.execPath, // Use the current node executable
                 args: [devPath],
-                cwd: path.dirname(devPath)
+                // Preserve the launcher's working directory instead of anchoring the
+                // long-lived child to replaceable package bytes under node_modules.
+                cwd: process.cwd()
             };
         } catch {
             console.debug('[DEBUG] Local dev path not found, trying global installation');
