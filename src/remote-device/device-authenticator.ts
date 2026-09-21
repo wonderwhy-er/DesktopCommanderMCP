@@ -31,11 +31,26 @@ interface PollResponse {
 
 const CLIENT_ID = 'mcp-device';
 
+type DeviceAuthenticatorDeps = {
+    fetch?: typeof fetch;
+    open?: typeof open;
+    capture?: typeof captureRemote;
+    now?: () => number;
+};
+
 export class DeviceAuthenticator {
     private baseServerUrl: string;
+    private fetchFn: typeof fetch;
+    private openFn: typeof open;
+    private captureFn: typeof captureRemote;
+    private now: () => number;
 
-    constructor(baseServerUrl: string) {
+    constructor(baseServerUrl: string, deps: DeviceAuthenticatorDeps = {}) {
         this.baseServerUrl = baseServerUrl;
+        this.fetchFn = deps.fetch ?? fetch;
+        this.openFn = deps.open ?? open;
+        this.captureFn = deps.capture ?? captureRemote;
+        this.now = deps.now ?? Date.now;
     }
 
     async authenticate(deviceId?: string): Promise<AuthSession> {
@@ -66,30 +81,52 @@ export class DeviceAuthenticator {
 
     private async requestDeviceCode(codeChallenge: string, deviceId?: string): Promise<DeviceAuthResponse> {
         console.log('   - 📡 Requesting device code...');
-
-        const response = await fetch(`${this.baseServerUrl}/device/start`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                client_id: CLIENT_ID,
-                scope: 'mcp:tools',
-                device_name: os.hostname(),
-                device_type: 'mcp',
-                device_id: deviceId,
-                code_challenge: codeChallenge,
-                code_challenge_method: 'S256',
-            }),
+        const startedAt = this.now();
+        await this.captureFn('remote_device_auth_request_started', {
+            has_existing_device_id: Boolean(deviceId),
         });
+
+        let response: Response;
+        try {
+            response = await this.fetchFn(`${this.baseServerUrl}/device/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: CLIENT_ID,
+                    scope: 'mcp:tools',
+                    device_name: os.hostname(),
+                    device_type: 'mcp',
+                    device_id: deviceId,
+                    code_challenge: codeChallenge,
+                    code_challenge_method: 'S256',
+                }),
+            });
+        } catch (error) {
+            await this.captureFn('remote_device_auth_request_network_error', {
+                error,
+                duration_ms: this.now() - startedAt,
+                has_existing_device_id: Boolean(deviceId),
+            });
+            throw error;
+        }
         observeServerDate(response.headers.get('date'));
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Unknown error' }));
             const errorMessage = error.error_description || 'Failed to start device flow';
-            await captureRemote('remote_device_auth_request_failed', { error: errorMessage });
+            await this.captureFn('remote_device_auth_request_failed', {
+                error: errorMessage,
+                duration_ms: this.now() - startedAt,
+                has_existing_device_id: Boolean(deviceId),
+            });
             throw new Error(errorMessage);
         }
 
         const data = await response.json();
+        await this.captureFn('remote_device_auth_code_received', {
+            duration_ms: this.now() - startedAt,
+            has_existing_device_id: Boolean(deviceId),
+        });
         console.log('   - ✅ Device code received\n');
         return data;
     }
@@ -102,11 +139,15 @@ export class DeviceAuthenticator {
         console.log(`      ${deviceAuth.user_code}\n`);
         console.log(`   Code expires in ${Math.floor(deviceAuth.expires_in / 60)} minutes.\n`);
 
-        // Try to open browser automatically
-        open(deviceAuth.verification_uri_complete).catch(() => {
-            console.log('   - Could not open browser automatically.');
-            console.log(`   - Please visit: ${deviceAuth.verification_uri}\n`);
-        });
+        // Try to open browser automatically. This only confirms the OS accepted
+        // the launch request; page-load completion is measured by the web event.
+        void this.openFn(deviceAuth.verification_uri_complete)
+            .then(() => this.captureFn('remote_device_browser_launch_succeeded'))
+            .catch(async (error) => {
+                await this.captureFn('remote_device_browser_launch_failed', { error });
+                console.log('   - Could not open browser automatically.');
+                console.log(`   - Please visit: ${deviceAuth.verification_uri}\n`);
+            });
 
         console.log('   - ⏳ Waiting for authorization...\n');
     }
