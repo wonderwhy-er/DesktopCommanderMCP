@@ -457,21 +457,24 @@ Or add to `.qwen/settings.json` (project) or `~/.qwen/settings.json` (global). S
 <details>
 <summary><b>ChatGPT / Claude Web (Remote MCP)</b></summary>
 
-Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services via Remote MCP — no desktop app required.
+Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services while commands still execute on your computer.
 
-**👉 [Get started at mcp.desktopcommander.app](https://mcp.desktopcommander.app)**
+Start the Remote Device:
 
-How it works:
-1. You run a lightweight **Remote Device** on your computer
-2. It connects securely to the cloud Remote MCP service
-3. Your AI sends commands through the cloud to your device
-4. Commands execute locally, results return to your AI
-5. **You stay in control** — stop anytime with `Ctrl+C`
+```bash
+npx @wonderwhy-er/desktop-commander@latest remote
+```
+
+On first run, complete browser authentication, then connect your AI at **[mcp.desktopcommander.app](https://mcp.desktopcommander.app)**.
+
+- Stop the local device temporarily with `Ctrl+C`
+- See available CLI options with `npx @wonderwhy-er/desktop-commander@latest remote --help`
+- See **[Remote MCP setup, logout/revocation, CLI reference, and troubleshooting](src/remote-device/README.md)**
 
 ### Security
 
-- ✅ Device only runs when you start it
-- ✅ Commands execute under your user permissions
+- ✅ The Remote Device only accepts commands while it is running
+- ✅ Commands execute locally under your user permissions
 - ✅ Secure OAuth authentication and encrypted communication channel
 
 </details>
