@@ -143,6 +143,11 @@ export class MCPDevice {
             // Load persisted configuration (deviceId, session)
             let session = await this.loadPersistedConfig();
 
+            await captureRemote('remote_device_session_state', {
+                has_persisted_session: Boolean(session),
+                has_persisted_device_id: Boolean(this.deviceId),
+            });
+
             // 2. Set Session or Authenticate
             if (session) {
                 const { error } = await this.remoteChannel.setSession(session);
@@ -171,6 +176,7 @@ export class MCPDevice {
             }
 
             if (!session) {
+                await captureRemote('remote_device_auth_flow_started');
                 console.log('\n🔐 Authenticating with Remote MCP server...');
                 const authenticator = new DeviceAuthenticator(this.baseServerUrl);
                 session = await authenticator.authenticate(this.deviceId);

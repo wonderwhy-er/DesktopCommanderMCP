@@ -1,6 +1,7 @@
 import { MCPDevice, getRemoteDeviceConfigPath } from '../remote-device/device.js';
 import fs from 'fs/promises';
 import os from 'os';
+import { captureRemote } from '../utils/capture.js';
 
 export async function runRemote() {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -54,6 +55,10 @@ Note:
     }
 
     console.debug('[DEBUG] Platform:', os.platform());
+    await captureRemote('remote_device_command_started', {
+        node_version: process.version,
+        persist_session: persistSession,
+    });
 
     // Start caffeinate on macOS (unless disabled)
     // Caffeinate will monitor this process and automatically exit when it terminates
