@@ -197,26 +197,33 @@ export class DesktopCommanderIntegration {
         return null;
     }
 
-    async callClientTool(toolName: string, args: any, metadata?: any) {
+    /**
+     * Forward MCPDevice's claimed command to the local stdio MCP child. The optional
+     * caller-owned guard keeps remote session/deadline rules out of this SDK adapter.
+     */
+    async callClientTool(toolName: string, args: any, metadata?: any, assertCanExecute?: () => void, onExecutionStart?: () => void, callId?: string) {
         // Restart the child if it died since the last call, so a one-off crash
         // costs one failed call instead of wedging the device until a human
         // restarts `desktop-commander remote`.
         await this.ensureReady();
+        // Restart can outlive the remote session or deadline; recheck AFTER ensureReady,
+        // immediately before SDK dispatch. A failed guard returns to MCPDevice's failure path.
+        assertCanExecute?.();
 
         // Proxy other tools to MCP server
         try {
-            console.debug('[DEBUG] Calling MCP tool:', toolName, 'args:', JSON.stringify(args).substring(0, 100));
+            try { onExecutionStart?.(); } catch { /* telemetry cannot interrupt execution */ }
+            console.debug('[DEBUG] Calling MCP tool', { call_id: callId });
             const result = await this.mcpClient!.callTool({
                 name: toolName,
                 arguments: args,
                 _meta: { remote: true, ...metadata || {} }
             } as any);
-            console.debug('[DEBUG] Tool call successful:', toolName);
+            console.debug('[DEBUG] Tool call successful', { call_id: callId });
             return result;
         } catch (error) {
-            console.error(`Error executing tool ${toolName}:`, error);
-            console.debug('[DEBUG] Tool call error details:', error);
-            await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
+            console.error('Error executing tool', { call_id: callId });
+            await captureRemote('desktop_integration_tool_call_failed', { call_id: callId, toolName });
             throw error;
         }
     }

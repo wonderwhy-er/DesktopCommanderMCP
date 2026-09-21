@@ -63,7 +63,9 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
+    "test:mqtt": "node test/mqtt-transport.test.js && node test/mqtt-reliability.test.js && node test/mqtt-enrollment.test.js && node test/mqtt-shadow-analytics.test.js",
+    "test:mqtt:enrollment": "node test/mqtt-enrollment.test.js"
   },
   "publishConfig": {
     "access": "public"
@@ -109,6 +111,8 @@
     "isbinaryfile": "^5.0.4",
     "markdown-it": "^14.1.0",
     "md-to-pdf": "^5.2.5",
+    "mqtt": "5.15.2",
+    "node-forge": "1.4.0",
     "open": "^10.2.0",
     "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
@@ -130,7 +134,9 @@
     "@anthropic-ai/mcpb": "^1.2.0",
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@types/node": "^20.17.24",
+    "@types/node-forge": "1.3.14",
     "@types/proper-lockfile": "^4.1.4",
+    "aedes": "0.51.3",
     "commander": "^13.1.0",
     "esbuild": "^0.27.2",
     "js-tiktoken": "^1.0.21",

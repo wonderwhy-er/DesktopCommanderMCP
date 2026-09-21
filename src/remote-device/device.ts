@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { RemoteChannel } from './remote-channel.js';
+import { MAX_CONCURRENT_REMOTE_CALLS, RemoteChannel } from './remote-channel.js';
 import { DeviceAuthenticator } from './device-authenticator.js';
 import { DesktopCommanderIntegration } from './desktop-commander-integration.js';
 import { fileURLToPath } from 'url';
@@ -14,11 +14,9 @@ export interface MCPDeviceOptions {
 }
 
 /**
- * How many recently-handled call ids to remember for duplicate-delivery
- * suppression. The two transports deliver a call within MILLISECONDS of each
- * other, so this only has to outlive that window — 100 ids is several minutes
- * of even the heaviest agent traffic, and costs ~10 KB on the user's machine
- * (the device process, not the shared server).
+ * Bounded cache of recently claimed ids to skip repeated notifications locally.
+ * Active calls live separately so eviction cannot admit concurrent duplicates.
+ * The database claim, not this cache or MQTT QoS, arbitrates across processes.
  */
 const SEEN_CALL_IDS_MAX = 100;
 
@@ -32,13 +30,20 @@ export class MCPDevice {
     private desktop: DesktopCommanderIntegration;
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
+    /** Admission stays occupied from claim through terminal result reporting. */
+    private inFlightCallIds: Set<string> = new Set();
 
+    /** Wire remote delivery to the local MCP executor; startup later loads the chosen profile. */
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
-        this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
         this.isShuttingDown = false;
-        this.configPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+        // Separate local profiles let teammates simulate multiple registered devices without
+        // overwriting the default device id/session file. This is a path, not an identity override.
+        this.configPath = process.env.MCP_DEVICE_CONFIG_PATH ||
+            path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+        // Enrollment uses this same backend and profile so credentials cannot cross device identities.
+        this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl, profilePath: this.configPath });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
         // refresh-token families get replayed, trip GoTrue's reuse detection, and
@@ -320,48 +325,61 @@ export class MCPDevice {
         }
     }
 
+    /**
+     * RemoteChannel hands both transports' fetched rows here. Validate and atomically claim
+     * the row, call the local executor, then persist the result before notifying the server.
+     * Claim arbitration prevents duplicate admission; it cannot make external side effects
+     * and a database result write one exactly-once transaction.
+     */
     async handleNewToolCall(payload: any) {
-        const toolCall = payload.new;
-        // Expect toolCall to include a device_id field used to route calls to this device instance.
-        const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
+        const toolCall = payload?.new;
+        if (!toolCall || this.isShuttingDown) return;
+        const observe = (stage: string, reason?: string) => {
+            try { this.remoteChannel.recordTransportStage(payload.transportObservation, stage, reason, payload.transportGeneration); }
+            catch { /* analytics cannot interrupt execution */ }
+        };
+        const { id: call_id, tool_name, tool_args, device_id, user_id, metadata = {} } = toolCall;
+        // Revalidate even for direct callers: doorbell checks are not the execution boundary.
+        // Prefer the row deadline while retaining the metadata form used by older callers.
+        const deadline = toolCall.timeout_at ?? metadata.expires_at;
+        if (!call_id || !this.deviceId || device_id !== this.deviceId ||
+            !this.remoteChannel.user || user_id !== this.remoteChannel.user.id ||
+            toolCall.status !== 'pending' ||
+            (deadline && (!Number.isFinite(Date.parse(deadline)) || Date.parse(deadline) <= Date.now()))) return;
 
-        console.debug('[DEBUG] Tool call received, device_id:', device_id, 'this.deviceId:', this.deviceId);
-
-        // Only process jobs for this device
-        if (device_id && device_id !== this.deviceId) {
-            console.debug('[DEBUG] Ignoring tool call for different device');
-            return;
+        // Hold in-flight ids separately: evicting an old completed id must never
+        // evict an active execution. Database claims protect other processes.
+        if (this.seenCallIds.has(call_id) || this.inFlightCallIds.has(call_id)) {
+            observe('handling_rejected', 'duplicate'); return;
         }
-
-        console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
-
-        // LOCAL claim first — this is the authoritative guard against executing
-        // a call twice. During the transition both transports deliver every call
-        // to THIS SAME PROCESS, so an in-memory check is sufficient and, unlike
-        // the DB claim below, cannot fail open: a transient REST error made
-        // markCallExecuting return true for both deliveries, which could run a
-        // side-effecting command twice (found in review, 2026-07-24).
-        if (this.seenCallIds.has(call_id)) {
-            console.debug('[DEBUG] Duplicate delivery for call already handled here, skipping:', call_id);
-            return;
+        if (this.inFlightCallIds.size >= MAX_CONCURRENT_REMOTE_CALLS) {
+            observe('handling_rejected', 'concurrency_limit'); return;
         }
-        this.rememberCallId(call_id);
-
-        try {
-            // DB claim second — keeps the row state machine honest, gives
-            // cross-restart/cross-process protection, and is observable. It may
-            // fail open (returns true on a transient write error); the local
-            // guard above is what makes execution exactly-once.
-            const claimed = await this.remoteChannel.markCallExecuting(call_id);
-            if (!claimed) {
-                // markCallExecuting already logged the duplicate-delivery skip.
-                return;
+        this.inFlightCallIds.add(call_id);
+        let claimed = false;
+        const sessionGeneration = this.remoteChannel.sessionGeneration;
+        // Used after the claim and again by DesktopCommanderIntegration after child restart.
+        // A restored session has a new generation even when its user/device ids are unchanged.
+        const assertCanExecute = () => {
+            if (this.isShuttingDown ||
+                !this.remoteChannel.canExecuteCall(user_id, device_id, sessionGeneration) ||
+                (deadline && Date.parse(deadline) <= Date.now())) {
+                observe('handling_rejected', deadline && Date.parse(deadline) <= Date.now() ? 'expired' : 'unavailable');
+                throw new Error('Command expired or device session changed before execution');
             }
+        };
+        try {
+            claimed = await this.remoteChannel.markCallExecuting(call_id, deadline);
+            if (!claimed) { observe('handling_rejected', 'claim_lost'); return; }
+            // Remember only a confirmed claim; a failed claim must remain safe to retry later.
+            this.rememberCallId(call_id);
+            assertCanExecute();
 
             let result;
 
             // Handle 'ping' tool specially
             if (tool_name === 'ping') {
+                observe('execution_start');
                 result = {
                     content: [{
                         type: 'text',
@@ -369,6 +387,7 @@ export class MCPDevice {
                     }]
                 };
             } else if (tool_name === 'shutdown') {
+                observe('execution_start');
                 result = {
                     content: [{
                         type: 'text',
@@ -384,10 +403,11 @@ export class MCPDevice {
                 }, 1000);
             } else {
                 // Execute other tools using desktop integration
-                result = await this.desktop.callClientTool(tool_name, tool_args, metadata);
+                result = await this.desktop.callClientTool(tool_name, tool_args, metadata, assertCanExecute,
+                    () => observe('execution_start'), call_id);
             }
 
-            console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
+            console.debug('[DEBUG] Tool call completed:', call_id);
 
             // Update database with result, THEN ring the doorbell — the server
             // fetches the row by id on the doorbell, so the write must land first.
@@ -395,17 +415,21 @@ export class MCPDevice {
             await this.remoteChannel.notifyResult(call_id);
 
         } catch (error: any) {
-            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            // The failure path must not fail: this method's promise is discarded
-            // at every call site, so a throw here becomes an unhandled rejection
-            // and takes the device process down.
+            if (!claimed) return; // a failed/ambiguous claim must not overwrite another execution
+            console.error('❌ Tool call failed', { call_id });
+            // RemoteChannel now awaits this handler to hold admission through reporting.
+            // Contain reporting failures too: a failed result write must not escape cleanup
+            // or trigger another execution of a command whose claim already succeeded.
             try {
-                await captureRemote('remote_device_tool_call_failed', { error, tool_name });
+                await captureRemote('remote_device_tool_call_failed', { call_id, tool_name });
                 await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
                 await this.remoteChannel.notifyResult(call_id);
             } catch (reportError: any) {
-                console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
+                console.error('❌ Could not report call failure', { call_id });
             }
+        } finally {
+            // Release on every outcome, including bounded database failures, so later work fits.
+            this.inFlightCallIds.delete(call_id);
         }
     }
 
