@@ -1538,6 +1538,30 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 };
         }
 
+        // read_multiple_files has a transport-sized response budget. Its generic
+        // unsupported-parameter warning is input-dependent, so apply that warning
+        // here and recheck the final pre-accounting result before any success path.
+        if (name === 'read_multiple_files') {
+            try {
+                const argSchema = toolArgSchemas[name];
+                if (argSchema && result && Array.isArray((result as any).content)) {
+                    const unsupported = detectUnsupportedParams(args, argSchema);
+                    if (unsupported.length > 0) {
+                        const warning = buildUnsupportedParamsWarning(
+                            name, unsupported, getSupportedParams(argSchema)
+                        );
+                        (result as any).content = [
+                            { type: "text", text: warning },
+                            ...(result as any).content,
+                        ];
+                    }
+                }
+            } catch {
+                // Advisory warning only; the budget check still runs below.
+            }
+            result = handlers.enforceReadMultipleFilesResultBudget(result);
+        }
+
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
         isError = !!result.isError;
@@ -1648,7 +1672,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // ignored and which parameters are actually supported.
         try {
             const argSchema = toolArgSchemas[name];
-            if (argSchema && result && Array.isArray((result as any).content)) {
+            if (name !== 'read_multiple_files' && argSchema && result && Array.isArray((result as any).content)) {
                 const unsupported = detectUnsupportedParams(args, argSchema);
                 if (unsupported.length > 0) {
                     const warning = buildUnsupportedParamsWarning(
