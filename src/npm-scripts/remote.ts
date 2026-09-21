@@ -14,7 +14,16 @@ Options:
   --no-persist-session  Do not reuse or save authentication for this run
   --disable-no-sleep    Do not prevent sleep while the remote device is running
   --debug                Enable verbose debug logging
-  -h, --help             Show this help`);
+  -h, --help             Show this help
+
+Examples:
+  npx @wonderwhy-er/desktop-commander@latest remote
+  npx @wonderwhy-er/desktop-commander@latest remote --debug
+  npx @wonderwhy-er/desktop-commander@latest remote --logout
+
+Note:
+  --logout removes local credentials only. Revoke the device in the Remote MCP
+  dashboard if you also want to invalidate its server-side authorization.`);
         return;
     }
     if (process.argv.includes('--logout')) {
