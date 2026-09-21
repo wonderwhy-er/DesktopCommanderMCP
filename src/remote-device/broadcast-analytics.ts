@@ -142,7 +142,7 @@ export class BroadcastAnalytics {
     }
   }
 
-  /** One request at a time, fifty observations, three attempts with stable observation IDs. */
+  /** One flush at a time, fifty observations, three attempts with stable observation IDs. */
   async flush(): Promise<void> {
     if (!this.send || this.sending || this.stopped || !this.queue.length) return;
     this.sending = true;

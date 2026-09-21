@@ -3,6 +3,7 @@ import { captureRemote, isTelemetryDisabledByEnv } from '../utils/capture.js';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { BroadcastAnalytics, captureArrival, observeRequest, type BroadcastObservation } from './broadcast-analytics.js';
 import { VERSION } from '../version.js';
+import { sendBroadcastObservations } from './broadcast-telemetry.js';
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -186,8 +187,8 @@ export class RemoteChannel {
     private observationGeneration = 0;
     private observationSessionChanging = false;
 
-    /** Report only to the backend already selected for device authentication. */
-    constructor(serverUrl?: string) {
+    /** Enabled for registered connectors; public telemetry never uses the backend bearer token. */
+    constructor(serverUrl?: string, telemetryEndpoints?: readonly [string, string]) {
         this.broadcastAnalytics = new BroadcastAnalytics(serverUrl && !isTelemetryDisabledByEnv()
             ? async (observations, signal) => {
                 const generation = this.observationGeneration;
@@ -197,38 +198,7 @@ export class RemoteChannel {
                     this.sessionLost || this.handlingSignedOut || this.observationSessionChanging || !this.deviceId || !this.user?.id) {
                     throw new Error('Broadcast reporting session unavailable');
                 }
-                const backend = new URL(serverUrl);
-                const local = backend.protocol === 'http:' &&
-                    process.env.BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL === 'true' &&
-                    ['localhost', 'mcp.localhost', 'mcp.localhost.localdomain', '127.0.0.1', '[::1]'].includes(backend.hostname);
-                if ((backend.protocol !== 'https:' && !local) || backend.username || backend.password) {
-                    throw new Error('Broadcast reporting requires a secure backend');
-                }
-                const token = this.lastKnownSession?.access_token;
-                if (!token) throw new Error('Broadcast reporting session unavailable');
-                const controller = new AbortController();
-                const cancel = () => controller.abort();
-                signal.addEventListener('abort', cancel, { once: true });
-                const timeout = setTimeout(cancel, 5_000);
-                timeout.unref();
-                try {
-                    const response = await fetch(new URL('/device/transport-observations', backend), {
-                        method: 'POST', redirect: 'error', signal: controller.signal,
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                        body: JSON.stringify({ device_id: this.deviceId, observations }),
-                    });
-                    if (!response.ok) throw new Error('Broadcast reporting failed');
-                    const result = await response.json() as { accepted?: number; dropped?: number };
-                    if (!Number.isInteger(result.accepted) || !Number.isInteger(result.dropped) ||
-                        result.accepted! < 0 || result.dropped! < 0 ||
-                        result.accepted! + result.dropped! !== observations.length) {
-                        throw new Error('Invalid broadcast reporting acknowledgement');
-                    }
-                    return result.dropped;
-                } finally {
-                    clearTimeout(timeout);
-                    signal.removeEventListener('abort', cancel);
-                }
+                return sendBroadcastObservations(this.deviceId, observations, signal, telemetryEndpoints);
             } : undefined);
     }
 

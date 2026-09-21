@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { BroadcastAnalytics, captureArrival, MAX_BUFFERED_OBSERVATIONS, MAX_OBSERVED_CALLS, OBSERVATION_WINDOW_MS } from '../dist/remote-device/broadcast-analytics.js';
+import { sendBroadcastObservations } from '../dist/remote-device/broadcast-telemetry.js';
+import { getTelemetryClientId, TELEMETRY_PROXY_URL, TELEMETRY_PROXY_FALLBACK_URL } from '../dist/utils/capture.js';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
 import { MCPDevice } from '../dist/remote-device/device.js';
 import { DesktopCommanderIntegration } from '../dist/remote-device/desktop-commander-integration.js';
@@ -58,7 +60,7 @@ function fixture({ claimErrors = 0, ambiguous = false, fallbackError = false, re
   let done = Promise.resolve();
   rc.onToolCall = (payload) => (done = device.handleNewToolCall(payload));
   return { rc, device, row, events, operations, waits, get executed() { return executed; },
-    async deliver(payload = { call_id: row.id, device_id: row.device_id }) { await rc.onDoorbell(payload); await done; await rc.broadcastAnalytics.flush(); },
+    async deliver(payload = { call_id: row.id, device_id: row.device_id }) { await rc.onDoorbell(payload); await done; while (rc.broadcastAnalytics.counters.queued) await rc.broadcastAnalytics.flush(); },
     stop() { rc.broadcastAnalytics.stop(); } };
 }
 
@@ -210,51 +212,188 @@ await check('session replacement invalidates late observations without gating ex
   } finally { s.stop(); }
 });
 
-await check('authenticated relay uses selected secure backend, opt-outs, bounded acknowledgement and local allowlist', async () => {
+// Real HTTP fixture: only installation configuration and event source are synthetic.
+async function publicFixture(run) {
   const originalGet = configManager.getValue;
-  let enabled = true, requests = 0, body, validAck = true, holdResponse = false, acceptedRequest;
+  const originalId = configManager.getOrCreateClientId;
+  const requests = [[], []];
+  const handlers = [() => 204, () => 204];
+  const servers = [0, 1].map((index) => createServer(async (request, response) => {
+    let bytes = ''; for await (const chunk of request) bytes += chunk;
+    const observed = { path: request.url, headers: request.headers, body: JSON.parse(bytes) };
+    requests[index].push(observed);
+    const status = handlers[index](observed);
+    if (status === null) return;
+    response.statusCode = status;
+    if (status === 302) response.setHeader('Location', `http://127.0.0.1:${servers[1].address().port}/redirected`);
+    response.end();
+  }));
+  for (const server of servers) await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const endpoints = servers.map((server) => `http://127.0.0.1:${server.address().port}/mp/collect`);
+  const channels = [];
+  let enabled = true;
   configManager.getValue = async () => enabled;
-  const server = createServer(async (request, response) => {
-    requests++; assert.equal(request.url, '/device/transport-observations');
-    assert.equal(request.headers.authorization, 'Bearer local-test-token');
-    let data = ''; for await (const chunk of request) data += chunk;
-    body = JSON.parse(data);
-    if (holdResponse) { acceptedRequest(); return; }
-    response.setHeader('Content-Type', 'application/json');
-    response.end(JSON.stringify({ accepted: body.observations.length, dropped: validAck ? 0 : 1 }));
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const make = (url) => { const rc = new RemoteChannel(url); rc.deviceId = 'device-1'; rc._user = { id: 'account-1' }; rc.lastKnownSession = { access_token: 'local-test-token' }; rc.broadcastAnalytics.receipt('call-1', captureArrival()); return rc; };
+  configManager.getOrCreateClientId = async () => 'installation-1';
+  const clientId = await getTelemetryClientId();
   delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
   process.env.BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL = 'true';
-  const channels = [];
-  try {
-    let rc = make(base); channels.push(rc); await rc.broadcastAnalytics.flush();
-    assert.equal(requests, 1); assert.equal(body.device_id, 'device-1');
-    assert.equal(body.observations[0].transport, 'broadcast');
-    enabled = false; rc.broadcastAnalytics.receipt('optout', captureArrival()); await rc.broadcastAnalytics.flush(); assert.equal(requests, 1);
-    enabled = true; validAck = false; rc.broadcastAnalytics.receipt('bad-ack', captureArrival()); await rc.broadcastAnalytics.flush(); assert.equal(rc.broadcastAnalytics.counters.queued, 1);
-    for (const url of ['http://example.com', 'http://127.0.0.1.evil.invalid', 'https://user:secret@example.com']) {
-      rc = make(url); channels.push(rc); await rc.broadcastAnalytics.flush(); assert.equal(rc.broadcastAnalytics.counters.queued, 1);
-    }
-    holdResponse = true;
-    rc = make(base); channels.push(rc);
-    const reached = new Promise((resolve) => { acceptedRequest = resolve; });
-    const sending = rc.broadcastAnalytics.flush(); await reached;
-    const cancelledAt = performance.now(); rc.broadcastAnalytics.reset(); await sending;
-    assert.ok(performance.now() - cancelledAt < 1000, 'identity reset aborts the actual in-flight HTTP request');
-    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
-    holdResponse = false;
-    delete process.env.BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL;
-    rc = make(base); channels.push(rc); const before = requests; await rc.broadcastAnalytics.flush(); assert.equal(requests, before);
-    process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
-    rc = make(base); channels.push(rc); assert.equal(rc.broadcastAnalytics.counters.queued, 0);
-  } finally {
-    channels.forEach((rc) => rc.broadcastAnalytics.stop()); configManager.getValue = originalGet;
+  const make = (urls = endpoints, backend = 'https://selected-backend.invalid') => {
+    const rc = new RemoteChannel(backend, urls);
+    rc.deviceId = 'device-1'; rc._user = { id: 'PRIVATE_ACCOUNT' };
+    rc.lastKnownSession = { access_token: 'PRIVATE_BEARER_TOKEN' };
+    channels.push(rc); return rc;
+  };
+  try { await run({ requests, handlers, endpoints, clientId, make, setEnabled: (value) => { enabled = value; } }); }
+  finally {
+    channels.forEach((rc) => rc.broadcastAnalytics.stop());
+    configManager.getValue = originalGet; configManager.getOrCreateClientId = originalId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1'; delete process.env.BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL;
-    server.closeAllConnections();
-    await new Promise((resolve) => server.close(resolve));
+    for (const server of servers) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
   }
+}
+
+await check('one logical flush drains 50 through five wire batches with installation identity and original captures', async () => {
+  assert.equal(TELEMETRY_PROXY_URL, 'https://telemetry.desktopcommander.app/mp/collect');
+  assert.equal(TELEMETRY_PROXY_FALLBACK_URL, 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect');
+  await publicFixture(async ({ requests, endpoints, clientId, make }) => {
+    const rc = make();
+    for (let i = 0; i < 50; i++) rc.broadcastAnalytics.receipt(`call-${i}`, { monotonic_ms: i, timestamp_utc: '2020-01-01T00:00:00.000Z' });
+    const original = structuredClone(rc.broadcastAnalytics.queue);
+    await rc.broadcastAnalytics.flush();
+    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    assert.deepEqual(requests[0].map((r) => r.body.events.length), [10, 10, 10, 10, 10]);
+    assert.equal(requests[1].length, 0);
+    const events = requests[0].flatMap((r) => r.body.events);
+    assert.deepEqual(events.map((e) => e.params.observation_id), original.map((e) => e.observation_id));
+    assert.ok(events.every((e) => e.name === 'broadcast' && e.params.device_id === 'device-1' && e.params.timestamp_utc === '2020-01-01T00:00:00.000Z'));
+    assert.deepEqual(events.map((e) => e.params.monotonic_ms), original.map((e) => e.monotonic_ms));
+    for (const request of requests[0]) {
+      assert.equal(request.path, '/mp/collect'); assert.equal(request.body.client_id, clientId);
+      assert.equal(request.headers.authorization, undefined);
+      assert.equal(request.headers.cookie, undefined);
+      assert.deepEqual(Object.keys(request.body).sort(), ['client_id', 'events']);
+      assert.ok(!JSON.stringify(request).includes('PRIVATE_'));
+    }
+    // The low-level awaited helper is also the pilot's seam; callers own opt-outs.
+    assert.equal(await sendBroadcastObservations('device-1', original.slice(0, 1), new AbortController().signal,
+      endpoints), 0);
+  });
+});
+
+await check('public fallback and queue retry reuse observation IDs; only204 acknowledges all rows', async () => {
+  await publicFixture(async ({ requests, handlers, make }) => {
+    handlers[0] = () => 202; // An unexpected success code is not collector admission.
+    handlers[1] = () => 503;
+    const rc = make(); rc.broadcastAnalytics.receipt('call-1', captureArrival());
+    await rc.broadcastAnalytics.flush();
+    assert.equal(rc.broadcastAnalytics.counters.queued, 1);
+    handlers[1] = () => 204;
+    await rc.broadcastAnalytics.flush();
+    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    assert.equal(requests[0].length, 2); assert.equal(requests[1].length, 2);
+    const original = requests[0][0].body;
+    for (const request of [...requests[0], ...requests[1]]) assert.deepEqual(request.body, original);
+    handlers[0] = () => 503; handlers[1] = () => 503;
+    rc.broadcastAnalytics.receipt('drop-after-three', captureArrival());
+    await rc.broadcastAnalytics.flush(); await rc.broadcastAnalytics.flush(); await rc.broadcastAnalytics.flush();
+    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    assert.equal(rc.broadcastAnalytics.counters.dropped, 1);
+    rc.broadcastAnalytics.receipt('recovery', captureArrival());
+    assert.equal(rc.broadcastAnalytics.queue[0].dropped_count, 1);
+    assert.equal(requests[0].length, 5); assert.equal(requests[1].length, 5);
+  });
+});
+
+await check('partial chunk failure retries the whole flush with stable identities and no overlapping sends', async () => {
+  await publicFixture(async ({ requests, handlers, make }) => {
+    const rc = make();
+    for (let i = 0; i < 50; i++) rc.broadcastAnalytics.receipt(`partial-${i}`, captureArrival());
+    const original = structuredClone(rc.broadcastAnalytics.queue);
+    handlers[0] = () => requests[0].length < 3 ? 204 : 503;
+    handlers[1] = () => 503;
+    const first = rc.broadcastAnalytics.flush();
+    await rc.broadcastAnalytics.flush(); // The queue must not start concurrent sends.
+    await first;
+    assert.equal(rc.broadcastAnalytics.counters.queued, 50);
+    assert.equal(requests[0].length, 3); assert.equal(requests[1].length, 1);
+    assert.deepEqual(requests[1][0].body, requests[0][2].body);
+    handlers[0] = () => 204;
+    await rc.broadcastAnalytics.flush();
+    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    assert.equal(requests[0].length, 8); assert.equal(requests[1].length, 1);
+    for (let i = 0; i < 3; i++) assert.deepEqual(requests[0][i].body, requests[0][i + 3].body);
+    assert.deepEqual(requests[0].slice(3).flatMap((r) => r.body.events.map((e) => e.params.observation_id)), original.map((e) => e.observation_id));
+    assert.equal(rc.broadcastAnalytics.counters.dropped, 0);
+  });
+});
+
+await check('primary timeout reaches fallback; redirects never forward public payload to redirect targets', async () => {
+  await publicFixture(async ({ requests, handlers, make }) => {
+    handlers[0] = () => null;
+    const rc = make(); rc.broadcastAnalytics.receipt('timeout', captureArrival());
+    const started = performance.now(); await rc.broadcastAnalytics.flush();
+    assert.ok(performance.now() - started < 5000, 'primary timeout is bounded before fallback');
+    assert.equal(requests[1].length, 1); assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    handlers[0] = () => 302;
+    rc.broadcastAnalytics.receipt('redirect', captureArrival()); await rc.broadcastAnalytics.flush();
+    assert.ok(requests.flat().every((request) => request.path === '/mp/collect'));
+    assert.equal(requests[1].length, 2, 'only configured fallback receives the retried batch');
+  });
+});
+
+await check('all wire chunks share a bounded six-second network budget', async () => {
+  await publicFixture(async ({ requests, handlers, make }) => {
+    handlers[0] = () => null;
+    const rc = make();
+    for (let i = 0; i < 50; i++) rc.broadcastAnalytics.receipt(`budget-${i}`, captureArrival());
+    const started = performance.now(); await rc.broadcastAnalytics.flush();
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed >= 5500 && elapsed < 7500, `logical flush deadline: ${elapsed}`);
+    assert.equal(rc.broadcastAnalytics.counters.queued, 50, 'partial admission does not acknowledge the whole flush');
+    assert.equal(requests[0].length, 2, 'a separate timeout per chunk must not multiply the logical budget');
+    assert.ok(requests[1].length >= 1 && requests[1].length <= 2);
+  });
+});
+
+await check('session reset aborts primary and fallback HTTP; stale identity never starts another request', async () => {
+  for (const pending of [0, 1]) await publicFixture(async ({ requests, handlers, make }) => {
+    let reached;
+    const accepted = new Promise((resolve) => { reached = resolve; });
+    handlers[0] = () => 503;
+    handlers[pending] = () => { reached(); return null; };
+    const rc = make();
+    for (let i = 0; i < 21; i++) rc.broadcastAnalytics.receipt(`cancelled-${i}`, captureArrival());
+    const sending = rc.broadcastAnalytics.flush(); await accepted;
+    const start = performance.now(); rc.broadcastAnalytics.reset(); await sending;
+    assert.ok(performance.now() - start < 1000);
+    assert.equal(rc.broadcastAnalytics.counters.queued, 0);
+    assert.equal(requests[0].length, 1, 'reset must prevent later chunks');
+    assert.equal(requests[1].length, pending === 1 ? 1 : 0);
+  });
+});
+
+await check('public sender preserves environment/config opt-outs and validates endpoints before network access', async () => {
+  await publicFixture(async ({ requests, endpoints, make, setEnabled }) => {
+    const rc = make();
+    setEnabled(false); rc.broadcastAnalytics.receipt('config-optout', captureArrival()); await rc.broadcastAnalytics.flush();
+    setEnabled(true);
+    for (const flag of ['1', 'true', 'yes', 'on', ' TRUE ']) {
+      process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = flag;
+      const disabled = make(); disabled.broadcastAnalytics.receipt('env-optout', captureArrival());
+      await disabled.broadcastAnalytics.flush(); assert.equal(disabled.broadcastAnalytics.counters.queued, 0);
+    }
+    delete process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+    const absent = make(endpoints, ''); absent.broadcastAnalytics.receipt('no-backend', captureArrival());
+    assert.equal(absent.broadcastAnalytics.counters.queued, 0);
+    for (const url of ['http://example.com/mp/collect', 'http://127.0.0.1.evil.invalid/mp/collect', 'https://user:secret@example.com/mp/collect']) {
+      const invalid = make([url, endpoints[1]]); invalid.broadcastAnalytics.receipt('unsafe', captureArrival());
+      await invalid.broadcastAnalytics.flush(); assert.equal(invalid.broadcastAnalytics.counters.queued, 1);
+    }
+    delete process.env.BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL;
+    rc.broadcastAnalytics.receipt('no-local-optin', captureArrival()); await rc.broadcastAnalytics.flush();
+    assert.equal(requests.flat().length, 0);
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(sendBroadcastObservations('device-1', Array(51).fill({}), controller.signal, endpoints), /Invalid public broadcast batch/);
+  });
 });
 console.log(`PASS Broadcast analytics: ${passed} checks`);

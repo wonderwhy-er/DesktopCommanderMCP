@@ -7,9 +7,10 @@
    observe the existing fallback read/claim. No database requests are added.
 4. Observe child readiness, actual execution, and every result-write attempt. Record
    `execution_start` only after readiness, immediately before invoking the tool.
-5. Batch observations through authenticated `POST /device/transport-observations`.
-   Backend forwards event `broadcast` to the existing `/remote/collect` endpoint.
-   Deploy compatible collector/backend support before this device update.
+5. Batch event `broadcast` directly to public `POST /mp/collect`, using the same
+   primary/fallback collector URLs and installation `client_id` as ordinary telemetry.
+   Include `device_id`, never account identity or a bearer token. Deploy compatible
+   collector support first; the authenticated backend relay remains for older devices.
 
 | Stage / operation | Meaning |
 | --- | --- |
@@ -35,14 +36,22 @@ Legacy/direct row callers have no Broadcast receipt and produce no attributed ev
 Provider-wide fan-out, background/auth/internal traffic and complete production request
 counts are outside these observed call-path totals; they are unavailable, not zero.
 
-Reporting is best effort: 1,000 queued observations, batches of 50 once per second,
-three attempts, one request at a time, 5-second timeout. Overflow/retry loss accompanies
+Reporting is best effort: 1,000 queued observations, flushes of up to 50 once per second,
+three queue attempts, one request at a time. Each flush sends sequential HTTP chunks of
+at most 10, primary then fallback, with 3 seconds per request and a shared 6-second
+network budget. Partial failures replay the flush with the same observation IDs and
+captured timestamps; deduplicate observations already admitted.
+Only HTTP 204 acknowledges memory admission, not durable warehouse storage. Overflow/retry loss accompanies
 later events as `dropped_count`. At most 1,000 receipt identities live for 60 seconds;
 crashes or eviction can remove evidence. Sign-out resets identity-bound observations.
 `DESKTOP_COMMANDER_DISABLE_TELEMETRY=1/true/yes/on` and `telemetryEnabled=false`
-disable reporting. The relay uses the configured authentication backend over HTTPS;
-local HTTP tests require `BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL=true` and an
-allowlisted loopback hostname. Redirects are rejected; no collector token is on device.
+disable reporting. Public collector requests use HTTPS; explicit test endpoint overrides
+require `BROADCAST_ANALYTICS_ALLOW_INSECURE_LOCAL=true` for allowlisted loopback HTTP.
+Redirects are rejected. Session changes abort requests and prevent fallback under old state.
+Public device observations are unverified reports: the collector assigns `source=device`,
+leaves account `user_id` null and retains the installation ID. Analysis keeps this cohort
+separate from authenticated backend/legacy-relay evidence; matching IDs alone do not
+turn a public receipt into an authenticated delivery metric.
 
 Use monotonic differences only within one process lifetime. Wall-clock offsets cannot
 prove exact one-way network delay. Backend's offline analyzer applies the documented
