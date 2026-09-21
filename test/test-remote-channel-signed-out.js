@@ -103,6 +103,10 @@ class FakeClient {
   removeAllChannels() { return Promise.resolve(); }
   from() {
     const result = Promise.resolve({ error: null });
+    // MQTT withdrawal uses the same scoped, abortable capability PATCH. This legacy
+    // auth fixture only needs the fluent shape; MQTT fault behavior has dedicated tests.
+    result.eq = () => result;
+    result.abortSignal = () => result;
     const chain = { update: () => chain, insert: () => chain, delete: () => chain, select: () => chain, eq: () => result };
     return chain;
   }

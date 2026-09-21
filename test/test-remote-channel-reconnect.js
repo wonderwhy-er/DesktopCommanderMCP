@@ -256,6 +256,10 @@ class FakeClient {
   // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
   from() {
     const result = Promise.resolve({ error: null });
+    // Capability updates add identity filters and an abort deadline; keep this legacy
+    // reconnect fixture chainable without simulating new MQTT or cancellation behavior.
+    result.eq = () => result;
+    result.abortSignal = () => result;
     const chain = {
       update: () => chain,
       insert: () => chain,

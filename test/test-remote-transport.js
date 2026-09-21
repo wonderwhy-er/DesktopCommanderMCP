@@ -64,8 +64,10 @@ function makeDevice({ claimResults = [] } = {}) {
     },
   };
   device.remoteChannel = {
-    // Default: first delivery claims, later ones lose. Override to model a
-    // transient DB error, which makes the claim return true (fail open).
+    // Satisfy the strengthened execution boundary with this fixture's authenticated user.
+    user: { id: 'user-1' },
+    canExecuteCall: () => true,
+    // Claim outcomes model successful and lost conditional database updates.
     markCallExecuting: async () => (claims.length ? claims.shift() : true),
     updateCallResult: async () => {},
     notifyResult: async () => {},
@@ -79,6 +81,9 @@ function makeDevice({ claimResults = [] } = {}) {
  * Records every mcp_devices write in `writes`.
  */
 function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {}) {
+  // Older fixtures omit ownership; default them to the same synthetic registration so
+  // legacy transport assertions still reach the shared handler's stricter row checks.
+  if (row) { row.user_id ??= 'user-1'; row.device_id ??= DEVICE_ID; }
   const writes = [];
   // Recorded when a write COMPLETES, not when it is issued. `writes` alone
   // cannot test ordering: setOnlineStatus evaluates .update() synchronously
@@ -98,6 +103,9 @@ function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {
       return { data: row, error: null };
     };
     p.eq = () => result();
+    // Preserve the new claim/read fluent shape; cancellation is tested in MQTT reliability.
+    p.abortSignal = () => p;
+    p.gt = () => p;
     p.select = () => result();
     return p;
   };
@@ -133,6 +141,9 @@ function makeFakeClient({ row = null, failFetches = 0, writeLatencies = [] } = {
       // this must stay chainable exactly like result() does — returning a bare
       // promise leaves that chain hanging forever.
       p.eq = () => p;
+      // Mirror abortable identity/deadline-filtered capability/claim writes without real I/O.
+      p.abortSignal = () => p;
+      p.gt = () => p;
       p.select = () => p;
       p.maybeSingle = async () => ({ data: null, error: null });
       return p;
@@ -166,9 +177,12 @@ function makeRemoteChannel(opts = {}) {
   return { rc, client };
 }
 
+// Include the authenticated owner and pending state now required by the shared execution path.
 const payloadFor = (id, deviceId = DEVICE_ID) => ({
   new: {
     id,
+    user_id: 'user-1',
+    status: 'pending',
     tool_name: 'start_process',
     tool_args: { command: 'echo hi' },
     device_id: deviceId,
@@ -176,9 +190,8 @@ const payloadFor = (id, deviceId = DEVICE_ID) => ({
   },
 });
 
-// --- 1. Exactly-once under dual delivery ------------------------------------
-// Both transports deliver every call during the transition. The DB claim fails
-// OPEN on a transient error, so the in-memory guard is the real guarantee.
+// --- 1. Duplicate suppression under repeated delivery -----------------------
+// Repeated delivery must be safe; database claims now fail closed on errors.
 
 await test('dual delivery of the same call executes the tool exactly once', async () => {
   const { device, executed } = makeDevice();
@@ -187,7 +200,7 @@ await test('dual delivery of the same call executes the tool exactly once', asyn
   assert(executed.length === 1, `expected 1 execution, got ${executed.length}`);
 });
 
-await test('exactly-once holds when the DB claim fails OPEN for both deliveries', async () => {
+await test('local duplicate guard holds even when the claim stub would accept both deliveries', async () => {
   const { device, executed } = makeDevice({ claimResults: [true, true] });
   await device.handleNewToolCall(payloadFor('call-b'));
   await device.handleNewToolCall(payloadFor('call-b'));

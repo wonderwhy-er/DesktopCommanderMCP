@@ -156,8 +156,9 @@ async function testExactNumberOfOccurrences() {
     // Check that the operation succeeded
     assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
     assert.ok(
-      result.content[0].text.includes('Successfully applied 4 edits'),
-      'Should report success with the correct number of edits'
+      !result.isError && /\[Reading \d+ lines? from/.test(result.content[0].text) &&
+        result.content[0].text.includes('This line has been replaced correctly.'),
+      'Should preview the successfully edited content'
     );
     
     // Verify the file content
@@ -200,8 +201,9 @@ This is a MODIFIED target line in the header.`,
     // Check that the operation succeeded
     assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
     assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the header edit'
+      !result.isError && /\[Reading \d+ lines? from/.test(result.content[0].text) &&
+        result.content[0].text.includes('This is a MODIFIED target line in the header.'),
+      'Should preview the successful header edit'
     );
     
     // Target the occurrence in the footer section using context
@@ -217,8 +219,9 @@ This is a MODIFIED target line in the footer.`,
     // Check that the operation succeeded
     assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
     assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the footer edit'
+      !result.isError && /\[Reading \d+ lines? from/.test(result.content[0].text) &&
+        result.content[0].text.includes('This is a MODIFIED target line in the footer.'),
+      'Should preview the successful footer edit'
     );
     
     // Verify the file content
@@ -283,20 +286,19 @@ async function testEmptySearchString() {
   console.log('\nTest 6: Empty search string');
   
   try {
-    // Try to use an empty search string
-    const result = await handleEditBlock({
+    const originalContent = await fs.readFile(CONTEXT_TEST_FILE, 'utf8');
+    // The public schema rejects an empty search before file editing begins.
+    await assert.rejects(() => handleEditBlock({
       file_path: CONTEXT_TEST_FILE,
       old_string: '',
       new_string: 'This replacement should not be applied.',
       expected_replacements: 1
-    });
-    
-    // Check that we got the appropriate error message
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Empty search strings are not allowed'),
-      'Should report that empty search strings are not allowed'
-    );
+    }), error => error.name === 'ZodError' && error.issues.some(issue =>
+      issue.code === 'custom' &&
+      issue.message === 'Must provide either (old_string + new_string) or (range + content)'
+    ), 'Should reject an empty search at the validation boundary');
+    assert.strictEqual(await fs.readFile(CONTEXT_TEST_FILE, 'utf8'), originalContent,
+      'An empty search must leave the file unchanged');
     
     console.log('✓ Test correctly rejected empty search string');
   } catch (error) {
@@ -351,7 +353,9 @@ export default async function runTests() {
 
 // If this file is run directly (not imported), execute the test
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
+  runTests().then(success => {
+    if (!success) process.exitCode = 1;
+  }).catch(error => {
     console.error('❌ Unhandled error:', error);
     process.exit(1);
   });

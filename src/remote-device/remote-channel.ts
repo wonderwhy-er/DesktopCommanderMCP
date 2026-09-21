@@ -1,6 +1,14 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
-import { captureRemote } from '../utils/capture.js';
+import { captureRemote, isTelemetryDisabledByEnv } from '../utils/capture.js';
+import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { VERSION } from '../version.js';
+import { MqttDoorbellReceiver, type MqttConfig } from './mqtt-transport.js';
+import { enrollMqttDevice } from './mqtt-enrollment.js';
+import { captureArrival, TransportAnalytics, type ArrivalTime, type Transport, type TransportObservation } from './transport-analytics.js';
+
+// Shared admission ceiling: onDoorbell bounds fetches; MCPDevice also bounds direct delivery.
+// Overflow is dropped for the server's timeout/retry handling, never put in an unbounded queue.
+export const MAX_CONCURRENT_REMOTE_CALLS = 32;
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -142,6 +150,22 @@ export class RemoteChannel {
     /** Auth session gone for good: stops rejoins and caps the notice at one line. */
     private sessionLost = false;
     private handlingSignedOut = false;
+    /** Invalidates work admitted before sign-out or explicit session replacement. */
+    private authGeneration = 0;
+    /** Covers row fetch through execution/result reporting, not just MQTT packet handling. */
+    private activeDoorbells = new Set<string>();
+    private mqttReceiver: MqttDoorbellReceiver | null = null;
+    /** Successfully prepared credentials survive the existing session recovery without reenrollment. */
+    private mqttConfig: { config: MqttConfig; userId: string; deviceId: string } | null = null;
+    private readonly mqttEnabled = process.env.MQTT_TRANSPORT_ENABLED === 'true';
+    private readonly mqttExecutionEnabled = this.mqttEnabled && process.env.MQTT_EXECUTION_ENABLED === 'true';
+    private readonly transportAnalytics: TransportAnalytics;
+    private mqttReady = false;
+    private broadcastReady = false;
+    /** Existing non-transport fields survive whole-JSON capability replacement. */
+    private capabilityBase: Record<string, any> = {};
+    private capabilityWriteChain: Promise<void> = Promise.resolve();
+    private capabilitiesWritten: string | null = null;
 
 
     // Store subscription parameters for channel recreation
@@ -179,7 +203,64 @@ export class RemoteChannel {
     private tokenRefreshInterval: NodeJS.Timeout | null = null;
 
     private _user: User | null = null;
+
+    /** MCPDevice supplies the same backend/profile used for authentication and device registration. */
+    constructor(private readonly enrollment?: { serverUrl: string; profilePath: string }) {
+        const reportingEnabled = enrollment && !isTelemetryDisabledByEnv();
+        this.transportAnalytics = new TransportAnalytics(reportingEnabled ? async (observations, signal) => {
+            if (isTelemetryDisabledByEnv() ||
+                isTelemetryDisabledValue(await configManager.getValue('telemetryEnabled'))) return observations.length;
+            if (signal.aborted) throw new Error('Transport reporting cancelled');
+            const generation = this.authGeneration;
+            const deviceId = this.deviceId;
+            const userId = this.user?.id;
+            if (!deviceId || !userId || !this.canExecuteCall(userId, deviceId, generation)) {
+                throw new Error('Transport reporting session unavailable');
+            }
+            const backend = new URL(enrollment.serverUrl);
+            const local = backend.protocol === 'http:' && process.env.MQTT_ALLOW_INSECURE_LOCAL === 'true' &&
+                ['localhost', 'mcp.localhost', 'mcp.localhost.localdomain', '127.0.0.1', '[::1]'].includes(backend.hostname);
+            if ((backend.protocol !== 'https:' && !local) || backend.username || backend.password) {
+                throw new Error('Transport reporting requires a secure backend');
+            }
+            // Use the cached, refreshed device bearer token; no collector secret leaves the server.
+            const token = this.lastKnownSession?.access_token;
+            if (!token) throw new Error('Transport reporting session unavailable');
+            const response = await fetch(new URL('/device/transport-observations', backend), {
+                method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ device_id: deviceId, observations }),
+            });
+            if (!response.ok) throw new Error('Transport reporting failed');
+            const result = await response.json() as { accepted?: number; dropped?: number };
+            if (!Number.isInteger(result.accepted) || !Number.isInteger(result.dropped) ||
+                result.accepted! < 0 || result.dropped! < 0 ||
+                result.accepted! + result.dropped! !== observations.length) {
+                throw new Error('Invalid transport reporting acknowledgement');
+            }
+            return result.dropped;
+        } : undefined);
+    }
+
+    /** Device-side rejection/execution observers must never become execution dependencies. */
+    recordTransportStage(receipt: TransportObservation | undefined, stage: string, reason?: string, generation = this.authGeneration): void {
+        if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        try { this.transportAnalytics.stage(receipt, stage, reason); } catch { /* telemetry only */ }
+    }
+
     get user(): User | null { return this._user; }
+    /** MCPDevice captures this admission epoch and checks it after asynchronous work. */
+    get sessionGeneration(): number { return this.authGeneration; }
+
+    /**
+     * Shared gate for onDoorbell fetches and MCPDevice's execution guard. Recheck after
+     * awaits: matching ids alone do not prove that the admitting session is still valid.
+     */
+    canExecuteCall(userId: string, deviceId: string, generation: number): boolean {
+        return !!this.client && this.user?.id === userId && this.deviceId === deviceId &&
+            generation === this.authGeneration && !this.handlingSignedOut &&
+            !this.sessionLost && !this.shuttingDown;
+    }
 
 
     initialize(url: string, key: string): void {
@@ -217,7 +298,11 @@ export class RemoteChannel {
         }
     }
 
+    /** Establish the authenticated user for registration, invalidating previously admitted calls. */
     async setSession(session: AuthSession): Promise<{ error: any }> {
+        // Advance before network I/O: even a failed replacement cannot revive older work.
+        this.authGeneration += 1;
+        this.transportAnalytics.reset();
         if (!this.client) throw new Error('Client not initialized');
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
         const { error } = await this.client.auth.setSession({
@@ -289,7 +374,12 @@ export class RemoteChannel {
     private async handleSignedOut(): Promise<void> {
         if (this.handlingSignedOut || this.sessionLost || this.shuttingDown) return;
         this.handlingSignedOut = true;
+        this.authGeneration += 1;
+        this.transportAnalytics.reset();
         try {
+            // Stop delivery before attempting restoration. Even a successful restore requires
+            // a new subscription and cannot authorize claims from the previous generation.
+            await this.stopMqttTransport();
             const cached = this.lastKnownSession;
             if (cached?.refresh_token && this.client) {
                 console.debug('[DEBUG] SIGNED_OUT — attempting one session restore');
@@ -318,6 +408,14 @@ export class RemoteChannel {
                             }
                             console.log('   - ✅ Remote session restored after a transient sign-out');
                             await captureRemote('remote_channel_signed_out_recovered', {});
+                            if (this.deviceId) {
+                                try { await this.startMqttTransport(); }
+                                catch (error) {
+                                    await this.stopMqttTransport();
+                                    if (this.mqttExecutionEnabled) throw error;
+                                    console.warn('[MQTT] Shadow reconnect unavailable; Broadcast remains selected');
+                                }
+                            }
                             return;
                         }
                     }
@@ -335,6 +433,7 @@ export class RemoteChannel {
             }
 
             this.sessionLost = true;
+            await this.stopMqttTransport();
             await captureRemote('remote_channel_session_lost', {
                 hadRefreshToken: !!cached?.refresh_token,
             });
@@ -375,11 +474,12 @@ export class RemoteChannel {
         return await this.client.auth.getSession();
     }
 
+    /** Registration reads only this user's device, including capability fields that must survive. */
     async findDevice(deviceId: string) {
         if (!this.client) throw new Error('Client not initialized');
         const { data, error } = await this.client
             .from('mcp_devices')
-            .select('id, device_name')
+            .select('id, device_name, capabilities')
             .eq('id', deviceId)
             .eq('user_id', this.user?.id)
             .maybeSingle();
@@ -426,6 +526,10 @@ export class RemoteChannel {
         return { data, error };
     }
 
+    /**
+     * MCPDevice startup supplies its existing registration and handler. Keep the private
+     * channel for legacy calls/results/presence, then add an opt-in MQTT subscription.
+     */
     async registerDevice(capabilities: any, currentDeviceId: string | undefined, deviceName: string, onToolCall: (payload: any) => void): Promise<void> {
 
         console.debug('[DEBUG] RemoteChannel.registerDevice() called, deviceId:', currentDeviceId);
@@ -439,9 +543,14 @@ export class RemoteChannel {
         }
 
         if (existingDevice) {
+            // Persisted flags describe a previous connection; prove each transport again.
+            this.capabilityBase = { ...existingDevice.capabilities };
+            delete this.capabilityBase.transport_broadcast_v1;
+            delete this.capabilityBase.transport_mqtt_v1;
+            delete this.capabilityBase.transport_mqtt_observability_v1;
             console.debug('[DEBUG] Updating device status to online');
-            // transport_broadcast_v1 is NOT set here: the server treats it as
-            // binding, so it is written only once presence is proven.
+            // The server routes from capabilities, so broadcast waits for presence and
+            // MQTT waits for its QoS 1 SUBACK before either flag can be advertised.
             await this.updateDevice(existingDevice.id, {
                 status: 'online',
                 last_seen: new Date().toISOString(),
@@ -459,15 +568,62 @@ export class RemoteChannel {
             // Create and subscribe to the channel
             console.debug('[DEBUG] Calling createChannel()');
 
+            // Validate enabled MQTT configuration before opening another connection.
+            const generation = this.authGeneration;
+            const userId = this.user!.id;
+            const assertCurrent = () => {
+                if (!this.canExecuteCall(userId, existingDevice.id, generation)) {
+                    throw new Error('Device session changed during MQTT startup; restart the connector');
+                }
+            };
+            let mqttConfig: MqttConfig | null = null;
+            try { mqttConfig = await this.prepareMqttConfig(assertCurrent); }
+            catch (error) {
+                if (this.mqttExecutionEnabled) throw error;
+                console.warn('[MQTT] Shadow startup unavailable; Broadcast remains selected');
+            }
+            assertCurrent();
+            this.mqttConfig = mqttConfig ? { config: mqttConfig, userId, deviceId: existingDevice.id } : null;
             await this.createChannel().catch((error) => {
                 console.debug(`[DEBUG] Failed to create channel, will retry after socket reconnect: ${error?.message || error} — ${this.connState()}`);
             });
+            assertCurrent();
+            if (mqttConfig) {
+                try { await this.startMqttTransport(mqttConfig); }
+                catch (error) {
+                    await this.stopMqttTransport();
+                    if (this.mqttExecutionEnabled) throw error;
+                    console.warn('[MQTT] Shadow subscription unavailable; Broadcast remains selected');
+                }
+            }
 
         } else {
             console.error(`   - ❌ Device not found: ${currentDeviceId}`);
             await captureRemote('remote_channel_register_device_error', { error: 'Device not found', deviceId: currentDeviceId });
             throw new Error(`Device not found: ${currentDeviceId}`);
         }
+    }
+
+    /** MQTT startup always enrolls or reuses its private cache; legacy startup needs no credentials. */
+    private async prepareMqttConfig(assertCurrent: () => void): Promise<MqttConfig | null> {
+        if (!this.mqttEnabled) {
+            console.log('[MQTT] Disabled; set MQTT_TRANSPORT_ENABLED=true to enable');
+            return null;
+        }
+        console.log('[MQTT] Enabled; preparing device credentials');
+        if (!this.enrollment || !this.user || !this.deviceId) {
+            throw new Error('MQTT enrollment requires the authenticated connector backend and profile');
+        }
+        const { data, error } = await this.getSession();
+        assertCurrent();
+        if (error || !data.session?.access_token) throw new Error('MQTT enrollment requires a current device session');
+        return enrollMqttDevice({
+            ...this.enrollment,
+            userId: this.user.id,
+            deviceId: this.deviceId,
+            accessToken: data.session.access_token,
+            assertCurrent,
+        });
     }
 
     /**
@@ -525,13 +681,15 @@ export class RemoteChannel {
     }
 
     /**
-     * The complete `capabilities` JSONB value. One place only: every write
-     * replaces the whole column, so a second literal would silently drop keys.
+     * Build the whole `capabilities` JSONB value for registration and writeCapabilities.
+     * Each update replaces the column, so preserve unrelated keys and combine both flags.
      */
     private capabilitiesPayload(broadcastCapable: boolean): Record<string, any> {
         return {
+            ...this.capabilityBase,
             app_version: VERSION,
-            ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
+            ...(broadcastCapable ? { transport_broadcast_v1: true } : {}),
+            ...(this.mqttReady ? { transport_mqtt_v1: true, transport_mqtt_observability_v1: true } : {})
         };
     }
 
@@ -542,31 +700,85 @@ export class RemoteChannel {
      * re-arm the heartbeat.
      */
     private async setTransportCapable(capable: boolean): Promise<void> {
-        if (!this.client || !this.deviceId) return;
-        if (this.transportCapableWritten === capable) return; // no redundant writes
-        try {
-            const capabilities = this.capabilitiesPayload(capable);
+        this.broadcastReady = capable && !this.shuttingDown && !this.sessionLost;
+        await this.writeCapabilities();
+    }
+
+    /**
+     * Serialize MQTT and broadcast readiness writes to the device row. Connection callbacks
+     * and checkConnectionHealth share this owner so older snapshots cannot win a write race.
+     */
+    private writeCapabilities(): Promise<void> {
+        this.capabilityWriteChain = this.capabilityWriteChain.then(async () => {
+            if (!this.client || !this.deviceId || !this.user) return;
+            const broadcastReady = this.broadcastReady && !this.shuttingDown && !this.sessionLost;
+            if (this.shuttingDown || this.sessionLost) this.mqttReady = false;
+            // Read current flags when the queued write starts, not when it was enqueued.
+            const capabilities = this.capabilitiesPayload(broadcastReady);
+            const serialized = JSON.stringify(capabilities);
+            // Only confirmed writes are cached; a failed PATCH is retried by the health loop.
+            if (serialized === this.capabilitiesWritten) return;
             const { error } = await this.client
                 .from('mcp_devices')
                 .update({ capabilities })
-                .eq('id', this.deviceId);
-            if (error) {
-                console.error('[DEBUG] Failed to update transport capability:', error.message);
-                return;
-            }
-            this.transportCapableWritten = capable;
-            console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
-            // Tier changed — move last_seen onto the cadence that tier's sweep
-            // threshold expects (no-op if the heartbeat hasn't started yet).
+                .eq('id', this.deviceId)
+                .eq('user_id', this.user.id)
+                // A stalled PATCH must not block every later readiness change in the chain.
+                .abortSignal(AbortSignal.timeout(CAPABILITY_WRITE_TIMEOUT_MS));
+            if (error) throw new Error('Transport capability write failed');
+            this.capabilitiesWritten = serialized;
+            this.transportCapableWritten = broadcastReady;
+            // Existing heartbeat tiers still follow broadcast/presence capability in this pilot.
             this.scheduleHeartbeat();
-            // last_seen may already be past the 45s threshold now judging us,
-            // so write once immediately rather than waiting out the interval.
-            if (!capable && this.heartbeatDeviceId) {
-                this.updateHeartbeat(this.heartbeatDeviceId).catch(() => { /* logged inside */ });
+            if (!broadcastReady && this.heartbeatDeviceId) {
+                void this.updateHeartbeat(this.heartbeatDeviceId).catch(() => {});
             }
-        } catch (error: any) {
-            console.error('[DEBUG] Transport capability update threw:', error?.message);
+        }).catch(() => {
+            // Recover the chain so one failed write does not reject all future updates.
+            console.error('[DEBUG] Transport capability update failed');
+        });
+        return this.capabilityWriteChain;
+    }
+
+    /** Registration or session recovery starts one receiver bound to the authenticated device. */
+    private async startMqttTransport(config?: MqttConfig | null): Promise<void> {
+        if (!this.mqttEnabled) return;
+        if (config === undefined) {
+            if (this.mqttConfig) {
+                // Session restoration may reuse credentials only for the same authenticated identity.
+                if (this.mqttConfig.userId !== this.user?.id || this.mqttConfig.deviceId !== this.deviceId) {
+                    throw new Error('MQTT credentials belong to a different device session; restart the connector');
+                }
+                config = this.mqttConfig.config;
+            } else if (this.mqttEnabled) {
+                throw new Error('MQTT enrollment has not completed; restart the connector');
+            } else {
+                config = null;
+            }
         }
+        if (!config || this.shuttingDown || this.sessionLost) return;
+        if (!this.user || !this.deviceId || this.mqttReceiver) {
+            throw new Error('MQTT requires one authenticated registered device');
+        }
+        this.mqttReceiver = new MqttDoorbellReceiver(
+            config, this.user.id, this.deviceId,
+            (payload, arrival) => this.onDoorbell(payload, 'mqtt', arrival),
+            async (ready) => {
+                // SUBACK/close report readiness; shutdown/session loss always wins a late callback.
+                this.mqttReady = ready && !this.shuttingDown && !this.sessionLost;
+                await this.writeCapabilities();
+            },
+            () => this.transportAnalytics.rejectMalformed(),
+        );
+        await this.mqttReceiver.start();
+    }
+
+    /** Sign-out/shutdown withdraws readiness and detaches the receiver before awaiting its stop. */
+    private async stopMqttTransport(): Promise<void> {
+        this.mqttReady = false;
+        const receiver = this.mqttReceiver;
+        this.mqttReceiver = null;
+        if (receiver) await receiver.stop();
     }
 
     /** Create and subscribe the private channel (initial join and recreation). */
@@ -597,8 +809,9 @@ export class RemoteChannel {
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
-                        this.onDoorbell(payload).catch((e: any) => {
-                            console.error('[DEBUG] Doorbell handling failed:', e?.message);
+                        const arrival = captureArrival();
+                        this.onDoorbell(payload, 'broadcast', arrival).catch(() => {
+                            console.error('[BROADCAST] Doorbell handling failed', { call_id: payload?.call_id });
                         });
                     }
                 )
@@ -645,90 +858,125 @@ export class RemoteChannel {
         });
     }
 
-    /** Hand a call to device.ts, observing the rejection — the handler is async
-     * and an unhandled rejection terminates the process. */
-    private dispatchToolCall(payload: any): void {
+    /** Await MCPDevice's registered handler so onDoorbell holds its slot through result reporting. */
+    private async dispatchToolCall(payload: any): Promise<void> {
         try {
-            const maybePromise = this.onToolCall?.(payload) as unknown;
-            if (maybePromise instanceof Promise) {
-                maybePromise.catch((e: any) => {
-                    console.error('[DEBUG] Tool call handler rejected:', e?.message);
-                });
-            }
+            await this.onToolCall?.(payload);
         } catch (e: any) {
-            console.error('[DEBUG] Tool call handler threw:', e?.message);
+            console.error('[DEBUG] Tool call handler failed', { call_id: payload?.new?.id });
         }
     }
 
     /**
-     * Handle a 'new_call' doorbell. It carries ids only; the row is fetched by
-     * primary key and fed through the same handler as a postgres_changes
-     * payload, so device.ts stays transport-agnostic.
+     * Shared MQTT/private-broadcast entry point. Fetch the durable row by id and
+     * authenticated user/device, then adapt it to MCPDevice's existing `{ new: row }`
+     * handler shape. Notifications never supply tool arguments or execution authority.
      */
-    private async onDoorbell(payload: any): Promise<void> {
+    private async onDoorbell(payload: any, transport: Transport = 'broadcast', arrival = captureArrival()): Promise<void> {
         const callId = payload?.call_id;
-        if (!callId) return;
-        if (payload?.device_id && payload.device_id !== this.deviceId) {
-            console.debug('[DEBUG] Ignoring doorbell for different device');
+        if (!this.user || !this.deviceId || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        if (typeof callId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(callId) ||
+            payload.device_id !== this.deviceId || (payload.user_id && payload.user_id !== this.user.id)) {
+            this.transportAnalytics.rejectMalformed();
             return;
         }
+        const generation = this.authGeneration;
+        let receipt: TransportObservation | undefined;
+        try {
+            receipt = this.transportAnalytics.receipt(callId, transport, arrival,
+                transport === 'mqtt' ? payload.notification_id : undefined,
+                transport === 'mqtt' ? payload.attempt_number : undefined);
+        } catch { /* analytics cannot prevent admission */ }
+        const rejected = (reason: string) => this.recordTransportStage(receipt, 'handling_rejected', reason, generation);
+        // Receipt precedes expiry and source selection, including observation-only messages.
+        if (payload.expires_at && Date.parse(payload.expires_at) <= Date.now()) { rejected('expired'); return; }
+        const selected: Transport = this.mqttExecutionEnabled ? 'mqtt' : 'broadcast';
+        if (transport !== selected) {
+            this.recordTransportStage(receipt, 'execution_skipped', 'observation_only', generation);
+            return;
+        }
+        if (this.activeDoorbells.has(callId)) { rejected('duplicate'); return; }
+        if (this.activeDoorbells.size >= MAX_CONCURRENT_REMOTE_CALLS) { rejected('concurrency_limit'); return; }
+        this.activeDoorbells.add(callId);
+        // Capture identity before any wait; sign-out can restore the same ids.
+        const userId = this.user.id;
+        const deviceId = this.deviceId;
+        try {
+            console.debug('[DEBUG] Selected doorbell received for call:', callId);
 
-        // Not a telemetry event on purpose: ~126k/day in prod. Transport usage
-        // is already segmentable server-side via metadata.transport.
-        console.debug('[DEBUG] Doorbell received for call:', callId);
+            if (!this.client) { rejected('unavailable'); return; }
 
-        if (!this.client) return;
-
-        // Retry on transient failures (a REST blip while the socket stays
-        // healthy). Post-flip this fetch is the only way we learn about a call,
-        // so a hiccup must not cost a 5-minute timeout.
-        let row: any = null;
-        let lastError: any = null;
-        for (const delayMs of [0, 500, 1500]) {
-            if (delayMs > 0) await this.sleep(delayMs);
-            const { data, error } = await this.client
-                .from('mcp_remote_calls')
-                .select('*')
-                .eq('id', callId)
-                .maybeSingle();
-            if (!error) {
-                row = data;
-                lastError = null;
-                break;
+            // Retry transient REST errors on a fixed budget. Each request is abortable,
+            // and every retry rechecks admission so session loss/expiry cannot revive work.
+            let row: any = null;
+            let lastError: any = null;
+            for (const delayMs of [0, 500, 1500]) {
+                if (delayMs > 0) await this.sleep(delayMs);
+                if (!this.canExecuteCall(userId, deviceId, generation)) { rejected('unavailable'); return; }
+                if (payload.expires_at && Date.parse(payload.expires_at) <= Date.now()) { rejected('expired'); return; }
+                const { data, error } = await this.client
+                    .from('mcp_remote_calls')
+                    .select('*')
+                    .eq('id', callId)
+                    .eq('user_id', this.user.id)
+                    .eq('device_id', this.deviceId)
+                    .abortSignal(AbortSignal.timeout(CAPABILITY_WRITE_TIMEOUT_MS))
+                    .maybeSingle();
+                if (!error) {
+                    row = data;
+                    lastError = null;
+                    break;
+                }
+                lastError = error;
+                console.debug('[DEBUG] Doorbell row fetch attempt failed; retrying', { call_id: callId });
             }
-            lastError = error;
-            console.debug(`[DEBUG] Doorbell row fetch attempt failed for ${callId}: ${error.message} — retrying`);
-        }
 
-        if (lastError) {
-            console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after retries:`, lastError.message);
-            await captureRemote('remote_channel_doorbell_fetch_error', { error: lastError });
-            return;
-        }
-        if (!row) {
-            // Already claimed and deleted, or cleanup raced delivery. Not
-            // retried: the row is always inserted before the doorbell is sent.
-            await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
-            return;
-        }
-        // Optimization, not a guard — saves a hop on a duplicate doorbell
-        // (retry, reconnect). Exactly-once lives in device.ts (seenCallIds + DB claim).
-        if (row.status !== 'pending') {
-            console.debug('[DEBUG] Doorbell call already claimed:', callId);
-            return;
-        }
+            if (lastError) {
+                console.error('[DEBUG] Doorbell row fetch failed after retries', { call_id: callId });
+                rejected('unavailable');
+                await captureRemote('remote_channel_doorbell_fetch_error', { call_id: callId });
+                return;
+            }
+            if (!row) {
+                // Already claimed and deleted, or cleanup raced delivery. Not
+                // retried: the row is always inserted before the doorbell is sent.
+                rejected('invalid_row');
+                await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
+                return;
+            }
+            // The fetched row must agree with admission and the MQTT deadline. This is
+            // validation, not a claim: markCallExecuting arbitrates competing processes.
+            const deadline = row.timeout_at ?? row.metadata?.expires_at;
+            if (!this.canExecuteCall(userId, deviceId, generation) ||
+                row.user_id !== userId || row.device_id !== deviceId ||
+                (payload.expires_at && Date.parse(payload.expires_at) !== Date.parse(deadline)) ||
+                (deadline && (!Number.isFinite(Date.parse(deadline)) || Date.parse(deadline) <= Date.now()))) { rejected('invalid_row'); return; }
+            // Skip a redundant claim for known terminal/executing rows. A concurrent claim
+            // after this read is still handled by the conditional database update.
+            if (row.status !== 'pending') {
+                rejected('claim_lost');
+                console.debug('[DEBUG] Doorbell call already claimed:', callId);
+                return;
+            }
 
-        this.dispatchToolCall({ new: row });
+            await this.dispatchToolCall({ new: row, transportObservation: receipt, transportGeneration: generation });
+        } catch {
+            rejected('unavailable');
+            console.error('[DEBUG] Doorbell handling failed', { call_id: callId });
+        } finally {
+            // Keep the slot until the handler settles, then release on success or any error.
+            this.activeDoorbells.delete(callId);
+        }
     }
 
     /**
-     * Tell the server a result row is written. Fire-and-forget: a failed send
-     * just falls back to the server's 10s recovery poll. MUST run only after
-     * updateCallResult() resolves, so the server's fetch-by-id sees a terminal row.
+     * MCPDevice calls this after updateCallResult. Results still use Supabase Broadcast
+     * in the MQTT pilot; send failures are contained and the server's recovery poll checks
+     * the durable row. The notification itself does not carry or prove a stored result.
      */
     async notifyResult(callId: string): Promise<void> {
         if (!this.channel || this.channel.state !== 'joined') {
-            console.debug('[DEBUG] Result doorbell skipped — channel not joined (recovery poll covers)');
+            console.debug('[DEBUG] Result doorbell skipped — channel not joined (recovery poll covers)', { call_id: callId });
             return;
         }
         try {
@@ -739,11 +987,11 @@ export class RemoteChannel {
                 console.debug('[DEBUG] Result doorbell sent:', callId);
             } else {
                 console.debug(`[DEBUG] Result doorbell not acknowledged (${result}) — recovery poll covers:`, callId);
-                captureRemote('remote_channel_result_doorbell_send_failed', { result }).catch(() => { });
+                captureRemote('remote_channel_result_doorbell_send_failed', { call_id: callId, result }).catch(() => { });
             }
         } catch (error: any) {
-            console.debug('[DEBUG] Result doorbell send failed (recovery poll covers):', error?.message);
-            captureRemote('remote_channel_result_doorbell_send_failed', { error: error?.message }).catch(() => { });
+            console.debug('[DEBUG] Result doorbell send failed (recovery poll covers)', { call_id: callId });
+            captureRemote('remote_channel_result_doorbell_send_failed', { call_id: callId }).catch(() => { });
         }
     }
 
@@ -762,10 +1010,13 @@ export class RemoteChannel {
     }
 
     /**
-     * Check if channel is connected, recreate if not.
+     * Existing health timer retries capability persistence and repairs the private channel.
+     * MQTT.js owns its separate socket reconnects; this does not create another MQTT client.
      */
     private checkConnectionHealth(): void {
-        if (this.sessionLost) return;
+        if (this.sessionLost || this.shuttingDown) return;
+        // Retry a failed capability PATCH on the existing health cadence.
+        void this.writeCapabilities();
         if (!this.channel || !this.client || !this.user?.id || !this.onToolCall) {
             return;
         }
@@ -973,37 +1224,42 @@ export class RemoteChannel {
     }
 
     /**
-     * Claim a call. True only when THIS update flipped the row pending ->
-     * executing, which is what makes dual delivery safe across processes.
-     * .eq('status','pending') makes it conditional; .select('id') makes the
-     * result observable. On a transient DB error it returns true (execute
-     * anyway), matching prior behaviour — so device.ts's in-memory guard is what
-     * actually guarantees exactly-once within a process.
+     * MCPDevice's cross-process arbitration: update only this authenticated device's pending,
+     * unexpired row and return true only when the database reports a match. Ambiguous/errors
+     * fail closed; the caller also rechecks session/deadline after this await before execution.
      */
-    async markCallExecuting(callId: string): Promise<boolean> {
-        if (!this.client) throw new Error('Client not initialized');
-        const { data, error } = await this.client
-            .from('mcp_remote_calls')
-            .update({ status: 'executing' })
-            .eq('id', callId)
-            .eq('status', 'pending')
-            .select('id');
-
-        if (error) {
-            console.error('[DEBUG] Failed to mark call executing:', error.message);
-            await captureRemote('remote_channel_mark_call_executing_error', { error });
-            return true; // preserve legacy behavior: execution proceeds despite the write error
+    async markCallExecuting(callId: string, deadline?: string): Promise<boolean> {
+        if (!this.client || !this.user || !this.deviceId ||
+            !this.canExecuteCall(this.user.id, this.deviceId, this.authGeneration)) return false;
+        if (deadline && (!Number.isFinite(Date.parse(deadline)) || Date.parse(deadline) <= Date.now())) return false;
+        try {
+            let query = this.client
+                .from('mcp_remote_calls')
+                .update({ status: 'executing' })
+                .eq('id', callId)
+                .eq('user_id', this.user.id)
+                .eq('device_id', this.deviceId)
+                .eq('status', 'pending');
+            // Check the stored deadline in the conditional UPDATE, not only the fetched snapshot.
+            if (deadline) query = query.gt('timeout_at', new Date(Date.now()).toISOString());
+            const { data, error } = await query.select('id')
+                .abortSignal(AbortSignal.timeout(CAPABILITY_WRITE_TIMEOUT_MS));
+            if (error) {
+                console.error('[DEBUG] Failed to claim call; execution skipped', { call_id: callId });
+                void captureRemote('remote_channel_mark_call_executing_error', { call_id: callId }).catch(() => {});
+                return false;
+            }
+            return !!data && data.length > 0;
+        } catch {
+            console.error('[DEBUG] Failed to claim call; execution skipped', { call_id: callId });
+            return false;
         }
-
-        const claimed = !!data && data.length > 0;
-        if (claimed) {
-            console.debug('[DEBUG] Call marked executing:', callId);
-        } else {
-            console.debug('[DEBUG] Call already claimed (duplicate delivery), skipping:', callId);
-        }
-        return claimed;
     }
 
+    /**
+     * MCPDevice persists completion/failure here before notifyResult. Bound every write,
+     * including the recursive text-only fallback, so stalled I/O cannot occupy all 32 slots.
+     */
     async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
@@ -1034,11 +1290,12 @@ export class RemoteChannel {
         const { error } = await this.client
             .from('mcp_remote_calls')
             .update(updateData)
-            .eq('id', callId);
+            .eq('id', callId)
+            .abortSignal(AbortSignal.timeout(CAPABILITY_WRITE_TIMEOUT_MS));
 
         if (error) {
-            console.error('[DEBUG] Failed to update call result:', error.message);
-            await captureRemote('remote_channel_update_call_result_error', { error });
+            console.error('[DEBUG] Failed to update call result', { call_id: callId });
+            await captureRemote('remote_channel_update_call_result_error', { call_id: callId });
 
             // Fail-fast fallback: if the RESULT write failed (sanitize should
             // prevent the NUL case, but any unstorable payload lands here),
@@ -1059,16 +1316,15 @@ export class RemoteChannel {
         }
     }
 
-    /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
+    /** Pilot reachability still requires the private result/presence channel, even with MQTT input. */
     private isReachable(): boolean {
         return this.channel?.state === 'joined';
     }
 
     /**
-     * Set `status` from actual reachability. `status` is transport-agnostic (the
-     * server filters on it), so it must not follow one channel's health — the
-     * private channel's error path re-fires on every rejoin and would oscillate
-     * the row against the heartbeat. Same predicate as the heartbeat gate.
+     * Set the status used by server dispatch from the same reachability predicate as
+     * the heartbeat. MQTT input capability alone does not remove this pilot's dependency
+     * on the private channel for results and presence.
      */
     private syncReachabilityStatus(): void {
         this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
@@ -1347,6 +1603,7 @@ export class RemoteChannel {
         }
     }
 
+    /** MCPDevice shutdown closes both inputs before its final durable offline update. */
     async unsubscribe() {
         // setOffline()'s durable write is the final word on `status` from here,
         // so stop the heartbeat and the channel callbacks from racing it. The
@@ -1354,6 +1611,9 @@ export class RemoteChannel {
         // SIGINT during recreateChannel()'s backoff, where the later join's
         // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
+        this.transportAnalytics.stop();
+        // Socket stop is immediate; do not let capability persistence consume the exit budget.
+        await Promise.race([this.stopMqttTransport(), this.sleep(250)]);
         // Budget against device.ts's 5s force-exit, worst case:
         //   250 drain + 2x300 leave + 500 session + 3000 spawnSync = 4350ms.
         // In practice only the untrack bound binds — removeChannel/unsubscribe
