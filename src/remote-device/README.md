@@ -41,7 +41,7 @@ By default, the authenticated device session is saved to:
 ~/.desktop-commander-device/device.json
 ```
 
-The file is stored with mode `0600`. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
+On POSIX systems, the file is created with mode `0600` (read/write for the owning user only). On Windows, this code does not set a custom owner-only ACL; access is governed by the Windows filesystem permissions for the user profile. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
 
 ### 3. Connect your AI
 
@@ -217,6 +217,6 @@ These contributor commands are separate from the recommended end-user command, `
 - **Explicit availability:** remote calls can reach the computer only while the Remote Device is running and connected.
 - **Authentication:** the device uses OAuth authentication to connect to the Remote MCP service.
 - **Local history:** the local Desktop Commander MCP server records tool-call history on the device. See [Local tool history and audit logs](../../README.md#local-tool-history-and-audit-logs) for storage locations and retention behavior.
-- **Remote retention:** the Remote MCP service does not currently retain command arguments or command results as a historical server-side audit trail after execution is complete.
+- **Remote retention:** the Remote MCP service temporarily stores tool arguments and results in `mcp_remote_calls` so calls can be routed and completed. Terminal rows are automatically swept shortly after completion (eligible for deletion after one minute, with a one-hour creation-time backstop), so they are not kept as a long-term historical audit log.
 
 For general support, see the [Desktop Commander README](../../README.md) and [GitHub issues](https://github.com/wonderwhy-er/DesktopCommanderMCP/issues).

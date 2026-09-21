@@ -813,7 +813,7 @@ Locations:
 
 ### Remote calls and server-side retention
 
-Calls executed through Remote Desktop Commander are still handled by the local MCP server and use the same local history files above. The Remote Desktop Commander service does **not currently retain command arguments or command results as a historical server-side audit trail after execution is complete**.
+Calls executed through Remote Desktop Commander are still handled by the local MCP server and use the same local history files above. The Remote Desktop Commander service temporarily stores tool arguments and results in `mcp_remote_calls` so calls can be routed and completed. Terminal rows are automatically swept shortly after completion (eligible for deletion after one minute, with a one-hour creation-time backstop), so they are not kept as a long-term historical server-side audit trail.
 
 These local history files are also separate from Desktop Commander's optional telemetry. The files themselves are not uploaded as telemetry. See [Data Collection & Privacy](#data-collection--privacy) and [PRIVACY.md](PRIVACY.md) for telemetry details.
 
