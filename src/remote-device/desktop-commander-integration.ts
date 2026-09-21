@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
+import type { BroadcastObservation, OperationEnd } from './broadcast-analytics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -215,23 +216,37 @@ export class DesktopCommanderIntegration {
         return null;
     }
 
-    async callClientTool(toolName: string, args: any, metadata?: any) {
+    async callClientTool(toolName: string, args: any, metadata?: any, observation?: BroadcastObservation) {
         // Restart the child if it died since the last call, so a one-off crash
         // costs one failed call instead of wedging the device until a human
         // restarts `desktop-commander remote`.
-        await this.ensureReady();
+        const ready = observation?.operation('executor_ready');
+        try {
+            await this.ensureReady();
+            ready?.('success');
+        } catch (error) {
+            ready?.('failed', 'unavailable');
+            throw error;
+        }
 
         // Proxy other tools to MCP server
+        let executed: OperationEnd | undefined;
         try {
             console.debug('[DEBUG] Calling MCP tool:', toolName, 'args:', JSON.stringify(args).substring(0, 100));
+            executed = observation?.operation('executor');
+            observation?.stage('execution_start');
             const result = await this.mcpClient!.callTool({
                 name: toolName,
                 arguments: args,
                 _meta: { remote: true, ...metadata || {} }
             } as any);
+            executed?.(result.isError === true ? 'failed' : 'success', result.isError === true ? 'executor_failed' : undefined);
+            observation?.stage('execution_finish', result.isError === true ? 'executor_failed' : undefined);
             console.debug('[DEBUG] Tool call successful:', toolName);
             return result;
         } catch (error) {
+            executed?.('failed', 'executor_failed');
+            if (executed) observation?.stage('execution_finish', 'executor_failed');
             console.error(`Error executing tool ${toolName}:`, error);
             console.debug('[DEBUG] Tool call error details:', error);
             await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
