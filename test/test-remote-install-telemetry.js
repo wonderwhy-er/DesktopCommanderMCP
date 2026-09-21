@@ -32,7 +32,7 @@ async function testSuccessfulDeviceStart() {
     let request;
     const authenticator = new DeviceAuthenticator('https://mcp.example.test', {
         capture: telemetry.capture,
-        now: clock(1000, 1123),
+        monotonicNow: clock(1000, 1123),
         fetch: async (url, init) => {
             request = { url, init };
             return new Response(JSON.stringify(authResponse()), {
@@ -60,7 +60,7 @@ async function testInitialNetworkFailure() {
     const telemetry = recorder();
     const authenticator = new DeviceAuthenticator('https://mcp.example.test', {
         capture: telemetry.capture,
-        now: clock(2000, 2456),
+        monotonicNow: clock(2000, 2456),
         fetch: async () => { throw new Error('dns lookup failed'); },
     });
 
@@ -80,7 +80,7 @@ async function testInitialHttpFailure() {
     const telemetry = recorder();
     const authenticator = new DeviceAuthenticator('https://mcp.example.test', {
         capture: telemetry.capture,
-        now: clock(3000, 3075),
+        monotonicNow: clock(3000, 3075),
         fetch: async () => new Response(
             JSON.stringify({ error_description: 'service unavailable' }),
             { status: 503, headers: { 'Content-Type': 'application/json', Date: new Date().toUTCString() } },

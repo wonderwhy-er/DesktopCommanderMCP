@@ -35,7 +35,7 @@ type DeviceAuthenticatorDeps = {
     fetch?: typeof fetch;
     open?: typeof open;
     capture?: typeof captureRemote;
-    now?: () => number;
+    monotonicNow?: () => number;
 };
 
 export class DeviceAuthenticator {
@@ -43,14 +43,14 @@ export class DeviceAuthenticator {
     private fetchFn: typeof fetch;
     private openFn: typeof open;
     private captureFn: typeof captureRemote;
-    private now: () => number;
+    private monotonicNow: () => number;
 
     constructor(baseServerUrl: string, deps: DeviceAuthenticatorDeps = {}) {
         this.baseServerUrl = baseServerUrl;
         this.fetchFn = deps.fetch ?? fetch;
         this.openFn = deps.open ?? open;
         this.captureFn = deps.capture ?? captureRemote;
-        this.now = deps.now ?? Date.now;
+        this.monotonicNow = deps.monotonicNow ?? performance.now.bind(performance);
     }
 
     async authenticate(deviceId?: string): Promise<AuthSession> {
@@ -81,7 +81,7 @@ export class DeviceAuthenticator {
 
     private async requestDeviceCode(codeChallenge: string, deviceId?: string): Promise<DeviceAuthResponse> {
         console.log('   - 📡 Requesting device code...');
-        const startedAt = this.now();
+        const startedAt = this.monotonicNow();
         await this.captureFn('remote_device_auth_request_started', {
             has_existing_device_id: Boolean(deviceId),
         });
@@ -104,7 +104,7 @@ export class DeviceAuthenticator {
         } catch (error) {
             await this.captureFn('remote_device_auth_request_network_error', {
                 error,
-                duration_ms: this.now() - startedAt,
+                duration_ms: Math.round(this.monotonicNow() - startedAt),
                 has_existing_device_id: Boolean(deviceId),
             });
             throw error;
@@ -116,7 +116,7 @@ export class DeviceAuthenticator {
             const errorMessage = error.error_description || 'Failed to start device flow';
             await this.captureFn('remote_device_auth_request_failed', {
                 error: errorMessage,
-                duration_ms: this.now() - startedAt,
+                duration_ms: Math.round(this.monotonicNow() - startedAt),
                 has_existing_device_id: Boolean(deviceId),
             });
             throw new Error(errorMessage);
@@ -124,7 +124,7 @@ export class DeviceAuthenticator {
 
         const data = await response.json();
         await this.captureFn('remote_device_auth_code_received', {
-            duration_ms: this.now() - startedAt,
+            duration_ms: Math.round(this.monotonicNow() - startedAt),
             has_existing_device_id: Boolean(deviceId),
         });
         console.log('   - ✅ Device code received\n');
