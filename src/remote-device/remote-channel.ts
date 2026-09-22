@@ -533,6 +533,11 @@ export class RemoteChannel {
     }
 
     private async trackPresenceInner(recovered: number, attempts: number): Promise<void> {
+        // A fresh attempt starts from "not proven", so a leftover true from an
+        // earlier join cannot keep the device counting as reachable while this
+        // one is still deciding.
+        this.presenceTracked = false;
+
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
             let status: string;
@@ -548,34 +553,37 @@ export class RemoteChannel {
             }
 
             if (status === 'ok') {
-                this.presenceTracked = true;
-                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
-                // Reconnect attempts preceding this join (0 on a first join).
-                captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
-                // Proven end-to-end (joined AND presence published) — only now
-                // advertise the capability dispatch requires.
+                // `presenceTracked` is not "track() said ok" — isReachable()
+                // reads it as "this device receives commands", and the heartbeat
+                // consults isReachable() directly rather than waiting for the
+                // sequence below. Raising it here let a heartbeat firing while
+                // these writes were in flight assert `online` over a row with no
+                // capability recorded: the very state this is meant to remove.
+                // So it is raised last, when every claim it makes is already true.
                 //
-                // Both writes have to land. Supabase reports a refused
-                // write in the result rather than by throwing, and a
-                // device whose row records neither the capability nor
-                // `online` is exactly as undispatchable as one that never
-                // published presence — so it must not report itself ready.
-                // The health check retries presence while presenceTracked
-                // is false, which is the way back.
+                // Both writes have to land. Supabase reports a refused write in
+                // the result rather than by throwing, and a device whose row
+                // records neither the capability nor `online` is exactly as
+                // undispatchable as one that never published presence. The
+                // health check retries presence while this stays false, which is
+                // the way back.
                 const capabilityWritten = await this.setTransportCapable(true);
-                // Same event, same promise: the row may claim reachable
-                // only where the capability is advertised.
                 // Strictly after, never alongside: `online` may be claimed only
                 // where the capability is already advertised, or the row lands
                 // back in the state this whole change is about.
                 const statusWritten = capabilityWritten ? await this.queueStatusWrite('online') : false;
                 if (!capabilityWritten || !statusWritten) {
-                    this.presenceTracked = false;
                     console.error('❌ Presence published but the device row could not be updated — not ready');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
                     }).catch(() => { });
+                    return;
                 }
+
+                this.presenceTracked = true;
+                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
+                // Reconnect attempts preceding this join (0 on a first join).
+                captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
                 return;
             }
 
