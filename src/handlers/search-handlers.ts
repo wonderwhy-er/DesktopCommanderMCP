@@ -1,4 +1,5 @@
 import { searchManager, describeShortfalls } from '../search-manager.js';
+import type { SearchShortfall } from '../search-manager.js';
 import {
   StartSearchArgsSchema,
   GetMoreSearchResultsArgsSchema,
@@ -11,8 +12,8 @@ import { capture } from '../utils/capture.js';
  * Only a finished search reports what it missed, so the lines follow the status
  * the caller was given rather than whichever moment they read the session at.
  */
-function shortfallLines(shortfalls: string[] | undefined): string {
-  const sentences = describeShortfalls(shortfalls as never);
+function shortfallLines(shortfalls: SearchShortfall[] | undefined): string {
+  const sentences = describeShortfalls(shortfalls);
   return sentences ? `\n${sentences}` : '';
 }
 

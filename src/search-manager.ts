@@ -36,6 +36,8 @@ const MAX_BUFFERED_LINE_CHARS = 1024 * 1024;
  */
 export type SearchShortfall = 'max-results' | 'time-limit' | 'output-size';
 
+// Only the first two name a knob, because only they have one: a session that
+// ran out of room can be asked for less, but not for more.
 const SHORTFALL_SENTENCES: Record<SearchShortfall, string> = {
   'max-results': '⚠️  Stopped at the maxResults limit; there may be more matches. Raise maxResults or narrow the search to see them.',
   'time-limit': '⚠️  Stopped at the time limit; there may be more matches. Raise timeout_ms or narrow the search to see them.',
