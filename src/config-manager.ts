@@ -462,7 +462,9 @@ class ConfigManager {
 
   private async emitCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): Promise<void> {
     try {
-      await this.captureEvent('server_config_recovered', telemetry);
+      // Named in #693: `error` keeps it in the MCP error rollup, and the prefix
+      // is deliberately not `server_`, which reads as a tool event.
+      await this.captureEvent('config_parse_error_recovered', telemetry);
     } catch {
       // Recovery must never depend on telemetry delivery.
     }
