@@ -332,7 +332,19 @@ export class MCPDevice {
         }
     }
 
-    async clearPersistedConfig() {
+    /**
+     * Queue the removal of the config. Goes through the same chain as a write,
+     * because removing it is one: a rotation queued a moment earlier would
+     * otherwise land afterwards and put the file back, and the one caller is
+     * the revoked-device branch of start(), where the credentials have to be
+     * gone before the next start decides whether to trust them.
+     */
+    async clearPersistedConfig(): Promise<void> {
+        this.configWriteChain = this.configWriteChain.then(() => this.removePersistedConfig());
+        return this.configWriteChain;
+    }
+
+    private async removePersistedConfig(): Promise<void> {
         try {
             await fs.rm(this.configPath, { force: true });
             console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
