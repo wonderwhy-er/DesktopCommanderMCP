@@ -214,21 +214,20 @@ export function describeProcessOutcome(
     return '❌ Process ended without an exit status';
   }
 
-  const ended = signal
-    ? `terminated by ${signal}`
-    : exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`;
-
-  if (shortfalls.includes('pipe-still-open')) {
-    const pointer = readAgain ? 'Read again for the rest' : 'Use read_process_output for the rest';
-    return `⏳ Process ${ended}, but ${describeOutputShortfall('pipe-still-open')}. ${pointer}`;
-  }
-
   const runtime = runtimeMs !== undefined ? ` (runtime: ${(runtimeMs / 1000).toFixed(2)}s)` : '';
-  if (signal) {
-    return `⏹️ Process terminated by ${signal}${runtime}`;
+  const verdict = signal
+    ? `⏹️ Process terminated by ${signal}${runtime}`
+    : `${exitCode === 0 ? '✅' : '❌'} Process completed with exit code ${exitCode}${runtime}`;
+
+  // The exit is known even when the output is not, so the verdict stands and
+  // the warning joins it rather than replacing it.
+  if (!shortfalls.includes('pipe-still-open')) {
+    return verdict;
   }
-  return `${exitCode === 0 ? '✅' : '❌'} Process completed with exit code ${exitCode}${runtime}`;
+  const pointer = readAgain ? 'Read again for the rest' : 'Use read_process_output for the rest';
+  return `${verdict}, but ${describeOutputShortfall('pipe-still-open')}. ${pointer}`;
 }
+
 
 /**
  * Format process state for user display

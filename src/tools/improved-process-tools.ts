@@ -305,8 +305,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
     const waitForOutput = (): Promise<void> => {
       return new Promise((resolve) => {
         // Check if there's already new output
-        const currentLines = terminalManager.getOutputLineCount(pid) || 0;
-        if (currentLines > session.lastReadIndex) {
+        if (terminalManager.hasUnreadOutput(pid)) {
           resolve();
           return;
         }
@@ -329,8 +328,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
         // Poll for new output
         interval = setInterval(() => {
-          const newLineCount = terminalManager.getOutputLineCount(pid) || 0;
-          if (newLineCount > session.lastReadIndex) {
+          if (terminalManager.hasUnreadOutput(pid)) {
             resolveOnce();
           }
         }, 50);

@@ -113,10 +113,10 @@ async function worker() {
       `the grandchild must have held the pipe open, got: ${JSON.stringify(inFlight)}`
     );
     assert.ok(
-      !/Process completed/i.test(inFlight),
-      `completion must not be claimed while another process still holds the output pipe, got: ${JSON.stringify(inFlight)}`
+      /exit code 0/.test(inFlight),
+      `the exit is known and must be reported even here, got: ${JSON.stringify(inFlight)}`
     );
-    console.log('✓ completion is not claimed while output is still in flight');
+    console.log('✓ the exit is reported, with the warning that output may follow');
 
     // 5. A signalled process has no exit code, and "exit code null" under a
     // failure marker turns a deliberate stop into a crash.
@@ -228,8 +228,8 @@ async function worker() {
       `the read must have found the session, got: ${JSON.stringify(readWhileOpen)}`
     );
     assert.ok(
-      !/Process completed/i.test(readWhileOpen),
-      `read_process_output must not claim completion while the output pipe is still open, got: ${JSON.stringify(readWhileOpen)}`
+      /exit code 0/.test(readWhileOpen),
+      `read_process_output must report the same exit start_process did, got: ${JSON.stringify(readWhileOpen)}`
     );
     assert.ok(
       /output pipe is still open/.test(readWhileOpen),

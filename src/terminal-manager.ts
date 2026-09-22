@@ -314,6 +314,7 @@ export class TerminalManager {
       process: childProcess,
       outputLines: [],           // Line-based buffer
       lastReadIndex: 0,          // Track where "new" output starts
+      lastReadOpenLine: '',
       isBlocked: false,
       startTime: new Date(),
       bufferedChars: 0,
@@ -628,6 +629,8 @@ export class TerminalManager {
         lines: session.outputLines,
         lastReadIndex: session.lastReadIndex,
         updateLastRead: (newIndex) => { session.lastReadIndex = newIndex; },
+        lastReadOpenLine: session.lastReadOpenLine,
+        updateLastReadOpenLine: (text) => { session.lastReadOpenLine = text; },
         outcome: 'running',
         outputShortfalls: [],
         evictedLines: session.evictedLines,
@@ -645,6 +648,8 @@ export class TerminalManager {
         // while it was alive must not be handed those lines a second time.
         lastReadIndex: completedSession.session.lastReadIndex,
         updateLastRead: (newIndex) => { completedSession.session.lastReadIndex = newIndex; },
+        lastReadOpenLine: completedSession.session.lastReadOpenLine,
+        updateLastReadOpenLine: (text) => { completedSession.session.lastReadOpenLine = text; },
         outcome: 'exited',
         outputShortfalls: completedSession.outputShortfalls,
         evictedLines: completedSession.session.evictedLines,
@@ -668,6 +673,8 @@ export class TerminalManager {
       lines: string[];
       lastReadIndex: number;
       updateLastRead: (index: number) => void;
+      lastReadOpenLine: string;
+      updateLastReadOpenLine: (text: string) => void;
       outcome: ProcessOutcome;
       outputShortfalls: OutputShortfall[];
       evictedLines: number;
@@ -695,10 +702,16 @@ export class TerminalManager {
     } else if (offset === 0) {
       // offset=0 means "from where I last read" (like getNewOutput)
       startIndex = lastReadIndex;
-      linesToRead = lines.slice(startIndex, startIndex + length);
-      // Update lastReadIndex for "new output" behavior
+      // While the buffer can grow, its last line is the open one: it is written
+      // into in place, so its line number never moves and only its text can say
+      // whether there is anything new in it.
+      const openLine = totalLines > 0 ? lines[totalLines - 1] : '';
+      const openLineChanged = openLine !== from.lastReadOpenLine;
+      const readable = from.canGrow && !openLineChanged ? Math.max(totalLines - 1, 0) : totalLines;
+      linesToRead = lines.slice(startIndex, Math.min(startIndex + length, readable));
       const consumable = from.canGrow ? Math.max(totalLines - 1, 0) : totalLines;
       updateLastRead(Math.min(startIndex + linesToRead.length, consumable));
+      from.updateLastReadOpenLine(openLine);
     } else {
       // Positive offset = absolute position
       startIndex = offset;
@@ -725,6 +738,18 @@ export class TerminalManager {
       runtimeMs,
       signal
     };
+  }
+
+  /**
+   * Has a default read anything left to return? Complete lines past the read
+   * index, or an open line whose text has changed since it was last handed out.
+   */
+  hasUnreadOutput(pid: number): boolean {
+    const session = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
+    if (!session) return false;
+    const lines = session.outputLines;
+    if (Math.max(lines.length - 1, 0) > session.lastReadIndex) return true;
+    return (lines[lines.length - 1] ?? '') !== session.lastReadOpenLine;
   }
 
   /**

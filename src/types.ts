@@ -19,7 +19,10 @@ export interface TerminalSession {
   pid: number;
   process: ChildProcess;
   outputLines: string[];      // Line-based buffer (persistent, capped — oldest lines evicted)
-  lastReadIndex: number;      // Track where "new" output starts for default reads
+  lastReadIndex: number;      // Complete lines already handed to a default read
+  // The open line as it looked then: it grows in place, so only its text can
+  // say whether there is anything new in it.
+  lastReadOpenLine: string;
   isBlocked: boolean;
   startTime: Date;
   bufferedChars: number;      // Joined length of outputLines (content + separators)
