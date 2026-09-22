@@ -12,18 +12,22 @@ import PizZip from 'pizzip';
  * never their size, and a context line is stored whole: 400 context lines of a
  * 100KiB file held 78MiB in one session.
  *
+ * Counted in characters, not bytes: these are JavaScript string lengths, so a
+ * budget of 4M characters is 4MiB of ASCII and up to twice that in memory for
+ * text V8 cannot keep in one byte per character.
+ *
  * The per-entry cap is well above what a caller is shown — both handlers print
  * at most 100 characters of a result — so it costs nothing visible.
  */
 const MAX_RESULT_TEXT_CHARS = 2000;
-const MAX_RETAINED_TEXT_BYTES = 4 * 1024 * 1024;
+const MAX_RETAINED_TEXT_CHARS = 4 * 1024 * 1024;
 
 /**
- * How much of a single line the collector may hold before it gives up on it.
- * ripgrep writes one JSON object per line, so a minified bundle can put
- * megabytes on the wire with no newline to break at.
+ * How much of a single line the collector may hold before it gives up on it,
+ * in characters as above. ripgrep writes one JSON object per line, so a
+ * minified bundle can put megabytes on the wire with no newline to break at.
  */
-const MAX_BUFFERED_LINE_BYTES = 1024 * 1024;
+const MAX_BUFFERED_LINE_CHARS = 1024 * 1024;
 
 /**
  * Why an answer holds less than the tree it came from. A session can hit more
@@ -71,7 +75,7 @@ export interface SearchSession {
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
   shortfalls: Set<SearchShortfall>;
-  retainedBytes: number;    // Size of the result text held in results[]
+  retainedChars: number;    // Length of the result text held in results[]
   skippingOversizedLine?: boolean;  // Discarding a line too large to buffer
 }
 
@@ -146,7 +150,7 @@ export interface SearchSessionOptions {
       buffer: '',
       totalMatches: 0,
       totalContextLines: 0,
-      retainedBytes: 0,
+      retainedChars: 0,
       shortfalls: new Set()
     };
 
@@ -977,7 +981,7 @@ export interface SearchSessionOptions {
       sessionId: session.id,
       searchType: session.options.searchType,
       matches: session.totalMatches,
-      retainedBytes: session.retainedBytes,
+      retainedChars: session.retainedChars,
       runtime: Date.now() - session.startTime
     });
   }
@@ -1008,8 +1012,8 @@ export interface SearchSessionOptions {
    * answer out of a much larger tree otherwise looks exactly like a search that
    * found that much.
    *
-   * The same door holds the byte budget: an entry's text is capped, and once the
-   * session has kept MAX_RETAINED_TEXT_BYTES it stops taking anything at all.
+   * The same door holds the text budget: an entry's text is capped, and once the
+   * session has kept MAX_RETAINED_TEXT_CHARS it stops taking anything at all.
    *
    * Returns false when a result was turned away and the caller must stop.
    */
@@ -1019,9 +1023,8 @@ export interface SearchSessionOptions {
       return false;
     }
 
-    if (session.retainedBytes >= MAX_RETAINED_TEXT_BYTES) {
-      // Out of bytes, so nothing more can be kept — not even context, which
-      // would otherwise ride along free.
+    if (session.retainedChars >= MAX_RETAINED_TEXT_CHARS) {
+      // Not even context, which would otherwise ride along free
       this.recordShortfall(session, 'output-size');
       return false;
     }
@@ -1031,7 +1034,7 @@ export interface SearchSessionOptions {
       // result, so the caller cannot tell the difference.
       result.match = `${result.match.slice(0, MAX_RESULT_TEXT_CHARS - 1)}…`;
     }
-    session.retainedBytes += (result.match?.length || 0) + result.file.length;
+    session.retainedChars += (result.match?.length || 0) + result.file.length;
 
     session.results.push(result);
     if (isContext) {
@@ -1065,7 +1068,7 @@ export interface SearchSessionOptions {
       session.buffer = '';
     }
 
-    if (session.buffer.length > MAX_BUFFERED_LINE_BYTES) {
+    if (session.buffer.length > MAX_BUFFERED_LINE_CHARS) {
       // One line, already larger than anything worth holding, and still no
       // newline: give up on it rather than grow with it. The match it carried
       // is lost, which is what the caller is told.
