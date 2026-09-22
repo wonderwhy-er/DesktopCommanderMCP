@@ -295,7 +295,13 @@ export async function validatePath(requestedPath: string): Promise<string> {
                 allowedDirsCount: (await getAllowedDirs()).length
             });
 
-            throw new Error(`Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`);
+            // When the allowlist is recovery's fallback rather than a setting the
+            // user chose, say so here: this message is what the caller reads.
+            const recoveryNotice = configManager.failClosedExplanation();
+            throw new Error(
+                `Path not allowed: ${requestedPath}. Must be within one of these directories: ${(await getAllowedDirs()).join(', ')}`
+                + (recoveryNotice ? `\n${recoveryNotice}` : '')
+            );
         }
 
         // SECURITY: Always return the resolved path (with symlinks resolved) so that
