@@ -119,13 +119,10 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   const isAllowed = await commandManager.validateCommand(parsed.data.command);
   if (!isAllowed) {
-    // A blocklist the user never wrote has to say so here. The caller reads this;
-    // it does not read the stderr line recovery wrote at startup.
-    const recoveryNotice = configManager.failClosedExplanation();
     return {
       content: [{
         type: "text",
-        text: `Error: Command not allowed: ${parsed.data.command}${recoveryNotice ? `\n${recoveryNotice}` : ''}`
+        text: configManager.explainRefusal(`Error: Command not allowed: ${parsed.data.command}`)
       }],
       isError: true,
     };

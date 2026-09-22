@@ -627,14 +627,20 @@ class ConfigManager {
     });
   }
 
-  /**
-   * Why a request was refused, when the policy in force is recovery's fallback
-   * rather than the user's own setting - otherwise null. stderr is not where the
-   * user is looking; the tool that just refused them is.
-   */
+  /** The fallback sentence when the policy in force is recovery's, else null. */
   failClosedExplanation(): string | null {
     const fields = this.failClosedFieldsIn(this.config);
     return fields.length > 0 ? this.failClosedNotice(fields) : null;
+  }
+
+  /**
+   * A refusal, carrying that sentence when it applies. stderr is not where the
+   * user is looking; the tool that just refused them is.
+   */
+  explainRefusal(refusal: string): string {
+    const explanation = this.failClosedExplanation();
+    return explanation ? `${refusal}
+${explanation}` : refusal;
   }
 
   /** A fail-closed value stands only until the config carries its own again. */
