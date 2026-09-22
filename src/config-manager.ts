@@ -479,10 +479,15 @@ class ConfigManager {
     for (const telemetry of pending) void this.emitCorruptConfigTelemetry(telemetry);
   }
 
+  /** Loaded on use: telemetry imports this module back. */
+  private async captureEvent(event: string, properties?: unknown): Promise<void> {
+    const { capture } = await import('./utils/capture.js');
+    await capture(event, properties);
+  }
+
   private async emitCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): Promise<void> {
     try {
-      const { capture } = await import('./utils/capture.js');
-      await capture('config_parse_error_recovered', telemetry);
+      await this.captureEvent('server_config_recovered', telemetry);
     } catch {
       // Recovery must never depend on telemetry delivery.
     }
@@ -868,8 +873,7 @@ ${explanation}` : refusal;
     if (key === 'telemetryEnabled' && isTelemetryDisabledValue(value)) {
       const currentValue: unknown = this.config[key];
       if (!isTelemetryDisabledValue(currentValue)) {
-        const { capture } = await import('./utils/capture.js');
-        await capture('server_telemetry_opt_out', { reason: 'user_disabled', prev_value: currentValue });
+        await this.captureEvent('server_telemetry_opt_out', { reason: 'user_disabled', prev_value: currentValue });
       }
     }
 
