@@ -201,11 +201,11 @@ export class RemoteChannel {
      * fresh join -- both are evidence the next try could land. */
     private capabilityRepublishAttempts = 0;
     /** Eligible health ticks left before the next burst. 0 = may try now. */
+    private capabilityRepublishCooldown = 0;
     /** True when the last attempt was acknowledged by track() but the row
      * writes after it failed. Those cost a REST write per try, so that repair
      * is bounded; a push that is never acknowledged is cheap and is not. */
     private rowWriteIsWhatFailed = false;
-    private capabilityRepublishCooldown = 0;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -997,18 +997,18 @@ export class RemoteChannel {
                 }
             }
 
-            // Self-heal a failed presence publish: the channel is up, so nothing
-            // else will ever retry (SUBSCRIBED won't fire again). Until it
-            // lands the dashboard shows this device offline, and if track()
-            // already failed its retries the capability is withdrawn too, so
-            // the server fails every dispatch to it fast.
-            // One repair for both halves: push presence again. It is what
-            // earns the capability flag — trackPresenceInner writes it on 'ok'
-            // and withdraws when it cannot — so the flag is re-earned rather
-            // than re-asserted, and isTrackingPresence is the single guard.
+            // Self-heal a proven channel: it is up, so nothing else will ever
+            // retry (SUBSCRIBED won't fire again). Until the repair lands the
+            // dashboard shows this device offline and the server fails every
+            // dispatch to it fast.
             //
-            // The flag can be missing while presence still reads tracked: the
-            // withdrawal path leaves that flag set. So ask about both.
+            // One repair for both halves: push presence again. That push is
+            // what earns the capability flag — trackPresenceInner writes it on
+            // 'ok' and withdraws when it cannot — so the flag is re-earned
+            // rather than re-asserted, and isTrackingPresence is the single
+            // guard. The flag can also be missing while presence still reads
+            // tracked, because the withdrawal path leaves that marker set, so
+            // ask about both.
             if (this.deviceId && !this.isTrackingPresence
                 && (!this.presenceTracked || this.transportCapableWritten !== true)) {
                 // Which half failed decides whether the retry is bounded. An
