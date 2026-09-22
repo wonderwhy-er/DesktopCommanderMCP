@@ -134,6 +134,12 @@ export class RemoteChannel {
     private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
+    /**
+     * Answers whether the local execution child is alive. Default yes, so a
+     * RemoteChannel used without a device (tests, other callers) behaves as
+     * before; MCPDevice installs the real probe.
+     */
+    private localExecutorProbe: () => boolean = () => true;
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
     /** Notified when auth-js rotates the session; the device persists it. */
@@ -217,6 +223,15 @@ export class RemoteChannel {
                 });
             } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
         }
+    }
+
+    /**
+     * Teach the channel how to ask whether the local executor is alive.
+     * `status` is a claim that this device will run a tool call right now, and
+     * a joined channel alone cannot support that claim - issue #4.
+     */
+    setLocalExecutorProbe(probe: () => boolean) {
+        this.localExecutorProbe = probe;
     }
 
     /**
@@ -452,11 +467,15 @@ export class RemoteChannel {
         }
 
         if (existingDevice) {
-            console.debug('[DEBUG] Updating device status to online');
+            console.debug('[DEBUG] Registering device as offline until the channel proves otherwise');
+            // Neither half of this row may claim reachability yet.
             // transport_broadcast_v1 is NOT set here: the server treats it as
-            // binding, so it is written only once presence is proven.
+            // binding, so it is written only once presence is proven. `status`
+            // is the same promise in the other notation — dispatch picks its
+            // target by it — so it stays offline until the channel joins and
+            // syncReachabilityStatus() advertises it.
             await this.updateDevice(existingDevice.id, {
-                status: 'online',
+                status: 'offline',
                 last_seen: new Date().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
@@ -622,7 +641,9 @@ export class RemoteChannel {
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // Update device status on successful connection (queued, so
                         // it can't be overtaken by a teardown's status write).
-                        this.queueStatusWrite('online');
+                        // Through the predicate, not straight to 'online': a
+                        // channel coming up says nothing about the executor.
+                        this.syncReachabilityStatus();
                         // The capability flag dispatch requires is written only
                         // once presence lands, so resolve then — otherwise
                         // registerDevice() reports "Device ready" while still
@@ -1069,9 +1090,14 @@ export class RemoteChannel {
         }
     }
 
-    /** Reachable means the private channel is joined. Gates the heartbeat and `status`. */
+    /**
+     * Reachable means BOTH halves are healthy: the private channel is joined and
+     * the local executor answers. Gates the heartbeat and `status`.
+     */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined';
+        // Both halves. A healthy channel on a device whose executor is dead is
+        // exactly the false-online state issue #4 was opened for.
+        return this.channel?.state === 'joined' && this.localExecutorProbe();
     }
 
     /**
@@ -1079,9 +1105,13 @@ export class RemoteChannel {
      * server filters on it), so it must not follow one channel's health — the
      * private channel's error path re-fires on every rejoin and would oscillate
      * the row against the heartbeat. Same predicate as the heartbeat gate.
+     *
+     * Every transition belongs here rather than calling setOnlineStatus(), which
+     * is the write and not the decision. Public so the device can route its
+     * recovery transition through the predicate too.
      */
-    private syncReachabilityStatus(): void {
-        this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
+    syncReachabilityStatus(): Promise<void> {
+        return this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
     }
 
     /**
@@ -1093,17 +1123,19 @@ export class RemoteChannel {
      * Not the single writer: updateHeartbeat, registerDevice and setOffline's
      * subprocess write status directly, so this is not total ordering.
      */
-    private queueStatusWrite(status: 'online' | 'offline'): void {
+    private queueStatusWrite(status: 'online' | 'offline'): Promise<void> {
         // After teardown begins, setOffline() owns the final status write.
         if (this.shuttingDown) {
             console.debug(`[DEBUG] Status write '${status}' suppressed — teardown in progress`);
-            return;
+            return Promise.resolve();
         }
         this.statusWriteChain = this.statusWriteChain
             .then(() => (this.deviceId ? this.setOnlineStatus(this.deviceId, status) : undefined))
             .catch((e: any) => {
                 console.error('[DEBUG] Status write failed:', e?.message);
             });
+        // Handed back so a caller that must not race the row can await it.
+        return this.statusWriteChain;
     }
 
     /**
