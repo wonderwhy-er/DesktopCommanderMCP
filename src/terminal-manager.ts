@@ -302,7 +302,10 @@ export class TerminalManager {
       return {
         pid: -1,  // Use -1 to indicate an error state
         output: 'Error: Failed to get process ID. The command could not be executed.',
-        isBlocked: false
+        isBlocked: false,
+        // This path returns before the promise that normally attaches it, and a
+        // failed spawn is where knowing the real command matters most.
+        rewrittenCommand
       };
     }
 
