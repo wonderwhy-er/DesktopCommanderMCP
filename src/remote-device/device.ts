@@ -487,16 +487,13 @@ export class MCPDevice {
      * the destination: the old config has to outlive a commit that fails.
      */
     private async commitConfigFile(tempPath: string): Promise<void> {
-        for (let attempt = 1; ; attempt++) {
-            try {
-                await fs.rename(tempPath, this.configPath);
-                return;
-            } catch (error: any) {
-                if (error?.code !== 'EPERM' || attempt === CONFIG_COMMIT_ATTEMPTS) throw error;
-                console.debug(`[DEBUG] Config commit refused (${attempt}/${CONFIG_COMMIT_ATTEMPTS}); retrying`);
-                await new Promise((resolve) => setTimeout(resolve, CONFIG_COMMIT_RETRY_MS * attempt));
-            }
-        }
+        await this.withRetry(() => fs.rename(tempPath, this.configPath), {
+            attempts: CONFIG_COMMIT_ATTEMPTS,
+            delayMs: CONFIG_COMMIT_RETRY_MS,
+            retryOn: (error) => error?.code === 'EPERM',
+            onRetry: (attempt) => console.debug(
+                `[DEBUG] Config commit refused (${attempt}/${CONFIG_COMMIT_ATTEMPTS}); retrying`),
+        });
     }
 
     async fetchSupabaseConfig() {
