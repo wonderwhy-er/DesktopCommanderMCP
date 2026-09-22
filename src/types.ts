@@ -39,6 +39,8 @@ export interface CommandExecutionResult {
   signal?: NodeJS.Signals | null;
   // Set when the wait buffer dropped its head: `output` is only the tail.
   outputTruncated?: boolean;
+  // Set when the command was rewritten before running (plain ssh gets -t).
+  rewrittenCommand?: string;
   runtimeMs?: number;
   timingInfo?: TimingInfo;
 }

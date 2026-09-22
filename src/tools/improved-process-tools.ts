@@ -206,6 +206,13 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     }
   }
 
+  // Plain ssh commands are given -t before they run. Anyone reading this reply
+  // to work out why an ssh invocation behaved the way it did needs the command
+  // that actually ran, not the one they typed.
+  const rewriteMessage = result.rewrittenCommand
+    ? `\n[Command rewritten before running: ${result.rewrittenCommand}]`
+    : '';
+
   // The wait buffer keeps only its tail once output passes its cap, so the text
   // above can be missing its beginning — and a completion line under truncated
   // output would otherwise read as the whole story.
@@ -222,7 +229,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${truncationMessage}${statusMessage}${timingMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})${rewriteMessage}\nInitial output:\n${result.output}${truncationMessage}${statusMessage}${timingMessage}`
     }],
   };
 }

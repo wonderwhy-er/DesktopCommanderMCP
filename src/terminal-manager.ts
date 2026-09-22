@@ -206,8 +206,12 @@ export class TerminalManager {
 
     // Enhance SSH commands automatically
     let enhancedCommand = command;
+    // What ran, when that is not what was asked for. A caller debugging an ssh
+    // invocation cannot tell the two apart otherwise.
+    let rewrittenCommand: string | undefined;
     if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
       enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
+      rewrittenCommand = enhancedCommand;
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
 
@@ -340,6 +344,7 @@ export class TerminalManager {
         if (periodicCheck) clearInterval(periodicCheck);
         if (waitTimeout) clearTimeout(waitTimeout);
         if (waitOutputTruncated) result.outputTruncated = true;
+        if (rewrittenCommand) result.rewrittenCommand = rewrittenCommand;
 
         // Add timing info if requested
         if (collectTiming) {
