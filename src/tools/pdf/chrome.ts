@@ -1,12 +1,9 @@
 /**
  * Chrome discovery and installation for PDF generation.
  *
- * Split out of markdown.ts so that finding Chrome does not load the PDF
- * renderer. The server warms this up on every launch, right after the
- * handshake, while md-to-pdf (and the puppeteer it carries) is only needed to
- * actually render a PDF. Keep this module free of those imports:
- * @puppeteer/browsers is loaded on demand inside installChrome, and only when a
- * download is genuinely required.
+ * Separate from markdown.ts so that finding Chrome does not load the renderer:
+ * the server warms this up on every launch, while md-to-pdf and its puppeteer
+ * are needed only to render. Keep free of those imports.
  */
 
 import fs from 'fs/promises';

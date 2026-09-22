@@ -504,7 +504,6 @@ function countOccurrences(haystack: string, needle: string): number {
 // ════════════════════════════════════════════════════════════════
 
 export class DocxFileHandler implements FileHandler {
-
     canHandle(path: string): boolean {
         return hasExtension(path, DOCX_EXTENSIONS);
     }

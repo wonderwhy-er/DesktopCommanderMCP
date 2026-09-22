@@ -10,9 +10,8 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-// The PDF module tree pulls in md-to-pdf and puppeteer, which no session needs
-// until it actually reads or writes a PDF. pdfTools() loads it on demand; the
-// import() itself lives in pdf/lazy.ts. Types are erased and load nothing.
+// The PDF module tree carries md-to-pdf and puppeteer; no session needs them
+// until it reads or writes a PDF.
 import { pdfTools } from './pdf/lazy.js';
 import type { PdfOperations, PdfMetadata } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';

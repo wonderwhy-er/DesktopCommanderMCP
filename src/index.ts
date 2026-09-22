@@ -131,14 +131,10 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
-      // Preemptively find Chrome for PDF generation, downloading it only if it
-      // is missing. Kicked off here, after the handshake, and not awaited, so
-      // the lookup and any download proceed while the server serves.
-      //
-      // The module load itself is not free and not backgrounded: it runs on the
-      // main thread like any import. That is why the accessor points at
-      // tools/pdf/chrome.ts and not at the renderer — this path runs on every
-      // launch, so it has to stay cheap.
+      // Not awaited: the lookup, and any download it triggers, proceed while
+      // the server serves. The load itself is not backgrounded though — it runs
+      // on the main thread, on every launch, which is why chromeTools() points
+      // at the Chrome module and not at the renderer.
       chromeTools()
         .then(({ ensureChromeAvailable }) => ensureChromeAvailable())
         .catch((error) => {

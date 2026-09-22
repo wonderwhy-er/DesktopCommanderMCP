@@ -13,6 +13,5 @@ export { getFileHandler, isExcelFile, isImageFile } from './factory.js';
 export { TextFileHandler } from './text.js';
 export { ImageFileHandler } from './image.js';
 export { BinaryFileHandler } from './binary.js';
-// Type-only: exporting ExcelFileHandler as a value here loads exceljs on its
-// own, independently of the factory. Callers get a handler from getFileHandler().
+// A value export here would load exceljs on its own, whatever the factory does.
 export type { ExcelFileHandler } from './excel.js';
