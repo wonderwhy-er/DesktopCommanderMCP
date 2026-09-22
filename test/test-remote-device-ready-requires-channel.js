@@ -41,6 +41,20 @@ process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const DEVICE_ID = 'device-1';
 const USER = { id: 'user-1', email: 'tester@example.com' };
 
+/**
+ * A promise with its resolver exposed. Not Promise.withResolvers(): package.json
+ * declares `node >= 18` and that arrived in Node 22, so calling it would throw
+ * in the FakeClient constructor and take every case in this file with it, on a
+ * runtime the project claims to support. CI runs Node 22 and would not notice.
+ */
+function deferred() {
+    let resolve;
+    const promise = new Promise((r) => {
+        resolve = r;
+    });
+    return { promise, resolve };
+}
+
 /** Realtime channel whose join outcome the test picks. */
 class FakeChannel {
     state = 'joining';
@@ -117,7 +131,7 @@ class FakeClient {
     failCapabilityWrite = false; // does the capability write reach the row?
     holdCapabilityWrite = false; // leave the capability write in flight, forever
     /** Resolves once the capability write has been issued and is hanging. */
-    capabilityWriteIssued = Promise.withResolvers();
+    capabilityWriteIssued = deferred();
     deviceExists = true; // is there a row for this device id at all?
     statusWritesBeforeJoin = null;
 
