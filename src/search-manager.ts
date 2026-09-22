@@ -139,6 +139,8 @@ export interface SearchSessionOptions {
     if (timeoutMs) {
       killTimer = setTimeout(() => {
         if (!session.isComplete) {
+          // Filename-shaped patterns get this timeout without asking for it, above
+          this.recordShortfall(session, 'time-limit');
           this.killProcess(session);
         }
       }, timeoutMs);
