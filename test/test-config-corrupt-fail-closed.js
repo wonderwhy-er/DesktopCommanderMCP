@@ -6,7 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-const TIMEOUT_MS = 5_000;
+// Generous on purpose: the worker's first import of the server module costs
+// tens of seconds on a slow filesystem (25s over /mnt/c under WSL), and a
+// timeout that fires there fails for a reason the test is not about.
+const TIMEOUT_MS = 60_000;
 
 async function worker() {
   const { configManager } = await import('../dist/config-manager.js');
