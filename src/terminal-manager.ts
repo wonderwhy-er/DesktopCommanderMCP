@@ -203,8 +203,6 @@ export class TerminalManager {
 
     // Enhance SSH commands automatically
     let enhancedCommand = command;
-    // What ran, when that is not what was asked for. A caller debugging an ssh
-    // invocation cannot tell the two apart otherwise.
     let rewrittenCommand: string | undefined;
     if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
       enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
@@ -331,11 +329,8 @@ export class TerminalManager {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
       let waitTimeout: NodeJS.Timeout | null = null;
-      // Set once the wait buffer drops its head. The caller is shown that
-      // buffer, so it has to be told the text is only the tail.
       let waitOutputTruncated = false;
 
-      /** The bounded view of the output that the wait phase answers from. */
       const appendToWaitBuffer = (text: string) => {
         if (resolved) return;
         output += text;
@@ -480,17 +475,12 @@ export class TerminalManager {
         });
       }, timeoutMs);
 
-      // 'exit' says the child is gone; 'close' says its pipes are gone too.
-      // The two part company when something else inherited the pipe: a detached
-      // grandchild keeps it open and keeps writing, so 'exit' on its own does
-      // not mean the output is complete. Answer on 'close', and if that does
-      // not follow shortly after the exit, answer without claiming completion
-      // rather than announcing a result that is still arriving.
+      // A pipe inherited by someone else outlives the child, so 'exit' alone
+      // does not mean the output is over.
       let exitStatus: { code: number | null; signal: NodeJS.Signals | null; at: Date } | null = null;
       let closeGrace: NodeJS.Timeout | null = null;
-      // Held from where it is created. Looking it up by pid at answer time
-      // would, after a long wait for 'close', find whatever session the OS has
-      // since given that pid to.
+      // Held rather than looked up: after a long wait for 'close', that pid may
+      // belong to someone else's session.
       let completedRecord: CompletedSession | null = null;
 
       const finishAfterExit = (outcome: Exclude<ProcessOutcome, 'running'>) => {
@@ -498,10 +488,7 @@ export class TerminalManager {
           clearTimeout(closeGrace);
           closeGrace = null;
         }
-        // The answer is built here, not in the exit handler, so bring the
-        // completed-session snapshot up to this same moment. Whatever arrived
-        // in between is in this reply, and a later read of the same pid must
-        // not show less than the caller has already seen.
+        // A later read of this pid must not show less than this reply does.
         if (completedRecord) {
           completedRecord.outputLines = [...session.outputLines];
           completedRecord.evictedLines = session.evictedLines;
@@ -550,11 +537,8 @@ export class TerminalManager {
 
           this.sessions.delete(childProcess.pid);
         }
-        // From here the answer comes from 'close' or from the grace below.
-        // Neither of the other timers may speak in between: the wait timeout
-        // would report an exited process as still running, and the prompt check
-        // would read a prompt-shaped tail as "waiting for input" — a process
-        // that has exited is waiting for nothing.
+        // A process that has exited is neither running nor waiting for input,
+        // so neither of the other timers may answer from here on.
         if (waitTimeout) {
           clearTimeout(waitTimeout);
           waitTimeout = null;
@@ -566,7 +550,6 @@ export class TerminalManager {
         closeGrace = setTimeout(() => finishAfterExit('exited-output-open'), EXIT_TO_CLOSE_GRACE_MS);
       });
 
-      // 'close' is the one signal that the output is over, not just the child.
       childProcess.on('close', () => finishAfterExit('exited'));
     });
   }

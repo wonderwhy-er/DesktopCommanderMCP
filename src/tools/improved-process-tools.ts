@@ -175,9 +175,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     parsed.data.verbose_timing || false
   );
 
-  // Plain ssh commands are given -t before they run. Anyone reading this reply
-  // to work out why an ssh invocation behaved the way it did needs the command
-  // that actually ran, not the one they typed — including when it never ran.
+  // Whoever is working out why an ssh invocation behaved as it did needs the
+  // command that ran, not the one they typed — including when it never ran.
   const rewriteMessage = result.rewrittenCommand
     ? `\n[Command rewritten before running: ${result.rewrittenCommand}]`
     : '';
@@ -197,8 +196,6 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
       runtimeMs: result.runtimeMs
     });
   } else {
-    // Nothing has exited yet, so the output text is all there is to read — and
-    // it is what prompt detection needs anyway.
     const processState = analyzeProcessState(result.output, result.pid);
     if (processState.isWaitingForInput) {
       statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -209,9 +206,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     }
   }
 
-  // The wait buffer keeps only its tail once output passes its cap, so the text
-  // above can be missing its beginning — and a completion line under truncated
-  // output would otherwise read as the whole story.
+  // Under a completion line, a tail with its head missing reads as the whole
+  // story.
   const truncationMessage = result.outputTruncated
     ? '\n[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap]'
     : '';
