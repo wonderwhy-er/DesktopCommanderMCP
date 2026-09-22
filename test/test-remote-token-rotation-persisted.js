@@ -1,38 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Regression test for DC-661 (#661): a rotated refresh token must reach the
- * persisted device config, so a restart does not demand browser authorization.
- *
- * The connector refreshes its Supabase session on a 45-minute cadence. auth-js
- * rotates the refresh token on every refresh and emits TOKEN_REFRESHED, and
- * RemoteChannel reacts by re-authorizing the realtime socket and updating
- * `lastKnownSession` — in memory only:
- *
- *     remote-channel.ts  TOKEN_REFRESHED -> realtime.setAuth() + lastKnownSession
- *     device.ts          savePersistedConfig() — called once, during start()
- *
- * Nothing carries a rotation to disk. `~/.desktop-commander-device/device.json`
- * therefore keeps whichever refresh token the process started with, and after a
- * few hours that token has been spent several times over. On the next restart
- * the device loads it, GoTrue refuses a reused token, and an unattended machine
- * sits waiting for someone to complete a browser flow. Reproduced independently
- * on Linux and Windows against 0.2.47/0.2.48.
- *
- * Persisting on every rotation raises three questions the first version of this
- * fix did not answer, all raised in review on #710:
- *
- *   - a rotation landing as the process exits must not be dropped on the floor
- *   - two saves in flight must not let a slow earlier one overwrite a newer one
- *   - a write that cannot complete must not destroy the config that was there
- *
- * Everything drives the real RemoteChannel and MCPDevice against a fake Supabase
- * client and a temp config file — no network, no browser, no Supabase. The fake
- * snapshots its session at call time and can delay the reply, which is how a
- * slow save is modelled deterministically instead of with a sleep.
- *
- * Runs as part of `npm test`, or standalone:
- *   npm run build && node test/test-remote-token-rotation-persisted.js
+ * Regression test for DC-661 (#661): a refresh token rotated by auth-js must
+ * reach device.json, or a restart hours later replays a spent one and an
+ * unattended device sits waiting for a browser. Runs against
+ * ./helpers/remote-device-harness.js - no network, no browser, no Supabase.
  */
 import assert from 'node:assert';
 import { mkdirSync } from 'node:fs';

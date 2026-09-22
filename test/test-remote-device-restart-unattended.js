@@ -1,35 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * The question DC-695 (#695) was opened to answer: after the refresh token
- * rotates and the service restarts, does the device come back on its own?
- *
- * Every other case in this repo answers a smaller version of it - a second
- * `new MCPDevice()` reading a file the first one wrote, inside one process.
- * That models a restart; it is not one. Here each start is a real child
- * process with its own memory, its own module graph and nothing but
- * `device.json` carried between them, and the server's view of which refresh
- * tokens are still live is a file too, so a token spent in one process is
- * spent for the next.
- *
- * The browser path is trapped rather than mocked away: any run that reaches
- * DeviceAuthenticator prints BROWSER_REQUIRED and exits 2. On the reporters'
- * headless servers that path is the failure - it prints a device code nobody
- * can type and dies fifteen minutes later, which under systemd Restart=always
- * is the loop they described.
- *
- * The second case is the control: with the rotation-to-disk wiring removed -
- * 0.2.50 - the same three steps must demand a browser. Without it a pass here
- * would prove only that the harness can start a device.
- *
- * The third case has no such control, and passes with the wiring either way:
- * the pair GoTrue mints during setSession reaches disk through the save at the
- * end of start(), which 0.2.50 had too. What it pins is narrower and still
- * worth pinning - that an access token past its hour neither stops the device
- * coming up nor leaves a spent token behind for the next restart.
- *
- * Standalone:
- *   npm run build && node test/test-remote-device-restart-unattended.js
+ * Pins that a device whose refresh token has rotated comes back after a real
+ * process restart with no browser. Each start is a child process carrying only
+ * device.json; DeviceAuthenticator.authenticate() is trapped, so reaching for
+ * a browser fails loudly instead of waiting out a device code.
  */
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
@@ -119,12 +94,9 @@ await test('a device restarts unattended after its refresh token has rotated', a
     seed(paths);
     const env = { DC_CONFIG: paths.config, DC_LEDGER: paths.ledger };
 
-    // Up once, then the 45-minute refresh rotates the pair and the process ends
-    // - a package upgrade, a watchdog, an operator, anything that restarts it.
     const first = await runScenario({ ...env, DC_ROTATE: '1' });
     assert.strictEqual(first.result, 'READY', `precondition: the first start must come up - ${summarise(first)}\n${first.out}`);
 
-    // Nothing of the first process survives but the two files.
     const second = await runScenario(env);
 
     assert.strictEqual(
@@ -151,9 +123,6 @@ await test('control: without the rotation reaching disk, the restart does demand
 });
 
 await test('an access token past its hour is spent for a new pair, and the restart still needs no browser', async (paths) => {
-    // Seventy-five minutes since the device was authorized, so the hour-long
-    // access token on disk is fifteen minutes dead. The refresh token is still
-    // good, which is the whole point: GoTrue will trade it for a new pair.
     const expired = mintAccessToken({ issuedMinutesAgo: 75 });
     writeFileSync(paths.ledger, JSON.stringify({
         current: { access: expired, refresh: 'refresh-1' },
@@ -166,15 +135,11 @@ await test('an access token past its hour is spent for a new pair, and the resta
 
     const env = { DC_CONFIG: paths.config, DC_LEDGER: paths.ledger };
 
-    // The expired token is spent for a new pair during setSession, before the
-    // device is even up. That rotation is one a restart never announced.
     const first = await runScenario(env);
     assert.strictEqual(first.result, 'READY', `the expired access token stopped the device coming up - ${summarise(first)}
 ${first.out}`);
 
-    // The boundary was actually crossed, not stepped over: the server retired
-    // exactly one refresh token while the device was starting. Without this the
-    // case would pass just as well against a token that never expired.
+    // Without this the case passes against a token that never expired.
     const ledger = JSON.parse(readFileSync(paths.ledger, 'utf8'));
     assert.deepStrictEqual(
         ledger.spent, ['refresh-1'],
@@ -189,7 +154,6 @@ ${first.out}`);
         'replays it and GoTrue answers "Invalid Refresh Token: Already Used"'
     );
 
-    // And once more, which is where replaying a spent token would show.
     const second = await runScenario(env);
     assert.strictEqual(
         second.result, 'READY',
@@ -200,8 +164,8 @@ ${second.out}`
 
 await test('a start whose config cannot be written says so instead of passing for behaviour', async (paths) => {
     seed(paths);
-    // A file where the config's directory should be: the save fails at mkdir,
-    // on every platform, without needing permissions to be arranged.
+    // A file where the config's directory should be: mkdir fails on every
+    // platform, with no permissions to arrange.
     const blocked = path.join(path.dirname(paths.config), 'blocked');
     writeFileSync(blocked, 'not a directory');
 

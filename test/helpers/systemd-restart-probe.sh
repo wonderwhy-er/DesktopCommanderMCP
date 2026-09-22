@@ -1,30 +1,12 @@
 #!/usr/bin/env bash
 #
-# The numbers in #743's description, reproducible.
+# Reproduces the restart numbers in #743 under a real systemd unit: two units,
+# this branch and the 0.2.50 wiring, run side by side for a window and report
+# restarts, how many came up, how many demanded a browser and the token left on
+# disk. Needs a user systemd instance - not root; WSL2 offers one.
 #
-# test-remote-device-restart-unattended.js restarts a device by spawning it
-# again. This does it the way the report does: a systemd unit with
-# Restart=always, left running, so the restarting is systemd's and the state
-# between restarts is only what is on disk.
+#   npm run build && bash test/helpers/systemd-restart-probe.sh [seconds]
 #
-# Two units run side by side for the same window:
-#
-#   dc695-fixed    this branch as it stands
-#   dc695-broken   the same, with the rotation->disk wiring dropped (0.2.50)
-#
-# and it prints, per unit: restarts, how many came up, how many demanded a
-# browser, the refresh token left on disk, and the journal lines the reporters
-# pasted.
-#
-# Needs a user systemd instance - not root. Verified on WSL2 Ubuntu 24.04 with
-# Node 24.10 against a Windows checkout over /mnt/c, where `sudo` was not
-# available; a system unit would want root and buys nothing here.
-#
-#   npm run build
-#   bash test/helpers/systemd-restart-probe.sh [seconds]     # default 170
-#
-# Leaves ~/.config/systemd/user/dc695-*.service and ~/dc695-* behind unless
-# KEEP=0, which is the default; pass KEEP=1 to inspect them.
 set -euo pipefail
 
 WINDOW="${1:-170}"

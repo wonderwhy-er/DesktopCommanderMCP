@@ -1,38 +1,9 @@
 /**
- * One process of an unattended restart, run as a real child process.
- *
- * The card behind #695 asks for one thing the in-process cases cannot answer:
- * after the token rotates and the service restarts, does the device come back
- * on its own, with nobody at a browser? A second `new MCPDevice()` in the same
- * process does not answer it - the interesting state is the file on disk and a
- * process that has forgotten everything else.
- *
- * So this is a whole `start()`, in its own process, against:
- *
- *   - a token ledger on disk, which is what makes rotation survive the restart.
- *     GoTrue refuses a refresh token it has already rotated away, and so does
- *     this: a spent token answers 'Invalid Refresh Token: Already Used', the
- *     error the reporters pasted.
- *   - DeviceAuthenticator.authenticate() replaced by a trap. It is constructed
- *     inside start() and cannot be injected, but ESM modules are singletons, so
- *     patching the prototype reaches the instance start() makes. Any run that
- *     reaches for a browser says so and fails, instead of quietly waiting out a
- *     fifteen-minute device code.
- *
- * Everything else that would touch the network is stubbed at the seam it sits
- * behind. The control flow of start() itself is the real one.
- *
- * Env:
- *   DC_CONFIG           device.json to use
- *   DC_LEDGER           the server's view of which tokens are live
- *   DC_ROTATE=1         rotate once the device is up, as the 45-minute refresh does
- *   DC_PERSIST_ROTATION=0   drop the rotation->disk wiring, i.e. 0.2.50
- *   DC_BREAK_WRITES     save to this path once up, to exercise a failed write
- *
- * Prints exactly one RESULT: line - READY, BROWSER_REQUIRED, or WRITE_FAILED
- * when a config write reported a failure, which makes an environment fault say
- * its own name instead of the behaviour under test. Not named test*.js: it is a fixture, and
- * run-all-tests.js only runs the top of test/.
+ * One whole start(), in its own process, driven by env (DC_CONFIG, DC_LEDGER,
+ * DC_ROTATE, DC_PERSIST_ROTATION, DC_BREAK_WRITES) and answering with one
+ * RESULT line. The ledger on disk is the server's: a refresh token it has
+ * rotated away answers 'Invalid Refresh Token: Already Used', as GoTrue does.
+ * Kept out of test/*.js so run-all-tests.js never runs it as a test.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { MCPDevice, persistenceFailures } from './remote-device-harness.js';
@@ -45,18 +16,14 @@ const LEDGER = process.env.DC_LEDGER;
 const readLedger = () => JSON.parse(readFileSync(LEDGER, 'utf8'));
 const writeLedger = (l) => writeFileSync(LEDGER, JSON.stringify(l, null, 2));
 
-// The browser path, booby-trapped. Reaching it is the failure this scenario
-// exists to detect, so it has to be loud rather than slow.
+// Constructed inside start() and not injectable, but ESM modules are
+// singletons, so the prototype reaches the instance start() makes.
 DeviceAuthenticator.prototype.authenticate = async function trapped() {
     console.log('RESULT: BROWSER_REQUIRED');
     process.exit(2);
 };
 
-/**
- * exp out of a JWT-shaped access token, or null for the plain strings the
- * other cases use. The issue measured the real ones this way: iat and exp an
- * hour apart, rotated at forty-five minutes.
- */
+/** The issue read the real timings here: iat and exp an hour apart. */
 function expiryOf(token) {
     const parts = String(token).split('.');
     if (parts.length !== 3) return null;
@@ -69,7 +36,6 @@ function expiryOf(token) {
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
 
-/** The server's side of a session: one live pair, and the ones it has retired. */
 function makeLedgerClient() {
     let authListener = null;
 
@@ -99,10 +65,9 @@ function makeLedgerClient() {
                 if (refresh_token !== ledger.current.refresh) {
                     return { data: { user: null }, error: { message: 'Invalid Refresh Token' } };
                 }
-                // GoTrue does not hand back an expired access token: it spends
-                // the refresh token for a new pair. So a restart past the hour
-                // rotates before it is even up, and that rotation has to reach
-                // disk like any other or the NEXT restart replays a spent one.
+                // GoTrue spends the refresh token rather than hand back an
+                // expired access token, so a restart past the hour rotates
+                // before it is even up.
                 const exp = expiryOf(access_token);
                 if (exp !== null && exp <= nowSeconds()) rotate(ledger);
                 return {
@@ -118,7 +83,6 @@ function makeLedgerClient() {
         },
         realtime: { setAuth: () => { } },
 
-        /** What the 45-minute refresh does: retire the old pair, announce the new. */
         rotate() {
             const ledger = rotate(readLedger());
             authListener?.('TOKEN_REFRESHED', {
@@ -135,7 +99,6 @@ device.configPath = CONFIG;
 const client = makeLedgerClient();
 const rc = device.remoteChannel;
 
-// Seams that would otherwise reach the network, each stubbed where it sits.
 device.fetchSupabaseConfig = async () => ({ supabaseUrl: 'https://fake.invalid', anonKey: 'anon' });
 rc.initialize = () => { rc.client = client; };
 rc.findDevice = async (id) => ({ id });
@@ -161,9 +124,8 @@ if (process.env.DC_PERSIST_ROTATION === '0') {
 await device.start();
 
 if (process.env.DC_BREAK_WRITES) {
-    // A save that cannot land, after the device is already up: the path names a
-    // directory that is really a file, so mkdir fails on every platform without
-    // permissions having to be arranged.
+    // The path names a directory that is really a file: mkdir fails on every
+    // platform, with no permissions to arrange.
     device.configPath = process.env.DC_BREAK_WRITES;
     await device.savePersistedConfig();
 }
@@ -173,10 +135,8 @@ if (process.env.DC_ROTATE === '1') {
     await device.configWriteQueue; // let the rotation reach disk, if it is going to
 }
 
-// A config write that failed leaves the same empty directory as one that was
-// never attempted, so a run that hit one proves nothing about restarting. Say
-// so rather than letting the environment masquerade as the behaviour under
-// test - EPERM on rename is intermittent on Windows.
+// Without this an EPERM on rename - intermittent on Windows - reads as a
+// verdict about restarting.
 const failures = persistenceFailures();
 if (failures.length) {
     console.log(`WRITE-FAILURE: ${failures.join('; ')}`);

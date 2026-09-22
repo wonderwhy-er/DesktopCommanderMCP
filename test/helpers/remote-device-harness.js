@@ -1,20 +1,9 @@
 /**
- * Shared fixtures for the remote-device tests.
- *
- * One fake Supabase client, one wired-up MCPDevice, one runner. They used to be
- * copied per test file, and the copies had already drifted - one grew signOut(),
- * the other rotate(), and only one of them stubbed the teardown surface. A fake
- * that models auth-js is the sort of thing a second reader assumes is the same
- * in both files, so it is kept in one.
- *
- * It also owns the home directory the device module graph is loaded against.
- * config.ts resolves CONFIG_FILE from os.homedir() at module load, so the only
- * place a redirect can work is before that import - which means before any test
- * file imports the device. Doing it here is what keeps every test off the real
- * ~/.claude-server-commander/config.json, rather than each file remembering to.
- *
- * Not named test*.js, and in a subdirectory: run-all-tests.js scans the top of
- * test/ for files starting with "test", so a helper here is never run as one.
+ * Shared fixtures for the remote-device tests: one fake Supabase client, one
+ * wired-up MCPDevice, one runner. It owns HOME, because config.ts resolves the
+ * config path from os.homedir() at module load - a redirect only works before
+ * the device is imported, so it happens here rather than per file. Kept out of
+ * test/*.js so run-all-tests.js never runs it as a test.
  */
 import assert from 'node:assert';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -40,13 +29,9 @@ const PERSIST_DEADLINE_MS = 5000;
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Stands in for the Supabase client. It owns a `currentSession` the way auth-js
- * does, so a rotation changes what getSession() reports - which is exactly what
- * savePersistedConfig() reads when it decides what to write.
- *
- * getSession() snapshots the session BEFORE its optional delay. That models the
- * real hazard: a save reads the session it is going to write, then takes time
- * to get it onto disk, during which a newer save can overtake it.
+ * Stands in for the Supabase client. getSession() snapshots BEFORE its delay:
+ * without that, a save cannot read one session and land after a newer one, and
+ * the slow-save case stops testing anything.
  */
 function makeFakeClient() {
     let currentSession = null;
@@ -72,17 +57,14 @@ function makeFakeClient() {
         },
         realtime: { setAuth: () => { } },
 
-        /** How long the NEXT save should take to read its session, in order. */
         delaySaves(...msPerSave) {
             sessionDelays.push(...msPerSave);
         },
 
-        /** auth-js drops the session: getSession() answers null from here on. */
         signOut() {
             currentSession = null;
         },
 
-        /** What the 45-minute refresh does: rotate, then announce it. */
         rotate(access_token, refresh_token) {
             currentSession = { access_token, refresh_token };
             authListener?.('TOKEN_REFRESHED', currentSession);
@@ -90,11 +72,7 @@ function makeFakeClient() {
     };
 }
 
-/**
- * A device wired to a fake client and a throwaway config file, at the point
- * start() reaches once a session is in hand: listener registered, config
- * written once. `persist: false` leaves the config file absent instead.
- */
+/** A device at the point start() reaches once a session is in hand. */
 export async function makeDevice(configPath, { deviceId = DEVICE_ID, persist = true } = {}) {
     const device = new MCPDevice();
     device.deviceId = deviceId;
@@ -104,25 +82,18 @@ export async function makeDevice(configPath, { deviceId = DEVICE_ID, persist = t
     const rc = device.remoteChannel;
     rc.client = client; // private in TS, plain property at runtime
 
-    // shutdown() walks the teardown path; none of it is under test here.
     rc.stopHeartbeat = () => { };
     rc.unsubscribe = async () => { };
     rc.setOffline = async () => { };
     device.desktop = { shutdown: async () => { }, listClientTools: async () => ({ tools: [] }) };
 
-    // Registers the TOKEN_REFRESHED listener, as start() does.
     await rc.setSession({ access_token: 'access-1', refresh_token: 'refresh-1' });
-    // start() persists exactly here, before the revocation check.
     if (persist) await device.savePersistedConfig();
 
     return { device, client };
 }
 
-/**
- * Drain the config write queue. Waiting on the queue itself is exact, where
- * polling for a file that should never appear can only ever time out. Private
- * in TS, a plain property at runtime, like rc.client above.
- */
+/** Private in TS, a plain property at runtime, like rc.client above. */
 export const drainWrites = (device) => device.configWriteQueue;
 
 export const readPersisted = (configPath) => JSON.parse(readFileSync(configPath, 'utf8'));
@@ -135,12 +106,7 @@ export const onDisk = (configPath) => {
     }
 };
 
-/**
- * Wait for the config to satisfy `predicate`, or give up. Polling rather than a
- * fixed sleep: a sleep only gives an async save time to finish, it never
- * confirms that it did, and on a loaded machine that reads the old token and
- * fails a correct implementation (raised in review on #710).
- */
+/** Polls: a fixed sleep fails a correct implementation on a loaded machine. */
 export async function waitForPersisted(configPath, predicate, timeoutMs = PERSIST_DEADLINE_MS) {
     const deadline = Date.now() + timeoutMs;
     let last = null;
@@ -155,14 +121,9 @@ export async function waitForPersisted(configPath, predicate, timeoutMs = PERSIS
 }
 
 /**
- * Windows rename is intermittently EPERM under an antivirus or an indexer. A
- * write that failed leaves no file behind, which is indistinguishable from a
- * removal that held - so an unlucky run would read as a pass for the wrong
- * reason, or as a precondition failure that looks like the defect under test.
- *
- * Recorded and still printed. Swallowing the line would make this module a
- * silencer for anything that imports it, and not every importer runs the
- * assertion below - a child process cannot.
+ * EPERM on rename is intermittent on Windows, and a failed write leaves the
+ * same empty directory as a removal that held. Recorded AND still printed:
+ * not every importer runs the assertion below - a child process cannot.
  */
 const persistenceErrors = [];
 const realConsoleError = console.error;
