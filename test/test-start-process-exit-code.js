@@ -358,6 +358,28 @@ async function worker() {
     );
     console.log('✓ a command the rewrite left alone is not reported as rewritten');
 
+    // 17. The last path that still decided completion from the output text:
+    // analyzeProcessState reads "Error:" as a finished process, so a child that
+    // prints one and keeps running was announced as finished — the defect this
+    // whole file is about, on the one branch the earlier fixes left standing.
+    const stillRunning = replyText(await startProcess({
+      command: `node ${path.join(helpers, 'error-then-run.cjs')}`,
+      timeout_ms: 1_500
+    }));
+    assert.ok(
+      stillRunning.includes('Error: still working'),
+      `the helper must have printed before the wait ended, got: ${JSON.stringify(stillRunning)}`
+    );
+    assert.ok(
+      !/has finished execution/.test(stillRunning),
+      `a process that is still running must not be reported as finished, got: ${JSON.stringify(stillRunning)}`
+    );
+    assert.ok(
+      /Process is running/.test(stillRunning),
+      `a process that is still running must be reported as running, got: ${JSON.stringify(stillRunning)}`
+    );
+    console.log('✓ a running process is not called finished because of its output text');
+
     await report({ type: 'done' });
   } catch (error) {
     // The assertion message is the point; the parent fails once, with that text.
@@ -463,6 +485,12 @@ async function parent() {
     'kid.unref();',
     "console.log('child up');",
     'process.exit(0);'
+  ].join('\n'));
+
+  // Prints a line analyzeProcessState reads as completion, then keeps running.
+  writeFileSync(path.join(home, 'error-then-run.cjs'), [
+    "console.log('Error: still working');",
+    'setTimeout(() => {}, 20000);'
   ].join('\n'));
 
   // Exits on its own if it is not killed, so a failing run leaves nothing behind.
