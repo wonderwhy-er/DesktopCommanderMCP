@@ -221,6 +221,7 @@ class ConfigManager {
 
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
     let corruptConfigObserved = false;
+    let recoveredConfig: ServerConfig | null = null;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
@@ -235,6 +236,7 @@ class ConfigManager {
           corruptConfigObserved = true;
           const recovery = await this.recoverCorruptConfig(error, 'startup');
           this.config = recovery.config;
+          recoveredConfig = recovery.config;
           corruptConfigTelemetry = recovery.telemetry;
           this._isFirstRun = false;
         } else if (error?.code === 'ENOENT') {
@@ -268,16 +270,20 @@ class ConfigManager {
       if (corruptConfigTelemetry) this.pendingCorruptConfigTelemetry.push(corruptConfigTelemetry);
     } catch (error) {
       console.error('Failed to initialize config:', error);
-      this.config = this.getDefaultConfig();
-      if (corruptConfigObserved) {
-        // The file on disk is known damaged and recovery did not finish. The
-        // defaults are the permissive ones - an empty allowlist is full
-        // filesystem access - so falling back to them here would grant exactly
-        // what the lost policy may have denied.
-        for (const field of RECOVERABLE_POLICY_FIELDS) {
-          this.config[field.key] = field.failClosed(this.configPath);
+      if (recoveredConfig) {
+        // Recovery finished and its result is already on disk. Whatever failed
+        // after it, this policy is the user's own - keep it rather than trading
+        // it for defaults, permissive or not.
+        this.config = { ...recoveredConfig, version: VERSION };
+      } else {
+        this.config = this.getDefaultConfig();
+        if (corruptConfigObserved) {
+          // The file on disk is known damaged and recovery never produced a
+          // config. The defaults are the permissive ones - an empty allowlist is
+          // full filesystem access - so settling for them here would grant
+          // exactly what the lost policy may have denied.
+          this.applyFailClosedPolicy([...RECOVERABLE_POLICY_FIELDS]);
         }
-        console.error(this.failClosedNotice([...RECOVERABLE_POLICY_FIELDS]));
       }
       this.initialized = true;
       this.startConfigWatcher();
