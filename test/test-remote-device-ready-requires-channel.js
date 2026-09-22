@@ -115,6 +115,9 @@ class FakeClient {
     channelJoins = true;
     presenceAcks = true; // does the channel acknowledge track()?
     failCapabilityWrite = false; // does the capability write reach the row?
+    holdCapabilityWrite = false; // leave the capability write in flight, forever
+    /** Resolves once the capability write has been issued and is hanging. */
+    capabilityWriteIssued = Promise.withResolvers();
     deviceExists = true; // is there a row for this device id at all?
     statusWritesBeforeJoin = null;
 
@@ -149,8 +152,17 @@ class FakeClient {
                 if (typeof updates.status === 'string') client.statusWrites.push(updates.status);
                 // Supabase reports a refused write in the result, not by
                 // throwing — which is how it reaches code that ignores it.
-                if (updates.capabilities?.transport_broadcast_v1 === true && client.failCapabilityWrite) {
-                    result = { data: null, error: { message: 'capability write refused' } };
+                if (updates.capabilities?.transport_broadcast_v1 === true) {
+                    if (client.failCapabilityWrite) {
+                        result = { data: null, error: { message: 'capability write refused' } };
+                    }
+                    if (client.holdCapabilityWrite) {
+                        // A PATCH that is simply slow. Everything the device does
+                        // in this window happens while the row still has no
+                        // capability recorded.
+                        result = new Promise(() => {});
+                        client.capabilityWriteIssued.resolve();
+                    }
                 }
                 return node;
             },
@@ -321,6 +333,30 @@ await test('a device whose readiness write is refused is not ready', async () =>
     assert.ok(
         !client.statusWrites.includes('online'),
         `the row claimed ${JSON.stringify(client.statusWrites)} although its capability never landed`
+    );
+});
+
+// The heartbeat does not go through createChannel(): it decides on its own,
+// from isReachable(), whether to assert `status: 'online'`. So the readiness
+// sequence is not the only writer, and while it is still in flight the device
+// must not yet count as reachable — otherwise a heartbeat firing in that window
+// publishes online over a row whose capability has not landed, which is the
+// state this file exists to forbid. Reported on #724 by wonderwhy-er, who
+// reproduced it by holding the capability PATCH pending.
+await test('the heartbeat cannot advertise online while readiness is still being written', async () => {
+    const { rc, client } = makeRemoteChannel(true, { holdCapabilityWrite: true });
+
+    const registration = register(rc); // parks inside the capability write
+    registration.catch(() => { /* never settles here; the case below owns it */ });
+    await client.capabilityWriteIssued.promise;
+
+    await rc.updateHeartbeat(DEVICE_ID);
+
+    assert.ok(
+        !client.statusWrites.includes('online'),
+        `the heartbeat wrote ${JSON.stringify(client.statusWrites)} while the capability write was ` +
+            'still in flight. For that window the row is online with no transport capability — the ' +
+            'exact state the server refuses as not_broadcast_capable.'
     );
 });
 
