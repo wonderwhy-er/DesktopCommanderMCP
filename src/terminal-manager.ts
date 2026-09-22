@@ -322,6 +322,10 @@ export class TerminalManager {
     return new Promise((resolve) => {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
+      let waitTimeout: NodeJS.Timeout | null = null;
+      // Set once the wait buffer drops its head. The caller is shown that
+      // buffer, so it has to be told the text is only the tail.
+      let waitOutputTruncated = false;
 
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
@@ -330,6 +334,8 @@ export class TerminalManager {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+        if (waitTimeout) clearTimeout(waitTimeout);
+        if (waitOutputTruncated) result.outputTruncated = true;
 
         // Add timing info if requested
         if (collectTiming) {
@@ -380,6 +386,7 @@ export class TerminalManager {
           output += text;
           if (output.length > MAX_WAIT_OUTPUT_CHARS) {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+            waitOutputTruncated = true;
           }
         }
         // Append to line-based buffer
@@ -424,6 +431,7 @@ export class TerminalManager {
           output += text;
           if (output.length > MAX_WAIT_OUTPUT_CHARS) {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+            waitOutputTruncated = true;
           }
         }
         // Append to line-based buffer
@@ -458,7 +466,7 @@ export class TerminalManager {
       }, 100);
 
       // Timeout fallback
-      setTimeout(() => {
+      waitTimeout = setTimeout(() => {
         session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
@@ -481,6 +489,16 @@ export class TerminalManager {
         if (closeGrace) {
           clearTimeout(closeGrace);
           closeGrace = null;
+        }
+        // The answer is built here, not in the exit handler, so bring the
+        // completed-session snapshot up to this same moment. Whatever arrived
+        // in between is in this reply, and a later read of the same pid must
+        // not show less than the caller has already seen.
+        const completed = childProcess.pid ? this.completedSessions.get(childProcess.pid) : undefined;
+        if (completed) {
+          completed.outputLines = [...session.outputLines];
+          completed.evictedLines = session.evictedLines;
+          completed.evictedChars = session.evictedChars;
         }
         exitReason = 'process_exit';
         if (!exitStatus || !outputComplete) {
@@ -524,6 +542,13 @@ export class TerminalManager {
           }
 
           this.sessions.delete(childProcess.pid);
+        }
+        // From here the answer comes from 'close' or from the grace below. The
+        // wait timeout must not fire in between and report a process that has
+        // already exited as still running.
+        if (waitTimeout) {
+          clearTimeout(waitTimeout);
+          waitTimeout = null;
         }
         closeGrace = setTimeout(() => finishAfterExit(false), EXIT_TO_CLOSE_GRACE_MS);
       });

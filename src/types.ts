@@ -37,6 +37,8 @@ export interface CommandExecutionResult {
   exitCode?: number | null;
   // Name of the signal that killed it, when one did.
   signal?: NodeJS.Signals | null;
+  // Set when the wait buffer dropped its head: `output` is only the tail.
+  outputTruncated?: boolean;
   runtimeMs?: number;
   timingInfo?: TimingInfo;
 }

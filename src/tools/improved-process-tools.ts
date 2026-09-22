@@ -201,6 +201,13 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     }
   }
 
+  // The wait buffer keeps only its tail once output passes its cap, so the text
+  // above can be missing its beginning — and a completion line under truncated
+  // output would otherwise read as the whole story.
+  const truncationMessage = result.outputTruncated
+    ? '\n[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. Use read_process_output for the full output]'
+    : '';
+
   // Add timing information if requested
   let timingMessage = '';
   if (result.timingInfo) {
@@ -210,7 +217,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${truncationMessage}${statusMessage}${timingMessage}`
     }],
   };
 }
