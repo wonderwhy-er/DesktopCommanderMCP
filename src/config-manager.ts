@@ -67,10 +67,8 @@ function scanStringToken(text: string, start: number): number {
   return -1;
 }
 
-/** Index just past the container opening at `start`, or -1 if it never closes. */
-function scanContainer(text: string, start: number): number {
-  const open = text[start];
-  const close = open === '[' ? ']' : '}';
+/** Index just past the array opening at `start`, or -1 if it never closes. */
+function scanArray(text: string, start: number): number {
   let depth = 0;
 
   for (let i = start; i < text.length; i++) {
@@ -81,8 +79,8 @@ function scanContainer(text: string, start: number): number {
       i = stringEnd - 1;
       continue;
     }
-    if (char === open) depth++;
-    else if (char === close && --depth === 0) return i + 1;
+    if (char === '[') depth++;
+    else if (char === ']' && --depth === 0) return i + 1;
   }
   return -1;
 }
@@ -125,7 +123,7 @@ function extractTopLevelStringArray(text: string, key: string): string[] | null 
 
       const valueStart = skipWhitespace(text, colon + 1);
       if (text[valueStart] !== '[') return null;
-      const valueEnd = scanContainer(text, valueStart);
+      const valueEnd = scanArray(text, valueStart);
       if (valueEnd === -1) return null;
 
       try {
@@ -137,30 +135,41 @@ function extractTopLevelStringArray(text: string, key: string): string[] | null 
     }
 
     if (char === '{' || char === '[') depth++;
-    else if (char === '}' || char === ']') depth--;
+    else if (char === '}' || char === ']') {
+      // Where a parser would stop, this stops too. At zero the root object has
+      // closed; below zero the text left it behind. Either way, what follows is
+      // not one of its fields, however much it looks like one.
+      if (--depth <= 0) return null;
+    }
   }
   return null;
 }
 
 /**
- * The security policy fields recovery may carry over from a damaged config,
- * each with the value to write when nothing can be trusted. Salvage and
- * fallback both read this table, so a field cannot gain one without the other.
+ * The security policy fields recovery may carry over from a damaged config, each
+ * with the value to write when nothing can be trusted and what that costs the
+ * user. Salvage, fallback and the warning all read this table, so a field cannot
+ * gain one without the others.
  */
-const RECOVERABLE_POLICY_FIELDS: ReadonlyArray<{
+interface RecoverablePolicyField {
   key: string;
   failClosed: (configPath: string) => string[];
-}> = [
+  failClosedEffect: (configPath: string) => string;
+}
+
+const RECOVERABLE_POLICY_FIELDS: ReadonlyArray<RecoverablePolicyField> = [
   {
     key: 'blockedCommands',
     // We cannot know a user's custom blocklist from an incomplete value.
     // `*` is treated by command validation as deny-all until the user resets it.
     failClosed: () => ['*'],
+    failClosedEffect: () => 'all commands are blocked',
   },
   {
     key: 'allowedDirectories',
     // Never turn an unknown prior allowlist into unrestricted filesystem access.
     failClosed: (configPath) => [path.dirname(configPath)],
+    failClosedEffect: (configPath) => `file access is limited to ${path.dirname(configPath)}`,
   },
 ];
 
@@ -196,6 +205,7 @@ class ConfigManager {
     if (this.initialized) return;
 
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
+    let corruptConfigObserved = false;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
@@ -207,6 +217,7 @@ class ConfigManager {
         this._isFirstRun = false;
       } catch (error: any) {
         if (error instanceof SyntaxError) {
+          corruptConfigObserved = true;
           const recovery = await this.recoverCorruptConfig(error, 'startup');
           this.config = recovery.config;
           corruptConfigTelemetry = recovery.telemetry;
@@ -243,6 +254,16 @@ class ConfigManager {
     } catch (error) {
       console.error('Failed to initialize config:', error);
       this.config = this.getDefaultConfig();
+      if (corruptConfigObserved) {
+        // The file on disk is known damaged and recovery did not finish. The
+        // defaults are the permissive ones - an empty allowlist is full
+        // filesystem access - so falling back to them here would grant exactly
+        // what the lost policy may have denied.
+        for (const field of RECOVERABLE_POLICY_FIELDS) {
+          this.config[field.key] = field.failClosed(this.configPath);
+        }
+        console.error(this.failClosedNotice([...RECOVERABLE_POLICY_FIELDS]));
+      }
       this.initialized = true;
       this.startConfigWatcher();
     } finally {
@@ -439,7 +460,10 @@ class ConfigManager {
     if (existsSync(this.configPath)) {
       const backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
       try {
-        await fs.rename(this.configPath, backupPath);
+        // Copy rather than move. Until the replacement is on disk the damaged
+        // file is the only record of the user's settings, and an install with no
+        // config at all starts over permissive and replays onboarding.
+        await fs.copyFile(this.configPath, backupPath);
         backupCreated = true;
       } catch (backupError) {
         console.error('Failed to preserve corrupt config before recovery:', backupError);
@@ -450,8 +474,15 @@ class ConfigManager {
     const defaults = this.getDefaultConfig();
     if (preservedClientId) defaults['clientId'] = preservedClientId;
     if (telemetryWasDisabled) defaults['telemetryEnabled'] = false;
+    const failedClosed: RecoverablePolicyField[] = [];
     for (const field of RECOVERABLE_POLICY_FIELDS) {
-      defaults[field.key] = preservedPolicy.get(field.key) ?? field.failClosed(this.configPath);
+      const preserved = preservedPolicy.get(field.key);
+      if (preserved) {
+        defaults[field.key] = preserved;
+      } else {
+        defaults[field.key] = field.failClosed(this.configPath);
+        failedClosed.push(field);
+      }
     }
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
@@ -460,10 +491,23 @@ class ConfigManager {
     this.config = { ...defaults, version: VERSION };
 
     console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
+    if (failedClosed.length > 0) console.error(this.failClosedNotice(failedClosed));
     return {
       config: defaults,
       telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
     };
+  }
+
+  /**
+   * What the user is left with when recovery could not restore a policy field,
+   * and the one file that undoes it. Without this the install simply stops
+   * working - every command refused - with nothing on stderr to explain why.
+   */
+  private failClosedNotice(fields: RecoverablePolicyField[]): string {
+    const effects = fields.map((field) => field.failClosedEffect(this.configPath)).join(' and ');
+    const names = fields.map((field) => field.key).join(' and ');
+    return `Security settings could not be recovered from the damaged config: ${effects}. `
+      + `Set ${names} in ${this.configPath} to restore access.`;
   }
 
   private async recoverCorruptConfig(
