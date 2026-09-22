@@ -52,6 +52,13 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         return;
     }
 
+    if (message.method === 'tools/list') {
+        // A real server answers this, and the connector now asks for it before
+        // calling a restarted child usable.
+        send({ jsonrpc: '2.0', id: message.id, result: { tools: [] } });
+        return;
+    }
+
     if (message.method === 'tools/call') {
         if (message.params?.name === CRASH_TOOL) {
             // Take the call, then die without answering. The delay lets the
