@@ -37,14 +37,13 @@ function getRepairedPathExt(): string {
 
 interface CompletedSession {
   pid: number;
-  outputLines: string[];       // Line-based buffer (consistent with active sessions)
+  // The session itself, not a copy of its numbers: whoever holds the pipe keeps
+  // writing into its buffer, and its eviction counters move with it.
+  session: TerminalSession;
   exitCode: number | null;
   signal: NodeJS.Signals | null;   // Set instead of exitCode when a signal killed it
   outputShortfalls: OutputShortfall[];   // why what is stored may not be all of it
-  startTime: Date;
   endTime: Date;
-  evictedLines: number;        // Carried over from the active session (see TerminalSession)
-  evictedChars: number;
 }
 
 /**
@@ -492,8 +491,6 @@ export class TerminalManager {
         if (pipeStillOpen) outputShortfalls.add('pipe-still-open');
         else outputShortfalls.delete('pipe-still-open');
         if (completedRecord) {
-          completedRecord.evictedLines = session.evictedLines;
-          completedRecord.evictedChars = session.evictedChars;
           completedRecord.outputShortfalls = pipeStillOpen ? ['pipe-still-open'] : [];
         }
         exitReason = 'process_exit';
@@ -519,16 +516,11 @@ export class TerminalManager {
           // Store completed session before removing active session
           completedRecord = {
             pid: childProcess.pid,
-            // The live buffer, not a copy: whoever holds the pipe keeps writing
-            // into it after this, and a reader of this pid must see that.
-            outputLines: session.outputLines,
+            session,
             exitCode: code,
             signal,
-            startTime: session.startTime,
             endTime,
-            outputShortfalls: ['pipe-still-open'],
-            evictedLines: session.evictedLines,
-            evictedChars: session.evictedChars
+            outputShortfalls: ['pipe-still-open']
           };
           this.completedSessions.set(childProcess.pid, completedRecord);
 
@@ -639,9 +631,9 @@ export class TerminalManager {
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      const runtimeMs = completedSession.endTime.getTime() - completedSession.startTime.getTime();
+      const runtimeMs = completedSession.endTime.getTime() - completedSession.session.startTime.getTime();
       const result = this.readFromLineBuffer(
-        completedSession.outputLines,
+        completedSession.session.outputLines,
         offset,
         length,
         0,  // Completed sessions don't track read position
@@ -652,7 +644,7 @@ export class TerminalManager {
         runtimeMs,
         completedSession.signal
       );
-      result.evictedLines = completedSession.evictedLines;
+      result.evictedLines = completedSession.session.evictedLines;
       return result;
     }
 
@@ -727,7 +719,7 @@ export class TerminalManager {
 
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      return completedSession.outputLines.length;
+      return completedSession.session.outputLines.length;
     }
 
     return null;
@@ -802,7 +794,7 @@ export class TerminalManager {
     // Fallback to completed sessions - process may have finished between snapshot and poll
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      return TerminalManager.outputSinceSnapshot(completedSession.outputLines, completedSession.evictedChars, snapshot.totalChars);
+      return TerminalManager.outputSinceSnapshot(completedSession.session.outputLines, completedSession.session.evictedChars, snapshot.totalChars);
     }
 
     return null;
