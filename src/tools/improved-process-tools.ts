@@ -210,11 +210,12 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
       shortfalls: result.outputShortfalls
     });
   } else {
+    // Only prompt detection is read from the text here. Completion is the
+    // process's own to report: analyzeProcessState calls "Error:" a finished
+    // process, which is how a live one used to be announced as done.
     const processState = analyzeProcessState(result.output, result.pid);
     if (processState.isWaitingForInput) {
       statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
-    } else if (processState.isFinished) {
-      statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
     } else if (result.isBlocked) {
       statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
     }
