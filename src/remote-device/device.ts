@@ -312,12 +312,9 @@ export class MCPDevice {
                 // Treating it as no session costs one authorization and ends
                 // the loop.
                 if (!this.deviceId) {
-                    // Not a silent recovery: on a headless host there is still
-                    // nobody to finish the authorization this leads to, so the
-                    // unit keeps restarting. What changes is that it restarts
-                    // asking for something - a device code someone can act on -
-                    // instead of dying on 'Device not found: undefined', which
-                    // names nothing and has no way out but deleting the file.
+                    // Not a recovery on a headless host - nobody is there to
+                    // finish the authorization either. It trades a restart loop
+                    // with no way out for one that asks for a device code.
                     console.log('   - ⚠️ Ignoring a persisted session with no device ID - reauthorizing');
                     console.debug('[DEBUG] Session present but no device ID; treating as no session');
                     // Its own event: remote_device_session_state reports this
@@ -394,18 +391,10 @@ export class MCPDevice {
     private async writePersistedConfig(rotated?: AuthSession, announcedDeviceId?: string): Promise<void> {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
-            // A config with no device id cannot be used, so it is never written.
-            // start() hands this.deviceId straight to registerDevice(), which
-            // looks the device up and throws 'Device not found: undefined' when
-            // there is nothing to look up - so any run that got here without one
-            // is already over. What the file would cost is the next run: it
-            // restores the session, finds no device id, skips the revocation
-            // check that is guarded by one, and dies registering. Every time.
-            //
-            // Nothing legitimate needs it: start() has the device id - from the
-            // file, or from what authenticate() answered - before the save that
-            // follows. When authenticate() answers without one, the assignment
-            // is skipped and the run dies at registerDevice() regardless.
+            // A config with no device id costs the next run everything: it
+            // restores the session, skips the revocation check that the id
+            // guards, and dies in registerDevice() on 'Device not found:
+            // undefined'. Every restart, with nothing on the machine changing.
             const deviceId = rotated ? announcedDeviceId : this.deviceId;
             if (!deviceId) {
                 console.debug('[DEBUG] Skipping config save - no device id to attach it to');
