@@ -111,7 +111,15 @@ export class DesktopCommanderIntegration {
 
             // Connect to Desktop Commander
             console.debug('[DEBUG] Connecting MCP client to transport');
+            // shutdown() sets the flag and tears down what exists; it cannot
+            // reach back into a restart already in flight. Without these
+            // checks that restart carries on past the teardown, connects a
+            // child nobody will close and sets `ready` behind it. The catch
+            // below discards whatever this attempt built.
+            this.abortIfShuttingDown();
+
             await this.mcpClient.connect(this.mcpTransport);
+            this.abortIfShuttingDown();
 
             // Supervise the local half. Without these, a child crash is silent:
             // the SDK clears its transport and every subsequent call throws
@@ -144,6 +152,7 @@ export class DesktopCommanderIntegration {
             // step to get the stronger meaning. A failure here lands in
             // the catch below and leaves nothing half-built behind.
             await this.verifyExecution();
+            this.abortIfShuttingDown();
             this.isReady = true;
 
             console.log(' - 🔌 Connected to Desktop Commander MCP');
@@ -167,6 +176,13 @@ export class DesktopCommanderIntegration {
      * if the child is crashing on startup, each tool call fails with the real
      * reason instead of spinning respawns in the background.
      */
+    /** Same refusal ensureReady() makes up front, for an attempt already running. */
+    private abortIfShuttingDown(): void {
+        if (this.isShuttingDown) {
+            throw new Error('Desktop Commander integration is shutting down');
+        }
+    }
+
     async ensureReady(): Promise<void> {
         if (this.ready) return;
         if (this.isShuttingDown) {

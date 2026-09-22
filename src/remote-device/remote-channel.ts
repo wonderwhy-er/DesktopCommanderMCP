@@ -467,11 +467,15 @@ export class RemoteChannel {
         }
 
         if (existingDevice) {
-            console.debug('[DEBUG] Updating device status to online');
+            console.debug('[DEBUG] Registering device as offline until the channel proves otherwise');
+            // Neither half of this row may claim reachability yet.
             // transport_broadcast_v1 is NOT set here: the server treats it as
-            // binding, so it is written only once presence is proven.
+            // binding, so it is written only once presence is proven. `status`
+            // is the same promise in the other notation — dispatch picks its
+            // target by it — so it stays offline until the channel joins and
+            // syncReachabilityStatus() advertises it.
             await this.updateDevice(existingDevice.id, {
-                status: 'online',
+                status: 'offline',
                 last_seen: new Date().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
@@ -1106,8 +1110,8 @@ export class RemoteChannel {
      * is the write and not the decision. Public so the device can route its
      * recovery transition through the predicate too.
      */
-    syncReachabilityStatus(): void {
-        this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
+    syncReachabilityStatus(): Promise<void> {
+        return this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
     }
 
     /**
@@ -1119,17 +1123,19 @@ export class RemoteChannel {
      * Not the single writer: updateHeartbeat, registerDevice and setOffline's
      * subprocess write status directly, so this is not total ordering.
      */
-    private queueStatusWrite(status: 'online' | 'offline'): void {
+    private queueStatusWrite(status: 'online' | 'offline'): Promise<void> {
         // After teardown begins, setOffline() owns the final status write.
         if (this.shuttingDown) {
             console.debug(`[DEBUG] Status write '${status}' suppressed — teardown in progress`);
-            return;
+            return Promise.resolve();
         }
         this.statusWriteChain = this.statusWriteChain
             .then(() => (this.deviceId ? this.setOnlineStatus(this.deviceId, status) : undefined))
             .catch((e: any) => {
                 console.error('[DEBUG] Status write failed:', e?.message);
             });
+        // Handed back so a caller that must not race the row can await it.
+        return this.statusWriteChain;
     }
 
     /**

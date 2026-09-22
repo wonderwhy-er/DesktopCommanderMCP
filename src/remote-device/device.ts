@@ -400,10 +400,12 @@ export class MCPDevice {
      * connected" until someone restarted the process by hand.
      */
     private async handleLocalMcpLoss(reason: string) {
-        if (this.deviceId) {
-            await this.remoteChannel.setOnlineStatus(this.deviceId, 'offline')
-                .catch((e: any) => console.error('Failed to mark device offline:', e.message));
-        }
+        // Through the predicate and its queue, not a direct write: the probe
+        // already reads false by the time this runs, and a direct write can be
+        // overtaken by an 'online' still sitting in the queue — which would put
+        // a device with a dead executor back into the server's selection pool.
+        await this.remoteChannel.syncReachabilityStatus()
+            .catch((e: any) => console.error('Failed to mark device offline:', e.message));
 
         // Keep trying, rather than attempting once. The lazy restart in
         // ensureReady() fires on an incoming tool call, and this device is now
