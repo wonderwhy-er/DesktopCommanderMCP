@@ -10,9 +10,19 @@ import { FileHandler } from './base.js';
 import { TextFileHandler } from './text.js';
 import { ImageFileHandler } from './image.js';
 import { BinaryFileHandler } from './binary.js';
-import { ExcelFileHandler } from './excel.js';
-import { PdfFileHandler } from './pdf.js';
-import { DocxFileHandler } from './docx.js';
+
+// Excel, PDF and DOCX handlers are imported as TYPES only. Loading their
+// modules pulls in exceljs, md-to-pdf and puppeteer, which cost real time at
+// process start and are useless to a session that never opens such a file.
+// They are loaded on demand below, in the async getters. A type import is
+// erased at compile time and loads nothing.
+import type { ExcelFileHandler } from './excel.js';
+import type { PdfFileHandler } from './pdf.js';
+import type { DocxFileHandler } from './docx.js';
+
+// Routing decides by extension so it can rule a handler out without loading it.
+// The handlers read the same lists, so routing and handler cannot disagree.
+import { EXCEL_EXTENSIONS, PDF_EXTENSIONS, DOCX_EXTENSIONS, hasExtension } from './extensions.js';
 
 // Singleton instances of each handler
 let excelHandler: ExcelFileHandler | null = null;
@@ -25,8 +35,11 @@ let docxHandler: DocxFileHandler | null = null;
 /**
  * Initialize handlers (lazy initialization)
  */
-function getExcelHandler(): ExcelFileHandler {
-    if (!excelHandler) excelHandler = new ExcelFileHandler();
+async function getExcelHandler(): Promise<ExcelFileHandler> {
+    if (!excelHandler) {
+        const { ExcelFileHandler } = await import('./excel.js');
+        excelHandler = new ExcelFileHandler();
+    }
     return excelHandler;
 }
 
@@ -45,21 +58,28 @@ function getBinaryHandler(): BinaryFileHandler {
     return binaryHandler;
 }
 
-function getPdfHandler(): PdfFileHandler {
-    if (!pdfHandler) pdfHandler = new PdfFileHandler();
+async function getPdfHandler(): Promise<PdfFileHandler> {
+    if (!pdfHandler) {
+        const { PdfFileHandler } = await import('./pdf.js');
+        pdfHandler = new PdfFileHandler();
+    }
     return pdfHandler;
 }
 
-function getDocxHandler(): DocxFileHandler {
-    if (!docxHandler) docxHandler = new DocxFileHandler();
+async function getDocxHandler(): Promise<DocxFileHandler> {
+    if (!docxHandler) {
+        const { DocxFileHandler } = await import('./docx.js');
+        docxHandler = new DocxFileHandler();
+    }
     return docxHandler;
 }
 
 /**
  * Get the appropriate file handler for a given file path
  *
- * Each handler's canHandle() determines if it can process the file.
- * Extension-based handlers (Excel, Image) return sync boolean.
+ * Routing is decided by extension first, so a path that is not a DOCX, PDF or
+ * spreadsheet never loads those handlers' modules. Only the matching handler is
+ * imported, and only then.
  * BinaryFileHandler uses async isBinaryFile for content-based detection.
  *
  * Priority order:
@@ -74,19 +94,19 @@ function getDocxHandler(): DocxFileHandler {
  * @returns FileHandler instance that can handle this file
  */
 export async function getFileHandler(filePath: string): Promise<FileHandler> {
-    // Check DOCX first (extension-based, sync)
-    if (getDocxHandler().canHandle(filePath)) {
-        return getDocxHandler();
+    // Check DOCX first (extension-based)
+    if (hasExtension(filePath, DOCX_EXTENSIONS)) {
+        return await getDocxHandler();
     }
 
-    // Check PDF (extension-based, sync)
-    if (getPdfHandler().canHandle(filePath)) {
-        return getPdfHandler();
+    // Check PDF (extension-based)
+    if (hasExtension(filePath, PDF_EXTENSIONS)) {
+        return await getPdfHandler();
     }
 
-    // Check Excel (extension-based, sync)
-    if (getExcelHandler().canHandle(filePath)) {
-        return getExcelHandler();
+    // Check Excel (extension-based)
+    if (hasExtension(filePath, EXCEL_EXTENSIONS)) {
+        return await getExcelHandler();
     }
 
     // Check Image (extension-based, sync - images are binary but handled specially)
@@ -105,12 +125,13 @@ export async function getFileHandler(filePath: string): Promise<FileHandler> {
 
 /**
  * Check if a file path is an Excel file
- * Delegates to ExcelFileHandler.canHandle to avoid duplicating extension logic
+ * Extension check only: callers use this to ask a question about a filename,
+ * and answering it must not load exceljs.
  * @param path File path
  * @returns true if file is Excel format
  */
 export function isExcelFile(path: string): boolean {
-    return getExcelHandler().canHandle(path);
+    return hasExtension(path, EXCEL_EXTENSIONS);
 }
 
 /**

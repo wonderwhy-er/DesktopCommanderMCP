@@ -10,7 +10,10 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+// Type-only: the PDF module tree pulls in md-to-pdf and puppeteer, which no
+// session needs until it actually reads or writes a PDF. The functions are
+// imported on demand at their call sites below; types are erased and load nothing.
+import type { PdfOperations, PdfMetadata } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -383,6 +386,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         // NEW: Add PDF handling before image check
         if (isPdf) {
             // Use URL directly - pdfreader handles URL downloads internally
+            const { parsePdfToMarkdown } = await import('./pdf/index.js');
             const pdfResult = await parsePdfToMarkdown(url);
 
             return {
@@ -1020,6 +1024,7 @@ export async function writePdf(
             mode: 'create'
         });
 
+        const { parseMarkdownToPdf } = await import('./pdf/index.js');
         const pdfBuffer = await parseMarkdownToPdf(content, options);
         // Use outputPath if provided, otherwise overwrite input file
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
@@ -1050,6 +1055,7 @@ export async function writePdf(
         });
 
         // Perform the PDF editing
+        const { editPdf } = await import('./pdf/index.js');
         const modifiedPdfBuffer = await editPdf(validPath, operations);
 
         // Write the modified PDF to the output path

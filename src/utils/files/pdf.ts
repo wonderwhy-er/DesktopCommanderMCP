@@ -5,6 +5,7 @@
 
 import fs from 'fs/promises';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
+import { PDF_EXTENSIONS, hasExtension } from './extensions.js';
 import { parsePdfToMarkdown, parseMarkdownToPdf, editPdf } from '../../tools/pdf/index.js';
 
 /**
@@ -12,14 +13,11 @@ import { parsePdfToMarkdown, parseMarkdownToPdf, editPdf } from '../../tools/pdf
  * Extracts text and images, supports page-based pagination
  */
 export class PdfFileHandler implements FileHandler {
-    private readonly extensions = ['.pdf'];
-
     /**
      * Check if this handler can handle the given file
      */
     canHandle(path: string): boolean {
-        const ext = path.toLowerCase();
-        return this.extensions.some(e => ext.endsWith(e));
+        return hasExtension(path, PDF_EXTENSIONS);
     }
 
     /**

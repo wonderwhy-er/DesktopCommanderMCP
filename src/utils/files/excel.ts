@@ -5,6 +5,7 @@
 
 import ExcelJS from 'exceljs';
 import fs from 'fs/promises';
+import { EXCEL_EXTENSIONS, hasExtension } from './extensions.js';
 import {
     FileHandler,
     ReadOptions,
@@ -33,8 +34,7 @@ interface ExcelMetadata {
 export class ExcelFileHandler implements FileHandler {
 
     canHandle(path: string): boolean {
-        const ext = path.toLowerCase();
-        return ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.xlsm');
+        return hasExtension(path, EXCEL_EXTENSIONS);
     }
 
     async read(path: string, options?: ReadOptions): Promise<FileResult> {

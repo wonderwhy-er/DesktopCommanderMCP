@@ -18,6 +18,7 @@
 
 import fs from 'fs/promises';
 import PizZip from 'pizzip';
+import { DOCX_EXTENSIONS, hasExtension } from './extensions.js';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
 
 // ════════════════════════════════════════════════════════════════
@@ -503,10 +504,9 @@ function countOccurrences(haystack: string, needle: string): number {
 // ════════════════════════════════════════════════════════════════
 
 export class DocxFileHandler implements FileHandler {
-    private readonly extensions = ['.docx'];
 
     canHandle(path: string): boolean {
-        return this.extensions.some(e => path.toLowerCase().endsWith(e));
+        return hasExtension(path, DOCX_EXTENSIONS);
     }
 
     /**

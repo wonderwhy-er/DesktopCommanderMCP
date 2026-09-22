@@ -13,7 +13,6 @@ import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
-import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -131,8 +130,15 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
-      // Preemptively check/download Chrome for PDF generation (runs in background)
-      ensureChromeAvailable();
+      // Preemptively check/download Chrome for PDF generation (runs in background).
+      // Imported here rather than at the top of the file: this is the only use,
+      // it happens after the handshake, and the module pulls in md-to-pdf and
+      // puppeteer, which would otherwise be loaded on every launch.
+      import('./tools/pdf/markdown.js')
+        .then(({ ensureChromeAvailable }) => ensureChromeAvailable())
+        .catch((error) => {
+          logger.error(`Chrome availability check failed to load: ${error instanceof Error ? error.message : String(error)}`);
+        });
     };
 
     await server.connect(transport);
