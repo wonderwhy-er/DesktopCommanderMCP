@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, describeProcessOutcome, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, describeOutputShortfall, describeProcessExit, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -189,11 +189,12 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   }
 
   let statusMessage = '';
-  if (result.outcome && result.outcome !== 'running') {
-    statusMessage = '\n' + describeProcessOutcome(result.outcome, {
+  if (result.outcome === 'exited') {
+    statusMessage = '\n' + describeProcessExit({
       exitCode: result.exitCode,
       signal: result.signal,
-      runtimeMs: result.runtimeMs
+      runtimeMs: result.runtimeMs,
+      shortfalls: result.outputShortfalls
     });
   } else {
     const processState = analyzeProcessState(result.output, result.pid);
@@ -208,8 +209,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   // Under a completion line, a tail with its head missing reads as the whole
   // story.
-  const truncationMessage = result.outputTruncated
-    ? '\n[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap]'
+  const truncationMessage = result.outputShortfalls?.includes('head-dropped')
+    ? '\n' + describeOutputShortfall('head-dropped')
     : '';
 
   // Add timing information if requested
@@ -368,11 +369,12 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
   // Add process state info
   let processStateMessage = '';
-  if (result.outcome !== 'running') {
-    processStateMessage = '\n' + describeProcessOutcome(result.outcome, {
+  if (result.outcome === 'exited') {
+    processStateMessage = '\n' + describeProcessExit({
       exitCode: result.exitCode,
       signal: result.signal,
       runtimeMs: result.runtimeMs,
+      shortfalls: result.outputShortfalls,
       readAgain: true
     });
   } else if (session) {

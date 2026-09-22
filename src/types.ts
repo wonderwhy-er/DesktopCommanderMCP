@@ -1,7 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
 import type { PreviewFileType } from './ui/file-preview/shared/preview-file-types.js';
-import type { ProcessOutcome } from './utils/process-detection.js';
+import type { OutputShortfall, ProcessOutcome } from './utils/process-detection.js';
 
 declare global {
   var mcpTransport: FilteredStdioServerTransport | undefined;
@@ -35,8 +35,8 @@ export interface CommandExecutionResult {
   outcome?: ProcessOutcome;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;
-  // The wait buffer dropped its head: `output` is only the tail.
-  outputTruncated?: boolean;
+  // Why `output` may not be all of it.
+  outputShortfalls?: OutputShortfall[];
   // The command as it actually ran, when the shell layer rewrote it.
   rewrittenCommand?: string;
   runtimeMs?: number;

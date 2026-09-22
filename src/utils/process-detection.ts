@@ -167,7 +167,20 @@ function escapeRegExp(string: string): string {
 }
 
 /** What a spawned process is doing, as far as this server can tell. */
-export type ProcessOutcome = 'running' | 'exited' | 'exited-output-open';
+export type ProcessOutcome = 'running' | 'exited';
+
+/** Why the output handed to the caller may not be all of it. */
+export type OutputShortfall = 'pipe-still-open' | 'head-dropped';
+
+/** The wording each shortfall gets, wherever it is reported. */
+export function describeOutputShortfall(reason: OutputShortfall): string {
+  switch (reason) {
+    case 'pipe-still-open':
+      return 'its output pipe is still open, so more output may follow';
+    case 'head-dropped':
+      return '[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap]';
+  }
+}
 
 /**
  * A signalled process has no exit code, and a process whose pipe someone else
@@ -176,21 +189,22 @@ export type ProcessOutcome = 'running' | 'exited' | 'exited-output-open';
  * story (#702). Every tool shares these sentences; only the next step differs,
  * because "read it" and "read it again" are different advice.
  */
-export function describeProcessOutcome(
-  outcome: Exclude<ProcessOutcome, 'running'>,
-  { exitCode, signal, runtimeMs, readAgain = false }: {
+export function describeProcessExit(
+  { exitCode, signal, runtimeMs, shortfalls = [], readAgain = false }: {
     exitCode?: number | null;
     signal?: NodeJS.Signals | null;
     runtimeMs?: number;
+    shortfalls?: OutputShortfall[];
     readAgain?: boolean;
   }
 ): string {
-  if (outcome === 'exited-output-open') {
-    const ended = signal
-      ? `terminated by ${signal}`
-      : exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`;
+  const ended = signal
+    ? `terminated by ${signal}`
+    : exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`;
+
+  if (shortfalls.includes('pipe-still-open')) {
     const pointer = readAgain ? 'Read again for the rest' : 'Use read_process_output for the rest';
-    return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. ${pointer}`;
+    return `⏳ Process ${ended}, but ${describeOutputShortfall('pipe-still-open')}. ${pointer}`;
   }
 
   const runtime = runtimeMs !== undefined ? ` (runtime: ${(runtimeMs / 1000).toFixed(2)}s)` : '';

@@ -4,7 +4,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, Out
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import { analyzeProcessState, describeProcessOutcome, ProcessOutcome } from './utils/process-detection.js';
+import { analyzeProcessState, describeProcessExit, OutputShortfall, ProcessOutcome } from './utils/process-detection.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -40,7 +40,7 @@ interface CompletedSession {
   outputLines: string[];       // Line-based buffer (consistent with active sessions)
   exitCode: number | null;
   signal: NodeJS.Signals | null;   // Set instead of exitCode when a signal killed it
-  outcome: Exclude<ProcessOutcome, 'running'>;
+  outputShortfalls: OutputShortfall[];   // why what is stored may not be all of it
   startTime: Date;
   endTime: Date;
   evictedLines: number;        // Carried over from the active session (see TerminalSession)
@@ -75,6 +75,7 @@ export interface PaginatedOutputResult {
   readCount: number;           // Number of lines returned
   remaining: number;           // Lines remaining after this read
   outcome: ProcessOutcome;
+  outputShortfalls: OutputShortfall[];
   exitCode?: number | null;    // Exit code if completed
   signal?: NodeJS.Signals | null;  // Signal that killed it, if one did
   runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
@@ -329,14 +330,14 @@ export class TerminalManager {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
       let waitTimeout: NodeJS.Timeout | null = null;
-      let waitOutputTruncated = false;
+      const outputShortfalls = new Set<OutputShortfall>();
 
       const appendToWaitBuffer = (text: string) => {
         if (resolved) return;
         output += text;
         if (output.length <= MAX_WAIT_OUTPUT_CHARS) return;
         output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
-        waitOutputTruncated = true;
+        outputShortfalls.add('head-dropped');
       };
 
       // Quick prompt patterns for immediate detection
@@ -347,7 +348,7 @@ export class TerminalManager {
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
         if (waitTimeout) clearTimeout(waitTimeout);
-        if (waitOutputTruncated) result.outputTruncated = true;
+        if (outputShortfalls.size > 0) result.outputShortfalls = [...outputShortfalls];
         if (rewrittenCommand) result.rewrittenCommand = rewrittenCommand;
 
         // Add timing info if requested
@@ -483,15 +484,17 @@ export class TerminalManager {
       // belong to someone else's session.
       let completedRecord: CompletedSession | null = null;
 
-      const finishAfterExit = (outcome: Exclude<ProcessOutcome, 'running'>) => {
+      const finishAfterExit = (pipeStillOpen: boolean) => {
         if (closeGrace) {
           clearTimeout(closeGrace);
           closeGrace = null;
         }
+        if (pipeStillOpen) outputShortfalls.add('pipe-still-open');
+        else outputShortfalls.delete('pipe-still-open');
         if (completedRecord) {
           completedRecord.evictedLines = session.evictedLines;
           completedRecord.evictedChars = session.evictedChars;
-          completedRecord.outcome = outcome;
+          completedRecord.outputShortfalls = pipeStillOpen ? ['pipe-still-open'] : [];
         }
         exitReason = 'process_exit';
         if (!exitStatus) {
@@ -502,7 +505,7 @@ export class TerminalManager {
           pid: childProcess.pid!,
           output,
           isBlocked: false,
-          outcome,
+          outcome: 'exited',
           exitCode: exitStatus.code,
           signal: exitStatus.signal,
           runtimeMs: exitStatus.at.getTime() - session.startTime.getTime()
@@ -523,7 +526,7 @@ export class TerminalManager {
             signal,
             startTime: session.startTime,
             endTime,
-            outcome: 'exited-output-open',
+            outputShortfalls: ['pipe-still-open'],
             evictedLines: session.evictedLines,
             evictedChars: session.evictedChars
           };
@@ -547,10 +550,10 @@ export class TerminalManager {
           clearInterval(periodicCheck);
           periodicCheck = null;
         }
-        closeGrace = setTimeout(() => finishAfterExit('exited-output-open'), EXIT_TO_CLOSE_GRACE_MS);
+        closeGrace = setTimeout(() => finishAfterExit(true), EXIT_TO_CLOSE_GRACE_MS);
       });
 
-      childProcess.on('close', () => finishAfterExit('exited'));
+      childProcess.on('close', () => finishAfterExit(false));
     });
   }
 
@@ -626,7 +629,8 @@ export class TerminalManager {
         length,
         session.lastReadIndex,
         (newIndex) => { session.lastReadIndex = newIndex; },
-        'running'
+        'running',
+        []
       );
       result.evictedLines = session.evictedLines;
       return result;
@@ -642,7 +646,8 @@ export class TerminalManager {
         length,
         0,  // Completed sessions don't track read position
         () => {},  // No-op for completed sessions
-        completedSession.outcome,
+        'exited',
+        completedSession.outputShortfalls,
         completedSession.exitCode,
         runtimeMs,
         completedSession.signal
@@ -664,6 +669,7 @@ export class TerminalManager {
     lastReadIndex: number,
     updateLastRead: (index: number) => void,
     outcome: ProcessOutcome,
+    outputShortfalls: OutputShortfall[],
     exitCode?: number | null,
     runtimeMs?: number,
     signal?: NodeJS.Signals | null
@@ -703,6 +709,7 @@ export class TerminalManager {
       readCount,
       remaining,
       outcome,
+      outputShortfalls,
       exitCode,
       runtimeMs,
       signal
@@ -738,11 +745,12 @@ export class TerminalManager {
 
     const output = result.lines.join('\n').trim();
 
-    if (result.outcome !== 'running') {
-      const completion = describeProcessOutcome(result.outcome, {
+    if (result.outcome === 'exited') {
+      const completion = describeProcessExit({
         exitCode: result.exitCode,
         signal: result.signal,
         runtimeMs: result.runtimeMs,
+        shortfalls: result.outputShortfalls,
         readAgain: true
       });
       if (output) {
