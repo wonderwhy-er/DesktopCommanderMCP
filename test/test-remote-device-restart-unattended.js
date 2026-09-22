@@ -5,6 +5,7 @@
  * process restart with no browser. Each start is a child process carrying only
  * device.json; DeviceAuthenticator.authenticate() is trapped, so reaching for
  * a browser fails loudly instead of waiting out a device code.
+ * The expired-token case has no control: it passes with the 0.2.50 wiring too.
  */
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';

@@ -386,12 +386,11 @@ export class MCPDevice {
         // belongs to rather than being read at write time.
         //
         // That holds for a rotation only. A save with no session takes the two
-        // on either side of the getSession() in writePersistedConfig, and
-        // auth-js locks inside it, so they can be minutes apart; it needs no
-        // better, because the one caller of that form is start(), which awaits
-        // the save. Twice now this has read like a restatement and been cut -
-        // without it the sentence above reads as unconditional, and the code
-        // says otherwise two methods away.
+        // on either side of the getSession() in writePersistedConfig, which can
+        // block; it needs no better, because the one caller of that form is
+        // start(), which awaits the save. Twice now this has read like a
+        // restatement and been cut - without it the sentence above reads as
+        // unconditional, and the code says otherwise two methods away.
         const announcedDeviceId = rotated ? this.deviceId : undefined;
         return this.queueConfigWrite(() => this.writePersistedConfig(rotated, announcedDeviceId));
     }
