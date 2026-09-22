@@ -113,14 +113,9 @@ function skipWhitespace(text: string, start: number): number {
 }
 
 /**
- * Read one field of the root object out of a damaged config.
- *
- * The text is not parseable, so this walks it the way a parser would: quoted
- * text cannot open or close a container, and a field only counts when it is a
- * key of the root object. A `blockedCommands` nested inside some other object
- * is not this install's policy, and accepting it would hand the user a policy
- * they never set instead of the fail-closed fallback. Anything incomplete or
- * not an array of strings reads as unsalvageable.
+ * A `blockedCommands` nested in some other object is not this install's policy,
+ * and taking it would hand the user a policy they never set instead of the
+ * fail-closed fallback. Only a key of the root object counts.
  */
 function extractTopLevelStringArray(text: string, key: string): string[] | null {
   const rootStart = skipWhitespace(text, 0);
@@ -138,7 +133,6 @@ function extractTopLevelStringArray(text: string, key: string): string[] | null 
       i = stringEnd - 1;
       if (!isCandidateKey) continue;
 
-      // A value that happens to equal the key name is not a field.
       const colon = skipWhitespace(text, stringEnd);
       if (text[colon] !== ':') continue;
 
@@ -157,21 +151,14 @@ function extractTopLevelStringArray(text: string, key: string): string[] | null 
 
     if (char === '{' || char === '[') depth++;
     else if (char === '}' || char === ']') {
-      // Where a parser would stop, this stops too. At zero the root object has
-      // closed; below zero the text left it behind. Either way, what follows is
-      // not one of its fields, however much it looks like one.
+      // Zero closes the root object; below zero the text has left it behind.
       if (--depth <= 0) return null;
     }
   }
   return null;
 }
 
-/**
- * The security policy fields recovery may carry over from a damaged config, each
- * with the value to write when nothing can be trusted and what that costs the
- * user. Salvage, fallback and the warning all read this table, so a field cannot
- * gain one without the others.
- */
+/** Salvage, fallback and the warning all read this table: one field, one entry. */
 interface RecoverablePolicyField {
   key: string;
   failClosed: (configPath: string) => string[];
@@ -181,19 +168,15 @@ interface RecoverablePolicyField {
 const RECOVERABLE_POLICY_FIELDS: ReadonlyArray<RecoverablePolicyField> = [
   {
     key: 'blockedCommands',
-    // We cannot know a user's custom blocklist from an incomplete value.
-    // `*` is treated by command validation as deny-all until the user resets it.
+    // `*` is deny-all to command validation until the user resets it.
     failClosed: () => ['*'],
     failClosedEffect: () => 'all commands are blocked',
   },
   {
     key: 'allowedDirectories',
-    // Never turn an unknown prior allowlist into unrestricted filesystem access.
-    // This is the narrowest value the field can express, since an empty list
-    // means unrestricted (see isPathAllowed). It is the config directory, so a
-    // file write can lift the restriction - deliberately: that is the way back
-    // for a user whose settings were lost. Refusing directories outright would
-    // need a deny-all marker in the allowlist, as `*` is for commands.
+    // The narrowest this field can express: an empty list means unrestricted
+    // (isPathAllowed). It holds config.json, so a write can lift it - the way
+    // back for a user whose settings were lost.
     failClosed: (configPath) => [path.dirname(configPath)],
     failClosedEffect: (configPath) => `file access is limited to ${path.dirname(configPath)}`,
   },
@@ -282,17 +265,13 @@ class ConfigManager {
     } catch (error) {
       console.error('Failed to initialize config:', error);
       if (recoveredConfig) {
-        // Recovery finished and its result is already on disk. Whatever failed
-        // after it, this policy is the user's own - keep it rather than trading
-        // it for defaults, permissive or not.
+        // Recovery's result is already on disk, and it is the user's own policy.
         this.config = { ...recoveredConfig, version: VERSION };
       } else {
         this.config = this.getDefaultConfig();
         if (corruptConfigObserved) {
-          // The file on disk is known damaged and recovery never produced a
-          // config. The defaults are the permissive ones - an empty allowlist is
-          // full filesystem access - so settling for them here would grant
-          // exactly what the lost policy may have denied.
+          // The defaults are the permissive ones - an empty allowlist is full
+          // filesystem access - and the lost policy may have denied exactly that.
           this.applyFailClosedPolicy([...RECOVERABLE_POLICY_FIELDS]);
         }
       }
@@ -422,11 +401,7 @@ class ConfigManager {
     return '>=1h';
   }
 
-  /**
-   * The damaged file as this process found it. Recovery runs under a lock other
-   * processes are waiting on, so the file is read once and the bytes are passed
-   * along to everything that needs them.
-   */
+  /** Read once: recovery runs under a lock other processes are waiting on. */
   private async readCorruptSnapshot(): Promise<CorruptConfigSnapshot> {
     const [stat, buffer] = await Promise.all([
       fs.stat(this.configPath).catch(() => null),
@@ -494,12 +469,9 @@ class ConfigManager {
   }
 
   /**
-   * Keep a copy of the damaged config beside it, and keep the set of copies
-   * small. The damaged file stays where it is, so a start that fails again meets
-   * the same bytes again: copying them every time would grow without limit in
-   * the very directory the fail-closed allowlist points at.
-   *
-   * Returns whether these bytes are preserved, by this call or an earlier one.
+   * Whether these bytes are preserved, by this call or an earlier one. The
+   * damaged file stays where it is, so a start that fails again meets the same
+   * bytes: copying them every time would fill the config directory.
    */
   private async preserveCorruptConfig(snapshot: CorruptConfigSnapshot, entries: string[]): Promise<boolean> {
     const prefix = `${path.basename(this.configPath)}.corrupt.`;
@@ -511,10 +483,8 @@ class ConfigManager {
         return { name, mtimeMs: stat?.mtimeMs ?? 0, size: stat?.size ?? -1 };
       }));
 
-    // Compare bytes, not decoded text. A damaged config is exactly where invalid
-    // sequences live, and two files that decode to the same replacement
-    // characters are still two different pieces of evidence. Size rules most
-    // candidates out without reading them.
+    // Bytes, not decoded text: two files that decode to the same replacement
+    // characters are still two different pieces of evidence.
     for (const { name, size } of existing) {
       if (size !== snapshot.buffer.length) continue;
       const kept = await fs.readFile(path.join(configDir, name)).catch(() => null);
@@ -540,10 +510,8 @@ class ConfigManager {
     const entries = await this.listConfigDir();
     const forensics = this.inspectCorruptConfig(error, phase, snapshot, entries);
 
-    // Prefer the last parsed in-memory policy during runtime recovery. On startup,
-    // salvage only complete string-array policy fields from the root of the
-    // damaged JSON. This keeps recovery narrow without introducing a persistent
-    // shadow config.
+    // In-memory policy first: on startup there is none, and the damaged text is
+    // all there is to salvage from.
     const corruptText = snapshot.text;
     const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
     const preservedClientId = clientIdMatch?.[1];
@@ -669,10 +637,8 @@ ${explanation}` : refusal;
     error: SyntaxError,
     phase: CorruptConfigPhase
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    // Keep the bytes this process originally saw. If another process repairs the
-    // file while we wait for the lock, they are the only evidence of the
-    // corruption this process met - and the directory is listed only in the
-    // branch that ends up reporting them.
+    // If another process repairs the file while we wait for the lock, these bytes
+    // are the only evidence of the corruption this process met.
     const observed = await this.readCorruptSnapshot();
     const release = await this.acquireConfigLock();
     try {
@@ -686,8 +652,7 @@ ${explanation}` : refusal;
         };
       } catch (latestError: any) {
         if (latestError instanceof SyntaxError) {
-          // Still corrupt under the lock. Recovery reads the file itself, so the
-          // forensic fields describe the exact snapshot being replaced.
+          // Recovery reads the file itself, so its forensics describe what it replaced.
           return await this.recoverCorruptConfigUnderLock(latestError, phase);
         }
         if (latestError?.code !== 'ENOENT') throw latestError;
@@ -826,9 +791,7 @@ ${explanation}` : refusal;
         && this.failClosedFieldsIn(latest).length === 0;
       this.config = latest;
       if (markWasStale) {
-        // Editing this file by hand is what the notice asks for, and it is the
-        // one repair no mutation follows. Clean up after it rather than leaving
-        // recovery's mark behind until something else happens to write.
+        // A hand-edited config is the one repair no mutation follows.
         this.pruneFailClosedMarker(this.config);
         this.queueMutation((config) => this.pruneFailClosedMarker(config));
       }
