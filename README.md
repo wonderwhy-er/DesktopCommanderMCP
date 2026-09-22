@@ -17,19 +17,6 @@ Work with code and text, run processes, and automate tasks, going far beyond oth
   <img width="380" height="200" src="https://glama.ai/mcp/servers/zempur9oh4/badge" alt="Desktop Commander MCP" />
 </a>
 
-## 🖥️ Try the Desktop Commander App (Beta)
-
-**Want a better experience?** The Desktop Commander App gives you everything the MCP server does, plus:
-
-- **Use any AI model** — Claude, GPT-4.5, Gemini 2.5, or any model you prefer
-- **See file changes live** — visual file previews as AI edits your files
-- **Add custom MCPs and context** — extend with your own tools, no config files
-- **Coming soon** — skills system, dictation, background scheduled tasks, and more
-
-**👉 [Download the App](https://desktopcommander.app/#download)** (macOS & Windows)
-
-> The MCP server below still works great with Claude Desktop and other MCP clients — the app is for those who want a dedicated, polished experience.
-
 ## Table of Contents
 - [Features](#features)
 - [How to install](#how-to-install)
@@ -470,21 +457,24 @@ Or add to `.qwen/settings.json` (project) or `~/.qwen/settings.json` (global). S
 <details>
 <summary><b>ChatGPT / Claude Web (Remote MCP)</b></summary>
 
-Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services via Remote MCP — no desktop app required.
+Use Desktop Commander from **ChatGPT**, **Claude web**, and other AI services while commands still execute on your computer.
 
-**👉 [Get started at mcp.desktopcommander.app](https://mcp.desktopcommander.app)**
+Start the Remote Device:
 
-How it works:
-1. You run a lightweight **Remote Device** on your computer
-2. It connects securely to the cloud Remote MCP service
-3. Your AI sends commands through the cloud to your device
-4. Commands execute locally, results return to your AI
-5. **You stay in control** — stop anytime with `Ctrl+C`
+```bash
+npx @wonderwhy-er/desktop-commander@latest remote
+```
+
+On first run, complete browser authentication, then connect your AI at **[mcp.desktopcommander.app](https://mcp.desktopcommander.app)**.
+
+- Stop the local device temporarily with `Ctrl+C`
+- See available CLI options with `npx @wonderwhy-er/desktop-commander@latest remote --help`
+- See **[Remote MCP setup, logout/revocation, CLI reference, and troubleshooting](src/remote-device/README.md)**
 
 ### Security
 
-- ✅ Device only runs when you start it
-- ✅ Commands execute under your user permissions
+- ✅ The Remote Device only accepts commands while it is running
+- ✅ Commands execute locally under your user permissions
 - ✅ Secure OAuth authentication and encrypted communication channel
 
 </details>
@@ -823,7 +813,7 @@ Locations:
 
 ### Remote calls and server-side retention
 
-Calls executed through Remote Desktop Commander are still handled by the local MCP server and use the same local history files above. The Remote Desktop Commander service does **not currently retain command arguments or command results as a historical server-side audit trail after execution is complete**.
+Calls executed through Remote Desktop Commander are still handled by the local MCP server and use the same local history files above. The Remote Desktop Commander service temporarily stores tool arguments and results in `mcp_remote_calls` so calls can be routed and completed. Terminal rows are automatically swept shortly after completion (eligible for deletion after one minute, with a one-hour creation-time backstop), so they are not kept as a long-term historical server-side audit trail.
 
 These local history files are also separate from Desktop Commander's optional telemetry. The files themselves are not uploaded as telemetry. See [Data Collection & Privacy](#data-collection--privacy) and [PRIVACY.md](PRIVACY.md) for telemetry details.
 

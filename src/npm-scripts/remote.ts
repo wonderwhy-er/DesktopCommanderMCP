@@ -1,6 +1,7 @@
 import { MCPDevice, getRemoteDeviceConfigPath } from '../remote-device/device.js';
 import fs from 'fs/promises';
 import os from 'os';
+import { captureRemote } from '../utils/capture.js';
 
 export async function runRemote() {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
@@ -14,7 +15,16 @@ Options:
   --no-persist-session  Do not reuse or save authentication for this run
   --disable-no-sleep    Do not prevent sleep while the remote device is running
   --debug                Enable verbose debug logging
-  -h, --help             Show this help`);
+  -h, --help             Show this help
+
+Examples:
+  npx @wonderwhy-er/desktop-commander@latest remote
+  npx @wonderwhy-er/desktop-commander@latest remote --debug
+  npx @wonderwhy-er/desktop-commander@latest remote --logout
+
+Note:
+  --logout removes local credentials only. Revoke the device in the Remote MCP
+  dashboard if you also want to invalidate its server-side authorization.`);
         return;
     }
     if (process.argv.includes('--logout')) {
@@ -45,6 +55,10 @@ Options:
     }
 
     console.debug('[DEBUG] Platform:', os.platform());
+    await captureRemote('remote_device_command_started', {
+        node_version: process.version,
+        persist_session: persistSession,
+    });
 
     // Start caffeinate on macOS (unless disabled)
     // Caffeinate will monitor this process and automatically exit when it terminates

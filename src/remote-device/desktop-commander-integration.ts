@@ -6,6 +6,21 @@ import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotoc
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 
+// Restart pacing: grows with consecutive failures, caps, and jitters so a
+// fleet-wide fault does not stampede.
+//
+// The cap is what a user waits after fixing whatever broke the child, so it is
+// deliberately short. It can be: readiness now keeps an unusable device out of
+// the server's selection, so no routed calls arrive to spawn anything, and the
+// only thing asking for a restart is this connector's own recovery loop. The
+// cost of the short cap is one short-lived spawn every few seconds while a
+// child stays broken; the cost of a long one is a device that sits dead for
+// most a minute after it could have come back.
+const RESTART_BACKOFF_CAP_MS = 5_000;
+const restartBackoffMs = (attempt: number) =>
+    // Cap AFTER jitter, so the cap is the wait this comment claims it is.
+    Math.min(RESTART_BACKOFF_CAP_MS, 250 * 2 ** Math.min(attempt, 5) * (0.5 + Math.random()));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,6 +38,10 @@ export class DesktopCommanderIntegration {
     private isShuttingDown: boolean = false;
     private disconnectHandler: ((reason: string) => void) | null = null;
     private reinitPromise: Promise<void> | null = null;
+    /** Consecutive failed restarts; reset by a successful one. */
+    private restartAttempts: number = 0;
+    /** Before this, ensureReady() refuses rather than spawning again. */
+    private nextRestartAt: number = 0;
 
     /** True only while the local stdio child is actually reachable. */
     get ready(): boolean {
@@ -92,32 +111,60 @@ export class DesktopCommanderIntegration {
 
             // Connect to Desktop Commander
             console.debug('[DEBUG] Connecting MCP client to transport');
+            // shutdown() sets the flag and tears down what exists; it cannot
+            // reach back into a restart already in flight. Without these
+            // checks that restart carries on past the teardown, connects a
+            // child nobody will close and sets `ready` behind it. The catch
+            // below discards whatever this attempt built.
+            this.abortIfShuttingDown();
+
             await this.mcpClient.connect(this.mcpTransport);
-            this.isReady = true;
+            this.abortIfShuttingDown();
 
             // Supervise the local half. Without these, a child crash is silent:
             // the SDK clears its transport and every subsequent call throws
             // "Not connected" with nothing tying it back to the death.
-            this.mcpTransport.onclose = () => this.handleLocalDisconnect('stdio transport closed');
-            this.mcpTransport.onerror = (err: Error) =>
-                this.handleLocalDisconnect(`stdio transport error: ${err?.message ?? String(err)}`);
+            //
+            // These MUST hang off the client, not the transport. connect() wraps
+            // transport.onclose/onerror with its own handlers and the SDK states
+            // that "The Protocol object assumes ownership of the Transport,
+            // replacing any callbacks that have already been set". Assigning to
+            // the transport here instead would drop the SDK's wrapper, and with
+            // it Protocol._onclose() — the only place a pending response is
+            // rejected with ConnectionClosed. The call in flight when the child
+            // died would then hang for the SDK's 60s default request timeout
+            // before the user heard anything.
+            this.mcpClient.onclose = () => this.handleLocalDisconnect('stdio transport closed');
+
+            // Diagnostics only. Protocol.onerror is raised for eleven non-fatal
+            // conditions that say nothing about the child's health — a response
+            // for an unknown message id, an unknown progress token, a failed
+            // cancellation send, an uncaught notification-handler error — and
+            // treating any of those as death takes a working device offline and
+            // respawns a live child. Real death arrives through onclose, which
+            // only fires once the transport has actually closed.
+            this.mcpClient.onerror = (err: Error) =>
+                console.error(` - ⚠️  Local Desktop Commander MCP error: ${err?.message ?? String(err)}`);
+
+            // Ready means the child has served a request, not that it
+            // completed the handshake — one definition, whichever path
+            // started the child, so no caller has to remember a second
+            // step to get the stronger meaning. A failure here lands in
+            // the catch below and leaves nothing half-built behind.
+            await this.verifyExecution();
+            this.abortIfShuttingDown();
+            this.isReady = true;
 
             console.log(' - 🔌 Connected to Desktop Commander MCP');
             console.debug('[DEBUG] Desktop Commander MCP connection successful');
 
         } catch (error) {
-            console.error(' - ❌ Failed to connect to Desktop Commander MCP:', error);
-            console.debug('[DEBUG] MCP connection error:', error);
-            // Leave no half-built client behind, or ensureReady() would treat the
-            // corpse as live on the next attempt.
-            this.isReady = false;
-            this.mcpClient = null;
-            if (this.mcpTransport) {
-                try {
-                    await this.mcpTransport.close();
-                } catch { /* already dead — nothing to salvage */ }
-                this.mcpTransport = null;
-            }
+            console.error(' - ❌ Failed to start Desktop Commander MCP:', error);
+            console.debug('[DEBUG] MCP startup error:', error);
+            // Leave no half-built child behind, or ensureReady() would treat
+            // the corpse as live on the next attempt. Covers a child that
+            // connected and then failed verification, too.
+            await this.discardChild();
             await captureRemote('desktop_integration_init_failed', { error });
             throw error;
         }
@@ -129,19 +176,68 @@ export class DesktopCommanderIntegration {
      * if the child is crashing on startup, each tool call fails with the real
      * reason instead of spinning respawns in the background.
      */
+    /** Same refusal ensureReady() makes up front, for an attempt already running. */
+    private abortIfShuttingDown(): void {
+        if (this.isShuttingDown) {
+            throw new Error('Desktop Commander integration is shutting down');
+        }
+    }
+
     async ensureReady(): Promise<void> {
         if (this.ready) return;
         if (this.isShuttingDown) {
             throw new Error('Desktop Commander integration is shutting down');
         }
         if (!this.reinitPromise) {
+            // A child that crashes on start would otherwise be respawned once
+            // per routed tool call. Refuse inside the window instead, so the
+            // caller gets the real reason and the machine is left alone.
+            const waitMs = this.nextRestartAt - Date.now();
+            if (waitMs > 0) {
+                throw new Error(
+                    `Local Desktop Commander MCP failed to start ${this.restartAttempts} time(s); ` +
+                    `next attempt in ${Math.ceil(waitMs / 1000)}s`
+                );
+            }
             console.log(' - ♻️  Local Desktop Commander MCP is not running; restarting it...');
-            this.reinitPromise = this.initialize().finally(() => {
+            this.reinitPromise = this.restartChild().finally(() => {
                 this.reinitPromise = null;
             });
         }
         // Concurrent calls share the single in-flight restart.
         await this.reinitPromise;
+    }
+
+    /** One restart, with the pacing bookkeeping around it. */
+    private async restartChild(): Promise<void> {
+        try {
+            // initialize() resolves only once the child has served a request,
+            // so there is nothing further to prove here.
+            await this.initialize();
+            this.restartAttempts = 0;
+            this.nextRestartAt = 0;
+        } catch (error) {
+            await this.discardChild();
+            this.restartAttempts++;
+            this.nextRestartAt = Date.now() + restartBackoffMs(this.restartAttempts);
+            throw error;
+        }
+    }
+
+    /** Drop an unusable child so `ready` is false and the next attempt rebuilds. */
+    private async discardChild(): Promise<void> {
+        this.isReady = false;
+        const client = this.mcpClient;
+        const transport = this.mcpTransport;
+        this.mcpClient = null;
+        this.mcpTransport = null;
+        try { await client?.close(); } catch { /* already dead */ }
+        try { await transport?.close(); } catch { /* already dead */ }
+    }
+
+    /** How long ensureReady() will refuse for. 0 when it will try immediately. */
+    get msUntilRestartAllowed(): number {
+        return Math.max(0, this.nextRestartAt - Date.now());
     }
 
     async resolveMcpConfig(): Promise<McpConfig | null> {
@@ -219,6 +315,18 @@ export class DesktopCommanderIntegration {
             await captureRemote('desktop_integration_tool_call_failed', { error, toolName });
             throw error;
         }
+    }
+
+    /**
+     * Prove the child can serve a request, not merely that it completed the
+     * handshake. connect() only exchanges `initialize`, which says the process
+     * is up and speaks MCP - the same substitution issue #4 is about, one level
+     * down. Throws so initialize() can withhold readiness; listClientTools()
+     * keeps swallowing, because registerDevice() wants a tool list or nothing.
+     */
+    private async verifyExecution(): Promise<void> {
+        if (!this.mcpClient) throw new Error('Local Desktop Commander MCP is not connected');
+        await this.mcpClient.listTools();
     }
 
     async listClientTools() {
