@@ -4,10 +4,6 @@ import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 import { getChromePath } from './chrome.js';
 
-// Re-exported for callers that have always reached them through this module.
-// They live in chrome.js now, which loads without the renderer.
-export { findPuppeteerChrome, pruneOldPuppeteerChromeBuilds, ensureChromeAvailable, getChromePath } from './chrome.js';
-
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
 

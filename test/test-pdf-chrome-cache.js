@@ -10,10 +10,13 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// chrome.js owns these. They used to be imported through markdown.js, which
+// dragged in md-to-pdf and puppeteer to test Chrome cache pruning; markdown.js
+// no longer exports them at all.
 import {
     findPuppeteerChrome,
     pruneOldPuppeteerChromeBuilds,
-} from '../dist/tools/pdf/markdown.js';
+} from '../dist/tools/pdf/chrome.js';
 
 function executablePathForBuild(chromeDir, buildDirName) {
     if (process.platform === 'win32') {
