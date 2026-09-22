@@ -338,6 +338,15 @@ export class TerminalManager {
       // buffer, so it has to be told the text is only the tail.
       let waitOutputTruncated = false;
 
+      /** The bounded view of the output that the wait phase answers from. */
+      const appendToWaitBuffer = (text: string) => {
+        if (resolved) return;
+        output += text;
+        if (output.length <= MAX_WAIT_OUTPUT_CHARS) return;
+        output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
+        waitOutputTruncated = true;
+      };
+
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
 
@@ -392,15 +401,7 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        // `output` only feeds the wait-phase result and prompt/state detection,
-        // so stop growing it once resolved and keep only a bounded tail.
-        if (!resolved) {
-          output += text;
-          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
-            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
-            waitOutputTruncated = true;
-          }
-        }
+        appendToWaitBuffer(text);
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
@@ -439,13 +440,7 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        if (!resolved) {
-          output += text;
-          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
-            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
-            waitOutputTruncated = true;
-          }
-        }
+        appendToWaitBuffer(text);
         // Append to line-based buffer
         this.appendToLineBuffer(session, text);
 
