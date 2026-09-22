@@ -187,7 +187,6 @@ export class MCPDevice {
                         if (!persistedDevice) {
                             console.log(`   - ⚠️ Persisted device ${this.deviceId} was revoked or removed`);
                             await this.clearPersistedConfig();
-                            this.deviceId = undefined;
                             session = null;
                         }
                     }
@@ -391,6 +390,10 @@ export class MCPDevice {
     }
 
     async clearPersistedConfig(): Promise<void> {
+        // Before the removal is queued, not after it lands: a rotation
+        // announced while the queue drains would otherwise still carry the
+        // revoked id, and a write carrying one is not refused.
+        this.deviceId = undefined;
         return this.queueConfigWrite(() => this.removePersistedConfig());
     }
 
