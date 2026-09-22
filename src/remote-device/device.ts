@@ -320,11 +320,10 @@ export class MCPDevice {
                     // names nothing and has no way out but deleting the file.
                     console.log('   - ⚠️ Ignoring a persisted session with no device ID - reauthorizing');
                     console.debug('[DEBUG] Session present but no device ID; treating as no session');
-                    // Its own event: remote_device_session_state below reports
-                    // this machine as having neither session nor device id, the
-                    // same as one that has never been set up, so the population
-                    // this guard exists for would otherwise be invisible.
-                    await captureRemote('remote_device_config_session_without_device_id', {});
+                    // Its own event: remote_device_session_state reports this
+                    // machine as having neither session nor device id, the same
+                    // as one that was never set up.
+                    await captureRemote('remote_device_session_ignored', {});
                     return null;
                 }
                 console.log('💾 Found persisted session for device ' + this.deviceId);
