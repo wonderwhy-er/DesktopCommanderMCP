@@ -385,11 +385,15 @@ export class MCPDevice {
     async savePersistedConfig(rotated?: AuthSession): Promise<void> {
         // Take the device id together with the session it belongs to. A rotated
         // session is handed over now and written later, off the queue, and
-        // start() reassigns the id inside exactly that gap - once when a revoked
-        // device is cleared, again when authenticate() answers. Reading the id
-        // at write time would pair one device with another device's session. A
-        // save that carries no session reads both at write time, which pairs
-        // them just as tightly.
+        // start() reassigns the id inside that gap - once when a revoked device
+        // is cleared, again when authenticate() answers. Reading the id at write
+        // time would pair one device with another device's session.
+        //
+        // A save that carries no session re-reads one instead, so its id and its
+        // session are not taken at the same instant: getSession() sits between
+        // them and can wait on a lock. It does not have to be tighter - the only
+        // caller of that form is start(), which awaits the save, so nothing
+        // reassigns the id underneath it.
         const announcedDeviceId = rotated ? this.deviceId : undefined;
         this.configWriteChain = this.configWriteChain.then(
             () => this.writePersistedConfig(rotated, announcedDeviceId));
