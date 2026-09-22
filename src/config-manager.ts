@@ -44,6 +44,9 @@ const RECOVERY_FAIL_CLOSED_KEY = 'recoveryFailClosedFields';
 /** Copies of a damaged config are evidence, not an archive. */
 const MAX_CORRUPT_BACKUPS = 5;
 
+const PARTIAL_WRITE_ATTEMPTS = 5;
+const PARTIAL_WRITE_RETRY_MS = 10;
+
 interface CorruptConfigRecoveryTelemetry {
   phase: CorruptConfigPhase;
   parse_error_kind: 'truncated' | 'invalid_json';
@@ -378,16 +381,21 @@ class ConfigManager {
     };
   }
 
-  private async readConfigFromDisk(attempts = 5): Promise<ServerConfig> {
+  private async readConfigOnce(): Promise<ServerConfig> {
+    return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+  }
+
+  /** Re-reads a parse failure: a cooperating writer may be mid-write. */
+  private async readConfigFromDisk(): Promise<ServerConfig> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < attempts; attempt++) {
+    for (let attempt = 0; attempt < PARTIAL_WRITE_ATTEMPTS; attempt++) {
       try {
-        return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+        return await this.readConfigOnce();
       } catch (error: any) {
         lastError = error;
         if (error?.code === 'ENOENT') throw error;
-        if (!(error instanceof SyntaxError) || attempt === attempts - 1) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (!(error instanceof SyntaxError) || attempt === PARTIAL_WRITE_ATTEMPTS - 1) throw error;
+        await new Promise((resolve) => setTimeout(resolve, PARTIAL_WRITE_RETRY_MS));
       }
     }
     throw lastError;
@@ -664,9 +672,8 @@ ${explanation}` : refusal;
     const release = await this.acquireConfigLock();
     try {
       try {
-        // One read: under the lock no cooperating writer can be mid-write, which
-        // is the only thing the retries in readConfigFromDisk are there for.
-        const latest = await this.readConfigFromDisk(1);
+        // Under the lock no cooperating writer can be mid-write.
+        const latest = await this.readConfigOnce();
         const observedForensics = this.inspectCorruptConfig(error, phase, observed, await this.listConfigDir());
         return {
           config: latest,
