@@ -51,6 +51,7 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 // The poll is deliberately short and frequent: a handle is held for the length
 // of one read, so waiting tens of milliseconds between tries costs throughput
 // against a busy reader without making the commit any more likely to land.
+// CONFIG_COMMIT_RETRIES is retries, not attempts: one rename plus this many.
 const SHARING_VIOLATION_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const CONFIG_COMMIT_RETRIES = 40;
 const CONFIG_COMMIT_RETRY_CAP_MS = 25;
@@ -236,7 +237,11 @@ class ConfigManager {
    * file in place. Nothing is wrong with the write; the handle closes in
    * milliseconds. Without this the failure leaves setValue for the caller,
    * which on the tools/list path is what reached the client as -32603.
-   * POSIX renames over an open file, so this loop never runs a second pass there.
+   *
+   * A sharing violation is a Windows condition -- POSIX renames over an open
+   * file -- but these codes also carry genuine permission failures, on either
+   * platform. Those are not lost: they are retried in vain and rethrown about
+   * 0.9s later rather than at once.
    */
   private async commitConfigFile(tempPath: string): Promise<void> {
     for (let attempt = 0; ; attempt++) {
