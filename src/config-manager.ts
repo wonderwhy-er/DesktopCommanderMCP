@@ -570,17 +570,26 @@ class ConfigManager {
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
     defaults['pendingWelcomeOnboarding'] = false;
-    // The marker goes to disk with the values it describes: later starts read a
+    // The mark goes to disk with the values it describes: later starts read a
     // valid config and would otherwise have nothing to tell them where this
-    // policy came from.
-    if (failedClosed.length > 0) {
-      defaults[RECOVERY_FAIL_CLOSED_KEY] = failedClosed.map((field) => field.key);
+    // policy came from. A mark carried in from the damaged config counts too -
+    // a fallback that gets damaged again salvages as an ordinary policy, and
+    // without this it would quietly become one.
+    const carriedMark = Array.isArray(this.config[RECOVERY_FAIL_CLOSED_KEY])
+      ? this.config[RECOVERY_FAIL_CLOSED_KEY] as string[]
+      : extractTopLevelStringArray(corruptText, RECOVERY_FAIL_CLOSED_KEY) ?? [];
+    const marked = RECOVERABLE_POLICY_FIELDS
+      .filter((field) => failedClosed.includes(field) || carriedMark.includes(field.key))
+      .map((field) => field.key);
+    const stillFailClosed = this.failClosedFieldsIn({ ...defaults, [RECOVERY_FAIL_CLOSED_KEY]: marked });
+    if (stillFailClosed.length > 0) {
+      defaults[RECOVERY_FAIL_CLOSED_KEY] = stillFailClosed.map((field) => field.key);
     }
     await this.writeConfigAtomically(defaults);
     this.config = { ...defaults, version: VERSION };
 
     console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
-    if (failedClosed.length > 0) console.error(this.failClosedNotice(failedClosed));
+    if (stillFailClosed.length > 0) console.error(this.failClosedNotice(stillFailClosed));
     return {
       config: defaults,
       telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
@@ -795,7 +804,16 @@ class ConfigManager {
       const latest = await this.readConfigFromDisk();
       for (const mutate of this.pendingMutations) mutate(latest);
       latest['version'] = VERSION;
+      const markWasStale = Array.isArray(latest[RECOVERY_FAIL_CLOSED_KEY])
+        && this.failClosedFieldsIn(latest).length === 0;
       this.config = latest;
+      if (markWasStale) {
+        // Editing this file by hand is what the notice asks for, and it is the
+        // one repair no mutation follows. Clean up after it rather than leaving
+        // recovery's mark behind until something else happens to write.
+        this.pruneFailClosedMarker(this.config);
+        this.queueMutation((config) => this.pruneFailClosedMarker(config));
+      }
     } catch (error: any) {
       if (error instanceof SyntaxError) {
         try {
