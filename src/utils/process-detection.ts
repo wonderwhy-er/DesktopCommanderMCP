@@ -167,7 +167,7 @@ function escapeRegExp(string: string): string {
 }
 
 /** What a spawned process is doing, as far as this server can tell. */
-export type ProcessOutcome = 'running' | 'exited';
+export type ProcessOutcome = 'running' | 'exited' | 'failed';
 
 /** Why the output handed to the caller may not be all of it. */
 export type OutputShortfall = 'pipe-still-open' | 'head-dropped' | 'lines-evicted';
@@ -198,7 +198,8 @@ export function describeOutputShortfall(
  * story (#702). Every tool shares these sentences; only the next step differs,
  * because "read it" and "read it again" are different advice.
  */
-export function describeProcessExit(
+export function describeProcessOutcome(
+  outcome: Exclude<ProcessOutcome, 'running'>,
   { exitCode, signal, runtimeMs, shortfalls = [], readAgain = false }: {
     exitCode?: number | null;
     signal?: NodeJS.Signals | null;
@@ -207,6 +208,12 @@ export function describeProcessExit(
     readAgain?: boolean;
   }
 ): string {
+  // The child is gone and never reported how: no code, no signal, only the
+  // error that ended it, which the caller already has in the output.
+  if (outcome === 'failed') {
+    return '❌ Process ended without an exit status';
+  }
+
   const ended = signal
     ? `terminated by ${signal}`
     : exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`;

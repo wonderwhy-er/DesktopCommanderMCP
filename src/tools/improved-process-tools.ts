@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, describeOutputShortfall, describeProcessExit, formatProcessStateMessage, OutputShortfall, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, describeOutputShortfall, describeProcessOutcome, formatProcessStateMessage, OutputShortfall, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -203,12 +203,14 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   let statusMessage = '';
   if (result.outcome === 'exited') {
-    statusMessage = '\n' + describeProcessExit({
+    statusMessage = '\n' + describeProcessOutcome('exited', {
       exitCode: result.exitCode,
       signal: result.signal,
       runtimeMs: result.runtimeMs,
       shortfalls: result.outputShortfalls
     });
+  } else if (result.outcome === 'failed') {
+    statusMessage = '\n' + describeProcessOutcome('failed', {});
   } else {
     // Only prompt detection is read from the text here. Completion is the
     // process's own to report: analyzeProcessState calls "Error:" a finished
@@ -386,7 +388,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Add process state info
   let processStateMessage = '';
   if (result.outcome === 'exited') {
-    processStateMessage = '\n' + describeProcessExit({
+    processStateMessage = '\n' + describeProcessOutcome('exited', {
       exitCode: result.exitCode,
       signal: result.signal,
       runtimeMs: result.runtimeMs,

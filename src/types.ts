@@ -31,7 +31,8 @@ export interface CommandExecutionResult {
   pid: number;
   output: string;
   isBlocked: boolean;
-  // Absent only when the spawn itself failed and nothing ever ran.
+  // Absent when no state could be established at all: the spawn failed, or
+  // the pipes closed without an exit ever being seen.
   outcome?: ProcessOutcome;
   exitCode?: number | null;
   signal?: NodeJS.Signals | null;

@@ -4,7 +4,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, Out
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import { analyzeProcessState, describeProcessExit, OutputShortfall, ProcessOutcome } from './utils/process-detection.js';
+import { analyzeProcessState, describeProcessOutcome, OutputShortfall, ProcessOutcome } from './utils/process-detection.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -382,7 +382,8 @@ export class TerminalManager {
         resolveOnce({
           pid: childProcess.pid!,
           output: output + `\nProcess error: ${err.message}`,
-          isBlocked: false
+          isBlocked: false,
+          outcome: 'failed'
         });
       };
       // An error emitted between spawn and here (the common case — spawn errors
@@ -425,7 +426,8 @@ export class TerminalManager {
           resolveOnce({
             pid: childProcess.pid!,
             output,
-            isBlocked: true
+            isBlocked: true,
+            outcome: 'running'
           });
         }
       });
@@ -463,7 +465,8 @@ export class TerminalManager {
             resolveOnce({
               pid: childProcess.pid!,
               output,
-              isBlocked: true
+              isBlocked: true,
+              outcome: 'running'
             });
           }
         }
@@ -476,7 +479,8 @@ export class TerminalManager {
         resolveOnce({
           pid: childProcess.pid!,
           output,
-          isBlocked: true
+          isBlocked: true,
+          outcome: 'running'
         });
       }, timeoutMs);
 
@@ -753,7 +757,7 @@ export class TerminalManager {
     const output = result.lines.join('\n').trim();
 
     if (result.outcome === 'exited') {
-      const completion = describeProcessExit({
+      const completion = describeProcessOutcome('exited', {
         exitCode: result.exitCode,
         signal: result.signal,
         runtimeMs: result.runtimeMs,
