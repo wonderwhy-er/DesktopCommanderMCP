@@ -15,6 +15,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_INDEX = path.join(__dirname, '..', 'dist', 'index.js');
 
 const RUNS = 5;
+// 13x sits between what was measured on one machine either side of the fix:
+// 19.3x bare node before it (677ms against 35ms), 7.3x after (262ms against 36ms).
 const CEILING_MULTIPLE = 13;
 const CEILING_FLOOR_MS = 400;
 const RUN_TIMEOUT_MS = 120000;
@@ -69,17 +71,29 @@ function measureOneStart() {
         let initializeMs = null;
         let settled = false;
 
-        const send = (msg) => child.stdin.write(JSON.stringify(msg) + '\n');
+        const send = (msg) => {
+            try {
+                child.stdin.write(JSON.stringify(msg) + '\n');
+            } catch (err) {
+                finish({ error: `could not write to the server: ${err.message}`, initializeMs });
+            }
+        };
 
+        const discardHome = () => {
+            try { rmSync(home, { recursive: true, force: true }); } catch { /* still in use; retried on exit */ }
+        };
+
+        // Settles without waiting for 'exit': a spawn that never starts emits
+        // 'error' and no 'exit' at all, and waiting for it would hang the run
+        // instead of failing it.
         const finish = (result) => {
             if (settled) return;
             settled = true;
             clearTimeout(timeoutHandle);
-            child.once('exit', () => {
-                try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
-                resolve(result);
-            });
-            child.kill('SIGTERM');
+            try { child.kill('SIGTERM'); } catch { /* already gone */ }
+            child.once('exit', discardHome);
+            discardHome();
+            resolve(result);
         };
 
         const timeoutHandle = setTimeout(

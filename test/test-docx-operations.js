@@ -5,12 +5,18 @@
  */
 
 import assert from 'assert';
+import { rmSync } from 'fs';
 import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 
 // Before the first dist import: config.ts resolves the config path at load.
 const home = await fsp.mkdtemp(path.join(os.tmpdir(), 'dc-docx-home-'));
+// Registered here, not after the imports below: one of them throwing would
+// otherwise leave this directory on disk.
+process.on('exit', () => {
+    try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
+});
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = 'true';
@@ -29,11 +35,11 @@ const asText = (result) => (typeof result.content === 'string' ? result.content 
 async function run() {
     // realpath so the allowed directory matches what validatePath resolves to.
     const workDir = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'dc-docx-work-')));
-    await configManager.setValue('allowedDirectories', [workDir]);
-
-    const docxPath = path.join(workDir, 'note.docx');
 
     try {
+        await configManager.setValue('allowedDirectories', [workDir]);
+
+        const docxPath = path.join(workDir, 'note.docx');
         // A DOCX is a zip: without the PK check a text file named .docx would pass.
         {
             await writeFile(docxPath, 'Hello DOCX\n\nParagraph with MARKER-ONE inside.', 'rewrite');
@@ -87,7 +93,6 @@ async function run() {
         }
     } finally {
         await fsp.rm(workDir, { recursive: true, force: true }).catch(() => {});
-        await fsp.rm(home, { recursive: true, force: true }).catch(() => {});
     }
 }
 
