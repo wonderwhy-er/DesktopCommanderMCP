@@ -224,6 +224,19 @@ export interface SearchSessionOptions {
       validatedPath: validPath
     });
 
+    /**
+     * What a producer found, offered to the session as it is found. The budget
+     * is one budget, so a refusal is not this producer's business alone: the
+     * search is over, and everything still reading is told to stop.
+     */
+    const submit = (result: SearchResult): boolean => {
+      if (this.addResult(session, result, false)) {
+        return true;
+      }
+      this.killProcess(session);
+      return false;
+    };
+
     // For content searches, only search Excel files when contextually relevant:
     // - filePattern explicitly targets Excel files (*.xlsx, *.xls, etc.)
     // - or rootPath is an Excel file itself
@@ -235,17 +248,11 @@ export interface SearchSessionOptions {
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
         options.filePattern,  // Pass filePattern to filter Excel files too
         options.literalSearch,  // Respect literalSearch flag for Office files
-        () => session.stopped
-      ).then(excelResults => {
-        // Add Excel results to session (merged after initial response).
-        // Shares the session budget with ripgrep, so the merge stops once it is spent.
-        for (const result of excelResults) {
-          if (!this.addResult(session, result, false)) break;
-        }
-      }).catch((err) => {
+        () => session.stopped,
+        submit
+      ).catch((err) => {
         // Log Excel search errors but don't fail the whole search
         capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
       }));
@@ -260,15 +267,11 @@ export interface SearchSessionOptions {
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
         options.filePattern,
         options.literalSearch,  // Respect literalSearch flag for Office files
-        () => session.stopped
-      ).then(docxResults => {
-        for (const result of docxResults) {
-          if (!this.addResult(session, result, false)) break;
-        }
-      }).catch((err) => {
+        () => session.stopped,
+        submit
+      ).catch((err) => {
         capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
       }));
     }
@@ -422,12 +425,14 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
-    filePattern?: string,
-    _literalSearch?: boolean,
-    stopped: () => boolean = () => false
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
+    filePattern: string | undefined,
+    _literalSearch: boolean | undefined,
+    stopped: () => boolean,
+    submit: (result: SearchResult) => boolean
+  ): Promise<void> {
+    // A refused match ends this producer as surely as a cancelled search does.
+    let halted = false;
+    const done = () => halted || stopped();
 
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
@@ -463,8 +468,7 @@ export interface SearchSessionOptions {
     const ExcelJS = await import('exceljs');
 
     for (const filePath of excelFiles) {
-      if (stopped()) break;
-      if (maxResults && results.length >= maxResults) break;
+      if (done()) break;
 
       try {
         const workbook = new ExcelJS.default.Workbook();
@@ -472,16 +476,14 @@ export interface SearchSessionOptions {
 
         // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
         for (const worksheet of workbook.worksheets) {
-          if (stopped()) break;
-          if (maxResults && results.length >= maxResults) break;
+          if (done()) break;
 
           const sheetName = worksheet.name;
 
           try {
             // Iterate through rows (faster than cell-by-cell)
             worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-              if (stopped()) throw STOP_SCAN;
-              if (maxResults && results.length >= maxResults) throw STOP_SCAN;
+              if (done()) throw STOP_SCAN;
 
               // Build a concatenated string of all cell values in the row
               const rowValues: string[] = [];
@@ -516,12 +518,15 @@ export interface SearchSessionOptions {
               if (matchIndex !== -1) {
                 const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
 
-                results.push({
+                if (!submit({
                   file: `${filePath}:${sheetName}!Row${rowNumber}`,
                   line: rowNumber,
                   match: matchContext,
                   type: 'content'
-                });
+                })) {
+                  halted = true;
+                  throw STOP_SCAN;
+                }
               }
             });
           } catch (thrown) {
@@ -534,8 +539,6 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
@@ -613,12 +616,13 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
-    filePattern?: string,
-    _literalSearch?: boolean,
-    stopped: () => boolean = () => false
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
+    filePattern: string | undefined,
+    _literalSearch: boolean | undefined,
+    stopped: () => boolean,
+    submit: (result: SearchResult) => boolean
+  ): Promise<void> {
+    let halted = false;
+    const done = () => halted || stopped();
 
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
@@ -643,8 +647,7 @@ export interface SearchSessionOptions {
     }
 
     for (const filePath of docxFiles) {
-      if (stopped()) break;
-      if (maxResults && results.length >= maxResults) break;
+      if (done()) break;
 
       try {
         const buf = await fs.readFile(filePath);
@@ -655,8 +658,7 @@ export interface SearchSessionOptions {
           'word/header3.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
 
         for (const xmlPath of xmlParts) {
-          if (stopped()) break;
-          if (maxResults && results.length >= maxResults) break;
+          if (done()) break;
 
           const file = zip.file(xmlPath);
           if (!file) continue;
@@ -668,8 +670,7 @@ export interface SearchSessionOptions {
           let lineNum = 0;
 
           while ((m = wtRe.exec(xml)) !== null) {
-            if (stopped()) break;
-            if (maxResults && results.length >= maxResults) break;
+            if (done()) break;
             const text = m[1];
             if (!text || !text.trim()) continue;
             lineNum++;
@@ -680,12 +681,15 @@ export interface SearchSessionOptions {
               const matchContext = this.getMatchContext(text, matchIndex, searchTerm.length);
 
               const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
-              results.push({
+              if (!submit({
                 file: `${filePath}${partName}`,
                 line: lineNum,
                 match: matchContext,
                 type: 'content'
-              });
+              })) {
+                halted = true;
+                break;
+              }
             }
           }
         }
@@ -693,8 +697,6 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
