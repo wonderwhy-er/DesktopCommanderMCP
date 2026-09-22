@@ -202,9 +202,8 @@ export class RemoteChannel {
     private capabilityRepublishAttempts = 0;
     /** Eligible health ticks left before the next burst. 0 = may try now. */
     private capabilityRepublishCooldown = 0;
-    /** Set when the push landed and the row writes after it did not, which is
-     * the repair that costs a REST call per try and is therefore budgeted. */
-    private repairCostsAWrite = false;
+    /** The repair the health check budgets: each try costs a REST call. */
+    private rowWriteFailedAfterPush = false;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -579,7 +578,7 @@ export class RemoteChannel {
         // earlier join cannot keep the device counting as reachable while this
         // one is still deciding.
         this.presenceTracked = false;
-        this.repairCostsAWrite = false;
+        this.rowWriteFailedAfterPush = false;
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
@@ -626,9 +625,7 @@ export class RemoteChannel {
                     ? await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline')
                     : false;
                 if (!capabilityWritten || !statusWritten) {
-                    // The push worked; the writes did not. The health check
-                    // bounds its retry on that, because each one is a REST call.
-                    this.repairCostsAWrite = true;
+                    this.rowWriteFailedAfterPush = true;
                     console.error('❌ Presence published but the device row could not be updated — not ready');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
@@ -1007,7 +1004,7 @@ export class RemoteChannel {
                 // An unacknowledged push costs a channel push; a failed row
                 // write costs a REST call, and one per tick for the life of the
                 // process is the log flood #697 also reported.
-                const budgetedRepair = this.repairCostsAWrite
+                const budgetedRepair = this.rowWriteFailedAfterPush
                     || (this.presenceTracked && this.transportCapableWritten !== true);
 
                 if (!budgetedRepair) {
