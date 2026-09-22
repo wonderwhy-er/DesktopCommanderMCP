@@ -144,27 +144,34 @@ async function heldHandle() {
   writeFileSync(configPath, JSON.stringify(baseConfig(), null, 2));
 
   const child = forkRole('single-write', home);
-  await new Promise((resolve) => {
-    child.on('message', function onReady(m) {
-      if (m?.type === 'ready') { child.off('message', onReady); resolve(); }
+  let handle = null;
+  let timer = null;
+  try {
+    await new Promise((resolve) => {
+      child.on('message', function onReady(m) {
+        if (m?.type === 'ready') { child.off('message', onReady); resolve(); }
+      });
     });
-  });
 
-  const handle = await fs.open(configPath, 'r');
-  let closed = false;
-  const release = async () => { if (!closed) { closed = true; await handle.close().catch(() => {}); } };
-  const timer = setTimeout(() => void release(), HELD_WINDOW_MS);
+    handle = await fs.open(configPath, 'r');
+    timer = setTimeout(() => void handle.close().catch(() => {}), HELD_WINDOW_MS);
 
-  child.send({ type: 'go' });
-  const result = await collect(child);
-  clearTimeout(timer);
-  await release();
+    child.send({ type: 'go' });
+    const result = await collect(child);
 
-  assert.ok(result, 'the writing child should report back');
-  assert.equal(result.error, null,
-    `a durable write must wait out another process holding config.json open, got ${result.code}: ${result.error}`);
-  console.log(`✓ a durable write commits after a ${HELD_WINDOW_MS}ms handle on config.json goes away`);
-  rmSync(home, { recursive: true, force: true });
+    assert.ok(result, 'the writing child should report back');
+    assert.equal(result.error, null,
+      `a durable write must wait out another process holding config.json open, got ${result.code}: ${result.error}`);
+    console.log(`✓ a durable write commits after a ${HELD_WINDOW_MS}ms handle on config.json goes away`);
+  } finally {
+    // A failing assertion must not leave the handle, the timer, the child or
+    // the directory behind: the run is already failing, and debris makes the
+    // next case fail for a reason that is not its own.
+    if (timer) clearTimeout(timer);
+    if (handle) await handle.close().catch(() => {});
+    child.kill('SIGTERM');
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -179,25 +186,29 @@ async function tornWindow() {
   writeFileSync(configPath, whole);
 
   const child = forkRole('torn-write', home);
-  await new Promise((resolve) => {
-    child.on('message', function onReady(m) {
-      if (m?.type === 'ready') { child.off('message', onReady); resolve(); }
+  let heal = null;
+  try {
+    await new Promise((resolve) => {
+      child.on('message', function onReady(m) {
+        if (m?.type === 'ready') { child.off('message', onReady); resolve(); }
+      });
     });
-  });
 
-  writeFileSync(configPath, whole.slice(0, Math.floor(whole.length / 2)));
-  const heal = setTimeout(() => writeFileSync(configPath, whole), TORN_WINDOW_MS);
+    writeFileSync(configPath, whole.slice(0, Math.floor(whole.length / 2)));
+    heal = setTimeout(() => writeFileSync(configPath, whole), TORN_WINDOW_MS);
 
-  child.send({ type: 'go' });
-  const result = await collect(child);
-  clearTimeout(heal);
-  writeFileSync(configPath, whole);
+    child.send({ type: 'go' });
+    const result = await collect(child);
 
-  assert.ok(result, 'the writing child should report back');
-  assert.equal(result.error, null,
-    `a durable write must outlast a ${TORN_WINDOW_MS}ms torn file, got ${result.error}`);
-  console.log(`✓ a durable write survives a ${TORN_WINDOW_MS}ms torn config.json`);
-  rmSync(home, { recursive: true, force: true });
+    assert.ok(result, 'the writing child should report back');
+    assert.equal(result.error, null,
+      `a durable write must outlast a ${TORN_WINDOW_MS}ms torn file, got ${result.error}`);
+    console.log(`✓ a durable write survives a ${TORN_WINDOW_MS}ms torn config.json`);
+  } finally {
+    if (heal) clearTimeout(heal);
+    child.kill('SIGTERM');
+    rmSync(home, { recursive: true, force: true });
+  }
 }
 
 async function parent() {
@@ -218,7 +229,10 @@ async function parent() {
     }
     await writerDone;
   } finally {
+    // The run may be failing; debris must not make the next case fail for a
+    // reason that is not its own.
     for (const w of writers) w.kill('SIGTERM');
+    rmSync(home, { recursive: true, force: true });
   }
 
   const answered = samples.filter(Boolean);
@@ -236,7 +250,6 @@ async function parent() {
   console.log(`✓ ${answered.length} starts during a 0.2.46-style storm read the real config and wrote durably`);
   // Control: how many of these would fail without the fix varies run to run,
   // so this count proves nothing on its own -- the two cases above do.
-  rmSync(home, { recursive: true, force: true });
 }
 
 if (ROLE === 'legacy-writer') await legacyWriter();
