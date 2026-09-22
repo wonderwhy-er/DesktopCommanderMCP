@@ -287,26 +287,33 @@ async function testFilePatternFiltering() {
 async function testMaxResults() {
   console.log(`${colors.yellow}Testing maximum results limiting...${colors.reset}`);
   
-  // Test that the maxResults parameter is accepted and doesn't cause errors
+  // 'function' appears on more than two lines of the fixture, spread over more
+  // than one file, so a limit of 2 can only be met by counting the whole search
   const { finalResult } = await searchAndWaitForCompletion({
     path: TEST_DIR,
-    pattern: 'function', // This pattern should appear multiple times
+    pattern: 'function',
     searchType: 'content',
-    maxResults: 5 // Small limit
+    maxResults: 2
   });
-  
+
   assert(finalResult.content, 'Should have content');
   assert(finalResult.content.length > 0, 'Content should not be empty');
-  
+
   const text = finalResult.content[0].text;
-  
+
   // Verify we get some results
   assert(text.length > 0, 'Should have some results');
-  
+
   // Should have results but respect the limit
   const hasResults = text.includes('function') || text.includes('No matches found');
   assert(hasResults, 'Should have function results or no matches');
-  
+
+  // The limit is a limit on the search, not on each file searched
+  const reported = text.match(/Total results found: \d+ \((\d+) matches\)/);
+  assert(reported, `Could not read the match count from the result: ${text.slice(0, 200)}`);
+  assert(Number(reported[1]) === 2,
+    `maxResults 2 must cap the whole search, got ${reported[1]} matches`);
+
   console.log(`${colors.green}✓ Max results limiting test passed${colors.reset}`);
 }
 
