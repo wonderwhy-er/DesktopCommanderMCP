@@ -122,8 +122,11 @@ class FixtureIntegration extends DesktopCommanderIntegration {
 /** A child whose spawn can be held mid-flight, to open a window for shutdown. */
 class GatedIntegration extends FixtureIntegration {
     gate = deferred();
+    /** Resolves once the attempt is genuinely parked on the gate. */
+    entered = deferred();
 
     async resolveMcpConfig() {
+        this.entered.resolve();
         await this.gate.promise;
         return super.resolveMcpConfig();
     }
@@ -284,7 +287,10 @@ await test('a shutdown cancels an initialization already in flight', async () =>
     const integration = new GatedIntegration(WORKING_FIXTURE);
 
     const starting = integration.ensureReady().catch(() => { /* cancelled is fine */ });
-    await new Promise((r) => setImmediate(r)); // let it park inside resolveMcpConfig
+    // Not a bare tick: that proves nothing about where the attempt got to, and a
+    // shutdown landing before it reached the gate would make this case pass
+    // without ever exercising the overlap it is about.
+    await integration.entered.promise;
     await integration.shutdown();
     integration.gate.resolve();                // the spawn the shutdown did not wait for
     await starting;
