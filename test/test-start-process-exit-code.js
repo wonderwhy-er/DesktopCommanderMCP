@@ -406,6 +406,29 @@ async function worker() {
     );
     console.log('✓ reading again after the exit moves forward instead of repeating');
 
+    // 19. The result says outcome is absent only when the spawn failed, so a
+    // caller may read its absence as "nothing ran". Every early return of a
+    // command that did run has to carry one.
+    const byTimeout = await terminalManager.executeCommand(
+      `node ${path.join(helpers, 'stays-alive.cjs')}`, 800, shellForTests()
+    );
+    assert.equal(byTimeout.outcome, 'running',
+      `a command still running when the wait ends must say so, got: ${JSON.stringify(byTimeout.outcome)}`);
+
+    const byPromptCheck = await terminalManager.executeCommand(
+      `node ${path.join(helpers, 'prompt-then-run.cjs')}`, 5_000, shellForTests()
+    );
+    assert.equal(byPromptCheck.outcome, 'running',
+      `a process answering from the prompt check must say so, got: ${JSON.stringify(byPromptCheck.outcome)}`);
+    assert.equal(byPromptCheck.isBlocked, true,
+      `this case needs the prompt check to be what answered, got: ${JSON.stringify(byPromptCheck)}`);
+
+    const byQuickPattern = await terminalManager.executeCommand('node -i', 8_000, shellForTests());
+    assert.equal(byQuickPattern.outcome, 'running',
+      `a REPL answering from its prompt must say so, got: ${JSON.stringify(byQuickPattern.outcome)}`);
+
+    console.log('✓ every early return of a command that ran carries an outcome');
+
     await report({ type: 'done' });
   } catch (error) {
     // The assertion message is the point; the parent fails once, with that text.
@@ -511,6 +534,13 @@ async function parent() {
     'kid.unref();',
     "console.log('child up');",
     'process.exit(0);'
+  ].join('\n'));
+
+  // A prompt the fast path does not match, from a process that keeps running:
+  // the 100ms check is the only thing that can answer for it.
+  writeFileSync(path.join(home, 'prompt-then-run.cjs'), [
+    "process.stdout.write('bash-');",
+    'setTimeout(() => {}, 20000);'
   ].join('\n'));
 
   // One line now, one after the first read, then leaves.
