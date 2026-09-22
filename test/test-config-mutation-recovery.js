@@ -6,9 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-// Generous on purpose: the worker's first import of the server module costs
-// tens of seconds on a slow filesystem (25s over /mnt/c under WSL), and a
-// timeout that fires there fails for a reason the test is not about.
+// The worker's first import of the server module measured 25s over /mnt/c.
 const TIMEOUT_MS = 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

@@ -1,9 +1,6 @@
 /**
- * #692 reports `desktop-commander remote` failing to start on a damaged config,
- * and reports the fix as "real remote tool execution worked again" - not as a
- * tidy refusal. Every other test here drives configManager in-process and
- * asserts something is denied. This one starts the real local MCP child through
- * the remote-device integration and makes it do work.
+ * #692 reports its fix as "real remote tool execution worked again", so this
+ * starts the real local MCP child and makes it work, rather than refuse tidily.
  */
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
@@ -15,8 +12,7 @@ import { fileURLToPath } from 'node:url';
 const TEST_FILE = fileURLToPath(import.meta.url);
 const TIMEOUT_MS = 90_000;
 const MARKER = 'dc692-remote-ok';
-// Truncated mid-object, with a complete policy at the root that allows ordinary
-// work: recovery must salvage it and the tools must then run, not just refuse.
+// The policy at the root allows ordinary work: otherwise a green run proves nothing.
 const CORRUPT = '{"blockedCommands":["rm","sudo"],"allowedDirectories":["__HOME__"],"telemetryEnabled":false,"usageStats":{';
 
 async function worker() {
@@ -26,8 +22,7 @@ async function worker() {
 
   const integration = new DesktopCommanderIntegration();
   try {
-    // The failure in #692 lands here: the local handshake dies with
-    // "MCP error -32603: Unexpected end of JSON input".
+    // Where #692 dies: "MCP error -32603: Unexpected end of JSON input".
     await integration.initialize();
     assert.equal(integration.ready, true, 'the local MCP child is reachable after a damaged config');
 

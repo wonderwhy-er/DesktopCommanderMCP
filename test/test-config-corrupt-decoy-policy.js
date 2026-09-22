@@ -6,9 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-// Generous on purpose: the worker's first import of the server module costs
-// tens of seconds on a slow filesystem (25s over /mnt/c under WSL), and a
-// timeout that fires there fails for a reason the test is not about.
+// The worker's first import of the server module measured 25s over /mnt/c.
 const TIMEOUT_MS = 60_000;
 
 async function expectFailClosed({ configManager, commandManager, CONFIG_FILE }, why) {
@@ -25,9 +23,7 @@ async function expectSalvaged({ configManager }, blockedCommands, allowedDirecto
 }
 
 const CASES = {
-  // Policy fields that live inside another object are not this install's policy.
-  // Salvaging them would hand the user someone else's blocklist and, with "/",
-  // unrestricted filesystem access instead of the deny-all fallback.
+  // "/" is unrestricted access, not a narrower policy.
   'nested-decoy': {
     corrupt: '{"clientId":"11111111-1111-4111-8111-111111111111","usageStats":{"blockedCommands":["rm"],"allowedDirectories":["/"]},"defaultShell":',
     async check(context) {
@@ -39,31 +35,25 @@ const CASES = {
       );
     }
   },
-  // A stray closing brace must not push the scan out of the root object and make
-  // the next nested object look top-level.
   'unbalanced-close': {
     corrupt: '{"a":1}}{"junk":{"blockedCommands":["rm"],"allowedDirectories":["/"]},"b":',
     check: (context) => expectFailClosed(context, 'depth that ran past the root object salvages nothing')
   },
-  // Text after the root object closes is not part of the root object.
   'after-root-close': {
     corrupt: '{"a":1}{"blockedCommands":["rm"],"allowedDirectories":["/"],"b":',
     check: (context) => expectFailClosed(context, 'fields after the root object are not root fields')
   },
-  // Garbage before the opening brace means the root cannot be established.
   'non-object-root': {
     corrupt: 'xx{"blockedCommands":["rm"],"allowedDirectories":["/"],"b":',
     check: (context) => expectFailClosed(context, 'nothing is top-level when the root is not an object')
   },
-  // A string that merely reads like a field name is a value, not a field, and the
-  // scan has to carry on past it to the real one.
+  // control: the scan must carry on past it to the real field.
   'field-name-as-value': {
     corrupt: '{"note":"blockedCommands","blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"u":{',
     check: (context) => expectSalvaged(context, ['rm', 'sudo'], ['/safe/project'],
       'a value that repeats a field name does not stop the scan')
   },
-  // The other direction: a real top-level policy must still survive, even when an
-  // earlier string value contains braces that naive depth counting would follow.
+  // control: the fix must not over-restrict; braces sit inside a string value.
   'top-level': {
     corrupt: '{"note":"a { b [ c","blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"usageStats":{',
     check: (context) => expectSalvaged(context, ['rm', 'sudo'], ['/safe/project'],

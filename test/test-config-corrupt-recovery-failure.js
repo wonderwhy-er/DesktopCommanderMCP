@@ -6,9 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
-// Generous on purpose: the worker's first import of the server module costs
-// tens of seconds on a slow filesystem (25s over /mnt/c under WSL), and a
-// timeout that fires there fails for a reason the test is not about.
+// The worker's first import of the server module measured 25s over /mnt/c.
 const TIMEOUT_MS = 60_000;
 const TRUNCATED = '{"defaultShell":';
 const WITH_POLICY = '{"blockedCommands":["rm","sudo"],"allowedDirectories":["/safe/project"],"usageStats":{';
@@ -19,10 +17,7 @@ const eperm = async () => {
 };
 
 const CASES = {
-  // Preserving the damaged file is a precondition for replacing it. When that step
-  // fails, the process must not carry on with the permissive defaults: that is the
-  // direction of failure fail-closed recovery exists to stop. Only the preserve
-  // step is broken here, so the case cannot pass through some later step failing.
+  // control: only the preserve step is broken, so a later failure cannot carry it.
   'preserve-failure': {
     corrupt: TRUNCATED,
     async worker({ configManager, commandManager, CONFIG_FILE, logs }) {
@@ -44,9 +39,7 @@ const CASES = {
     }
   },
 
-  // The damaged config holds the only copy of the user's settings until the
-  // replacement lands. Losing it leaves the install with no config at all, and the
-  // next start creates a fresh default: unrestricted file access, onboarding again.
+  // Losing the file entirely starts the next run from a fresh default.
   'replacement-write-failure': {
     corrupt: TRUNCATED,
     async worker({ configManager, CONFIG_FILE }) {
@@ -66,8 +59,6 @@ const CASES = {
     }
   },
 
-  // Keeping the damaged file means every failed start meets it again. Preserving
-  // the same bytes over and over piles up copies that nothing ever removes.
   'repeated-preserve': {
     corrupt: TRUNCATED,
     runs: 2,
@@ -85,9 +76,6 @@ const CASES = {
     }
   },
 
-  // Copies of a damaged config are diagnostic material, not an archive. Keeping
-  // every one ever made grows without limit in the directory the fail-closed
-  // allowlist points at.
   'bounded-backups': {
     corrupt: TRUNCATED,
     prepare(dir) {
@@ -111,9 +99,6 @@ const CASES = {
     }
   },
 
-  // A salvaged policy is the user's own. A failure later in startup must not
-  // quietly replace it with the deny-all values, nor tell the user to repair
-  // settings that are already correct on disk.
   'salvaged-policy-survives-init-failure': {
     corrupt: WITH_POLICY,
     async worker({ configManager, logs }) {
@@ -135,8 +120,6 @@ const CASES = {
     }
   },
 
-  // stderr is not where the user is looking. The caller that just had a command
-  // refused is, so the refusal itself has to carry the explanation.
   'denied-command-explains': {
     corrupt: TRUNCATED,
     async worker({ CONFIG_FILE }) {
@@ -152,11 +135,8 @@ const CASES = {
     }
   },
 
-  // Recovery runs under a cross-process lock, so every read in the config
-  // directory and every listing of it is time other processes wait. The copies
-  // recovery keeps are read too, and this is the worst case for them: five of
-  // them, each the same size as the damaged file, so none can be ruled out
-  // without looking.
+  // Worst case for the copies: five, each the size of the damaged file, so none
+  // can be ruled out unread.
   'bounded-reads': {
     corrupt: TRUNCATED,
     prepare(dir) {
@@ -190,9 +170,7 @@ const CASES = {
     }
   },
 
-  // The fallback outlives the session that applied it: the config on disk is
-  // valid now and carries the deny-all values, so the next start finds nothing
-  // damaged. The refusal still has to say where that policy came from.
+  // The next start finds a valid config and nothing damaged.
   'explains-after-restart': {
     corrupt: TRUNCATED,
     runs: 2,
@@ -218,8 +196,6 @@ const CASES = {
     }
   },
 
-  // The same fallback restricted file access, so the tools that enforce it owe
-  // the same explanation.
   'path-refusal-explains': {
     corrupt: TRUNCATED,
     async worker({ configManager, CONFIG_FILE }) {
@@ -234,8 +210,7 @@ const CASES = {
     }
   },
 
-  // "Preserved" is a fact about the damaged file, not about which start did it.
-  // A second start that finds its bytes already kept must not report otherwise.
+  // "Preserved" is about the file, not about which start copied it.
   'preserved-copy-reported': {
     corrupt: TRUNCATED,
     runs: 2,
@@ -255,9 +230,7 @@ const CASES = {
     }
   },
 
-  // Damage can strike the recovered config too. Its policy then reads as a
-  // perfectly ordinary top-level policy - it is the deny-all one - so recovery
-  // salvages it and would forget it was ever a fallback.
+  // A damaged fallback reads as an ordinary top-level policy.
   'explains-after-second-damage': {
     corrupt: TRUNCATED,
     runs: 2,
@@ -288,10 +261,8 @@ const CASES = {
     }
   },
 
-  // Truncation is the damage #692 reports, and it eats a file from the end. The
-  // mark has to sit where losing it costs more than the policy it describes:
-  // anywhere after the policy, a cut can take the mark and leave the deny-all
-  // values behind, which read as an ordinary policy nobody has to explain.
+  // Truncation eats a file from the end, so a cut can take the mark and leave
+  // the policy.
   'mark-survives-truncation-after-policy': {
     corrupt: TRUNCATED,
     runs: 2,
@@ -301,8 +272,7 @@ const CASES = {
         return;
       }
 
-      // Cut the recovered config the way a failed write would: right after the
-      // last policy field, so both policy fields survive intact.
+      // The cut lands after the last policy field, so both survive it.
       const recovered = readFileSync(CONFIG_FILE, 'utf8');
       const allowlistAt = recovered.indexOf('"allowedDirectories"');
       assert.ok(allowlistAt > 0, 'the recovered config carries the allowlist');
@@ -316,16 +286,13 @@ const CASES = {
     }
   },
 
-  // The notice tells the user to repair the file by hand. Once they have, the
-  // mark recovery left behind has no business staying in it.
   'marker-cleared-on-manual-repair': {
     corrupt: TRUNCATED,
     async worker({ configManager, CONFIG_FILE }) {
       await configManager.getConfig();
       assert.ok(configManager.failClosedExplanation(), 'the fallback is in force to begin with');
 
-      // Let startup's own writes finish first. Otherwise one of them would carry
-      // the cleanup and the case would pass without anything doing it on purpose.
+      // control: a startup write would otherwise carry the cleanup for free.
       let settled = '';
       for (let stable = 0; stable < 6; stable++) {
         const seen = readFileSync(CONFIG_FILE, 'utf8');
@@ -353,9 +320,7 @@ const CASES = {
     }
   },
 
-  // Damaged configs are where invalid byte sequences live. Two different files
-  // that decode to the same replacement characters are two different pieces of
-  // evidence.
+  // Two files that decode to the same replacement characters are two files.
   'distinct-bytes-same-text': {
     corrupt: TRUNCATED,
     runs: 2,
