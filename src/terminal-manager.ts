@@ -488,9 +488,7 @@ export class TerminalManager {
           clearTimeout(closeGrace);
           closeGrace = null;
         }
-        // A later read of this pid must not show less than this reply does.
         if (completedRecord) {
-          completedRecord.outputLines = [...session.outputLines];
           completedRecord.evictedLines = session.evictedLines;
           completedRecord.evictedChars = session.evictedChars;
           completedRecord.outcome = outcome;
@@ -518,7 +516,9 @@ export class TerminalManager {
           // Store completed session before removing active session
           completedRecord = {
             pid: childProcess.pid,
-            outputLines: [...session.outputLines], // Copy line buffer
+            // The live buffer, not a copy: whoever holds the pipe keeps writing
+            // into it after this, and a reader of this pid must see that.
+            outputLines: session.outputLines,
             exitCode: code,
             signal,
             startTime: session.startTime,
