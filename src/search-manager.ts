@@ -77,6 +77,7 @@ export interface SearchSession {
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
   shortfalls: Set<SearchShortfall>;
+  producers: Promise<unknown>[];  // Office searches still running alongside ripgrep
   retainedChars: number;    // Length of the result text held in results[]
   skippingOversizedLine?: boolean;  // Discarding a line too large to buffer
 }
@@ -153,7 +154,8 @@ export interface SearchSessionOptions {
       totalMatches: 0,
       totalContextLines: 0,
       retainedChars: 0,
-      shortfalls: new Set()
+      shortfalls: new Set(),
+      producers: []
     };
 
     this.sessions.set(sessionId, session);
@@ -210,7 +212,7 @@ export interface SearchSessionOptions {
       this.shouldIncludeExcelSearch(options.filePattern, validPath);
 
     if (shouldSearchExcel) {
-      this.searchExcelFiles(
+      session.producers.push(this.searchExcelFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
@@ -226,7 +228,7 @@ export interface SearchSessionOptions {
       }).catch((err) => {
         // Log Excel search errors but don't fail the whole search
         capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+      }));
     }
 
     // For content searches, also search DOCX files
@@ -234,7 +236,7 @@ export interface SearchSessionOptions {
       this.shouldIncludeDocxSearch(options.filePattern, validPath);
 
     if (shouldSearchDocx) {
-      this.searchDocxFiles(
+      session.producers.push(this.searchDocxFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
@@ -247,7 +249,7 @@ export interface SearchSessionOptions {
         }
       }).catch((err) => {
         capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+      }));
     }
 
     // Wait for first chunk of data or early completion instead of fixed delay
@@ -916,14 +918,38 @@ export interface SearchSessionOptions {
         this.processBufferedOutput(session, true);
       }
 
-      session.isComplete = true;
-
       // Track if search was incomplete due to access issues
       // Ripgrep exit code 2 means "some files couldn't be searched"
       if (code === 2) {
         session.wasIncomplete = true;
       }
 
+      void this.completeWhenProducersSettle(session, code);
+    });
+
+    process.on('error', (error: Error) => {
+      session.isComplete = true;
+      session.isError = true;
+      session.error = `Process error: ${error.message}`;
+
+      // Rely on cleanupSessions(maxAge) only; no per-session timer
+    });
+  }
+
+  /**
+   * ripgrep closing is only half of an answer: the Office producers merge their
+   * results, and their reasons, after it. A session that called itself complete
+   * here would be handing out an answer it is still writing, and the completion
+   * event would go out without whatever they found.
+   */
+  private async completeWhenProducersSettle(session: SearchSession, code: number): Promise<void> {
+    if (session.producers.length > 0) {
+      await Promise.allSettled(session.producers);
+    }
+
+    session.isComplete = true;
+
+    {
       // Only treat as error if:
       // 1. Unexpected exit code (not 0, 1, or 2) AND
       // 2. We have meaningful errors after filtering AND
@@ -950,17 +976,9 @@ export interface SearchSessionOptions {
         wasIncomplete: session.wasIncomplete || false,  // NEW: Track incomplete searches
         shortfalls: [...session.shortfalls].join(',')
       });
+    }
 
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
-    });
-
-    process.on('error', (error: Error) => {
-      session.isComplete = true;
-      session.isError = true;
-      session.error = `Process error: ${error.message}`;
-
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
-    });
+    // Rely on cleanupSessions(maxAge) only; no per-session timer
   }
 
   private killProcess(session: SearchSession): void {
