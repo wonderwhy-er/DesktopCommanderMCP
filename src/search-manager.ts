@@ -1025,18 +1025,21 @@ export interface SearchSessionOptions {
       return false;
     }
 
-    if (session.retainedChars >= MAX_RETAINED_TEXT_CHARS) {
-      // Not even context, which would otherwise ride along free
-      this.recordShortfall(session, 'output-size');
-      return false;
-    }
-
     if (result.match && result.match.length > MAX_RESULT_TEXT_CHARS) {
       // Not worth reporting: both handlers print at most 100 characters of a
       // result, so the caller cannot tell the difference.
       result.match = `${result.match.slice(0, MAX_RESULT_TEXT_CHARS - 1)}…`;
     }
-    session.retainedChars += (result.match?.length || 0) + result.file.length;
+
+    // What the entry costs after the cap is what decides whether it fits: a
+    // budget checked before the cost is one the next entry walks past.
+    const entryChars = (result.match?.length || 0) + result.file.length;
+    if (session.retainedChars + entryChars > MAX_RETAINED_TEXT_CHARS) {
+      // Not even context, which would otherwise ride along free
+      this.recordShortfall(session, 'output-size');
+      return false;
+    }
+    session.retainedChars += entryChars;
 
     session.results.push(result);
     if (isContext) {
