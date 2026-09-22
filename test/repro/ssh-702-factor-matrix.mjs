@@ -48,7 +48,13 @@ function runOne(label, file, args, options) {
     let stderr = '';
     let spawnError = null;
     let done = false;
-    const finish = (result) => { if (!done) { done = true; resolve(result); } };
+    let timer;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     const child = spawn(file, args, options);
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
     child.stderr?.on('data', (d) => { stderr += d.toString(); });
@@ -60,7 +66,12 @@ function runOne(label, file, args, options) {
       bytes: stdout.length + stderr.length,
       sample: (stdout + stderr).trim().split('\n')[0]?.slice(0, 48) ?? ''
     }));
-    setTimeout(() => finish({ label, exitCode: null, timedOut: true, bytes: stdout.length + stderr.length, sample: '' }), SPAWN_TIMEOUT_MS);
+    timer = setTimeout(() => {
+      // Nothing else will kill it: this probe runs binaries that may hang, and
+      // one left behind burns a core until someone notices.
+      if (!child.killed) child.kill();
+      finish({ label, exitCode: null, timedOut: true, bytes: stdout.length + stderr.length, sample: '' });
+    }, SPAWN_TIMEOUT_MS);
   });
 }
 
