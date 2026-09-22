@@ -13,6 +13,7 @@ import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { runRemote } from './npm-scripts/remote.js';
+import { chromeTools } from './tools/pdf/lazy.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -131,10 +132,10 @@ async function runServer() {
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
       // Preemptively check/download Chrome for PDF generation (runs in background).
-      // Imported here rather than at the top of the file: this is the only use,
-      // it happens after the handshake, and the module pulls in md-to-pdf and
-      // puppeteer, which would otherwise be loaded on every launch.
-      import('./tools/pdf/markdown.js')
+      // Loaded here rather than at startup: this is the only use, it happens
+      // after the handshake, and the module pulls in md-to-pdf and puppeteer,
+      // which would otherwise be loaded on every launch.
+      chromeTools()
         .then(({ ensureChromeAvailable }) => ensureChromeAvailable())
         .catch((error) => {
           logger.error(`Chrome availability check failed to load: ${error instanceof Error ? error.message : String(error)}`);
