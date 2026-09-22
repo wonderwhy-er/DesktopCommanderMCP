@@ -2,8 +2,10 @@
  * Factory pattern for creating appropriate file handlers
  * Routes file operations to the correct handler based on file type
  *
- * Each handler implements canHandle() which can be sync (extension-based)
- * or async (content-based like BinaryFileHandler using isBinaryFile)
+ * Routing is decided by extension for the document handlers, so a path that is
+ * not a spreadsheet, PDF or DOCX never loads those modules. The remaining
+ * handlers are asked directly: ImageFileHandler.canHandle() is sync, and
+ * BinaryFileHandler.canHandle() is async, using content-based isBinaryFile.
  */
 
 import { FileHandler } from './base.js';
@@ -24,21 +26,30 @@ import type { DocxFileHandler } from './docx.js';
 // The handlers read the same lists, so routing and handler cannot disagree.
 import { EXCEL_EXTENSIONS, PDF_EXTENSIONS, DOCX_EXTENSIONS, hasExtension } from './extensions.js';
 
-// Singleton instances of each handler
-let excelHandler: ExcelFileHandler | null = null;
+// One instance of each handler. The on-demand ones hold a promise rather than
+// an instance: it is stored before the first await, so two concurrent callers
+// share one load and one instance instead of racing to build a second. A
+// rejected load clears its slot again — Node retries a failed dynamic import,
+// and caching the rejection would turn one transient failure into a permanent
+// one for that file type.
 let imageHandler: ImageFileHandler | null = null;
 let textHandler: TextFileHandler | null = null;
 let binaryHandler: BinaryFileHandler | null = null;
-let pdfHandler: PdfFileHandler | null = null;
-let docxHandler: DocxFileHandler | null = null;
+let excelHandler: Promise<ExcelFileHandler> | null = null;
+let pdfHandler: Promise<PdfFileHandler> | null = null;
+let docxHandler: Promise<DocxFileHandler> | null = null;
 
 /**
  * Initialize handlers (lazy initialization)
  */
-async function getExcelHandler(): Promise<ExcelFileHandler> {
+function getExcelHandler(): Promise<ExcelFileHandler> {
     if (!excelHandler) {
-        const { ExcelFileHandler } = await import('./excel.js');
-        excelHandler = new ExcelFileHandler();
+        excelHandler = import('./excel.js')
+            .then(({ ExcelFileHandler }) => new ExcelFileHandler())
+            .catch((error) => {
+                excelHandler = null;
+                throw error;
+            });
     }
     return excelHandler;
 }
@@ -58,18 +69,26 @@ function getBinaryHandler(): BinaryFileHandler {
     return binaryHandler;
 }
 
-async function getPdfHandler(): Promise<PdfFileHandler> {
+function getPdfHandler(): Promise<PdfFileHandler> {
     if (!pdfHandler) {
-        const { PdfFileHandler } = await import('./pdf.js');
-        pdfHandler = new PdfFileHandler();
+        pdfHandler = import('./pdf.js')
+            .then(({ PdfFileHandler }) => new PdfFileHandler())
+            .catch((error) => {
+                pdfHandler = null;
+                throw error;
+            });
     }
     return pdfHandler;
 }
 
-async function getDocxHandler(): Promise<DocxFileHandler> {
+function getDocxHandler(): Promise<DocxFileHandler> {
     if (!docxHandler) {
-        const { DocxFileHandler } = await import('./docx.js');
-        docxHandler = new DocxFileHandler();
+        docxHandler = import('./docx.js')
+            .then(({ DocxFileHandler }) => new DocxFileHandler())
+            .catch((error) => {
+                docxHandler = null;
+                throw error;
+            });
     }
     return docxHandler;
 }
