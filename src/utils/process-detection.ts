@@ -190,24 +190,31 @@ export function formatProcessCompletion(
 }
 
 /**
- * Format process state for user display
- */
-/**
  * The process is gone, but its output pipe is not: something else inherited it
  * and can still write. Both halves are certain enough to say, and saying only
  * one of them is how a reply either overstates completion or goes silent about
  * a process that has already died (#702).
+ *
+ * Every tool that reports this state shares the sentence; only the next step
+ * differs, because "read it" and "read it again" are different advice.
  */
 export function formatProcessExitPending(
   exitCode: number | null | undefined,
-  signal?: NodeJS.Signals | null
+  signal?: NodeJS.Signals | null,
+  nextStep: 'read' | 'read-again' = 'read'
 ): string {
   const ended = signal
     ? `terminated by ${signal}`
     : (exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`);
-  return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. Use read_process_output for the rest`;
+  const pointer = nextStep === 'read-again'
+    ? 'Read again for the rest'
+    : 'Use read_process_output for the rest';
+  return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. ${pointer}`;
 }
 
+/**
+ * Format process state for user display
+ */
 export function formatProcessStateMessage(state: ProcessState, pid: number): string {
   if (state.isWaitingForInput) {
     return `Process ${pid} is waiting for input${state.detectedPrompt ? ` (detected: "${state.detectedPrompt.trim()}")` : ''}`;

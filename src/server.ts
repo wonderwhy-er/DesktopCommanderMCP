@@ -903,7 +903,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         
                         STATES DETECTED:
                         Process waiting for input (shows prompt)
-                        Process finished execution
+                        Process finished execution (reported with its exit code, or with the signal that stopped it)
+                        Process gone while another process still holds its output pipe (exit code reported, more output may follow)
                         Process running (use read_process_output)
 
                         PERFORMANCE DEBUGGING (verbose_timing parameter):

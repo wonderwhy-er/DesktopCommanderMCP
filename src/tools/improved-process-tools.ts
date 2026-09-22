@@ -370,7 +370,12 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Add process state info
   let processStateMessage = '';
   if (result.isComplete) {
-    processStateMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
+    // The session is over, but its output only is once 'close' has landed.
+    // Confirming completion here while the pipe is held would contradict the
+    // start_process reply that refused to claim it moments earlier.
+    processStateMessage = result.outputComplete === false
+      ? `\n${formatProcessExitPending(result.exitCode, result.signal, 'read-again')}`
+      : `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
   } else if (session) {
     // Analyze state for running processes
     const fullOutput = session.outputLines.join('\n');
