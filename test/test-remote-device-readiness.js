@@ -206,6 +206,31 @@ await test('online is withheld until the tool layer answers, not just the handsh
     );
 });
 
+// Readiness has to mean one thing whichever way the child was started. It does
+// not yet: initialize() sets `isReady` the moment connect() returns, and only
+// restartChild() goes on to prove the child can serve a request — so the
+// startup path in device.ts calls a child ready on the handshake alone, and any
+// future caller has to remember the second step or silently get the weaker
+// meaning. Raised on #717 by wonderwhy-er.
+await test('initialize does not report ready until the child has served a request', async () => {
+    // Connects and speaks MCP, but fails everything at the tool layer.
+    const integration = new FixtureIntegration(BROKEN_TOOLS_FIXTURE);
+
+    await assert.rejects(
+        () => integration.initialize(),
+        'initialize() resolved for a child that cannot run a tool. The startup path takes that ' +
+        'as ready, so the device advertises a local executor it has never seen execute anything.'
+    );
+    const ready = integration.ready;
+    await integration.shutdown().catch(() => { /* already unusable */ });
+
+    assert.equal(
+        ready, false,
+        'initialize() left `ready` true after the child failed at the tool layer; the restart ' +
+        'path proves the child before believing it, and the startup path must not be weaker'
+    );
+});
+
 await test('a device whose restart failed recovers without an incoming tool call', async () => {
     const { device, client } = makeDevice();
     const integration = new FixtureIntegration(NO_SUCH_SERVER);
