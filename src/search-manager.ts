@@ -30,6 +30,14 @@ const MAX_RETAINED_TEXT_CHARS = 4 * 1024 * 1024;
 const MAX_BUFFERED_LINE_CHARS = 1024 * 1024;
 
 /**
+ * ExcelJS calls its row callback through Array.forEach and ignores what the
+ * callback returns, so returning early leaves the row, not the sheet. Throwing
+ * this leaves the sheet; it is caught right outside the iteration, where an
+ * ordinary error still means a file that cannot be read.
+ */
+const STOP_SCAN = Symbol('stop-scan');
+
+/**
  * Why an answer holds less than the tree it came from. A session can hit more
  * than one of these, and a new one costs a member here rather than a field in
  * every caller.
@@ -469,52 +477,57 @@ export interface SearchSessionOptions {
 
           const sheetName = worksheet.name;
 
-          // Iterate through rows (faster than cell-by-cell)
-          worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-            if (stopped()) return;
-            if (maxResults && results.length >= maxResults) return;
+          try {
+            // Iterate through rows (faster than cell-by-cell)
+            worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+              if (stopped()) throw STOP_SCAN;
+              if (maxResults && results.length >= maxResults) throw STOP_SCAN;
 
-            // Build a concatenated string of all cell values in the row
-            const rowValues: string[] = [];
-            row.eachCell({ includeEmpty: false }, (cell) => {
-              if (cell.value === null || cell.value === undefined) return;
+              // Build a concatenated string of all cell values in the row
+              const rowValues: string[] = [];
+              row.eachCell({ includeEmpty: false }, (cell) => {
+                if (cell.value === null || cell.value === undefined) return;
 
-              let cellStr: string;
-              if (typeof cell.value === 'object') {
-                if ('result' in cell.value) {
-                  cellStr = String(cell.value.result ?? '');
-                } else if ('richText' in cell.value) {
-                  cellStr = (cell.value as any).richText.map((rt: any) => rt.text).join('');
-                } else if ('text' in cell.value) {
-                  cellStr = String((cell.value as any).text);
+                let cellStr: string;
+                if (typeof cell.value === 'object') {
+                  if ('result' in cell.value) {
+                    cellStr = String(cell.value.result ?? '');
+                  } else if ('richText' in cell.value) {
+                    cellStr = (cell.value as any).richText.map((rt: any) => rt.text).join('');
+                  } else if ('text' in cell.value) {
+                    cellStr = String((cell.value as any).text);
+                  } else {
+                    cellStr = String(cell.value);
+                  }
                 } else {
                   cellStr = String(cell.value);
                 }
-              } else {
-                cellStr = String(cell.value);
-              }
 
-              if (cellStr.trim()) {
-                rowValues.push(cellStr);
+                if (cellStr.trim()) {
+                  rowValues.push(cellStr);
+                }
+              });
+
+              // Join all cell values with space for cross-column matching
+              const rowText = rowValues.join(' ');
+
+              const textToSearch = ignoreCase ? rowText.toLowerCase() : rowText;
+              const matchIndex = textToSearch.indexOf(searchTerm);
+              if (matchIndex !== -1) {
+                const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
+
+                results.push({
+                  file: `${filePath}:${sheetName}!Row${rowNumber}`,
+                  line: rowNumber,
+                  match: matchContext,
+                  type: 'content'
+                });
               }
             });
-
-            // Join all cell values with space for cross-column matching
-            const rowText = rowValues.join(' ');
-
-            const textToSearch = ignoreCase ? rowText.toLowerCase() : rowText;
-            const matchIndex = textToSearch.indexOf(searchTerm);
-            if (matchIndex !== -1) {
-              const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
-
-              results.push({
-                file: `${filePath}:${sheetName}!Row${rowNumber}`,
-                line: rowNumber,
-                match: matchContext,
-                type: 'content'
-              });
-            }
-          });
+          } catch (thrown) {
+            if (thrown !== STOP_SCAN) throw thrown;
+            break;
+          }
         }
       } catch (error) {
         // Skip files that can't be read (permission issues, corrupted, etc.)
