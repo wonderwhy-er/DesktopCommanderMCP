@@ -312,8 +312,19 @@ export class MCPDevice {
                 // Treating it as no session costs one authorization and ends
                 // the loop.
                 if (!this.deviceId) {
+                    // Not a silent recovery: on a headless host there is still
+                    // nobody to finish the authorization this leads to, so the
+                    // unit keeps restarting. What changes is that it restarts
+                    // asking for something - a device code someone can act on -
+                    // instead of dying on 'Device not found: undefined', which
+                    // names nothing and has no way out but deleting the file.
                     console.log('   - ⚠️ Ignoring a persisted session with no device ID - reauthorizing');
                     console.debug('[DEBUG] Session present but no device ID; treating as no session');
+                    // Its own event: remote_device_session_state below reports
+                    // this machine as having neither session nor device id, the
+                    // same as one that has never been set up, so the population
+                    // this guard exists for would otherwise be invisible.
+                    await captureRemote('remote_device_config_session_without_device_id', {});
                     return null;
                 }
                 console.log('💾 Found persisted session for device ' + this.deviceId);
@@ -372,11 +383,20 @@ export class MCPDevice {
      * outlive it - shutdown() - can await it.
      */
     async savePersistedConfig(rotated?: AuthSession): Promise<void> {
-        this.configWriteChain = this.configWriteChain.then(() => this.writePersistedConfig(rotated));
+        // Take the device id together with the session it belongs to. A rotated
+        // session is handed over now and written later, off the queue, and
+        // start() reassigns the id inside exactly that gap - once when a revoked
+        // device is cleared, again when authenticate() answers. Reading the id
+        // at write time would pair one device with another device's session. A
+        // save that carries no session reads both at write time, which pairs
+        // them just as tightly.
+        const announcedDeviceId = rotated ? this.deviceId : undefined;
+        this.configWriteChain = this.configWriteChain.then(
+            () => this.writePersistedConfig(rotated, announcedDeviceId));
         return this.configWriteChain;
     }
 
-    private async writePersistedConfig(rotated?: AuthSession): Promise<void> {
+    private async writePersistedConfig(rotated?: AuthSession, announcedDeviceId?: string): Promise<void> {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             // A config with no device id cannot be used, so it is never written.
@@ -391,7 +411,8 @@ export class MCPDevice {
             // file, or from what authenticate() answered - before the save that
             // follows. When authenticate() answers without one, the assignment
             // is skipped and the run dies at registerDevice() regardless.
-            if (!this.deviceId) {
+            const deviceId = rotated ? announcedDeviceId : this.deviceId;
+            if (!deviceId) {
                 console.debug('[DEBUG] Skipping config save - no device id to attach it to');
                 return;
             }
@@ -409,7 +430,7 @@ export class MCPDevice {
             }
 
             const config = {
-                deviceId: this.deviceId,
+                deviceId,
                 // Only save session if --persist-session flag is set
                 session: (session && this.persistSession) ? {
                     access_token: session.access_token,
