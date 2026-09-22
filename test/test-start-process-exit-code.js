@@ -380,6 +380,32 @@ async function worker() {
     );
     console.log('✓ a running process is not called finished because of its output text');
 
+    // 18. "Read again for the rest" only works if reading again moves forward.
+    // A completed session was read from line 0 with the new index thrown away,
+    // so the second read repeated what the caller had already seen and buried
+    // the late lines behind it.
+    const twoLines = replyText(await startProcess({
+      command: `node ${path.join(helpers, 'two-lines.cjs')}`,
+      timeout_ms: 600
+    }));
+    const twoLinesPid = pidOf(twoLines);
+    const firstRead = replyText(await readProcessOutput({ pid: twoLinesPid, timeout_ms: 1_000 }));
+    assert.ok(
+      firstRead.includes('line one'),
+      `the first read must return what the process printed, got: ${JSON.stringify(firstRead)}`
+    );
+    await sleep(2_000);
+    const secondRead = replyText(await readProcessOutput({ pid: twoLinesPid, timeout_ms: 1_000 }));
+    assert.ok(
+      secondRead.includes('line two'),
+      `the second read must return what arrived since, got: ${JSON.stringify(secondRead)}`
+    );
+    assert.ok(
+      !secondRead.includes('line one'),
+      `the second read must not repeat what the first one already returned, got: ${JSON.stringify(secondRead)}`
+    );
+    console.log('✓ reading again after the exit moves forward instead of repeating');
+
     await report({ type: 'done' });
   } catch (error) {
     // The assertion message is the point; the parent fails once, with that text.
@@ -485,6 +511,13 @@ async function parent() {
     'kid.unref();',
     "console.log('child up');",
     'process.exit(0);'
+  ].join('\n'));
+
+  // One line now, one after the first read, then leaves.
+  writeFileSync(path.join(home, 'two-lines.cjs'), [
+    "console.log('line one');",
+    "setTimeout(() => console.log('line two'), 1200);",
+    'setTimeout(() => process.exit(0), 1600);'
   ].join('\n'));
 
   // Prints a line analyzeProcessState reads as completion, then keeps running.
