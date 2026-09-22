@@ -38,6 +38,12 @@ const SHORTFALL_SENTENCES: Record<SearchShortfall, string> = {
   'output-size': '⚠️  Output exceeded the size a session keeps; some matches were dropped. Narrow the search to see them.'
 };
 
+const SHORTFALL_EVENTS: Record<SearchShortfall, string> = {
+  'max-results': 'search_results_truncated',
+  'time-limit': 'search_walk_timed_out',
+  'output-size': 'search_output_dropped'
+};
+
 /** One line per reason, in the order they are listed, with no leading newline. */
 export function describeShortfalls(shortfalls: SearchShortfall[] = []): string {
   return shortfalls.map(reason => SHORTFALL_SENTENCES[reason]).join('\n');
@@ -957,9 +963,23 @@ export interface SearchSessionOptions {
     }
   }
 
-  /** The one writer of session.shortfalls. */
+  /**
+   * The one writer of session.shortfalls, and the one place each degraded
+   * outcome is reported — once per session, however many times it is hit.
+   */
   private recordShortfall(session: SearchSession, reason: SearchShortfall): void {
+    if (session.shortfalls.has(reason)) {
+      return;
+    }
+
     session.shortfalls.add(reason);
+    capture(SHORTFALL_EVENTS[reason], {
+      sessionId: session.id,
+      searchType: session.options.searchType,
+      matches: session.totalMatches,
+      retainedBytes: session.retainedBytes,
+      runtime: Date.now() - session.startTime
+    });
   }
 
   /**
