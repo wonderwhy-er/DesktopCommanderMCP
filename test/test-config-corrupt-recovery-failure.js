@@ -332,6 +332,31 @@ const CASES = {
     }
   },
 
+  // Damaged configs are where invalid byte sequences live. Two different files
+  // that decode to the same replacement characters are two different pieces of
+  // evidence.
+  'distinct-bytes-same-text': {
+    corrupt: TRUNCATED,
+    runs: 2,
+    async worker({ configManager, CONFIG_FILE, runIndex }) {
+      if (runIndex === 1) {
+        writeFileSync(CONFIG_FILE, Buffer.concat([Buffer.from('{"a":'), Buffer.from([0xfe])]));
+      }
+      configManager.writeConfigAtomically = async () => {
+        throw new Error('synthetic replacement write failure');
+      };
+      await configManager.getConfig();
+    },
+    prepare(dir) {
+      writeFileSync(path.join(dir, 'config.json'),
+        Buffer.concat([Buffer.from('{"a":'), Buffer.from([0xff])]));
+    },
+    verify(dir) {
+      const backups = readdirSync(dir).filter((name) => name.startsWith('config.json.corrupt.'));
+      assert.equal(backups.length, 2,
+        'two damaged files that decode alike are still two damaged files');
+    }
+  }
 };
 
 async function worker(caseName, runIndex) {

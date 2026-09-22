@@ -27,6 +27,7 @@ export interface ClientInfo {
 type CorruptConfigPhase = 'startup' | 'mutation' | 'watcher';
 
 interface CorruptConfigSnapshot {
+  buffer: Buffer;
   text: string;
   bytes: number | null;
   mtimeMs: number | null;
@@ -412,11 +413,16 @@ class ConfigManager {
    * along to everything that needs them.
    */
   private async readCorruptSnapshot(): Promise<CorruptConfigSnapshot> {
-    const [stat, text] = await Promise.all([
+    const [stat, buffer] = await Promise.all([
       fs.stat(this.configPath).catch(() => null),
-      fs.readFile(this.configPath, 'utf8').catch(() => ''),
+      fs.readFile(this.configPath).catch(() => Buffer.alloc(0)),
     ]);
-    return { text, bytes: stat?.size ?? null, mtimeMs: stat?.mtimeMs ?? null };
+    return {
+      buffer,
+      text: buffer.toString('utf8'),
+      bytes: stat?.size ?? null,
+      mtimeMs: stat?.mtimeMs ?? null,
+    };
   }
 
   private async listConfigDir(): Promise<string[]> {
@@ -475,23 +481,29 @@ class ConfigManager {
    *
    * Returns whether this call added a copy.
    */
-  private async preserveCorruptConfig(corruptText: string, entries: string[]): Promise<boolean> {
+  private async preserveCorruptConfig(snapshot: CorruptConfigSnapshot, entries: string[]): Promise<boolean> {
     const prefix = `${path.basename(this.configPath)}.corrupt.`;
     const configDir = path.dirname(this.configPath);
-    const existing = entries.filter((name) => name.startsWith(prefix));
+    const existing = await Promise.all(entries
+      .filter((name) => name.startsWith(prefix))
+      .map(async (name) => {
+        const stat = await fs.stat(path.join(configDir, name)).catch(() => null);
+        return { name, mtimeMs: stat?.mtimeMs ?? 0, size: stat?.size ?? -1 };
+      }));
 
-    for (const name of existing) {
-      const kept = await fs.readFile(path.join(configDir, name), 'utf8').catch(() => null);
-      if (kept === corruptText) return false;
+    // Compare bytes, not decoded text. A damaged config is exactly where invalid
+    // sequences live, and two files that decode to the same replacement
+    // characters are still two different pieces of evidence. Size rules most
+    // candidates out without reading them.
+    for (const { name, size } of existing) {
+      if (size !== snapshot.buffer.length) continue;
+      const kept = await fs.readFile(path.join(configDir, name)).catch(() => null);
+      if (kept && Buffer.compare(kept, snapshot.buffer) === 0) return false;
     }
 
     await fs.copyFile(this.configPath, `${this.configPath}.corrupt.${Date.now()}.${process.pid}`);
 
-    const dated = await Promise.all(existing.map(async (name) => ({
-      name,
-      mtimeMs: (await fs.stat(path.join(configDir, name)).catch(() => null))?.mtimeMs ?? 0,
-    })));
-    const stale = dated
+    const stale = existing
       .sort((a, b) => b.mtimeMs - a.mtimeMs)
       .slice(MAX_CORRUPT_BACKUPS - 1);
     for (const { name } of stale) {
@@ -528,7 +540,7 @@ class ConfigManager {
     let backupCreated = false;
     if (existsSync(this.configPath)) {
       try {
-        backupCreated = await this.preserveCorruptConfig(corruptText, entries);
+        backupCreated = await this.preserveCorruptConfig(snapshot, entries);
       } catch (backupError) {
         console.error('Failed to preserve corrupt config before recovery:', backupError);
         throw backupError;
