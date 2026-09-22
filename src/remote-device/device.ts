@@ -48,7 +48,7 @@ export class MCPDevice {
      * persist a token that is already spent. Shutdown awaits this to drain
      * whatever is still in flight.
      */
-    private configWriteChain: Promise<void> = Promise.resolve();
+    private configWriteQueue: Promise<void> = Promise.resolve();
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
 
@@ -361,8 +361,8 @@ export class MCPDevice {
      * shutdown() - can await it.
      */
     private queueConfigWrite(write: () => Promise<void>): Promise<void> {
-        this.configWriteChain = this.configWriteChain.then(write);
-        return this.configWriteChain;
+        this.configWriteQueue = this.configWriteQueue.then(write);
+        return this.configWriteQueue;
     }
 
     async clearPersistedConfig(): Promise<void> {
@@ -429,7 +429,7 @@ export class MCPDevice {
             // truncated file. loadPersistedConfig() answers a JSON.parse
             // failure with null, which costs a full browser reauthorization.
             // Same shape as ConfigManager's atomic save; the pid keeps two
-            // processes off each other's temp file, and configWriteChain keeps
+            // processes off each other's temp file, and configWriteQueue keeps
             // this one off its own.
             const tempPath = `${this.configPath}.${process.pid}.tmp`;
             await fs.writeFile(tempPath, JSON.stringify(config, null, 2), { mode: 0o600 });
@@ -645,7 +645,7 @@ export class MCPDevice {
             // Drain any config write still in flight - a rotation can land as
             // teardown begins, and losing it costs the next start a browser.
             console.debug('[DEBUG] Draining pending config writes');
-            await this.configWriteChain;
+            await this.configWriteQueue;
 
             // Shutdown desktop integration
             console.log('  → Shutting down desktop integration...');
