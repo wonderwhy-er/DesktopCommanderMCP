@@ -113,10 +113,8 @@ async function testSessionStopsAtTheTextBudget(searchManager) {
     contextLines: 2
   });
 
-  // Checked before an entry is taken, so the last one can carry it just past.
-  const ceiling = MAX_RETAINED_TEXT_CHARS + MAX_RESULT_TEXT_CHARS + 512;
-  assert.ok(retainedChars(state.results) <= ceiling,
-    `retained ${retainedChars(state.results)} chars against a ceiling of ${ceiling}`);
+  assert.ok(retainedChars(state.results) <= MAX_RETAINED_TEXT_CHARS,
+    `retained ${retainedChars(state.results)} chars against a budget of ${MAX_RETAINED_TEXT_CHARS}`);
   assert.strictEqual(cutShortBy(state, 'output-size'), true,
     'a search stopped by the text budget must say so, not report a complete answer');
   assert.ok(state.totalMatches < 60 * 20,

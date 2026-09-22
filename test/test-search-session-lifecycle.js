@@ -1,6 +1,7 @@
 /**
  * What the budget work touched but never checked: the DOCX producer, paging,
- * cancellation, cleanup, retention (GitHub issue #716 asks that cancellation,
+ * cancellation, cleanup, retention, and that a session waits for the producers
+ * it started (GitHub issue #716 asks that cancellation,
  * truncation and cleanup preserve useful results). HOME/USERPROFILE move first.
  */
 import assert from 'node:assert';
@@ -67,6 +68,24 @@ async function makeDocxFixture() {
   return dir;
 }
 
+/**
+ * One tiny text file against a workbook large enough that parsing it outlasts
+ * the ripgrep walk: 8000 rows land about 65ms after the child closes, which is
+ * the window a session must not declare itself complete in.
+ */
+async function makeSlowProducerFixture() {
+  const dir = makeTempDir('dc716-slow-producer-');
+  fs.writeFileSync(path.join(dir, `one.txt`), `line ${NEEDLE}
+`);
+
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Sheet1');
+  for (let i = 0; i < 8000; i++) sheet.addRow([`row ${i} ${NEEDLE}`]);
+  await workbook.xlsx.writeFile(path.join(dir, 'book.xlsx'));
+  return dir;
+}
+
 /** Enough entries that a truncated session has pages to walk. */
 function makePagingFixture(files, matchesPerFile) {
   const dir = makeTempDir('dc716-paging-');
@@ -108,6 +127,7 @@ async function runToCompletion(searchManager, options, until = null) {
 }
 
 const isDocxResult = result => result.file.toLowerCase().includes('.docx');
+const isWorkbookResult = result => result.file.toLowerCase().includes('.xlsx');
 
 async function testDocxProducerSharesTheBudget(searchManager, docxDir) {
   const { sessionId, state } = await runToCompletion(searchManager, {
@@ -125,6 +145,23 @@ async function testDocxProducerSharesTheBudget(searchManager, docxDir) {
     `ripgrep (${2 * TEXT_MATCHES_PER_FILE} needles) and DOCX must share one budget of ${MAX_RESULTS}, got ${state.totalMatches}`);
   searchManager.terminateSearch(sessionId);
   console.log(`✓ DOCX producer: exactly ${state.totalMatches} matches across both producers`);
+}
+
+async function testCompletionWaitsForOfficeProducers(searchManager, slowDir) {
+  // No `until` here on purpose: the first moment the session calls itself
+  // complete is the moment its answer has to be whole.
+  const { sessionId, state } = await runToCompletion(searchManager, {
+    rootPath: slowDir,
+    pattern: NEEDLE,
+    searchType: 'content',
+    filePattern: '*.txt|*.xlsx',
+    contextLines: 0
+  });
+
+  assert.ok(state.results.some(isWorkbookResult),
+    'a session is not complete while a producer it started is still running');
+  searchManager.terminateSearch(sessionId);
+  console.log(`✓ completion: ${state.results.length} results, document among them, at the first complete read`);
 }
 
 async function testTruncatedAnswerPages(searchManager, pagingDir) {
@@ -230,9 +267,11 @@ async function main() {
     const docxDir = await makeDocxFixture();
     const pagingDir = makePagingFixture(5, 10);
     const slowDir = makeSlowFixture();
+    const slowProducerDir = await makeSlowProducerFixture();
 
     console.log('=== search session lifecycle ===\n');
     await testDocxProducerSharesTheBudget(searchManager, docxDir);
+    await testCompletionWaitsForOfficeProducers(searchManager, slowProducerDir);
     await testTruncatedAnswerPages(searchManager, pagingDir);
     await testCancelledSearchKeepsWhatItHad(searchManager, slowDir);
 
