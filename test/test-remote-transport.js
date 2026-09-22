@@ -907,6 +907,32 @@ await test('the device serves a tool call once the repair has landed', async () 
   assert(executed[0].toolName === 'start_process', `wrong tool ran: ${executed[0]?.toolName}`);
 });
 
+// A repair that never got to push must not forget why it was budgeted.
+// trackPresenceInner clears rowWriteFailedAfterPush before it checks that the
+// channel is still joined, so a channel that drops in between loses the fact
+// that a row write is what failed -- and the next tick takes the unbounded
+// branch, past the bound this PR exists to add.
+
+await test('a repair that never pushed still knows the row write is what failed', async () => {
+  const { rc } = makeRemoteChannel();
+  let reads = 0;
+  rc.channel = {
+    get state() { return ++reads === 1 ? 'joined' : 'errored'; },
+    track: async () => 'ok',
+  };
+  rc.presenceTracked = false;
+  rc.transportCapableWritten = false;
+  rc.rowWriteFailedAfterPush = true;
+
+  rc.checkConnectionHealth();
+  await settleWrites();
+
+  assert(
+    rc.rowWriteFailedAfterPush === true,
+    'an attempt that never reached the push must not clear the fact that budgets the repair'
+  );
+});
+
 // --- 7. Shutdown ------------------------------------------------------------
 // setOffline()'s durable write is the final word on status, so nothing may race
 // or outlast it — device.ts force-exits 5s after the signal.
