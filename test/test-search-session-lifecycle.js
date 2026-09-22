@@ -69,7 +69,7 @@ async function makeDocxFixture() {
 }
 
 /**
- * One tiny text file against a workbook large enough that parsing it outlasts
+ * One tiny text file against a workbook large enough that reading it outlasts
  * the ripgrep walk: 8000 rows land about 65ms after the child closes, which is
  * the window a session must not declare itself complete in.
  */
@@ -128,7 +128,7 @@ async function runToCompletion(searchManager, options, until = null) {
 
 const isDocxResult = result => result.file.toLowerCase().includes('.docx');
 const isWorkbookResult = result => result.file.toLowerCase().includes('.xlsx');
-const SLOW_PRODUCER_ROWS = 8000;
+const SLOW_PRODUCER_ROWS = 20000;
 
 async function testDocxProducerSharesTheBudget(searchManager, docxDir) {
   const { sessionId, state } = await runToCompletion(searchManager, {
@@ -176,7 +176,8 @@ async function testCancellationReachesOfficeProducers(searchManager, slowDir) {
     contextLines: 0
   });
 
-  await new Promise(resolve => setTimeout(resolve, 40));
+  // Cancel at once: startSearch already waited for the first chunk, so the
+  // workbook reader is mid-book and the walk is over.
   const cancelledAt = Date.now();
   searchManager.terminateSearch(sessionId);
 

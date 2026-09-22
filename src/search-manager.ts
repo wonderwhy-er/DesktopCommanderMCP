@@ -78,6 +78,7 @@ export interface SearchSession {
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
   shortfalls: Set<SearchShortfall>;
   producers: Promise<unknown>[];  // Office searches still running alongside ripgrep
+  stopped: boolean;         // The search was cut short; producers check this to give up
   retainedChars: number;    // Length of the result text held in results[]
   skippingOversizedLine?: boolean;  // Discarding a line too large to buffer
 }
@@ -155,7 +156,8 @@ export interface SearchSessionOptions {
       totalContextLines: 0,
       retainedChars: 0,
       shortfalls: new Set(),
-      producers: []
+      producers: [],
+      stopped: false
     };
 
     this.sessions.set(sessionId, session);
@@ -218,7 +220,8 @@ export interface SearchSessionOptions {
         options.ignoreCase !== false,
         options.maxResults,
         options.filePattern,  // Pass filePattern to filter Excel files too
-        options.literalSearch  // Respect literalSearch flag for Office files
+        options.literalSearch,  // Respect literalSearch flag for Office files
+        () => session.stopped
       ).then(excelResults => {
         // Add Excel results to session (merged after initial response).
         // Shares the session budget with ripgrep, so the merge stops once it is spent.
@@ -242,7 +245,8 @@ export interface SearchSessionOptions {
         options.ignoreCase !== false,
         options.maxResults,
         options.filePattern,
-        options.literalSearch  // Respect literalSearch flag for Office files
+        options.literalSearch,  // Respect literalSearch flag for Office files
+        () => session.stopped
       ).then(docxResults => {
         for (const result of docxResults) {
           if (!this.addResult(session, result, false)) break;
@@ -403,7 +407,8 @@ export interface SearchSessionOptions {
     ignoreCase: boolean,
     maxResults?: number,
     filePattern?: string,
-    _literalSearch?: boolean
+    _literalSearch?: boolean,
+    stopped: () => boolean = () => false
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
@@ -441,6 +446,7 @@ export interface SearchSessionOptions {
     const ExcelJS = await import('exceljs');
 
     for (const filePath of excelFiles) {
+      if (stopped()) break;
       if (maxResults && results.length >= maxResults) break;
 
       try {
@@ -449,12 +455,14 @@ export interface SearchSessionOptions {
 
         // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
         for (const worksheet of workbook.worksheets) {
+          if (stopped()) break;
           if (maxResults && results.length >= maxResults) break;
 
           const sheetName = worksheet.name;
 
           // Iterate through rows (faster than cell-by-cell)
           worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            if (stopped()) return;
             if (maxResults && results.length >= maxResults) return;
 
             // Build a concatenated string of all cell values in the row
@@ -585,7 +593,8 @@ export interface SearchSessionOptions {
     ignoreCase: boolean,
     maxResults?: number,
     filePattern?: string,
-    _literalSearch?: boolean
+    _literalSearch?: boolean,
+    stopped: () => boolean = () => false
   ): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
 
@@ -612,6 +621,7 @@ export interface SearchSessionOptions {
     }
 
     for (const filePath of docxFiles) {
+      if (stopped()) break;
       if (maxResults && results.length >= maxResults) break;
 
       try {
@@ -623,6 +633,7 @@ export interface SearchSessionOptions {
           'word/header3.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
 
         for (const xmlPath of xmlParts) {
+          if (stopped()) break;
           if (maxResults && results.length >= maxResults) break;
 
           const file = zip.file(xmlPath);
@@ -635,6 +646,7 @@ export interface SearchSessionOptions {
           let lineNum = 0;
 
           while ((m = wtRe.exec(xml)) !== null) {
+            if (stopped()) break;
             if (maxResults && results.length >= maxResults) break;
             const text = m[1];
             if (!text || !text.trim()) continue;
@@ -928,11 +940,13 @@ export interface SearchSessionOptions {
     });
 
     process.on('error', (error: Error) => {
-      session.isComplete = true;
       session.isError = true;
       session.error = `Process error: ${error.message}`;
 
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
+      // A failed spawn is a stop like any other: the producers should hear it,
+      // and the session is only done once they have.
+      session.stopped = true;
+      void this.completeWhenProducersSettle(session, null);
     });
   }
 
@@ -942,7 +956,7 @@ export interface SearchSessionOptions {
    * here would be handing out an answer it is still writing, and the completion
    * event would go out without whatever they found.
    */
-  private async completeWhenProducersSettle(session: SearchSession, code: number): Promise<void> {
+  private async completeWhenProducersSettle(session: SearchSession, code: number | null): Promise<void> {
     if (session.producers.length > 0) {
       await Promise.allSettled(session.producers);
     }
@@ -954,7 +968,7 @@ export interface SearchSessionOptions {
       // 1. Unexpected exit code (not 0, 1, or 2) AND
       // 2. We have meaningful errors after filtering AND
       // 3. We found no results at all
-      if (code !== 0 && code !== 1 && code !== 2) {
+      if (code !== null && code !== 0 && code !== 1 && code !== 2) {
         // Codes 0=success, 1=no matches, 2=some files couldn't be searched
         if (session.error?.trim() && session.totalMatches === 0) {
           session.isError = true;
@@ -981,7 +995,12 @@ export interface SearchSessionOptions {
     // Rely on cleanupSessions(maxAge) only; no per-session timer
   }
 
+  /**
+   * Stopping a search is not only ripgrep's business: the Office producers read
+   * on their own, and nothing else tells them the answer is no longer wanted.
+   */
   private killProcess(session: SearchSession): void {
+    session.stopped = true;
     if (!session.process.killed) {
       session.process.kill('SIGTERM');
     }
