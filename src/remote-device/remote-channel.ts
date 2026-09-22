@@ -578,10 +578,14 @@ export class RemoteChannel {
         // earlier join cannot keep the device counting as reachable while this
         // one is still deciding.
         this.presenceTracked = false;
-        this.rowWriteFailedAfterPush = false;
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
+            // Only now is a push actually happening, so only now may the fact
+            // that budgets the repair be dropped. Clearing it above would let a
+            // channel that drops in between send the next tick to the unbounded
+            // branch.
+            this.rowWriteFailedAfterPush = false;
             let status: string;
             try {
                 status = await this.channel.track({
