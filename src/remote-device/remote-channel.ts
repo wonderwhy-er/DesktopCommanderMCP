@@ -148,6 +148,12 @@ export class RemoteChannel {
     private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
+    /**
+     * Answers whether the local execution child is alive. Default yes, so a
+     * RemoteChannel used without a device (tests, other callers) behaves as
+     * before; MCPDevice installs the real probe.
+     */
+    private localExecutorProbe: () => boolean = () => true;
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
     /** Notified when auth-js rotates the session; the device persists it. */
@@ -231,6 +237,15 @@ export class RemoteChannel {
                 });
             } catch { /* no onHeartbeat on this client version: staleness check stays inert */ }
         }
+    }
+
+    /**
+     * Teach the channel how to ask whether the local executor is alive.
+     * `status` is a claim that this device will run a tool call right now, and
+     * a joined channel alone cannot support that claim - issue #4.
+     */
+    setLocalExecutorProbe(probe: () => boolean) {
+        this.localExecutorProbe = probe;
     }
 
     /**
@@ -571,7 +586,17 @@ export class RemoteChannel {
                 // Strictly after, never alongside: `online` may be claimed only
                 // where the capability is already advertised, or the row lands
                 // back in the state this whole change is about.
-                const statusWritten = capabilityWritten ? await this.queueStatusWrite('online') : false;
+                // Not syncReachabilityStatus(): its predicate reads presenceTracked,
+                // and that flag is deliberately still false here - it is raised last,
+                // once these writes have landed, so a heartbeat cannot advertise the
+                // row mid-sequence. Both halves the predicate asks about are already
+                // known at this point: the channel is joined and presence was just
+                // acknowledged. The only open question is the local executor, so ask
+                // that directly - a joined, present device whose executor is dead must
+                // not be advertised either.
+                const statusWritten = capabilityWritten
+                    ? await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline')
+                    : false;
                 if (!capabilityWritten || !statusWritten) {
                     console.error('❌ Presence published but the device row could not be updated — not ready');
                     captureRemote('remote_channel_readiness_write_failed', {
@@ -1144,14 +1169,16 @@ export class RemoteChannel {
     }
 
     /**
-     * Reachable means the private channel is joined AND this device has
-     * published its presence — the pair the server requires before it will
-     * dispatch. A join alone leaves the capability withdrawn, so a row marked
-     * online on it collects calls that can only be refused. Gates the
-     * heartbeat and `status`.
+     * Reachable means all of it is true at once: the private channel is
+     * joined, this device has published its presence, and the local executor
+     * answers. The server needs the first two before it will dispatch, and a
+     * healthy channel on a device whose executor is dead is the false-online
+     * state issue #4 was opened for. Gates the heartbeat and `status`.
      */
     private isReachable(): boolean {
-        return this.channel?.state === 'joined' && this.presenceTracked;
+        return this.channel?.state === 'joined'
+            && this.presenceTracked
+            && this.localExecutorProbe();
     }
 
     /**
@@ -1159,9 +1186,14 @@ export class RemoteChannel {
      * server filters on it), so it must not follow one channel's health — the
      * private channel's error path re-fires on every rejoin and would oscillate
      * the row against the heartbeat. Same predicate as the heartbeat gate.
+     *
+     * Every transition belongs here rather than calling setOnlineStatus(), which
+     * is the write and not the decision. Public so the device can route its
+     * recovery transition through the predicate too.
      */
-    private syncReachabilityStatus(): void {
-        this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
+    /** Resolves with whether the row actually took the write. */
+    syncReachabilityStatus(): Promise<boolean> {
+        return this.queueStatusWrite(this.isReachable() ? 'online' : 'offline');
     }
 
     /**
