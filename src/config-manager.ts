@@ -33,6 +33,14 @@ interface CorruptConfigSnapshot {
   mtimeMs: number | null;
 }
 
+/**
+ * Names the policy fields in a config that recovery filled in because it could
+ * not restore the user's own. It rides in the config itself: the fallback
+ * outlives the session that applied it, and every later start reads a valid
+ * file with nothing about it left to notice.
+ */
+const RECOVERY_FAIL_CLOSED_KEY = 'recoveryFailClosedFields';
+
 /** Copies of a damaged config are evidence, not an archive. */
 const MAX_CORRUPT_BACKUPS = 5;
 
@@ -204,7 +212,6 @@ class ConfigManager {
   private watcher: FSWatcher | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
   private pendingCorruptConfigTelemetry: CorruptConfigRecoveryTelemetry[] = [];
-  private failClosedFields: RecoverablePolicyField[] = [];
 
   constructor() {
     // Get user's home directory
@@ -563,11 +570,16 @@ class ConfigManager {
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
     defaults['pendingWelcomeOnboarding'] = false;
+    // The marker goes to disk with the values it describes: later starts read a
+    // valid config and would otherwise have nothing to tell them where this
+    // policy came from.
+    if (failedClosed.length > 0) {
+      defaults[RECOVERY_FAIL_CLOSED_KEY] = failedClosed.map((field) => field.key);
+    }
     await this.writeConfigAtomically(defaults);
     this.config = { ...defaults, version: VERSION };
 
     console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
-    this.failClosedFields = failedClosed;
     if (failedClosed.length > 0) console.error(this.failClosedNotice(failedClosed));
     return {
       config: defaults,
@@ -582,8 +594,22 @@ class ConfigManager {
    */
   private applyFailClosedPolicy(fields: RecoverablePolicyField[]): void {
     for (const field of fields) this.config[field.key] = field.failClosed(this.configPath);
-    this.failClosedFields = fields;
+    this.config[RECOVERY_FAIL_CLOSED_KEY] = fields.map((field) => field.key);
     console.error(this.failClosedNotice(fields));
+  }
+
+  /** The marked fields whose values are still recovery's, not the user's. */
+  private failClosedFieldsIn(config: ServerConfig): RecoverablePolicyField[] {
+    const marked = config[RECOVERY_FAIL_CLOSED_KEY];
+    if (!Array.isArray(marked) || marked.length === 0) return [];
+    return RECOVERABLE_POLICY_FIELDS.filter((field) => {
+      if (!marked.includes(field.key)) return false;
+      const current = config[field.key];
+      const failClosed = field.failClosed(this.configPath);
+      return Array.isArray(current)
+        && current.length === failClosed.length
+        && current.every((item, index) => item === failClosed[index]);
+    });
   }
 
   /**
@@ -592,19 +618,16 @@ class ConfigManager {
    * user is looking; the tool that just refused them is.
    */
   failClosedExplanation(): string | null {
-    return this.failClosedFields.length > 0 ? this.failClosedNotice(this.failClosedFields) : null;
+    const fields = this.failClosedFieldsIn(this.config);
+    return fields.length > 0 ? this.failClosedNotice(fields) : null;
   }
 
   /** A fail-closed value stands only until the config carries its own again. */
-  private syncFailClosedState(config: ServerConfig): void {
-    if (this.failClosedFields.length === 0) return;
-    this.failClosedFields = this.failClosedFields.filter((field) => {
-      const current = config[field.key];
-      const failClosed = field.failClosed(this.configPath);
-      return Array.isArray(current)
-        && current.length === failClosed.length
-        && current.every((item, index) => item === failClosed[index]);
-    });
+  private pruneFailClosedMarker(config: ServerConfig): void {
+    if (!Array.isArray(config[RECOVERY_FAIL_CLOSED_KEY])) return;
+    const stillInForce = this.failClosedFieldsIn(config);
+    if (stillInForce.length === 0) delete config[RECOVERY_FAIL_CLOSED_KEY];
+    else config[RECOVERY_FAIL_CLOSED_KEY] = stillInForce.map((field) => field.key);
   }
 
   private failClosedNotice(fields: RecoverablePolicyField[]): string {
@@ -705,9 +728,9 @@ class ConfigManager {
         }
       }
       mutate(latest, existed);
+      this.pruneFailClosedMarker(latest);
       await this.writeConfigAtomically(latest);
       this.config = { ...latest, version: VERSION };
-      this.syncFailClosedState(this.config);
       result = latest;
     } finally {
       try {
@@ -773,7 +796,6 @@ class ConfigManager {
       for (const mutate of this.pendingMutations) mutate(latest);
       latest['version'] = VERSION;
       this.config = latest;
-      this.syncFailClosedState(this.config);
     } catch (error: any) {
       if (error instanceof SyntaxError) {
         try {
