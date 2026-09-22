@@ -1,4 +1,4 @@
-import { searchManager } from '../search-manager.js';
+import { searchManager, describeShortfalls } from '../search-manager.js';
 import {
   StartSearchArgsSchema,
   GetMoreSearchResultsArgsSchema,
@@ -6,6 +6,15 @@ import {
 } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
 import { capture } from '../utils/capture.js';
+
+/**
+ * Only a finished search reports what it missed, so the lines follow the status
+ * the caller was given rather than whichever moment they read the session at.
+ */
+function shortfallLines(shortfalls: string[] | undefined): string {
+  const sentences = describeShortfalls(shortfalls as never);
+  return sentences ? `\n${sentences}` : '';
+}
 
 /**
  * Handle start_search command
@@ -61,6 +70,8 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
 
     if (result.isComplete) {
       output += `\n✅ Search completed.`;
+
+      output += shortfallLines(result.shortfalls);
     } else {
       output += `\n🔄 Search in progress. Use get_more_search_results to get more results.`;
     }
@@ -159,6 +170,8 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
       if (results.wasIncomplete) {
         output += `\n⚠️  Warning: Some files were inaccessible due to permissions. Results may be incomplete.`;
       }
+
+      output += shortfallLines(results.shortfalls);
     }
 
     return {

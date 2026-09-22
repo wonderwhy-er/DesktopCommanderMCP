@@ -7,6 +7,24 @@ import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
 
+/**
+ * Why an answer holds less than the tree it came from. A session can hit more
+ * than one of these, and a new one costs a member here rather than a field in
+ * every caller.
+ */
+export type SearchShortfall = 'max-results' | 'time-limit' | 'output-size';
+
+const SHORTFALL_SENTENCES: Record<SearchShortfall, string> = {
+  'max-results': '⚠️  Stopped at the maxResults limit; there may be more matches. Raise maxResults or narrow the search to see them.',
+  'time-limit': '⚠️  Stopped at the time limit; there may be more matches. Raise timeout_ms or narrow the search to see them.',
+  'output-size': '⚠️  Output exceeded the size a session keeps; some matches were dropped. Narrow the search to see them.'
+};
+
+/** One line per reason, in the order they are listed, with no leading newline. */
+export function describeShortfalls(shortfalls: SearchShortfall[] = []): string {
+  return shortfalls.map(reason => SHORTFALL_SENTENCES[reason]).join('\n');
+}
+
 export interface SearchResult {
   file: string;
   line?: number;
@@ -28,6 +46,7 @@ export interface SearchSession {
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
+  shortfalls: Set<SearchShortfall>;
 }
 
 export interface SearchSessionOptions {
@@ -63,6 +82,7 @@ export interface SearchSessionOptions {
     results: SearchResult[];
     totalResults: number;
     runtime: number;
+    shortfalls: SearchShortfall[];
   }> {
     const sessionId = `search_${++this.sessionCounter}_${Date.now()}`;
     
@@ -99,7 +119,8 @@ export interface SearchSessionOptions {
       options,
       buffer: '',
       totalMatches: 0,
-      totalContextLines: 0
+      totalContextLines: 0,
+      shortfalls: new Set()
     };
 
     this.sessions.set(sessionId, session);
@@ -214,7 +235,8 @@ export interface SearchSessionOptions {
       isError: session.isError,
       results: [...session.results],
       totalResults: session.totalMatches,
-      runtime: Date.now() - session.startTime
+      runtime: Date.now() - session.startTime,
+      shortfalls: [...session.shortfalls]
     };
   }
 
@@ -237,6 +259,7 @@ export interface SearchSessionOptions {
     hasMoreResults: boolean;      // New field
     runtime: number;
     wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
+    shortfalls: SearchShortfall[];
   } {
     const session = this.sessions.get(sessionId);
     
@@ -261,7 +284,8 @@ export interface SearchSessionOptions {
         error: session.error?.trim() || undefined,
         hasMoreResults: false, // Tail always returns what's available
         runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete
+        wasIncomplete: session.wasIncomplete,
+        shortfalls: [...session.shortfalls]
       };
     }
 
@@ -281,7 +305,8 @@ export interface SearchSessionOptions {
       error: session.error?.trim() || undefined,
       hasMoreResults,
       runtime: Date.now() - session.startTime,
-      wasIncomplete: session.wasIncomplete
+      wasIncomplete: session.wasIncomplete,
+      shortfalls: [...session.shortfalls]
     };
   }
 
@@ -887,7 +912,8 @@ export interface SearchSessionOptions {
         totalResults: session.totalMatches + session.totalContextLines,
         totalMatches: session.totalMatches,
         runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete || false  // NEW: Track incomplete searches
+        wasIncomplete: session.wasIncomplete || false,  // NEW: Track incomplete searches
+        shortfalls: [...session.shortfalls].join(',')
       });
 
       // Rely on cleanupSessions(maxAge) only; no per-session timer
@@ -906,6 +932,11 @@ export interface SearchSessionOptions {
     if (!session.process.killed) {
       session.process.kill('SIGTERM');
     }
+  }
+
+  /** The one writer of session.shortfalls. */
+  private recordShortfall(session: SearchSession, reason: SearchShortfall): void {
+    session.shortfalls.add(reason);
   }
 
   /**
@@ -938,6 +969,7 @@ export interface SearchSessionOptions {
    */
   private addResult(session: SearchSession, result: SearchResult, isContext: boolean): boolean {
     if (!isContext && this.isBudgetExhausted(session)) {
+      this.recordShortfall(session, 'max-results');
       return false;
     }
 
