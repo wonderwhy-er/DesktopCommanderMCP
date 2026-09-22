@@ -4,7 +4,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, Out
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import { analyzeProcessState, formatProcessCompletion, formatProcessExitPending } from './utils/process-detection.js';
+import { analyzeProcessState, describeProcessOutcome, ProcessOutcome } from './utils/process-detection.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -40,9 +40,7 @@ interface CompletedSession {
   outputLines: string[];       // Line-based buffer (consistent with active sessions)
   exitCode: number | null;
   signal: NodeJS.Signals | null;   // Set instead of exitCode when a signal killed it
-  // False while something else still holds the output pipe: the process is
-  // over, its output is not, and readers must not be told otherwise.
-  outputComplete: boolean;
+  outcome: Exclude<ProcessOutcome, 'running'>;
   startTime: Date;
   endTime: Date;
   evictedLines: number;        // Carried over from the active session (see TerminalSession)
@@ -76,10 +74,9 @@ export interface PaginatedOutputResult {
   readFrom: number;            // Starting line of this read
   readCount: number;           // Number of lines returned
   remaining: number;           // Lines remaining after this read
-  isComplete: boolean;         // Whether process has finished
+  outcome: ProcessOutcome;
   exitCode?: number | null;    // Exit code if completed
   signal?: NodeJS.Signals | null;  // Signal that killed it, if one did
-  outputComplete?: boolean;    // False while the output pipe is still held open
   runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
   evictedLines?: number;       // Lines dropped by the buffer cap; when > 0, line numbers are relative to the retained buffer
 }
@@ -496,7 +493,7 @@ export class TerminalManager {
       // since given that pid to.
       let completedRecord: CompletedSession | null = null;
 
-      const finishAfterExit = (outputComplete: boolean) => {
+      const finishAfterExit = (outcome: Exclude<ProcessOutcome, 'running'>) => {
         if (closeGrace) {
           clearTimeout(closeGrace);
           closeGrace = null;
@@ -509,26 +506,18 @@ export class TerminalManager {
           completedRecord.outputLines = [...session.outputLines];
           completedRecord.evictedLines = session.evictedLines;
           completedRecord.evictedChars = session.evictedChars;
-          // Only 'close' proves the output is over. Until it lands, a reader of
-          // this session must hear the same thing the caller of start_process
-          // heard: the process is gone, its output may not be.
-          completedRecord.outputComplete = outputComplete;
+          completedRecord.outcome = outcome;
         }
         exitReason = 'process_exit';
         if (!exitStatus) {
           resolveOnce({ pid: childProcess.pid!, output, isBlocked: false });
           return;
         }
-        // Two independent facts: the process is gone, with this code, and its
-        // output is complete. The first is certain here; the second only once
-        // 'close' lands. The caller must be able to tell "finished, code 255"
-        // from "still running, nothing printed yet" (#702), so the exit is
-        // reported either way and only completeness waits for 'close'.
         resolveOnce({
           pid: childProcess.pid!,
           output,
           isBlocked: false,
-          ...(outputComplete ? { isComplete: true } : {}),
+          outcome,
           exitCode: exitStatus.code,
           signal: exitStatus.signal,
           runtimeMs: exitStatus.at.getTime() - session.startTime.getTime()
@@ -547,7 +536,7 @@ export class TerminalManager {
             signal,
             startTime: session.startTime,
             endTime,
-            outputComplete: false,
+            outcome: 'exited-output-open',
             evictedLines: session.evictedLines,
             evictedChars: session.evictedChars
           };
@@ -574,12 +563,11 @@ export class TerminalManager {
           clearInterval(periodicCheck);
           periodicCheck = null;
         }
-        closeGrace = setTimeout(() => finishAfterExit(false), EXIT_TO_CLOSE_GRACE_MS);
+        closeGrace = setTimeout(() => finishAfterExit('exited-output-open'), EXIT_TO_CLOSE_GRACE_MS);
       });
 
-      // Emitted once the child is gone and its stdio is closed: whatever it was
-      // ever going to print has arrived by now.
-      childProcess.on('close', () => finishAfterExit(true));
+      // 'close' is the one signal that the output is over, not just the child.
+      childProcess.on('close', () => finishAfterExit('exited'));
     });
   }
 
@@ -655,8 +643,7 @@ export class TerminalManager {
         length,
         session.lastReadIndex,
         (newIndex) => { session.lastReadIndex = newIndex; },
-        false,
-        undefined
+        'running'
       );
       result.evictedLines = session.evictedLines;
       return result;
@@ -672,11 +659,10 @@ export class TerminalManager {
         length,
         0,  // Completed sessions don't track read position
         () => {},  // No-op for completed sessions
-        true,
+        completedSession.outcome,
         completedSession.exitCode,
         runtimeMs,
-        completedSession.signal,
-        completedSession.outputComplete
+        completedSession.signal
       );
       result.evictedLines = completedSession.evictedLines;
       return result;
@@ -694,11 +680,10 @@ export class TerminalManager {
     length: number,
     lastReadIndex: number,
     updateLastRead: (index: number) => void,
-    isComplete: boolean,
+    outcome: ProcessOutcome,
     exitCode?: number | null,
     runtimeMs?: number,
-    signal?: NodeJS.Signals | null,
-    outputComplete?: boolean
+    signal?: NodeJS.Signals | null
   ): PaginatedOutputResult {
     const totalLines = lines.length;
     let startIndex: number;
@@ -734,11 +719,10 @@ export class TerminalManager {
       readFrom: startIndex,
       readCount,
       remaining,
-      isComplete,
+      outcome,
       exitCode,
       runtimeMs,
-      signal,
-      outputComplete
+      signal
     };
   }
 
@@ -771,11 +755,13 @@ export class TerminalManager {
 
     const output = result.lines.join('\n').trim();
 
-    // For completed sessions, append completion info with runtime
-    if (result.isComplete) {
-      const completion = result.outputComplete === false
-        ? formatProcessExitPending(result.exitCode, result.signal, 'read-again')
-        : formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal);
+    if (result.outcome !== 'running') {
+      const completion = describeProcessOutcome(result.outcome, {
+        exitCode: result.exitCode,
+        signal: result.signal,
+        runtimeMs: result.runtimeMs,
+        readAgain: true
+      });
       if (output) {
         return `${output}\n\n${completion}`;
       } else {

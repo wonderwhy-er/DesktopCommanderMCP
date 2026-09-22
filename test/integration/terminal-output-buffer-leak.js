@@ -76,7 +76,7 @@ async function main() {
   let exitCode = null;
   while (performance.now() - startedAt < FLOOD_DEADLINE_MS) {
     const tail = terminalManager.readOutputPaginated(result.pid, -1, 1);
-    if (tail?.isComplete) {
+    if (tail?.outcome === 'exited') {
       exitCode = tail.exitCode ?? 0;
       break;
     }

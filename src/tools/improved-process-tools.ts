@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, formatProcessCompletion, formatProcessExitPending, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, describeProcessOutcome, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -190,19 +190,15 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   }
 
   let statusMessage = '';
-  if (result.isComplete) {
-    // The process is gone and its output is in, so its own exit status is the
-    // answer. analyzeProcessState reads the output text, which says nothing at
-    // all about a process that exited without printing anything (#702).
-    statusMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
-  } else if (result.exitCode !== undefined || result.signal) {
-    // Gone, but something else still holds its pipe. Reporting the exit here is
-    // what keeps this case from looking like #702 all over again; completeness
-    // is the part that is still unknown.
-    statusMessage = `\n${formatProcessExitPending(result.exitCode, result.signal)}`;
+  if (result.outcome && result.outcome !== 'running') {
+    statusMessage = '\n' + describeProcessOutcome(result.outcome, {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      runtimeMs: result.runtimeMs
+    });
   } else {
-    // Still running, or still writing: reading the output text is all there is,
-    // and it is what prompt detection needs anyway.
+    // Nothing has exited yet, so the output text is all there is to read — and
+    // it is what prompt detection needs anyway.
     const processState = analyzeProcessState(result.output, result.pid);
     if (processState.isWaitingForInput) {
       statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
@@ -376,13 +372,13 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
   // Add process state info
   let processStateMessage = '';
-  if (result.isComplete) {
-    // The session is over, but its output only is once 'close' has landed.
-    // Confirming completion here while the pipe is held would contradict the
-    // start_process reply that refused to claim it moments earlier.
-    processStateMessage = result.outputComplete === false
-      ? `\n${formatProcessExitPending(result.exitCode, result.signal, 'read-again')}`
-      : `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
+  if (result.outcome !== 'running') {
+    processStateMessage = '\n' + describeProcessOutcome(result.outcome, {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      runtimeMs: result.runtimeMs,
+      readAgain: true
+    });
   } else if (session) {
     // Analyze state for running processes
     const fullOutput = session.outputLines.join('\n');

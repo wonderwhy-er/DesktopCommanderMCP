@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { FilteredStdioServerTransport } from './custom-stdio.js';
 import type { PreviewFileType } from './ui/file-preview/shared/preview-file-types.js';
+import type { ProcessOutcome } from './utils/process-detection.js';
 
 declare global {
   var mcpTransport: FilteredStdioServerTransport | undefined;
@@ -30,16 +31,13 @@ export interface CommandExecutionResult {
   pid: number;
   output: string;
   isBlocked: boolean;
-  // Set once the child has exited. Without it a process that died printing
-  // nothing is indistinguishable from one that is alive and quiet (#702).
-  isComplete?: boolean;
-  // Exit code of a finished process; null when it was killed by a signal.
+  // Absent only when the spawn itself failed and nothing ever ran.
+  outcome?: ProcessOutcome;
   exitCode?: number | null;
-  // Name of the signal that killed it, when one did.
   signal?: NodeJS.Signals | null;
-  // Set when the wait buffer dropped its head: `output` is only the tail.
+  // The wait buffer dropped its head: `output` is only the tail.
   outputTruncated?: boolean;
-  // Set when the command was rewritten before running (plain ssh gets -t).
+  // The command as it actually ran, when the shell layer rewrote it.
   rewrittenCommand?: string;
   runtimeMs?: number;
   timingInfo?: TimingInfo;

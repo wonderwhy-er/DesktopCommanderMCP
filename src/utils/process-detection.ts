@@ -166,50 +166,38 @@ function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** What a spawned process is doing, as far as this server can tell. */
+export type ProcessOutcome = 'running' | 'exited' | 'exited-output-open';
+
 /**
- * The single source for how a finished process is announced.
- *
- * start_process, read_process_output and getNewOutput all report the same
- * event, so the sentence lives here once instead of being copied per call site
- * (and then drifting). The marker follows the exit code, so a failure cannot be
- * announced with a success tick.
+ * A signalled process has no exit code, and a process whose pipe someone else
+ * still holds has no final output. Announcing either as a plain completion is
+ * how a deliberate stop reads as a crash, or a partial answer as the whole
+ * story (#702). Every tool shares these sentences; only the next step differs,
+ * because "read it" and "read it again" are different advice.
  */
-export function formatProcessCompletion(
-  exitCode: number | null | undefined,
-  runtimeMs?: number,
-  signal?: NodeJS.Signals | null
+export function describeProcessOutcome(
+  outcome: Exclude<ProcessOutcome, 'running'>,
+  { exitCode, signal, runtimeMs, readAgain = false }: {
+    exitCode?: number | null;
+    signal?: NodeJS.Signals | null;
+    runtimeMs?: number;
+    readAgain?: boolean;
+  }
 ): string {
+  if (outcome === 'exited-output-open') {
+    const ended = signal
+      ? `terminated by ${signal}`
+      : exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`;
+    const pointer = readAgain ? 'Read again for the rest' : 'Use read_process_output for the rest';
+    return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. ${pointer}`;
+  }
+
   const runtime = runtimeMs !== undefined ? ` (runtime: ${(runtimeMs / 1000).toFixed(2)}s)` : '';
-  // A signalled process has no exit code. Reporting "exit code null" under a
-  // failure marker turns a deliberate stop (force_terminate) into a crash.
   if (signal) {
     return `⏹️ Process terminated by ${signal}${runtime}`;
   }
-  const marker = exitCode === 0 ? '✅' : '❌';
-  return `${marker} Process completed with exit code ${exitCode}${runtime}`;
-}
-
-/**
- * The process is gone, but its output pipe is not: something else inherited it
- * and can still write. Both halves are certain enough to say, and saying only
- * one of them is how a reply either overstates completion or goes silent about
- * a process that has already died (#702).
- *
- * Every tool that reports this state shares the sentence; only the next step
- * differs, because "read it" and "read it again" are different advice.
- */
-export function formatProcessExitPending(
-  exitCode: number | null | undefined,
-  signal?: NodeJS.Signals | null,
-  nextStep: 'read' | 'read-again' = 'read'
-): string {
-  const ended = signal
-    ? `terminated by ${signal}`
-    : (exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`);
-  const pointer = nextStep === 'read-again'
-    ? 'Read again for the rest'
-    : 'Use read_process_output for the rest';
-  return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. ${pointer}`;
+  return `${exitCode === 0 ? '✅' : '❌'} Process completed with exit code ${exitCode}${runtime}`;
 }
 
 /**
