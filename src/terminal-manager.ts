@@ -206,8 +206,13 @@ export class TerminalManager {
     let rewrittenCommand: string | undefined;
     if (command.trim().startsWith('ssh ') && !command.includes(' -t')) {
       enhancedCommand = command.replace(/^ssh /, 'ssh -t ');
-      rewrittenCommand = enhancedCommand;
-      console.log(`Enhanced SSH command: ${enhancedCommand}`);
+      // The guard trims and the replace does not, so a leading space leaves the
+      // command as typed. Reporting that as a rewrite is the tool lying about
+      // itself; which commands get -t is a separate question, left alone here.
+      if (enhancedCommand !== command) {
+        rewrittenCommand = enhancedCommand;
+        console.log(`Enhanced SSH command: ${enhancedCommand}`);
+      }
     }
 
     // Get the appropriate spawn configuration for the shell
