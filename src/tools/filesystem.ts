@@ -11,7 +11,8 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 // The PDF module tree carries md-to-pdf and puppeteer; no session needs them
-// until it reads or writes a PDF.
+// until it reads or writes a PDF. The type import below is erased and loads
+// nothing, which is why it may stay an import type and nothing more.
 import { pdfTools } from './pdf/lazy.js';
 import type { PdfOperations, PdfMetadata } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';

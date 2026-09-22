@@ -82,9 +82,9 @@ function getBinaryHandler(): BinaryFileHandler {
  * @returns FileHandler instance that can handle this file
  */
 export async function getFileHandler(filePath: string): Promise<FileHandler> {
-    const document = DOCUMENT_HANDLERS.find(({ extensions }) => hasExtension(filePath, extensions));
-    if (document) {
-        return document.get();
+    const documentHandler = DOCUMENT_HANDLERS.find(({ extensions }) => hasExtension(filePath, extensions));
+    if (documentHandler) {
+        return documentHandler.get();
     }
 
     if (getImageHandler().canHandle(filePath)) {
