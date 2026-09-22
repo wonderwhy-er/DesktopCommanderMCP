@@ -73,8 +73,11 @@ async function makeDocxFixture() {
 
 /**
  * One tiny text file against a workbook large enough that reading it outlasts
- * the ripgrep walk: 8000 rows land about 65ms after the child closes, which is
- * the window a session must not declare itself complete in.
+ * the ripgrep walk beside it: the child closes while the workbook is still
+ * being read, and that window is what a session must not call itself complete
+ * in. SLOW_PRODUCER_ROWS is set by the cancellation case, which needs a
+ * producer still running when the stop arrives. No duration is named here: the
+ * cases assert the ordering, and a number would be this machine's alone.
  */
 async function makeSlowProducerFixture() {
   const dir = makeTempDir('dc716-slow-producer-');
