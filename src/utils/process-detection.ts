@@ -174,8 +174,17 @@ function escapeRegExp(string: string): string {
  * (and then drifting). The marker follows the exit code, so a failure cannot be
  * announced with a success tick.
  */
-export function formatProcessCompletion(exitCode: number | null | undefined, runtimeMs?: number): string {
+export function formatProcessCompletion(
+  exitCode: number | null | undefined,
+  runtimeMs?: number,
+  signal?: NodeJS.Signals | null
+): string {
   const runtime = runtimeMs !== undefined ? ` (runtime: ${(runtimeMs / 1000).toFixed(2)}s)` : '';
+  // A signalled process has no exit code. Reporting "exit code null" under a
+  // failure marker turns a deliberate stop (force_terminate) into a crash.
+  if (signal) {
+    return `⏹️ Process terminated by ${signal}${runtime}`;
+  }
   const marker = exitCode === 0 ? '✅' : '❌';
   return `${marker} Process completed with exit code ${exitCode}${runtime}`;
 }

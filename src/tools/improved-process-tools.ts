@@ -182,21 +182,23 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     };
   }
 
-  // Analyze the process state to detect if it's waiting for input
-  const processState = analyzeProcessState(result.output, result.pid);
-
   let statusMessage = '';
   if (result.isComplete) {
-    // The process is already gone, so its own exit status is the answer.
-    // analyzeProcessState reads the output text, which says nothing at all
-    // about a process that exited without printing anything (#702).
-    statusMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs)}`;
-  } else if (processState.isWaitingForInput) {
-    statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
-  } else if (processState.isFinished) {
-    statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
-  } else if (result.isBlocked) {
-    statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
+    // The process is gone and its output is in, so its own exit status is the
+    // answer. analyzeProcessState reads the output text, which says nothing at
+    // all about a process that exited without printing anything (#702).
+    statusMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
+  } else {
+    // Still running, or still writing: reading the output text is all there is,
+    // and it is what prompt detection needs anyway.
+    const processState = analyzeProcessState(result.output, result.pid);
+    if (processState.isWaitingForInput) {
+      statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
+    } else if (processState.isFinished) {
+      statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
+    } else if (result.isBlocked) {
+      statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
+    }
   }
 
   // Add timing information if requested
@@ -356,7 +358,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Add process state info
   let processStateMessage = '';
   if (result.isComplete) {
-    processStateMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs)}`;
+    processStateMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
   } else if (session) {
     // Analyze state for running processes
     const fullOutput = session.outputLines.join('\n');

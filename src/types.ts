@@ -35,6 +35,8 @@ export interface CommandExecutionResult {
   isComplete?: boolean;
   // Exit code of a finished process; null when it was killed by a signal.
   exitCode?: number | null;
+  // Name of the signal that killed it, when one did.
+  signal?: NodeJS.Signals | null;
   runtimeMs?: number;
   timingInfo?: TimingInfo;
 }

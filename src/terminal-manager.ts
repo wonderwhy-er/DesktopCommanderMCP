@@ -39,6 +39,7 @@ interface CompletedSession {
   pid: number;
   outputLines: string[];       // Line-based buffer (consistent with active sessions)
   exitCode: number | null;
+  signal: NodeJS.Signals | null;   // Set instead of exitCode when a signal killed it
   startTime: Date;
   endTime: Date;
   evictedLines: number;        // Carried over from the active session (see TerminalSession)
@@ -57,6 +58,14 @@ export const MAX_BUFFERED_OUTPUT_CHARS = 50 * 1024 * 1024;  // per session; olde
 const MAX_LINE_CHARS = 1024 * 1024;                  // force-split longer lines so eviction can work
 const MAX_WAIT_OUTPUT_CHARS = 2 * 1024 * 1024;       // start_process wait buffer (prompt/state detection)
 
+/**
+ * How long to wait, after a child exits, for its pipes to close before
+ * answering without claiming the output is complete. An ordinary child closes
+ * in the same millisecond it exits; only a pipe held by someone else — a
+ * detached grandchild that inherited stdout — takes longer (measured ~630ms).
+ */
+const EXIT_TO_CLOSE_GRACE_MS = 250;
+
 // Result type for paginated output reading
 export interface PaginatedOutputResult {
   lines: string[];
@@ -66,6 +75,7 @@ export interface PaginatedOutputResult {
   remaining: number;           // Lines remaining after this read
   isComplete: boolean;         // Whether process has finished
   exitCode?: number | null;    // Exit code if completed
+  signal?: NodeJS.Signals | null;  // Signal that killed it, if one did
   runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
   evictedLines?: number;       // Lines dropped by the buffer cap; when > 0, line numbers are relative to the retained buffer
 }
@@ -458,14 +468,49 @@ export class TerminalManager {
         });
       }, timeoutMs);
 
-      childProcess.on('exit', (code: any) => {
+      // 'exit' says the child is gone; 'close' says its pipes are gone too.
+      // The two part company when something else inherited the pipe: a detached
+      // grandchild keeps it open and keeps writing, so 'exit' on its own does
+      // not mean the output is complete. Answer on 'close', and if that does
+      // not follow shortly after the exit, answer without claiming completion
+      // rather than announcing a result that is still arriving.
+      let exitStatus: { code: number | null; signal: NodeJS.Signals | null; at: Date } | null = null;
+      let closeGrace: NodeJS.Timeout | null = null;
+
+      const finishAfterExit = (outputComplete: boolean) => {
+        if (closeGrace) {
+          clearTimeout(closeGrace);
+          closeGrace = null;
+        }
+        exitReason = 'process_exit';
+        if (!exitStatus || !outputComplete) {
+          resolveOnce({ pid: childProcess.pid!, output, isBlocked: false });
+          return;
+        }
+        // The caller must be able to tell "finished, code 255" from "still
+        // running, nothing printed yet"; the exit code used to live only in
+        // completedSessions, one extra read_process_output call away (#702).
+        resolveOnce({
+          pid: childProcess.pid!,
+          output,
+          isBlocked: false,
+          isComplete: true,
+          exitCode: exitStatus.code,
+          signal: exitStatus.signal,
+          runtimeMs: exitStatus.at.getTime() - session.startTime.getTime()
+        });
+      };
+
+      childProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         const endTime = new Date();
+        exitStatus = { code, signal, at: endTime };
         if (childProcess.pid) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
             pid: childProcess.pid,
             outputLines: [...session.outputLines], // Copy line buffer
             exitCode: code,
+            signal,
             startTime: session.startTime,
             endTime,
             evictedLines: session.evictedLines,
@@ -480,19 +525,12 @@ export class TerminalManager {
 
           this.sessions.delete(childProcess.pid);
         }
-        exitReason = 'process_exit';
-        // The caller must be able to tell "finished, code 255" from "still
-        // running, nothing printed yet"; the exit code was previously kept only
-        // in completedSessions, one extra read_process_output call away (#702).
-        resolveOnce({
-          pid: childProcess.pid!,
-          output,
-          isBlocked: false,
-          isComplete: true,
-          exitCode: code,
-          runtimeMs: endTime.getTime() - session.startTime.getTime()
-        });
+        closeGrace = setTimeout(() => finishAfterExit(false), EXIT_TO_CLOSE_GRACE_MS);
       });
+
+      // Emitted once the child is gone and its stdio is closed: whatever it was
+      // ever going to print has arrived by now.
+      childProcess.on('close', () => finishAfterExit(true));
     });
   }
 
@@ -587,7 +625,8 @@ export class TerminalManager {
         () => {},  // No-op for completed sessions
         true,
         completedSession.exitCode,
-        runtimeMs
+        runtimeMs,
+        completedSession.signal
       );
       result.evictedLines = completedSession.evictedLines;
       return result;
@@ -607,7 +646,8 @@ export class TerminalManager {
     updateLastRead: (index: number) => void,
     isComplete: boolean,
     exitCode?: number | null,
-    runtimeMs?: number
+    runtimeMs?: number,
+    signal?: NodeJS.Signals | null
   ): PaginatedOutputResult {
     const totalLines = lines.length;
     let startIndex: number;
@@ -645,7 +685,8 @@ export class TerminalManager {
       remaining,
       isComplete,
       exitCode,
-      runtimeMs
+      runtimeMs,
+      signal
     };
   }
 
@@ -680,7 +721,7 @@ export class TerminalManager {
 
     // For completed sessions, append completion info with runtime
     if (result.isComplete) {
-      const completion = formatProcessCompletion(result.exitCode, result.runtimeMs);
+      const completion = formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal);
       if (output) {
         return `${output}\n\n${completion}`;
       } else {
