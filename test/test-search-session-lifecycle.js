@@ -317,17 +317,27 @@ export function clearRipgrepCache() {}
   const stubbed = await import(pathToFileURL(path.join(stubRoot, 'dist', 'search-manager.js')).href);
   const manager = stubbed.searchManager;
 
+  // The child reports its own failure after startSearch has thrown, and an
+  // 'error' event with nobody listening is thrown by the emitter itself.
+  const escaped = [];
+  const catchEscaped = (err) => escaped.push(err);
+  process.on('uncaughtException', catchEscaped);
+
   let failure = null;
   try {
     await manager.startSearch({ rootPath: dir, pattern: NEEDLE, searchType: 'content', contextLines: 0 });
   } catch (err) {
     failure = err;
   }
+  await new Promise(resolve => setTimeout(resolve, 200));
+  process.off('uncaughtException', catchEscaped);
 
   assert.ok(failure, 'a search whose child never starts must report that it failed');
   assert.strictEqual(manager.sessions.size, 0,
     `the caller was given an error and no id, so nothing may be left behind, got ${manager.sessions.size}`);
-  console.log(`✓ failed start: "${failure.message}", no session left behind`);
+  assert.deepStrictEqual(escaped.map(err => err.message), [],
+    `the child's own failure must be handled, not thrown at the process: ${escaped.map(err => err.message).join(', ')}`);
+  console.log(`✓ failed start: "${failure.message}", no session left behind, nothing escaped`);
 }
 
 async function main() {
