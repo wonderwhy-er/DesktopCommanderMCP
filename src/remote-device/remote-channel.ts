@@ -82,6 +82,23 @@ const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
 // unable to join leaves the server dispatching calls this device can't
 // receive. Not lower than 3: ordinary half-open recovery legitimately costs 2.
 const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
+// How often checkConnectionHealth runs. Named because the capability cooldown
+// below is counted in these ticks and reported to the operator in minutes.
+const HEALTH_CHECK_INTERVAL_MS = 10_000;
+// Health-check attempts to repair an unpublished capability flag, and the
+// cooldown between bursts. Unlike a presence push this costs a REST write per
+// try, so it cannot run every tick; and it cannot stop for good either -- on a
+// channel that never leaves 'joined', which is #697's own topology, nothing
+// else would ever retry.
+//
+// Counted in ticks that reach the repair, not in wall clock: a tick spent with
+// presence untracked or a track() still unresolved does not shorten the pause,
+// so the real wait is at least this long and usually longer.
+const CAPABILITY_REPUBLISH_MAX_ATTEMPTS = 3;
+const CAPABILITY_REPUBLISH_COOLDOWN_TICKS = 30;
+// Why presence is being pushed. The push is identical; what it means for the
+// logs and for the recovery event is not.
+type PresenceTrackReason = 'join' | 'capability-repair';
 // Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
 // does not cover.
 const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
@@ -180,6 +197,15 @@ export class RemoteChannel {
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
+    /** Repair attempts in the current burst. Reset by a landed publish and by a
+     * fresh join -- both are evidence the next try could land. */
+    private capabilityRepublishAttempts = 0;
+    /** Eligible health ticks left before the next burst. 0 = may try now. */
+    /** True when the last attempt was acknowledged by track() but the row
+     * writes after it failed. Those cost a REST write per try, so that repair
+     * is bounded; a push that is never acknowledged is cheap and is not. */
+    private rowWriteIsWhatFailed = false;
+    private capabilityRepublishCooldown = 0;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -537,21 +563,22 @@ export class RemoteChannel {
      * status rather than rejecting, and absent presence reads as offline on the
      * dashboard. `presenceTracked` lets the health check retry later.
      */
-    private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
+    private async trackPresenceWithRetry(recovered: number, attempts = 3, reason: PresenceTrackReason = 'join'): Promise<void> {
         if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
         this.isTrackingPresence = true;
         try {
-            await this.trackPresenceInner(recovered, attempts);
+            await this.trackPresenceInner(recovered, attempts, reason);
         } finally {
             this.isTrackingPresence = false;
         }
     }
 
-    private async trackPresenceInner(recovered: number, attempts: number): Promise<void> {
+    private async trackPresenceInner(recovered: number, attempts: number, reason: PresenceTrackReason): Promise<void> {
         // A fresh attempt starts from "not proven", so a leftover true from an
         // earlier join cannot keep the device counting as reachable while this
         // one is still deciding.
         this.presenceTracked = false;
+        this.rowWriteIsWhatFailed = false;
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
@@ -598,6 +625,9 @@ export class RemoteChannel {
                     ? await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline')
                     : false;
                 if (!capabilityWritten || !statusWritten) {
+                    // The push worked; the writes did not. The health check
+                    // bounds its retry on that, because each one is a REST call.
+                    this.rowWriteIsWhatFailed = true;
                     console.error('❌ Presence published but the device row could not be updated — not ready');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
@@ -606,9 +636,18 @@ export class RemoteChannel {
                 }
 
                 this.presenceTracked = true;
-                console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
-                // Reconnect attempts preceding this join (0 on a first join).
-                captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
+                if (reason === 'capability-repair') {
+                    // Same push, different cause. Reporting it as a presence
+                    // recovery would hide the repair and put a meaningless
+                    // recoveredAfterAttempts on the recovery event. The writes
+                    // above are the publish itself, so nothing is written here.
+                    console.log(`👋 Presence re-pushed to republish the transport capability (device ${this.deviceId})`);
+                    captureRemote('remote_channel_capability_repair_tracked', {}).catch(() => { });
+                } else {
+                    console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
+                    // Reconnect attempts preceding this join (0 on a first join).
+                    captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
+                }
                 return;
             }
 
@@ -617,8 +656,15 @@ export class RemoteChannel {
         }
 
         this.presenceTracked = false;
-        console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
-        captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
+        if (reason === 'capability-repair') {
+            // Filing this as a presence failure would hide the repair exactly
+            // as reporting its success as a presence recovery once did.
+            console.error('❌ Transport capability repair failed — presence push not acknowledged; withdrawing broadcast capability');
+            captureRemote('remote_channel_capability_repair_error', { attempts }).catch(() => { });
+        } else {
+            console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
+            captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
+        }
         // Withdraw: the dashboard reads a flagged device with no presence as
         // offline. The faster heartbeat tier keeps the device's DB status
         // accurate while it recovers.
@@ -634,6 +680,50 @@ export class RemoteChannel {
             app_version: VERSION,
             ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
         };
+    }
+
+    private resetCapabilityRepublishBudget(): void {
+        this.capabilityRepublishAttempts = 0;
+        this.capabilityRepublishCooldown = 0;
+    }
+
+    /**
+     * Take one repair attempt, or refuse and burn a cooldown tick. Bursts of
+     * CAPABILITY_REPUBLISH_MAX_ATTEMPTS, then a pause: retrying every tick costs
+     * a REST write and a log line each time, and stopping for good would strand
+     * the device undispatchable with a fresh last_seen and status 'online'.
+     */
+    private claimCapabilityRepublishAttempt(): boolean {
+        if (this.capabilityRepublishCooldown > 0) {
+            this.capabilityRepublishCooldown--;
+            return false;
+        }
+        // The burst is spent; afterCapabilityRepairAttempt() opens the cooldown
+        // once the try it belongs to has actually resolved.
+        if (this.capabilityRepublishAttempts >= CAPABILITY_REPUBLISH_MAX_ATTEMPTS) return false;
+        this.capabilityRepublishAttempts++;
+        return true;
+    }
+
+    /**
+     * Called once a repair attempt has resolved. Only here is the outcome known:
+     * announcing on the claim instead would tell the operator the device cannot
+     * receive tool calls, and count that against the burst, even when the try
+     * being claimed goes on to land.
+     */
+    private afterCapabilityRepairAttempt(): void {
+        if (this.transportCapableWritten === true) return; // landed; budget already reset
+        if (this.capabilityRepublishAttempts < CAPABILITY_REPUBLISH_MAX_ATTEMPTS) return;
+        this.capabilityRepublishAttempts = 0;
+        this.capabilityRepublishCooldown = CAPABILITY_REPUBLISH_COOLDOWN_TICKS;
+        const pauseMin = Math.round(CAPABILITY_REPUBLISH_COOLDOWN_TICKS * HEALTH_CHECK_INTERVAL_MS / 60_000);
+        // Said out loud: from here the device looks online, answers the metadata
+        // tools the server handles itself, and fails every tool call. The
+        // silence that follows must not read as health.
+        console.error(`❌ Transport capability still unpublished after ${CAPABILITY_REPUBLISH_MAX_ATTEMPTS} attempts — this device cannot receive tool calls; retrying in at least ${pauseMin}min`);
+        captureRemote('remote_channel_capability_republish_exhausted', {
+            attempts: CAPABILITY_REPUBLISH_MAX_ATTEMPTS
+        }).catch(() => { });
     }
 
     /**
@@ -655,6 +745,10 @@ export class RemoteChannel {
                 return false;
             }
             this.transportCapableWritten = capable;
+            // Only a landed PUBLISH is evidence the repair can land. A landed
+            // withdrawal says nothing about that, and the missing flag it
+            // leaves behind is the very thing the repair exists to fix.
+            if (capable) this.resetCapabilityRepublishBudget();
             console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
             // Tier changed — move last_seen onto the cadence that tier's sweep
             // threshold expects (no-op if the heartbeat hasn't started yet).
@@ -709,6 +803,7 @@ export class RemoteChannel {
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
                         this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
+                        this.resetCapabilityRepublishBudget(); // new join, new evidence
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // A join is only half of what dispatch needs. The other
                         // half is presence, which writes the capability the
@@ -907,9 +1002,35 @@ export class RemoteChannel {
             // lands the dashboard shows this device offline, and if track()
             // already failed its retries the capability is withdrawn too, so
             // the server fails every dispatch to it fast.
-            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
-                console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
-                this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
+            // One repair for both halves: push presence again. It is what
+            // earns the capability flag — trackPresenceInner writes it on 'ok'
+            // and withdraws when it cannot — so the flag is re-earned rather
+            // than re-asserted, and isTrackingPresence is the single guard.
+            //
+            // The flag can be missing while presence still reads tracked: the
+            // withdrawal path leaves that flag set. So ask about both.
+            if (this.deviceId && !this.isTrackingPresence
+                && (!this.presenceTracked || this.transportCapableWritten !== true)) {
+                // Which half failed decides whether the retry is bounded. An
+                // unacknowledged push is a channel push, cheap to repeat every
+                // tick. A failed row write is a REST call, and repeating that
+                // every tick for the life of the process is the log flood #697
+                // also reported.
+                const rowWriteRepair = this.rowWriteIsWhatFailed
+                    || (this.presenceTracked && this.transportCapableWritten !== true);
+
+                if (!rowWriteRepair) {
+                    console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
+                    this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
+                } else if (this.claimCapabilityRepublishAttempt()) {
+                    // Claimed as a statement, not as an && operand: it spends the
+                    // budget and can open the cooldown, and reordering the
+                    // condition must not silently move when that happens.
+                    console.debug('[DEBUG] Channel joined but transport capability not published — re-proving presence');
+                    this.trackPresenceWithRetry(0, 1, 'capability-repair')
+                        .catch(() => { /* logged inside */ })
+                        .finally(() => this.afterCapabilityRepairAttempt());
+                }
             }
             return;
         }
@@ -1278,7 +1399,7 @@ export class RemoteChannel {
         this.heartbeatDeviceId = deviceId;
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
-        }, 10000);
+        }, HEALTH_CHECK_INTERVAL_MS);
 
         // Bookkeeping last_seen write. Self-rescheduling rather than a fixed
         // setInterval so the cadence can follow the tier: a device that
