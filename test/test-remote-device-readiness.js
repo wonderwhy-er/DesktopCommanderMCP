@@ -45,15 +45,49 @@ const RECOVERY_DEADLINE_MS = 10_000;
 
 const DEVICE_ID = 'device-1';
 
-/** Records what would have been written to `mcp_devices`. */
-function makeFakeClient() {
+/**
+ * A promise with its resolver exposed. Not Promise.withResolvers(): package.json
+ * declares `node >= 18` and that arrived in Node 22.
+ */
+function deferred() {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    return { promise, resolve };
+}
+
+/**
+ * `writes` records every payload as it is ISSUED; `completions` records it as it
+ * LANDS. Ordering cases need both: a direct write and a queued one are issued in
+ * one order and can land in the other, which is the whole question.
+ */
+function makeFakeClient({ latencyByStatus = {} } = {}) {
     const writes = [];
+    const completions = [];
+    let pending = null;
     const chain = {
-        update: (payload) => { writes.push(payload); return chain; },
+        update: (payload) => {
+            writes.push(payload);
+            // Keyed by status, not by call order: the queued write is deferred
+            // onto a microtask, so which one is ISSUED first is exactly what
+            // the case must not depend on.
+            pending = { payload, delay: latencyByStatus[payload.status] ?? 0 };
+            return chain;
+        },
         select: () => chain,
-        eq: () => Promise.resolve({ data: null, error: null }),
+        eq: () => {
+            const settled = pending;
+            pending = null;
+            return new Promise((resolve) => {
+                const land = () => {
+                    if (settled) completions.push(settled.payload);
+                    resolve({ data: null, error: null });
+                };
+                if (settled?.delay) setTimeout(land, settled.delay);
+                else land();
+            });
+        },
     };
-    return { writes, from: () => chain };
+    return { writes, completions, from: () => chain };
 }
 
 /** Points the spawn at a chosen script; everything else is production code. */
@@ -85,6 +119,16 @@ class FixtureIntegration extends DesktopCommanderIntegration {
     }
 }
 
+/** A child whose spawn can be held mid-flight, to open a window for shutdown. */
+class GatedIntegration extends FixtureIntegration {
+    gate = deferred();
+
+    async resolveMcpConfig() {
+        await this.gate.promise;
+        return super.resolveMcpConfig();
+    }
+}
+
 /**
  * Silence console while a case drives deliberate failures. The production code
  * logs each one with a full stack, which buries the actual result and reads as
@@ -112,9 +156,9 @@ async function withQuietLogs(fn) {
  * whatever it was handed. Both ids matter: MCPDevice reads its own, and
  * queueStatusWrite() reads the channel's.
  */
-function makeDevice({ channelState = 'joined' } = {}) {
+function makeDevice({ channelState = 'joined', latencyByStatus = {} } = {}) {
     const device = new MCPDevice();
-    const client = makeFakeClient();
+    const client = makeFakeClient({ latencyByStatus });
     device.deviceId = DEVICE_ID;
     device.remoteChannel.client = client;
     device.remoteChannel.deviceId = DEVICE_ID;
@@ -228,6 +272,51 @@ await test('initialize does not report ready until the child has served a reques
         ready, false,
         'initialize() left `ready` true after the child failed at the tool layer; the restart ' +
         'path proves the child before believing it, and the startup path must not be weaker'
+    );
+});
+
+// ensureReady() refuses to START a restart once shutdown has begun, but nothing
+// stops one already in flight. shutdown() neither cancels nor awaits it, so a
+// restart that was inside resolveMcpConfig() when the signal landed goes on to
+// spawn a child, connect it, verify it and set `ready` — on an integration the
+// process has already torn down. Raised on #717 by CodeRabbit.
+await test('a shutdown cancels an initialization already in flight', async () => {
+    const integration = new GatedIntegration(WORKING_FIXTURE);
+
+    const starting = integration.ensureReady().catch(() => { /* cancelled is fine */ });
+    await new Promise((r) => setImmediate(r)); // let it park inside resolveMcpConfig
+    await integration.shutdown();
+    integration.gate.resolve();                // the spawn the shutdown did not wait for
+    await starting;
+
+    assert.equal(
+        integration.ready, false,
+        'the integration reported itself ready after it was shut down: the in-flight restart ' +
+        'connected a child nobody will ever close and set the flag behind the teardown'
+    );
+    await integration.shutdown().catch(() => { /* best effort, for the leaked child */ });
+});
+
+// The status queue exists because concurrent writes land out of order. A write
+// that skips it is not merely unordered, it can be overtaken: an `online` still
+// in the queue lands after this `offline` and leaves the row advertising a
+// device whose local executor is dead. Raised on #717 by CodeRabbit.
+await test('the local-loss transition cannot be overtaken by a queued online write', async () => {
+    // The queued `online` lands late whenever it was issued; `offline` lands at once.
+    const { device, client } = makeDevice({ latencyByStatus: { online: 30 } });
+    // The loop after the status write is not what this case is about.
+    device.isShuttingDown = true;
+
+    device.remoteChannel.queueStatusWrite('online');
+    await device.handleLocalMcpLoss('test');
+    await device.remoteChannel.statusWriteChain;
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.equal(
+        client.completions.at(-1)?.status, 'offline',
+        `the row ended up ${JSON.stringify(client.completions.map((w) => w.status))}: the direct ` +
+        'offline write skipped the queue, so the pending online landed after it and put a device ' +
+        'with a dead executor back into the server\'s selection pool'
     );
 });
 
