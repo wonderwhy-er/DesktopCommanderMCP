@@ -303,6 +303,19 @@ export class MCPDevice {
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
             if (config.session && this.persistSession) {
+                // The shape the write side refuses, met coming the other way.
+                // Earlier versions could leave one behind, and reading it back
+                // is what keeps a machine stuck: the session restores, the
+                // revocation check above is skipped because it is guarded by
+                // the very id that is missing, and registerDevice() then throws
+                // 'Device not found: undefined'. Every restart, unchanged.
+                // Treating it as no session costs one authorization and ends
+                // the loop.
+                if (!this.deviceId) {
+                    console.log('   - ⚠️ Ignoring a persisted session with no device ID - reauthorizing');
+                    console.debug('[DEBUG] Session present but no device ID; treating as no session');
+                    return null;
+                }
                 console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
                 return config.session;
@@ -374,8 +387,10 @@ export class MCPDevice {
             // restores the session, finds no device id, skips the revocation
             // check that is guarded by one, and dies registering. Every time.
             //
-            // Nothing legitimate needs it: authenticate() returns the device id
-            // and start() assigns it before the save that follows.
+            // Nothing legitimate needs it: start() has the device id - from the
+            // file, or from what authenticate() answered - before the save that
+            // follows. When authenticate() answers without one, the assignment
+            // is skipped and the run dies at registerDevice() regardless.
             if (!this.deviceId) {
                 console.debug('[DEBUG] Skipping config save - no device id to attach it to');
                 return;
