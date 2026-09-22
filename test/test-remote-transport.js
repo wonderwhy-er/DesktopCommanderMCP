@@ -632,9 +632,9 @@ await test('a capability publish that failed is retried while the channel is hea
 
   // The real entry, not hand-set state: the push is acknowledged, the row
   // write after it is not. Since #724 that leaves presence unproven as well,
-  // which is what rowWriteIsWhatFailed records.
-  await rc.trackPresenceWithRetry(0, 1);
-  assert(rc.rowWriteIsWhatFailed === true, 'precondition: the push landed, the row write did not');
+  // which is what repairCostsAWrite records.
+  await rc.trackPresenceUnlessInFlight(0, 1);
+  assert(rc.repairCostsAWrite === true, 'precondition: the push landed, the row write did not');
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
 
   rc.checkConnectionHealth(); // the 10s tick that sees a healthy channel
@@ -667,12 +667,12 @@ await test('an unpublished capability does not preempt the presence retry', asyn
   rc.presenceTracked = false; // presence is the missing half here
   rc.transportCapableWritten = false; // ... and the flag is missing too
   let tracked = 0;
-  rc.trackPresenceWithRetry = async () => { tracked++; };
+  rc.trackPresenceUnlessInFlight = async () => { tracked++; };
 
   rc.checkConnectionHealth();
   await settleWrites();
 
-  // Both branches call trackPresenceWithRetry, so the count alone proves
+  // Both branches call trackPresenceUnlessInFlight, so the count alone proves
   // nothing. Only the capability branch spends the budget.
   assert(tracked === 1, 'presence must still be the repair that runs first');
   assert(
@@ -695,7 +695,7 @@ await test('the flag is not published while a presence track is still in flight'
   rc.presenceTracked = true; // stale: the withdrawal path does not clear it
   rc.transportCapableWritten = false; // withdrawn after sustained recreate failures
 
-  const inFlight = rc.trackPresenceWithRetry(0, 1);
+  const inFlight = rc.trackPresenceUnlessInFlight(0, 1);
   await settleWrites();
   assert(rc.isTrackingPresence === true, 'precondition: a track is in flight');
 
@@ -866,7 +866,7 @@ await test('a failed repair is not reported as a presence track error', async ()
 
 // Since #724 a failed row write leaves presence unproven, so the repair is
 // reached with presenceTracked false -- the same state as a push that was never
-// acknowledged. Only rowWriteIsWhatFailed tells the two apart, and the cases
+// acknowledged. Only repairCostsAWrite tells the two apart, and the cases
 // above reach the bounded branch by the other disjunct (presence tracked, flag
 // missing), so none of them would notice if the field stopped mattering.
 
@@ -876,7 +876,7 @@ await test('a row write that keeps failing is repaired in bursts, not on every t
 
   // The real post-#724 shape, nothing set by hand: the push is acknowledged,
   // the row write after it fails, and presence is left unproven because of it.
-  await rc.trackPresenceWithRetry(0, 1);
+  await rc.trackPresenceUnlessInFlight(0, 1);
   assert(rc.presenceTracked === false, 'precondition: a failed row write leaves presence unproven');
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
 
@@ -917,7 +917,7 @@ await test('the device serves a tool call once the repair has landed', async () 
   rc.onToolCall = (payload) => { inflight = device.handleNewToolCall(payload); return inflight; };
 
   // The publish fails, so the server would fail every dispatch to this device.
-  await rc.trackPresenceWithRetry(0, 1);
+  await rc.trackPresenceUnlessInFlight(0, 1);
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
 
   rc.checkConnectionHealth();
