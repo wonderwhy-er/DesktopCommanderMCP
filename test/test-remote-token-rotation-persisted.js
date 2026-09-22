@@ -7,10 +7,13 @@
  * ./helpers/remote-device-harness.js - no network, no browser, no Supabase.
  */
 import assert from 'node:assert';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import {
     MCPDevice,
     makeDevice,
+    drainWrites,
     readPersisted,
     sleep,
     waitForPersisted,
@@ -138,6 +141,58 @@ await test('a save with no session available does not wipe the token on disk', a
         readPersisted(configPath).session?.refresh_token, 'refresh-1',
         'a save that finds no session writes session:null, replacing a usable token with nothing. ' +
         'Clearing is what clearPersistedConfig() is for'
+    );
+});
+
+/** EPERM on the commit, the way Windows raises it while something holds the destination. */
+function refuseRename(times) {
+    const real = fsp.rename;
+    let left = times;
+    fsp.rename = async (from, to) => {
+        if (left-- > 0) {
+            const error = new Error('EPERM: operation not permitted, rename');
+            error.code = 'EPERM';
+            throw error;
+        }
+        return real(from, to);
+    };
+    return () => { fsp.rename = real; };
+}
+
+await test('a commit refused once still lands the rotation', async (configPath) => {
+    const { device, client } = await makeDevice(configPath);
+    const restore = refuseRename(1);
+    try {
+        client.rotate('access-2', 'refresh-2');
+        await drainWrites(device);
+    } finally {
+        restore();
+    }
+
+    assert.strictEqual(
+        readPersisted(configPath).session?.refresh_token, 'refresh-2',
+        'one EPERM on the commit drops the rotation, so disk keeps a token the server has already ' +
+        'spent and the next restart asks for a browser - the failure this PR exists to stop'
+    );
+});
+
+await test('a commit the filesystem keeps refusing leaves the old config and no temp file', async (configPath) => {
+    const { device, client } = await makeDevice(configPath);
+    const restore = refuseRename(Infinity);
+    try {
+        client.rotate('access-2', 'refresh-2');
+        await drainWrites(device);
+    } finally {
+        restore();
+    }
+
+    assert.deepStrictEqual(
+        readdirSync(path.dirname(configPath)).filter((f) => f.endsWith('.tmp')), [],
+        'the temp file outlives the failed commit, holding a session beside the config it never replaced'
+    );
+    assert.strictEqual(
+        readPersisted(configPath).session?.refresh_token, 'refresh-1',
+        'a refused commit must leave the previous config exactly as it was'
     );
 });
 
