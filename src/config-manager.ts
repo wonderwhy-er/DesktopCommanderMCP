@@ -6,6 +6,7 @@ import os from 'os';
 import lockfile from 'proper-lockfile';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
+import { retry } from './utils/retry.js';
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -48,12 +49,12 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 // Windows refuses to rename onto a path another process has open. The other
 // process is a reader or an older build mid-write, and it lets go in
 // milliseconds, so the commit waits it out rather than failing the caller.
-// The poll is deliberately short and frequent: a handle is held for the length
-// of one read, so waiting tens of milliseconds between tries costs throughput
-// against a busy reader without making the commit any more likely to land.
-// CONFIG_COMMIT_RETRIES is retries, not attempts: one rename plus this many.
+// A handle is held for the length of one read, so the poll is short and
+// frequent: waiting tens of milliseconds between tries costs throughput
+// against a busy reader without making the commit any likelier to land.
+// 41 tries capped at 25ms is ~856ms of waiting before the error is rethrown.
 const SHARING_VIOLATION_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
-const CONFIG_COMMIT_RETRIES = 40;
+const CONFIG_COMMIT_ATTEMPTS = 41;
 const CONFIG_COMMIT_RETRY_CAP_MS = 25;
 
 /**
@@ -231,28 +232,21 @@ class ConfigManager {
   }
 
   /**
-   * Replace config.json with the temp file. The rename is the commit, and on
-   * Windows it is refused with EPERM while another process holds the target
-   * open -- a reader mid-read, or an older Desktop Commander that rewrites the
-   * file in place. Nothing is wrong with the write; the handle closes in
-   * milliseconds. Without this the failure leaves setValue for the caller,
-   * which on the tools/list path is what reached the client as -32603.
+   * Windows refuses to rename onto a path another process holds open -- a
+   * reader mid-read, or an older Desktop Commander rewriting the file in
+   * place. The write is fine and the handle closes in milliseconds, but the
+   * failure used to leave setValue for the caller, which on the tools/list
+   * path is what reached the client of #697 as -32603.
    *
-   * A sharing violation is a Windows condition -- POSIX renames over an open
-   * file -- but these codes also carry genuine permission failures, on either
-   * platform. Those are not lost: they are retried in vain and rethrown about
-   * 0.9s later rather than at once.
+   * These codes also carry genuine permission failures, on either platform.
+   * Those are not lost, only rethrown ~0.9s later.
    */
-  private async commitConfigFile(tempPath: string): Promise<void> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await fs.rename(tempPath, this.configPath);
-        return;
-      } catch (error: any) {
-        if (attempt >= CONFIG_COMMIT_RETRIES || !SHARING_VIOLATION_CODES.has(error?.code)) throw error;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(2 * (attempt + 1), CONFIG_COMMIT_RETRY_CAP_MS)));
-      }
-    }
+  private commitConfigFile(tempPath: string): Promise<void> {
+    return retry(() => fs.rename(tempPath, this.configPath), {
+      attempts: CONFIG_COMMIT_ATTEMPTS,
+      delayMs: (attempt) => Math.min(2 * attempt, CONFIG_COMMIT_RETRY_CAP_MS),
+      retryOn: (error: any) => SHARING_VIOLATION_CODES.has(error?.code),
+    });
   }
 
   private async acquireConfigLock(): Promise<() => Promise<void>> {
