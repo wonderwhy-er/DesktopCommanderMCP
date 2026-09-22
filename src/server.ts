@@ -20,9 +20,16 @@ import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentTo
 const SYSTEM_INFO = getSystemInfo();
 const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
 const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
-const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
+const PATH_GUIDANCE = `${getPathGuidance(SYSTEM_INFO)} Relative paths depend on the current working directory, and tilde paths (~/...) may not resolve in every context. Absolute paths are generally the most reliable.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
+
+const SERVER_INSTRUCTIONS = `Desktop Commander provides tools for working with the user's authorized device.
+- Filesystem tools handle direct file and directory operations within configured access boundaries.
+- Terminal process tools support shell commands, REPLs, and long-running processes. start_process creates a process session; interact_with_process sends input; read_process_output reads later output; force_terminate ends a session.
+- Search tools are session-based. start_search creates a search session; get_more_search_results reads its results; stop_search ends it early.
+- Absolute paths are generally the most reliable because relative paths depend on the active working directory.
+- allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.`;
 
 import {
     StartProcessArgsSchema,
@@ -268,6 +275,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request: InitializeRequ
                 name: "desktop-commander",
                 version: VERSION,
             },
+            instructions: SERVER_INSTRUCTIONS,
         };
     } catch (error) {
         logToStderr('error', `Error in initialization handler: ${error}`);
@@ -325,6 +333,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get Configuration",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -332,8 +341,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Set a specific configuration value by key.
                         
-                        WARNING: Should be used in a separate chat from file operations and 
-                        command execution to prevent security issues.
+                        Security note: configuration changes affect later file and command behavior.
+                        Isolating them from untrusted file or command content reduces the chance that external content influences configuration.
                         
                         Config keys include:
                         - blockedCommands (array)
@@ -392,7 +401,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Text: Uses offset/length for line-based pagination
                         - Excel (.xlsx, .xls, .xlsm): Returns JSON 2D array
                           * sheet: "Sheet1" (name) or "0" (index as string, 0-based)
-                          * range: ALWAYS use FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
+                          * range uses FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
                           * offset/length work as row pagination (optional fallback)
                         - Images (PNG, JPEG, GIF, WebP): Base64 encoded viewable content
                         - PDF: Extracts text content as markdown with page structure
@@ -404,13 +413,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             Each element shows its body index [0], [1], etc.
                           * WITH offset/length: Returns raw pretty-printed XML with line pagination.
                             Use this to drill into specific sections or see the actual XML for editing.
-                          * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
-                            to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
-                            using XML fragments copied from the read output.
-                          * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
-                            offset=0 always returns the outline regardless of length.
-                          * For BULK changes (translation, mass replacements): use start_process with Python
-                            zipfile module to find/replace all <w:t> elements at once.
+                          * Raw DOCX XML output is compatible with edit_block's XML find/replace mode using
+                            XML fragments copied from the read output.
+                          * Raw XML mode requires a non-zero offset (offset=1 starts from line 1).
+                            offset=0 returns the outline regardless of length.
+                          * Bulk transformations can be performed programmatically against the DOCX archive
+                            when the task requires changes across many XML text nodes.
 
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -440,6 +448,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Read Multiple Files",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -447,37 +456,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Write or append to file contents.
 
-                        IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
-                        DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
-                        To CREATE a new DOCX, use write_file with .docx extension — text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
+                        PDF creation is handled by the dedicated write_pdf tool.
+                        Existing DOCX content can be edited with edit_block. New DOCX files can be created here; markdown headings (#, ##, ###) are converted to styled DOCX paragraphs.
 
-                        CHUNKING IS STANDARD PRACTICE: Always write files in chunks of 25-30 lines maximum.
-                        This is the normal, recommended way to write files - not an emergency measure.
-
-                        STANDARD PROCESS FOR ANY FILE:
-                        1. FIRST → write_file(filePath, firstChunk, {mode: 'rewrite'})  [≤30 lines]
-                        2. THEN → write_file(filePath, secondChunk, {mode: 'append'})   [≤30 lines]
-                        3. CONTINUE → write_file(filePath, nextChunk, {mode: 'append'}) [≤30 lines]
-
-                        ALWAYS CHUNK PROACTIVELY - don't wait for performance warnings!
-
-                        WHEN TO CHUNK (always be proactive):
-                        1. Any file expected to be longer than 25-30 lines
-                        2. When writing multiple files in sequence
-                        3. When creating documentation, code files, or configuration files
-
-                        HANDLING CONTINUATION ("Continue" prompts):
-                        If user asks to "Continue" after an incomplete operation:
-                        1. Read the file to see what was successfully written
-                        2. Continue writing ONLY the remaining content using {mode: 'append'}
-                        3. Keep chunks to 25-30 lines each
+                        CHUNKED WRITES:
+                        - Repeated calls with mode='rewrite' followed by mode='append' are supported for longer files.
+                        - Chunks of roughly 25-30 lines minimize latency when writing long text, multiple files, documentation, code, or configuration files.
+                        - Files over 50 lines are still written successfully but may generate performance notes.
+                        - For continuation after a partial write, the existing file state can be inspected before appending the remaining content.
 
                         FORMAT HANDLING (by extension):
                         - Text files: String content
                         - Excel (.xlsx, .xls, .xlsm): JSON 2D array or {"SheetName": [[...]]}
                           Example: '[["Name","Age"],["Alice",30]]'
 
-                        Files over 50 lines will generate performance notes but are still written successfully.
                         Only works within allowed directories.
 
                         ${PATH_GUIDANCE}
@@ -496,10 +488,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Create a new PDF file or modify an existing one.
 
-                        THIS IS THE ONLY TOOL FOR CREATING AND MODIFYING PDF FILES.
+                        Dedicated PDF creation and modification tool.
 
-                        RULES ABOUT FILENAMES:
-                        - When creating a new PDF, 'outputPath' MUST be provided and MUST use a new unique filename (e.g., "result_01.pdf", "analysis_2025_01.pdf", etc.).
+                        OUTPUT FILES:
+                        - Creating a PDF requires 'outputPath' with a new filename (e.g., "result_01.pdf", "analysis_2025_01.pdf", etc.).
 
                         MODES:
                         1. CREATE NEW PDF:
@@ -508,9 +500,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         2. MODIFY EXISTING PDF:
                            - Pass array of operations as 'content'.
-                           - NEVER overwrite the original file.
-                           - ALWAYS provide a new filename in 'outputPath'.
-                           - After modifying, show original file path and new file path to user.
+                           - Modifications preserve the original PDF and require a different filename in 'outputPath'.
+                           - The result includes the original and output paths for reference.
 
                            write_pdf(path="doc.pdf", content=[
                                { type: "delete", pageIndexes: [0, 2] },
@@ -567,6 +558,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Create Directory",
                     readOnlyHint: false,
+                    openWorldHint: false,
                     destructiveHint: false,
                 },
             },
@@ -575,7 +567,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Get a detailed listing of all files and directories in a specified path.
                         
-                        Use this instead of 'execute_command' with ls/dir commands.
+                        Returns a structured directory listing without starting a shell command.
                         Results distinguish between files and directories with [FILE] and [DIR] prefixes.
                         
                         Supports recursive listing with the 'depth' parameter (default: 2):
@@ -608,6 +600,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "List Directory Contents",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -649,13 +642,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Finding patterns in code: "console.log statements", "import statements"
                         - User describes functionality: "components that handle login", "files with database queries"
                         
-                        WHEN UNSURE OR USER REQUEST IS AMBIGUOUS:
-                        Run TWO searches in parallel - one for files and one for content:
-                        
-                        Example approach for ambiguous queries like "find authentication stuff":
-                        1. Start file search: searchType="files", pattern="auth"
-                        2. Simultaneously start content search: searchType="content", pattern="authentication"  
-                        3. Present combined results: "Found 3 auth-related files and 8 files containing authentication code"
+                        AMBIGUOUS SEARCHES:
+                        Queries that could refer to either filenames or file contents can be covered with two
+                        searches: one with searchType="files" and one with searchType="content".
+                        Example: "find authentication stuff" can pair a filename search for "auth" with a
+                        content search for "authentication".
                         
                         SEARCH TYPES:
                         - searchType="files": Find files by name (pattern matches file names)
@@ -665,8 +656,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Default (literalSearch=false): Patterns are treated as regular expressions
                         - Literal (literalSearch=true): Patterns are treated as exact strings
                         
-                        WHEN TO USE literalSearch=true:
-                        Use literal search when searching for code patterns with special characters:
+                        literalSearch=true is useful for code patterns with special characters:
                         - Function calls with parentheses and quotes
                         - Array access with brackets
                         - Object methods with dots and parentheses
@@ -697,12 +687,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                           1. searchType="files", pattern="auth"
                           2. searchType="content", pattern="authentication"
                         
-                        PRO TIP: When user requests are ambiguous about whether they want files or content,
-                        run both searches concurrently and combine results for comprehensive coverage.
+                        Ambiguous requests can combine file-name and content searches for broader coverage.
                         
-                        Unlike regular search tools, this starts a background search process and returns
-                        immediately with a session ID. Use get_more_search_results to get results as they
-                        come in, and stop_search to stop the search early if needed.
+                        This tool starts a background search process and returns immediately with a session ID.
+                        Results are available through get_more_search_results, and stop_search can end the search early.
                         
                         Perfect for large directories where you want to see results immediately and
                         have the option to cancel if the search takes too long or you find what you need.
@@ -713,6 +701,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Start Search",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -743,6 +732,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get Search Results",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -762,6 +752,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Stop Search",
                     readOnlyHint: false,
+                    openWorldHint: false,
                     destructiveHint: false,
                 },
             },
@@ -779,6 +770,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "List Active Searches",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -803,6 +795,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get File Information",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             // Note: list_allowed_directories removed - use get_config to check allowedDirectories
@@ -813,16 +806,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Apply surgical edits to files.
 
-                        BEST PRACTICE: Make multiple small, focused edits rather than one large edit.
-                        Each edit_block call should change only what needs to be changed - include just enough
-                        context to uniquely identify the text being modified.
+                        Small, focused edits are easier to verify than large multi-purpose replacements.
+                        old_string can include enough surrounding context to uniquely identify the intended text.
 
                         FORMAT HANDLING (by extension):
 
                         EXCEL FILES (.xlsx, .xls, .xlsm) - Range Update mode:
                         Takes:
                         - file_path: Path to the Excel file
-                        - range: ALWAYS use FROM:TO format - "SheetName!A1:C10" or "SheetName!C1:C1"
+                        - range uses FROM:TO format - "SheetName!A1:C10" or "SheetName!C1:C1"
                         - content: 2D array, e.g., [["H1","H2"],["R1","R2"]]
 
                         TEXT FILES - Find/Replace mode:
@@ -962,6 +954,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Read Process Output",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -1041,6 +1034,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "List Terminal Sessions",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -1055,6 +1049,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "List Running Processes",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -1085,6 +1080,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get Usage Statistics",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -1108,6 +1104,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get Recent Tool Calls",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             },
             {
@@ -1115,34 +1112,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
                         
-                        IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
-                        The user will fill out the form manually in their browser.
-                        
-                        WORKFLOW:
-                        1. When user agrees to give feedback, just call this tool immediately
-                        2. No need to ask questions or collect information
-                        3. Tool opens form with only usage statistics pre-filled automatically:
-                           - tool_call_count: Number of commands they've made
-                           - days_using: How many days they've used Desktop Commander
-                           - platform: Their operating system (Mac/Windows/Linux)
-                           - client_id: Analytics identifier
-                        
-                        All survey questions will be answered directly in the form:
-                        - Job title and technical comfort level
-                        - Company URL for industry context
-                        - Other AI tools they use
-                        - Desktop Commander's biggest advantage
-                        - How they typically use it
-                        - Recommendation likelihood (0-10)
-                        - User study participation interest
-                        - Email and any additional feedback
-                        
-                        EXAMPLE INTERACTION:
-                        User: "sure, I'll give feedback"
-                        Claude: "Perfect! Let me open the feedback form for you."
-                        [calls tool immediately]
-                        
-                        No parameters are needed - just call the tool to open the form.
+                        The form itself collects survey answers; this tool does not accept survey responses or
+                        pre-fill them. It automatically includes basic usage metadata:
+                        - tool_call_count: Number of commands made
+                        - days_using: Number of days Desktop Commander has been used
+                        - platform: Operating system (Mac/Windows/Linux)
+                        - client_id: Analytics identifier
+
+                        No input parameters are required.
                         
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
@@ -1166,13 +1143,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         4. Analyze a data file (promptId: 'onb2_04')
                         5. Check system health and resources (promptId: 'onb2_05')
                         
-                        USAGE:
-                        When user says "1", "2", "3", "4", or "5" from onboarding:
-                        - "1" → get_prompts(action='get_prompt', promptId='onb2_01')
-                        - "2" → get_prompts(action='get_prompt', promptId='onb2_02')
-                        - "3" → get_prompts(action='get_prompt', promptId='onb2_03')
-                        - "4" → get_prompts(action='get_prompt', promptId='onb2_04')
-                        - "5" → get_prompts(action='get_prompt', promptId='onb2_05')
+                        ONBOARDING CHOICE MAPPINGS:
+                        - "1" maps to promptId='onb2_01'
+                        - "2" maps to promptId='onb2_02'
+                        - "3" maps to promptId='onb2_03'
+                        - "4" maps to promptId='onb2_04'
+                        - "5" maps to promptId='onb2_05'
                         
                         The prompt content will be injected and execution begins immediately.
 
@@ -1181,6 +1157,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 annotations: {
                     title: "Get Prompts",
                     readOnlyHint: true,
+                    openWorldHint: false,
                 },
             }
         ];
