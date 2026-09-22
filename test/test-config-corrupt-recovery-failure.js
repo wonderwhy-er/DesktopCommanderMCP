@@ -66,6 +66,25 @@ const CASES = {
     }
   },
 
+  // Keeping the damaged file means every failed start meets it again. Preserving
+  // the same bytes over and over piles up copies that nothing ever removes.
+  'repeated-preserve': {
+    corrupt: TRUNCATED,
+    runs: 2,
+    async worker({ configManager }) {
+      configManager.writeConfigAtomically = async () => {
+        throw new Error('synthetic replacement write failure');
+      };
+      await configManager.getConfig();
+    },
+    verify(dir) {
+      const backups = readdirSync(dir).filter((name) => name.startsWith('config.json.corrupt.'));
+      assert.equal(backups.length, 1,
+        'a start that meets the same damaged config again does not add another copy of it');
+      assert.equal(readFileSync(path.join(dir, backups[0]), 'utf8'), TRUNCATED);
+    }
+  },
+
   // Copies of a damaged config are diagnostic material, not an archive. Keeping
   // every one ever made grows without limit in the directory the fail-closed
   // allowlist points at.

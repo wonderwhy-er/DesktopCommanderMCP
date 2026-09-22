@@ -177,6 +177,11 @@ const RECOVERABLE_POLICY_FIELDS: ReadonlyArray<RecoverablePolicyField> = [
   {
     key: 'allowedDirectories',
     // Never turn an unknown prior allowlist into unrestricted filesystem access.
+    // This is the narrowest value the field can express, since an empty list
+    // means unrestricted (see isPathAllowed). It is the config directory, so a
+    // file write can lift the restriction - deliberately: that is the way back
+    // for a user whose settings were lost. Refusing directories outright would
+    // need a deny-all marker in the allowlist, as `*` is for commands.
     failClosed: (configPath) => [path.dirname(configPath)],
     failClosedEffect: (configPath) => `file access is limited to ${path.dirname(configPath)}`,
   },
@@ -455,6 +460,39 @@ class ConfigManager {
     }
   }
 
+  /**
+   * Keep a copy of the damaged config beside it, and keep the set of copies
+   * small. The damaged file stays where it is, so a start that fails again meets
+   * the same bytes again: copying them every time would grow without limit in
+   * the very directory the fail-closed allowlist points at.
+   *
+   * Returns whether this call added a copy.
+   */
+  private async preserveCorruptConfig(corruptText: string, entries: string[]): Promise<boolean> {
+    const prefix = `${path.basename(this.configPath)}.corrupt.`;
+    const configDir = path.dirname(this.configPath);
+    const existing = entries.filter((name) => name.startsWith(prefix));
+
+    for (const name of existing) {
+      const kept = await fs.readFile(path.join(configDir, name), 'utf8').catch(() => null);
+      if (kept === corruptText) return false;
+    }
+
+    await fs.copyFile(this.configPath, `${this.configPath}.corrupt.${Date.now()}.${process.pid}`);
+
+    const dated = await Promise.all(existing.map(async (name) => ({
+      name,
+      mtimeMs: (await fs.stat(path.join(configDir, name)).catch(() => null))?.mtimeMs ?? 0,
+    })));
+    const stale = dated
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(MAX_CORRUPT_BACKUPS - 1);
+    for (const { name } of stale) {
+      await fs.unlink(path.join(configDir, name)).catch(() => {});
+    }
+    return true;
+  }
+
   private async recoverCorruptConfigUnderLock(
     error: SyntaxError,
     phase: CorruptConfigPhase
@@ -482,13 +520,8 @@ class ConfigManager {
 
     let backupCreated = false;
     if (existsSync(this.configPath)) {
-      const backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
       try {
-        // Copy rather than move. Until the replacement is on disk the damaged
-        // file is the only record of the user's settings, and an install with no
-        // config at all starts over permissive and replays onboarding.
-        await fs.copyFile(this.configPath, backupPath);
-        backupCreated = true;
+        backupCreated = await this.preserveCorruptConfig(corruptText, entries);
       } catch (backupError) {
         console.error('Failed to preserve corrupt config before recovery:', backupError);
         throw backupError;
