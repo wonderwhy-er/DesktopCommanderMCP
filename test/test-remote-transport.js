@@ -632,9 +632,9 @@ await test('a capability publish that failed is retried while the channel is hea
 
   // The real entry, not hand-set state: the push is acknowledged, the row
   // write after it is not. Since #724 that leaves presence unproven as well,
-  // which is what repairCostsAWrite records.
+  // which is what rowWriteFailedAfterPush records.
   await rc.trackPresenceUnlessInFlight(0, 1);
-  assert(rc.repairCostsAWrite === true, 'precondition: the push landed, the row write did not');
+  assert(rc.rowWriteFailedAfterPush === true, 'precondition: the push landed, the row write did not');
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
 
   rc.checkConnectionHealth(); // the 10s tick that sees a healthy channel
@@ -866,7 +866,7 @@ await test('a failed repair is not reported as a presence track error', async ()
 
 // Since #724 a failed row write leaves presence unproven, so the repair is
 // reached with presenceTracked false -- the same state as a push that was never
-// acknowledged. Only repairCostsAWrite tells the two apart, and the cases
+// acknowledged. Only rowWriteFailedAfterPush tells the two apart, and the cases
 // above reach the bounded branch by the other disjunct (presence tracked, flag
 // missing), so none of them would notice if the field stopped mattering.
 
