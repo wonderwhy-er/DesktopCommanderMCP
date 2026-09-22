@@ -112,7 +112,6 @@ export class DesktopCommanderIntegration {
             // Connect to Desktop Commander
             console.debug('[DEBUG] Connecting MCP client to transport');
             await this.mcpClient.connect(this.mcpTransport);
-            this.isReady = true;
 
             // Supervise the local half. Without these, a child crash is silent:
             // the SDK clears its transport and every subsequent call throws
@@ -139,22 +138,24 @@ export class DesktopCommanderIntegration {
             this.mcpClient.onerror = (err: Error) =>
                 console.error(` - ⚠️  Local Desktop Commander MCP error: ${err?.message ?? String(err)}`);
 
+            // Ready means the child has served a request, not that it
+            // completed the handshake — one definition, whichever path
+            // started the child, so no caller has to remember a second
+            // step to get the stronger meaning. A failure here lands in
+            // the catch below and leaves nothing half-built behind.
+            await this.verifyExecution();
+            this.isReady = true;
+
             console.log(' - 🔌 Connected to Desktop Commander MCP');
             console.debug('[DEBUG] Desktop Commander MCP connection successful');
 
         } catch (error) {
-            console.error(' - ❌ Failed to connect to Desktop Commander MCP:', error);
-            console.debug('[DEBUG] MCP connection error:', error);
-            // Leave no half-built client behind, or ensureReady() would treat the
-            // corpse as live on the next attempt.
-            this.isReady = false;
-            this.mcpClient = null;
-            if (this.mcpTransport) {
-                try {
-                    await this.mcpTransport.close();
-                } catch { /* already dead — nothing to salvage */ }
-                this.mcpTransport = null;
-            }
+            console.error(' - ❌ Failed to start Desktop Commander MCP:', error);
+            console.debug('[DEBUG] MCP startup error:', error);
+            // Leave no half-built child behind, or ensureReady() would treat
+            // the corpse as live on the next attempt. Covers a child that
+            // connected and then failed verification, too.
+            await this.discardChild();
             await captureRemote('desktop_integration_init_failed', { error });
             throw error;
         }
@@ -194,12 +195,9 @@ export class DesktopCommanderIntegration {
     /** One restart, with the pacing bookkeeping around it. */
     private async restartChild(): Promise<void> {
         try {
+            // initialize() resolves only once the child has served a request,
+            // so there is nothing further to prove here.
             await this.initialize();
-            // Not restarted until it has served a request. connect() only
-            // exchanges `initialize`, and a child that speaks MCP but cannot run
-            // a tool is not a working child - counting it as one would hand the
-            // caller a corpse and leave nothing to back off from.
-            await this.verifyExecution();
             this.restartAttempts = 0;
             this.nextRestartAt = 0;
         } catch (error) {
@@ -307,10 +305,10 @@ export class DesktopCommanderIntegration {
      * Prove the child can serve a request, not merely that it completed the
      * handshake. connect() only exchanges `initialize`, which says the process
      * is up and speaks MCP - the same substitution issue #4 is about, one level
-     * down. Throws so a caller can withhold readiness; listClientTools() keeps
-     * swallowing, because registerDevice() wants a tool list or nothing.
+     * down. Throws so initialize() can withhold readiness; listClientTools()
+     * keeps swallowing, because registerDevice() wants a tool list or nothing.
      */
-    async verifyExecution(): Promise<void> {
+    private async verifyExecution(): Promise<void> {
         if (!this.mcpClient) throw new Error('Local Desktop Commander MCP is not connected');
         await this.mcpClient.listTools();
     }
