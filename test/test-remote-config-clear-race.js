@@ -132,4 +132,31 @@ await test('a queued rotation keeps the device id it was announced under', async
     );
 });
 
+await test('a rotation announced while the clear is still queued does not recreate the config', async (configPath) => {
+    const { device, client } = await makeDevice(configPath);
+
+    // The clear waits behind a save, which is the window start() spends inside
+    // its own await. A rotation announced here still carries the revoked
+    // device id, so nothing downstream refuses the write it queues.
+    client.delaySaves(300);
+    const inFlight = device.savePersistedConfig();
+    const clearing = device.clearPersistedConfig();
+    client.rotate('access-2', 'refresh-2');
+
+    await inFlight;
+    await clearing;
+    await drainWrites(device);
+    assertWritesSucceeded();
+
+    const restarted = new MCPDevice();
+    restarted.configPath = configPath;
+    const loaded = await restarted.loadPersistedConfig();
+
+    assert.strictEqual(
+        loaded, null,
+        'the rotation landed after the removal and put the revoked device back on disk, so the ' +
+        `clear did not clear (deviceId=${restarted.deviceId}, on disk: ${onDisk(configPath)})`
+    );
+});
+
 finish();
