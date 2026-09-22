@@ -202,10 +202,9 @@ export class RemoteChannel {
     private capabilityRepublishAttempts = 0;
     /** Eligible health ticks left before the next burst. 0 = may try now. */
     private capabilityRepublishCooldown = 0;
-    /** True when the last attempt was acknowledged by track() but the row
-     * writes after it failed. Those cost a REST write per try, so that repair
-     * is bounded; a push that is never acknowledged is cheap and is not. */
-    private rowWriteIsWhatFailed = false;
+    /** Set when the push landed and the row writes after it did not, which is
+     * the repair that costs a REST call per try and is therefore budgeted. */
+    private repairCostsAWrite = false;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -561,10 +560,12 @@ export class RemoteChannel {
     /**
      * Publish presence, retrying a non-'ok' result — track() resolves with a
      * status rather than rejecting, and absent presence reads as offline on the
-     * dashboard. `presenceTracked` lets the health check retry later.
+     * dashboard. A second caller is dropped rather than queued: on a wedged
+     * socket each push buffers for the full 10s timeout, so 10s health ticks
+     * would stack them.
      */
-    private async trackPresenceWithRetry(recovered: number, attempts = 3, reason: PresenceTrackReason = 'join'): Promise<void> {
-        if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
+    private async trackPresenceUnlessInFlight(recovered: number, attempts = 3, reason: PresenceTrackReason = 'join'): Promise<void> {
+        if (this.isTrackingPresence) return;
         this.isTrackingPresence = true;
         try {
             await this.trackPresenceInner(recovered, attempts, reason);
@@ -578,7 +579,7 @@ export class RemoteChannel {
         // earlier join cannot keep the device counting as reachable while this
         // one is still deciding.
         this.presenceTracked = false;
-        this.rowWriteIsWhatFailed = false;
+        this.repairCostsAWrite = false;
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
@@ -627,7 +628,7 @@ export class RemoteChannel {
                 if (!capabilityWritten || !statusWritten) {
                     // The push worked; the writes did not. The health check
                     // bounds its retry on that, because each one is a REST call.
-                    this.rowWriteIsWhatFailed = true;
+                    this.repairCostsAWrite = true;
                     console.error('❌ Presence published but the device row could not be updated — not ready');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
@@ -815,7 +816,7 @@ export class RemoteChannel {
                         // `status` is written on the same event as the
                         // capability, in trackPresenceInner, so the two can
                         // never disagree.
-                        this.trackPresenceWithRetry(recovered)
+                        this.trackPresenceUnlessInFlight(recovered)
                             .catch(() => { /* logged inside */ })
                             .finally(() =>
                                 this.presenceTracked
@@ -1006,17 +1007,17 @@ export class RemoteChannel {
                 // An unacknowledged push costs a channel push; a failed row
                 // write costs a REST call, and one per tick for the life of the
                 // process is the log flood #697 also reported.
-                const rowWriteRepair = this.rowWriteIsWhatFailed
+                const budgetedRepair = this.repairCostsAWrite
                     || (this.presenceTracked && this.transportCapableWritten !== true);
 
-                if (!rowWriteRepair) {
+                if (!budgetedRepair) {
                     console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
-                    this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
+                    this.trackPresenceUnlessInFlight(0, 1).catch(() => { /* logged inside */ });
                 } else if (this.claimCapabilityRepublishAttempt()) {
                     // A statement, not an && operand: it spends the budget and
                     // can open the cooldown, so reordering must not move it.
                     console.debug('[DEBUG] Channel joined but transport capability not published — re-proving presence');
-                    this.trackPresenceWithRetry(0, 1, 'capability-repair')
+                    this.trackPresenceUnlessInFlight(0, 1, 'capability-repair')
                         .catch(() => { /* logged inside */ })
                         .finally(() => this.afterCapabilityRepairAttempt());
                 }
