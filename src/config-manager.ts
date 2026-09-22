@@ -7,6 +7,7 @@ import lockfile from 'proper-lockfile';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 import { retry } from './utils/retry.js';
+import { isSharingViolation } from './utils/errors.js';
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -53,7 +54,6 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 // frequent: waiting tens of milliseconds between tries costs throughput
 // against a busy reader without making the commit any likelier to land.
 // 41 tries capped at 25ms is ~856ms of waiting before the error is rethrown.
-const SHARING_VIOLATION_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const CONFIG_COMMIT_ATTEMPTS = 41;
 const CONFIG_COMMIT_RETRY_CAP_MS = 25;
 
@@ -238,14 +238,14 @@ class ConfigManager {
    * failure used to leave setValue for the caller, which on the tools/list
    * path is what reached the client of #697 as -32603.
    *
-   * These codes also carry genuine permission failures, on either platform.
-   * Those are not lost, only rethrown ~0.9s later.
+   * A genuine permission failure shares those codes; it is not lost, only
+   * rethrown ~0.9s later.
    */
   private commitConfigFile(tempPath: string): Promise<void> {
     return retry(() => fs.rename(tempPath, this.configPath), {
       attempts: CONFIG_COMMIT_ATTEMPTS,
       delayMs: (attempt) => Math.min(2 * attempt, CONFIG_COMMIT_RETRY_CAP_MS),
-      retryOn: (error: any) => SHARING_VIOLATION_CODES.has(error?.code),
+      retryOn: isSharingViolation,
     });
   }
 
