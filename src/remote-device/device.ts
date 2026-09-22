@@ -9,6 +9,14 @@ import fs from 'fs/promises';
 import path from 'path';
 import { captureRemote } from '../utils/capture.js';
 
+// Windows refuses a rename onto an existing file with EPERM while an antivirus
+// or an indexer still holds the destination open. It clears in milliseconds, so
+// a few spaced attempts cover it; the alternative - unlinking the destination
+// first - would trade a lost rotation for a lost config whenever the retry also
+// failed. Under 300ms in total, against a rotation cadence of 45 minutes.
+const CONFIG_COMMIT_ATTEMPTS = 5;
+const CONFIG_COMMIT_RETRY_MS = 20;
+
 export interface MCPDeviceOptions {
     persistSession?: boolean;
 }
@@ -396,6 +404,7 @@ export class MCPDevice {
     }
 
     private async writePersistedConfig(rotated?: AuthSession, announcedDeviceId?: string): Promise<void> {
+        let tempPath: string | undefined;
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             // A config with no device id costs the next run everything: it
@@ -438,14 +447,35 @@ export class MCPDevice {
             // Same shape as ConfigManager's atomic save; the pid keeps two
             // processes off each other's temp file, and configWriteQueue keeps
             // this one off its own.
-            const tempPath = `${this.configPath}.${process.pid}.tmp`;
+            tempPath = `${this.configPath}.${process.pid}.tmp`;
             await fs.writeFile(tempPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            await fs.rename(tempPath, this.configPath);
+            await this.commitConfigFile(tempPath);
             console.debug('[DEBUG] Config saved to:', this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
             console.debug('[DEBUG] Config save error details:', error);
             await captureRemote('remote_device_config_save_error', { error });
+        } finally {
+            // A commit that never happened leaves a file holding a session
+            // beside the config it did not replace.
+            if (tempPath) await fs.rm(tempPath, { force: true }).catch(() => { });
+        }
+    }
+
+    /**
+     * The commit boundary. Retries EPERM and nothing else, and never touches
+     * the destination: the old config has to outlive a commit that fails.
+     */
+    private async commitConfigFile(tempPath: string): Promise<void> {
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await fs.rename(tempPath, this.configPath);
+                return;
+            } catch (error: any) {
+                if (error?.code !== 'EPERM' || attempt === CONFIG_COMMIT_ATTEMPTS) throw error;
+                console.debug(`[DEBUG] Config commit refused (${attempt}/${CONFIG_COMMIT_ATTEMPTS}); retrying`);
+                await new Promise((resolve) => setTimeout(resolve, CONFIG_COMMIT_RETRY_MS * attempt));
+            }
         }
     }
 
