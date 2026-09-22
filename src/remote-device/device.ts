@@ -357,15 +357,20 @@ export class MCPDevice {
     }
 
     /**
-     * Queue the removal of the config. Goes through the same chain as a write,
-     * because removing it is one: a rotation queued a moment earlier would
-     * otherwise land afterwards and put the file back, and the one caller is
-     * the revoked-device branch of start(), where the credentials have to be
-     * gone before the next start decides whether to trust them.
+     * Serialises every change to the config file. Removing it is a change like
+     * any other: a rotation queued a moment earlier would otherwise land after
+     * the removal and put the file back.
+     *
+     * Returns the queued work, so a caller that must not outlive it -
+     * shutdown() - can await it.
      */
-    async clearPersistedConfig(): Promise<void> {
-        this.configWriteChain = this.configWriteChain.then(() => this.removePersistedConfig());
+    private queueConfigWrite(write: () => Promise<void>): Promise<void> {
+        this.configWriteChain = this.configWriteChain.then(write);
         return this.configWriteChain;
+    }
+
+    async clearPersistedConfig(): Promise<void> {
+        return this.queueConfigWrite(() => this.removePersistedConfig());
     }
 
     private async removePersistedConfig(): Promise<void> {
@@ -378,26 +383,13 @@ export class MCPDevice {
         }
     }
 
-    /**
-     * Queue a config write. Returns the queued write, so a caller that must not
-     * outlive it - shutdown() - can await it.
-     */
     async savePersistedConfig(rotated?: AuthSession): Promise<void> {
-        // Take the device id together with the session it belongs to. A rotated
-        // session is handed over now and written later, off the queue, and
-        // start() reassigns the id inside that gap - once when a revoked device
-        // is cleared, again when authenticate() answers. Reading the id at write
-        // time would pair one device with another device's session.
-        //
-        // A save that carries no session re-reads one instead, so its id and its
-        // session are not taken at the same instant: getSession() sits between
-        // them and can wait on a lock. It does not have to be tighter - the only
-        // caller of that form is start(), which awaits the save, so nothing
-        // reassigns the id underneath it.
+        // start() reassigns the device id between a rotation being announced
+        // and its write running - when a revoked device is cleared, and when
+        // authenticate() answers - so the id travels with the session it
+        // belongs to rather than being read at write time.
         const announcedDeviceId = rotated ? this.deviceId : undefined;
-        this.configWriteChain = this.configWriteChain.then(
-            () => this.writePersistedConfig(rotated, announcedDeviceId));
-        return this.configWriteChain;
+        return this.queueConfigWrite(() => this.writePersistedConfig(rotated, announcedDeviceId));
     }
 
     private async writePersistedConfig(rotated?: AuthSession, announcedDeviceId?: string): Promise<void> {
