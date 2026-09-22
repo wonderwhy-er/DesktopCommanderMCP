@@ -344,6 +344,20 @@ async function worker() {
     );
     console.log('✓ eviction after the answer is still reported');
 
+    // 16. The guard trims before it matches and the replace does not, so a
+    // command with a leading space runs untouched while the reply names it as
+    // rewritten — the tool telling an untruth about itself.
+    const notRewritten = await describeStart(startProcess, '  ssh -V');
+    assert.ok(
+      /Process started with PID/.test(notRewritten),
+      `the command must have run, got: ${JSON.stringify(notRewritten)}`
+    );
+    assert.ok(
+      !/Command rewritten/.test(notRewritten),
+      `a command that was not rewritten must not be reported as one, got: ${JSON.stringify(notRewritten)}`
+    );
+    console.log('✓ a command the rewrite left alone is not reported as rewritten');
+
     await report({ type: 'done' });
   } catch (error) {
     // The assertion message is the point; the parent fails once, with that text.
