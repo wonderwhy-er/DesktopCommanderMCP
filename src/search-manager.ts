@@ -79,6 +79,7 @@ export interface SearchSession {
   shortfalls: Set<SearchShortfall>;
   producers: Promise<unknown>[];  // Office searches still running alongside ripgrep
   stopped: boolean;         // The search was cut short; producers check this to give up
+  settling: boolean;        // Completion is under way; a second ending must not repeat it
   retainedChars: number;    // Length of the result text held in results[]
   skippingOversizedLine?: boolean;  // Discarding a line too large to buffer
 }
@@ -137,10 +138,6 @@ export interface SearchSessionOptions {
     // Start ripgrep process
     const rgProcess = spawn(rgPath, args, { windowsHide: true });  // Prevent visible console windows on Windows
     
-    if (!rgProcess.pid) {
-      throw new Error('Failed to start ripgrep process');
-    }
-
     // Create session
     const session: SearchSession = {
       id: sessionId,
@@ -157,7 +154,8 @@ export interface SearchSessionOptions {
       retainedChars: 0,
       shortfalls: new Set(),
       producers: [],
-      stopped: false
+      stopped: false,
+      settling: false
     };
 
     this.sessions.set(sessionId, session);
@@ -167,6 +165,17 @@ export interface SearchSessionOptions {
 
     // Start cleanup interval now that we have a session
     startCleanupIfNeeded();
+
+    // A child without a pid never started and will say so on its own 'error'
+    // event. The handlers above are already listening, so that event settles the
+    // session like any other ending instead of escaping as an unhandled error.
+    if (!rgProcess.pid) {
+      session.isError = true;
+      session.error = 'Failed to start ripgrep process';
+      session.stopped = true;
+      void this.completeWhenProducersSettle(session, null);
+      throw new Error('Failed to start ripgrep process');
+    }
 
     // Set up timeout if specified and auto-terminate
     // For exact filename searches, use a shorter default timeout
@@ -957,6 +966,13 @@ export interface SearchSessionOptions {
    * event would go out without whatever they found.
    */
   private async completeWhenProducersSettle(session: SearchSession, code: number | null): Promise<void> {
+    // A failed spawn emits 'error' and then 'close', and a kill can do the same:
+    // the session ends once, and says so once.
+    if (session.settling) {
+      return;
+    }
+    session.settling = true;
+
     if (session.producers.length > 0) {
       await Promise.allSettled(session.producers);
     }
