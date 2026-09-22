@@ -170,15 +170,24 @@ function escapeRegExp(string: string): string {
 export type ProcessOutcome = 'running' | 'exited';
 
 /** Why the output handed to the caller may not be all of it. */
-export type OutputShortfall = 'pipe-still-open' | 'head-dropped';
+export type OutputShortfall = 'pipe-still-open' | 'head-dropped' | 'lines-evicted';
 
-/** The wording each shortfall gets, wherever it is reported. */
-export function describeOutputShortfall(reason: OutputShortfall): string {
+/**
+ * Every reason names itself the same way: a clause the caller frames. None of
+ * them arrives ready-punctuated, so no caller has to know which one it is
+ * holding before it can place it.
+ */
+export function describeOutputShortfall(
+  reason: OutputShortfall,
+  evicted?: { lines: number; capMB: number }
+): string {
   switch (reason) {
     case 'pipe-still-open':
       return 'its output pipe is still open, so more output may follow';
     case 'head-dropped':
-      return '[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap]';
+      return 'the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap';
+    case 'lines-evicted':
+      return `output exceeded the ${evicted?.capMB}MB buffer cap; the ${evicted?.lines} earliest lines were evicted and cannot be read. Line numbers and totals refer to the retained buffer only`;
   }
 }
 

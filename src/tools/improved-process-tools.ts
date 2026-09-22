@@ -17,8 +17,9 @@ const __dirname = path.dirname(__filename);
 const mcpRoot = path.resolve(__dirname, '..', '..');
 
 // Reported once per run, from start_process, so polling a process does not
-// count its shortfall again.
-const SHORTFALL_EVENTS: Record<OutputShortfall, string> = {
+// count its shortfall again. Eviction is not on that path — a later read finds
+// it while walking the session buffer — so it has no event here.
+const SHORTFALL_EVENTS: Partial<Record<OutputShortfall, string>> = {
   'head-dropped': 'process_output_truncated',
   'pipe-still-open': 'process_output_incomplete'
 };
@@ -196,7 +197,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   }
 
   for (const shortfall of result.outputShortfalls ?? []) {
-    capture(SHORTFALL_EVENTS[shortfall]);
+    const event = SHORTFALL_EVENTS[shortfall];
+    if (event) capture(event);
   }
 
   let statusMessage = '';
@@ -221,7 +223,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   // Under a completion line, a tail with its head missing reads as the whole
   // story.
   const truncationMessage = result.outputShortfalls?.includes('head-dropped')
-    ? '\n' + describeOutputShortfall('head-dropped')
+    ? `\n[Output truncated: ${describeOutputShortfall('head-dropped')}]`
     : '';
 
   // Add timing information if requested
@@ -373,9 +375,11 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Surface buffer-cap eviction so the model knows the retained output is not
   // the full output and that line numbers shifted (matches the truncation
   // markers used by other tools).
-  if (result.evictedLines && result.evictedLines > 0) {
-    const capMB = Math.round(MAX_BUFFERED_OUTPUT_CHARS / 1024 / 1024);
-    statusMessage += `\n[WARNING: output exceeded the ${capMB}MB buffer cap; the ${result.evictedLines} earliest lines were evicted and cannot be read. Line numbers and totals refer to the retained buffer only]`;
+  if (result.outputShortfalls.includes('lines-evicted')) {
+    statusMessage += `\n[WARNING: ${describeOutputShortfall('lines-evicted', {
+      lines: result.evictedLines ?? 0,
+      capMB: Math.round(MAX_BUFFERED_OUTPUT_CHARS / 1024 / 1024)
+    })}]`;
   }
 
   // Add process state info

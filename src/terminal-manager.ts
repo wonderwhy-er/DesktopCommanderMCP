@@ -615,37 +615,31 @@ export class TerminalManager {
     // First check active sessions
     const session = this.sessions.get(pid);
     if (session) {
-      const result = this.readFromLineBuffer(
-        session.outputLines,
-        offset,
-        length,
-        session.lastReadIndex,
-        (newIndex) => { session.lastReadIndex = newIndex; },
-        'running',
-        []
-      );
-      result.evictedLines = session.evictedLines;
-      return result;
+      return this.readFromLineBuffer(offset, length, {
+        lines: session.outputLines,
+        lastReadIndex: session.lastReadIndex,
+        updateLastRead: (newIndex) => { session.lastReadIndex = newIndex; },
+        outcome: 'running',
+        outputShortfalls: [],
+        evictedLines: session.evictedLines
+      });
     }
 
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
       const runtimeMs = completedSession.endTime.getTime() - completedSession.session.startTime.getTime();
-      const result = this.readFromLineBuffer(
-        completedSession.session.outputLines,
-        offset,
-        length,
-        0,  // Completed sessions don't track read position
-        () => {},  // No-op for completed sessions
-        'exited',
-        completedSession.outputShortfalls,
-        completedSession.exitCode,
+      return this.readFromLineBuffer(offset, length, {
+        lines: completedSession.session.outputLines,
+        lastReadIndex: 0,                       // completed sessions do not track one
+        updateLastRead: () => {},
+        outcome: 'exited',
+        outputShortfalls: completedSession.outputShortfalls,
+        evictedLines: completedSession.session.evictedLines,
+        exitCode: completedSession.exitCode,
         runtimeMs,
-        completedSession.signal
-      );
-      result.evictedLines = completedSession.session.evictedLines;
-      return result;
+        signal: completedSession.signal
+      });
     }
 
     return null;
@@ -655,17 +649,21 @@ export class TerminalManager {
    * Internal helper to read from a line buffer with offset/length
    */
   private readFromLineBuffer(
-    lines: string[],
     offset: number,
     length: number,
-    lastReadIndex: number,
-    updateLastRead: (index: number) => void,
-    outcome: ProcessOutcome,
-    outputShortfalls: OutputShortfall[],
-    exitCode?: number | null,
-    runtimeMs?: number,
-    signal?: NodeJS.Signals | null
+    from: {
+      lines: string[];
+      lastReadIndex: number;
+      updateLastRead: (index: number) => void;
+      outcome: ProcessOutcome;
+      outputShortfalls: OutputShortfall[];
+      evictedLines: number;
+      exitCode?: number | null;
+      runtimeMs?: number;
+      signal?: NodeJS.Signals | null;
+    }
   ): PaginatedOutputResult {
+    const { lines, lastReadIndex, updateLastRead, outcome, outputShortfalls, exitCode, runtimeMs, signal } = from;
     const totalLines = lines.length;
     let startIndex: number;
     let linesToRead: string[];
@@ -701,7 +699,10 @@ export class TerminalManager {
       readCount,
       remaining,
       outcome,
-      outputShortfalls,
+      outputShortfalls: from.evictedLines > 0
+        ? [...outputShortfalls, 'lines-evicted']
+        : outputShortfalls,
+      evictedLines: from.evictedLines,
       exitCode,
       runtimeMs,
       signal
