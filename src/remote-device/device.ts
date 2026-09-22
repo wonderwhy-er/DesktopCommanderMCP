@@ -366,6 +366,20 @@ export class MCPDevice {
     private async writePersistedConfig(rotated?: AuthSession): Promise<void> {
         try {
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
+            // A config with no device id cannot be used, so it is never written.
+            // start() hands this.deviceId straight to registerDevice(), which
+            // looks the device up and throws 'Device not found: undefined' when
+            // there is nothing to look up - so any run that got here without one
+            // is already over. What the file would cost is the next run: it
+            // restores the session, finds no device id, skips the revocation
+            // check that is guarded by one, and dies registering. Every time.
+            //
+            // Nothing legitimate needs it: authenticate() returns the device id
+            // and start() assigns it before the save that follows.
+            if (!this.deviceId) {
+                console.debug('[DEBUG] Skipping config save - no device id to attach it to');
+                return;
+            }
             // Prefer the session TOKEN_REFRESHED handed us over re-reading it. A
             // sign-out landing in that gap answers null, and the write below would
             // replace a usable refresh token with nothing.
