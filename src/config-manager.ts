@@ -26,6 +26,15 @@ export interface ClientInfo {
 
 type CorruptConfigPhase = 'startup' | 'mutation' | 'watcher';
 
+interface CorruptConfigSnapshot {
+  text: string;
+  bytes: number | null;
+  mtimeMs: number | null;
+}
+
+/** Copies of a damaged config are evidence, not an archive. */
+const MAX_CORRUPT_BACKUPS = 5;
+
 interface CorruptConfigRecoveryTelemetry {
   phase: CorruptConfigPhase;
   parse_error_kind: 'truncated' | 'invalid_json';
@@ -349,15 +358,15 @@ class ConfigManager {
     };
   }
 
-  private async readConfigFromDisk(): Promise<ServerConfig> {
+  private async readConfigFromDisk(attempts = 5): Promise<ServerConfig> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
       } catch (error: any) {
         lastError = error;
         if (error?.code === 'ENOENT') throw error;
-        if (!(error instanceof SyntaxError) || attempt === 4) throw error;
+        if (!(error instanceof SyntaxError) || attempt === attempts - 1) throw error;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     }
@@ -385,27 +394,40 @@ class ConfigManager {
     return '>=1h';
   }
 
-  private async inspectCorruptConfig(
-    error: SyntaxError,
-    phase: CorruptConfigPhase
-  ): Promise<Omit<CorruptConfigRecoveryTelemetry, 'backup_created' | 'recovered_by_other_process'>> {
-    const [stat, corruptText] = await Promise.all([
+  /**
+   * The damaged file as this process found it. Recovery runs under a lock other
+   * processes are waiting on, so the file is read once and the bytes are passed
+   * along to everything that needs them.
+   */
+  private async readCorruptSnapshot(): Promise<CorruptConfigSnapshot> {
+    const [stat, text] = await Promise.all([
       fs.stat(this.configPath).catch(() => null),
       fs.readFile(this.configPath, 'utf8').catch(() => ''),
     ]);
-    const configDir = path.dirname(this.configPath);
+    return { text, bytes: stat?.size ?? null, mtimeMs: stat?.mtimeMs ?? null };
+  }
+
+  private async listConfigDir(): Promise<string[]> {
+    return fs.readdir(path.dirname(this.configPath)).catch(() => [] as string[]);
+  }
+
+  private inspectCorruptConfig(
+    error: SyntaxError,
+    phase: CorruptConfigPhase,
+    snapshot: CorruptConfigSnapshot,
+    entries: string[]
+  ): Omit<CorruptConfigRecoveryTelemetry, 'backup_created' | 'recovered_by_other_process'> {
     const configName = path.basename(this.configPath);
-    const entries = await fs.readdir(configDir).catch(() => [] as string[]);
     const tempFileCount = entries.filter((name) =>
       name.startsWith(`${configName}.`) && name.endsWith('.tmp')
     ).length;
-    const persistedVersion = /"version"\s*:\s*"([0-9A-Za-z._+-]{1,32})"/.exec(corruptText)?.[1] ?? 'unknown';
+    const persistedVersion = /"version"\s*:\s*"([0-9A-Za-z._+-]{1,32})"/.exec(snapshot.text)?.[1] ?? 'unknown';
 
     return {
       phase,
-      parse_error_kind: this.classifyConfigParseError(error, corruptText),
-      config_bytes: stat?.size ?? null,
-      config_age_bucket: this.configAgeBucket(stat?.mtimeMs ?? null),
+      parse_error_kind: this.classifyConfigParseError(error, snapshot.text),
+      config_bytes: snapshot.bytes,
+      config_age_bucket: this.configAgeBucket(snapshot.mtimeMs),
       temp_file_count: tempFileCount,
       persisted_version: persistedVersion,
     };
@@ -437,13 +459,15 @@ class ConfigManager {
     error: SyntaxError,
     phase: CorruptConfigPhase
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    const forensics = await this.inspectCorruptConfig(error, phase);
+    const snapshot = await this.readCorruptSnapshot();
+    const entries = await this.listConfigDir();
+    const forensics = this.inspectCorruptConfig(error, phase, snapshot, entries);
 
     // Prefer the last parsed in-memory policy during runtime recovery. On startup,
     // salvage only complete string-array policy fields from the root of the
     // damaged JSON. This keeps recovery narrow without introducing a persistent
     // shadow config.
-    const corruptText = await fs.readFile(this.configPath, 'utf8').catch(() => '');
+    const corruptText = snapshot.text;
     const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
     const preservedClientId = clientIdMatch?.[1];
     const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
@@ -514,26 +538,31 @@ class ConfigManager {
     error: SyntaxError,
     phase: CorruptConfigPhase
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    // Keep a snapshot of what this process originally observed. If another
-    // process repairs the file while we wait for the lock, this is the only
-    // evidence of the corruption this process saw.
-    const observedForensics = await this.inspectCorruptConfig(error, phase);
+    // Keep the bytes this process originally saw. If another process repairs the
+    // file while we wait for the lock, they are the only evidence of the
+    // corruption this process met - and the directory is listed only in the
+    // branch that ends up reporting them.
+    const observed = await this.readCorruptSnapshot();
     const release = await this.acquireConfigLock();
     try {
       try {
-        const latest = await this.readConfigFromDisk();
+        // One read: under the lock no cooperating writer can be mid-write, which
+        // is the only thing the retries in readConfigFromDisk are there for.
+        const latest = await this.readConfigFromDisk(1);
+        const observedForensics = this.inspectCorruptConfig(error, phase, observed, await this.listConfigDir());
         return {
           config: latest,
           telemetry: { ...observedForensics, backup_created: false, recovered_by_other_process: true },
         };
       } catch (latestError: any) {
         if (latestError instanceof SyntaxError) {
-          // The file is still corrupt under the lock. Inspect it again so the
-          // forensic fields correspond to the exact snapshot we are replacing.
+          // Still corrupt under the lock. Recovery reads the file itself, so the
+          // forensic fields describe the exact snapshot being replaced.
           return await this.recoverCorruptConfigUnderLock(latestError, phase);
         }
         if (latestError?.code !== 'ENOENT') throw latestError;
 
+        const observedForensics = this.inspectCorruptConfig(error, phase, observed, await this.listConfigDir());
         const defaults = this.getDefaultConfig();
         defaults['welcomeOnboardingEligible'] = false;
         defaults['pendingWelcomeOnboarding'] = false;
