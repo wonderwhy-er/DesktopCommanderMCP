@@ -166,17 +166,14 @@ export interface SearchSessionOptions {
       settling: false
     };
 
-    this.sessions.set(sessionId, session);
-
     // Set up process event handlers
     this.setupProcessHandlers(session);
-
-    // Start cleanup interval now that we have a session
-    startCleanupIfNeeded();
 
     // A child without a pid never started and will say so on its own 'error'
     // event. The handlers above are already listening, so that event settles the
     // session like any other ending instead of escaping as an unhandled error.
+    // Nothing is registered: this call throws, so the caller never learns the id
+    // and a session left in the map would be one nobody could read or close.
     if (!rgProcess.pid) {
       session.isError = true;
       session.error = 'Failed to start ripgrep process';
@@ -184,6 +181,12 @@ export interface SearchSessionOptions {
       void this.completeWhenProducersSettle(session, null);
       throw new Error('Failed to start ripgrep process');
     }
+
+    // The child is running, and the caller is about to be given its id.
+    this.sessions.set(sessionId, session);
+
+    // Start cleanup interval now that we have a session
+    startCleanupIfNeeded();
 
     // Set up timeout if specified and auto-terminate
     // For exact filename searches, use a shorter default timeout
