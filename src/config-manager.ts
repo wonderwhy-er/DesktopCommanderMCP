@@ -47,6 +47,12 @@ const MAX_CORRUPT_BACKUPS = 5;
 const PARTIAL_WRITE_ATTEMPTS = 5;
 const PARTIAL_WRITE_RETRY_MS = 10;
 
+// A reader that keeps reopening the config can hold it for a while; the whole
+// budget is under a second, and it is only ever spent under contention.
+const COMMIT_ATTEMPTS = 12;
+const COMMIT_RETRY_MS = 15;
+const COMMIT_RETRY_CAP_MS = 120;
+
 interface CorruptConfigRecoveryTelemetry {
   phase: CorruptConfigPhase;
   parse_error_kind: 'truncated' | 'invalid_json';
@@ -679,11 +685,30 @@ ${explanation}` : refusal;
     }
   }
 
+  /**
+   * Windows refuses to rename over a config another process holds, and the hold
+   * is momentary. Retry it; never unlink the destination first, which would
+   * trade the atomic boundary for a window where the config does not exist.
+   */
+  private async commitConfigFile(tempPath: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(tempPath, this.configPath);
+        return;
+      } catch (error: any) {
+        const held = error?.code === 'EPERM' || error?.code === 'EACCES' || error?.code === 'EBUSY';
+        if (!held || attempt === COMMIT_ATTEMPTS - 1) throw error;
+        const wait = Math.min(COMMIT_RETRY_MS * (attempt + 1), COMMIT_RETRY_CAP_MS);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
+  }
+
   private async writeConfigAtomically(config: ServerConfig): Promise<void> {
     const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      await fs.rename(tempPath, this.configPath);
+      await this.commitConfigFile(tempPath);
     } finally {
       await fs.unlink(tempPath).catch(() => {});
     }
