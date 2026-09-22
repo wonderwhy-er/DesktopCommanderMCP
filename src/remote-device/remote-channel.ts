@@ -636,18 +636,7 @@ export class RemoteChannel {
                 }
 
                 this.presenceTracked = true;
-                if (reason === 'capability-repair') {
-                    // Same push, different cause. Reporting it as a presence
-                    // recovery would hide the repair and put a meaningless
-                    // recoveredAfterAttempts on the recovery event. The writes
-                    // above are the publish itself, so nothing is written here.
-                    console.log(`👋 Presence re-pushed to republish the transport capability (device ${this.deviceId})`);
-                    captureRemote('remote_channel_capability_repair_tracked', {}).catch(() => { });
-                } else {
-                    console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
-                    // Reconnect attempts preceding this join (0 on a first join).
-                    captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
-                }
+                this.announcePresenceTracked(reason, recovered);
                 return;
             }
 
@@ -656,19 +645,36 @@ export class RemoteChannel {
         }
 
         this.presenceTracked = false;
-        if (reason === 'capability-repair') {
-            // Filing this as a presence failure would hide the repair exactly
-            // as reporting its success as a presence recovery once did.
-            console.error('❌ Transport capability repair failed — presence push not acknowledged; withdrawing broadcast capability');
-            captureRemote('remote_channel_capability_repair_error', { attempts }).catch(() => { });
-        } else {
-            console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
-            captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
-        }
+        this.reportUnacknowledgedPush(reason, attempts);
         // Withdraw: the dashboard reads a flagged device with no presence as
         // offline. The faster heartbeat tier keeps the device's DB status
         // accurate while it recovers.
         await this.setTransportCapable(false);
+    }
+
+    /**
+     * One push, two causes. A repair filed under presence would hide it, and
+     * would carry a recoveredAfterAttempts that means nothing for a repair.
+     */
+    private announcePresenceTracked(reason: PresenceTrackReason, recovered: number): void {
+        if (reason === 'capability-repair') {
+            console.log(`👋 Presence re-pushed to republish the transport capability (device ${this.deviceId})`);
+            captureRemote('remote_channel_capability_repair_tracked', {}).catch(() => { });
+            return;
+        }
+        console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
+        captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
+    }
+
+    /** The same split on the way down. */
+    private reportUnacknowledgedPush(reason: PresenceTrackReason, attempts: number): void {
+        if (reason === 'capability-repair') {
+            console.error('❌ Transport capability repair failed — presence push not acknowledged; withdrawing broadcast capability');
+            captureRemote('remote_channel_capability_repair_error', { attempts }).catch(() => { });
+            return;
+        }
+        console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
+        captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
     }
 
     /**
