@@ -582,16 +582,22 @@ class ConfigManager {
       .filter((field) => failedClosed.includes(field) || carriedMark.includes(field.key))
       .map((field) => field.key);
     const stillFailClosed = this.failClosedFieldsIn({ ...defaults, [RECOVERY_FAIL_CLOSED_KEY]: marked });
-    if (stillFailClosed.length > 0) {
-      defaults[RECOVERY_FAIL_CLOSED_KEY] = stillFailClosed.map((field) => field.key);
-    }
-    await this.writeConfigAtomically(defaults);
-    this.config = { ...defaults, version: VERSION };
+    // The mark leads the file. Truncation eats a config from the end - it is the
+    // damage this recovers from - so a mark written after the policy is the part
+    // a cut takes first, leaving deny-all values that read as an ordinary policy
+    // nobody has to explain. Ahead of them, no cut can keep the policy and drop
+    // the mark; a cut that reaches the mark has taken the policy with it, and
+    // recovery starts over fail-closed.
+    const recovered: ServerConfig = stillFailClosed.length > 0
+      ? { [RECOVERY_FAIL_CLOSED_KEY]: stillFailClosed.map((field) => field.key), ...defaults }
+      : defaults;
+    await this.writeConfigAtomically(recovered);
+    this.config = { ...recovered, version: VERSION };
 
     console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
     if (stillFailClosed.length > 0) console.error(this.failClosedNotice(stillFailClosed));
     return {
-      config: defaults,
+      config: recovered,
       telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
     };
   }
