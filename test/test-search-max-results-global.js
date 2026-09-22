@@ -21,6 +21,9 @@ const COMPLETION_TIMEOUT_MS = 20000;
 // Fewer than MAX_RESULTS across both text files, so the Excel producer has to
 // contribute for the budget to be reached at all.
 const TEXT_MATCHES_PER_OFFICE_FILE = 2;
+// One more needle in the workbook than the budget allows, so the Excel producer
+// alone has to turn a match away.
+const OFFICE_MATCHES = MAX_RESULTS + 1;
 
 const tempDirs = [];
 
@@ -100,7 +103,7 @@ async function makeOfficeFixture() {
   const ExcelJS = await import('exceljs');
   const workbook = new ExcelJS.default.Workbook();
   const sheet = workbook.addWorksheet('Sheet1');
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < OFFICE_MATCHES; i++) {
     sheet.addRow([`row ${i} ${NEEDLE}`]);
   }
   await workbook.xlsx.writeFile(path.join(dir, 'book.xlsx'));
@@ -342,6 +345,27 @@ async function testOfficeProducerSharesTheBudget(searchManager, officeDir) {
   console.log(`✓ Excel producer: exactly ${state.totalMatches} matches, both producers on one budget`);
 }
 
+/**
+ * The workbook is searched on its own, so nothing but the Excel producer can
+ * fill the budget or report it spent.
+ */
+async function testOfficeOnlySearchSaysItWasCutShort(searchManager, officeDir) {
+  const { state } = await runToCompletion(searchManager, {
+    rootPath: officeDir,
+    pattern: NEEDLE,
+    searchType: 'content',
+    filePattern: '*.xlsx',
+    contextLines: 0,
+    maxResults: MAX_RESULTS
+  }, merged => merged.totalMatches >= MAX_RESULTS);
+
+  assert.strictEqual(state.totalMatches, MAX_RESULTS,
+    `a workbook of ${OFFICE_MATCHES} needles against a budget of ${MAX_RESULTS} must keep ${MAX_RESULTS}, got ${state.totalMatches}`);
+  assert.strictEqual(cutShortBy(state, 'max-results'), true,
+    `the workbook held ${OFFICE_MATCHES} needles and ${MAX_RESULTS} came back: the answer was cut short and must say so`);
+  console.log(`✓ Excel-only search: ${state.totalMatches} of ${OFFICE_MATCHES} kept, marked as cut short`);
+}
+
 async function main() {
   // Fixtures are built inside the try, so a failure still cleans up after itself.
   try {
@@ -370,6 +394,7 @@ async function main() {
     await testOneMatchOverBudgetIsFlagged(searchManager, smallDir);
     await testTimedOutSearchSaysSo(searchManager, handleGetMoreSearchResults, slowDir);
     await testOfficeProducerSharesTheBudget(searchManager, officeDir);
+    await testOfficeOnlySearchSaysItWasCutShort(searchManager, officeDir);
     console.log('\nAll maxResults tests passed.');
   } finally {
     tempDirs.forEach(removeQuietly);
