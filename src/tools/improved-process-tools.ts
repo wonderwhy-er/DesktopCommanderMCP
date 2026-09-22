@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, formatProcessCompletion, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -186,7 +186,12 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   const processState = analyzeProcessState(result.output, result.pid);
 
   let statusMessage = '';
-  if (processState.isWaitingForInput) {
+  if (result.isComplete) {
+    // The process is already gone, so its own exit status is the answer.
+    // analyzeProcessState reads the output text, which says nothing at all
+    // about a process that exited without printing anything (#702).
+    statusMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs)}`;
+  } else if (processState.isWaitingForInput) {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
   } else if (processState.isFinished) {
     statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
@@ -351,10 +356,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
   // Add process state info
   let processStateMessage = '';
   if (result.isComplete) {
-    const runtimeStr = result.runtimeMs !== undefined 
-      ? ` (runtime: ${(result.runtimeMs / 1000).toFixed(2)}s)` 
-      : '';
-    processStateMessage = `\n✅ Process completed with exit code ${result.exitCode}${runtimeStr}`;
+    processStateMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs)}`;
   } else if (session) {
     // Analyze state for running processes
     const fullOutput = session.outputLines.join('\n');

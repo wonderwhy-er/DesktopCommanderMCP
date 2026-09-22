@@ -30,6 +30,12 @@ export interface CommandExecutionResult {
   pid: number;
   output: string;
   isBlocked: boolean;
+  // Set once the child has exited. Without it a process that died printing
+  // nothing is indistinguishable from one that is alive and quiet (#702).
+  isComplete?: boolean;
+  // Exit code of a finished process; null when it was killed by a signal.
+  exitCode?: number | null;
+  runtimeMs?: number;
   timingInfo?: TimingInfo;
 }
 

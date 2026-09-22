@@ -167,6 +167,20 @@ function escapeRegExp(string: string): string {
 }
 
 /**
+ * The single source for how a finished process is announced.
+ *
+ * start_process, read_process_output and getNewOutput all report the same
+ * event, so the sentence lives here once instead of being copied per call site
+ * (and then drifting). The marker follows the exit code, so a failure cannot be
+ * announced with a success tick.
+ */
+export function formatProcessCompletion(exitCode: number | null | undefined, runtimeMs?: number): string {
+  const runtime = runtimeMs !== undefined ? ` (runtime: ${(runtimeMs / 1000).toFixed(2)}s)` : '';
+  const marker = exitCode === 0 ? '✅' : '❌';
+  return `${marker} Process completed with exit code ${exitCode}${runtime}`;
+}
+
+/**
  * Format process state for user display
  */
 export function formatProcessStateMessage(state: ProcessState, pid: number): string {

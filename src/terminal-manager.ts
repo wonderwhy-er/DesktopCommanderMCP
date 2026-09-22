@@ -4,7 +4,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, Out
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
 import { configManager } from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import { analyzeProcessState } from './utils/process-detection.js';
+import { analyzeProcessState, formatProcessCompletion } from './utils/process-detection.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -459,6 +459,7 @@ export class TerminalManager {
       }, timeoutMs);
 
       childProcess.on('exit', (code: any) => {
+        const endTime = new Date();
         if (childProcess.pid) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
@@ -466,7 +467,7 @@ export class TerminalManager {
             outputLines: [...session.outputLines], // Copy line buffer
             exitCode: code,
             startTime: session.startTime,
-            endTime: new Date(),
+            endTime,
             evictedLines: session.evictedLines,
             evictedChars: session.evictedChars
           });
@@ -480,10 +481,16 @@ export class TerminalManager {
           this.sessions.delete(childProcess.pid);
         }
         exitReason = 'process_exit';
+        // The caller must be able to tell "finished, code 255" from "still
+        // running, nothing printed yet"; the exit code was previously kept only
+        // in completedSessions, one extra read_process_output call away (#702).
         resolveOnce({
           pid: childProcess.pid!,
           output,
-          isBlocked: false
+          isBlocked: false,
+          isComplete: true,
+          exitCode: code,
+          runtimeMs: endTime.getTime() - session.startTime.getTime()
         });
       });
     });
@@ -673,13 +680,11 @@ export class TerminalManager {
 
     // For completed sessions, append completion info with runtime
     if (result.isComplete) {
-      const runtimeStr = result.runtimeMs !== undefined 
-        ? `\nRuntime: ${(result.runtimeMs / 1000).toFixed(2)}s` 
-        : '';
+      const completion = formatProcessCompletion(result.exitCode, result.runtimeMs);
       if (output) {
-        return `${output}\n\nProcess completed with exit code ${result.exitCode}${runtimeStr}`;
+        return `${output}\n\n${completion}`;
       } else {
-        return `Process completed with exit code ${result.exitCode}${runtimeStr}\n(No output produced)`;
+        return `${completion}\n(No output produced)`;
       }
     }
 
