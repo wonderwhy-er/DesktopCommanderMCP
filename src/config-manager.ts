@@ -479,7 +479,7 @@ class ConfigManager {
    * the same bytes again: copying them every time would grow without limit in
    * the very directory the fail-closed allowlist points at.
    *
-   * Returns whether this call added a copy.
+   * Returns whether these bytes are preserved, by this call or an earlier one.
    */
   private async preserveCorruptConfig(snapshot: CorruptConfigSnapshot, entries: string[]): Promise<boolean> {
     const prefix = `${path.basename(this.configPath)}.corrupt.`;
@@ -498,7 +498,7 @@ class ConfigManager {
     for (const { name, size } of existing) {
       if (size !== snapshot.buffer.length) continue;
       const kept = await fs.readFile(path.join(configDir, name)).catch(() => null);
-      if (kept && Buffer.compare(kept, snapshot.buffer) === 0) return false;
+      if (kept && Buffer.compare(kept, snapshot.buffer) === 0) return true;
     }
 
     await fs.copyFile(this.configPath, `${this.configPath}.corrupt.${Date.now()}.${process.pid}`);

@@ -234,6 +234,27 @@ const CASES = {
     }
   },
 
+  // "Preserved" is a fact about the damaged file, not about which start did it.
+  // A second start that finds its bytes already kept must not report otherwise.
+  'preserved-copy-reported': {
+    corrupt: TRUNCATED,
+    runs: 2,
+    async worker({ configManager, CONFIG_FILE, logs, runIndex }) {
+      const events = [];
+      configManager.emitCorruptConfigTelemetry = async (telemetry) => { events.push(telemetry); };
+      // The second start meets the same damage again, its copy already kept.
+      if (runIndex === 1) writeFileSync(CONFIG_FILE, TRUNCATED);
+      await configManager.getConfig();
+      if (runIndex === 0) return;
+
+      assert.equal(events.length, 1);
+      assert.equal(events[0].backup_created, true,
+        'the damaged config is preserved, whether or not this start is what copied it');
+      assert.ok(logs.some((line) => line.includes('preserved the corrupt file')),
+        'and stderr says so');
+    }
+  },
+
   // Damage can strike the recovered config too. Its policy then reads as a
   // perfectly ordinary top-level policy - it is the deny-all one - so recovery
   // salvages it and would forget it was ever a fallback.
