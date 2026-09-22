@@ -519,10 +519,54 @@ await test('concurrent status writes stay ordered', async () => {
 });
 
 // --- 6. Capability withdrawal -----------------------------------------------
-// For a flagged device the server treats absent presence as authoritative
-// offline and applies that overlay before selection, overriding `status`. So a
-// device that cannot join the private channel must stop advertising the flag
-// or it is undispatchable — there is no other transport to fall back on.
+// Presence is dashboard-authoritative, but server dispatch uses DB status +
+// transport_broadcast_v1. A joined broadcast channel therefore stays a valid
+// delivery path through a short Presence-only failure. Genuine channel failure
+// still withdraws after repeated recreate failures.
+
+await test('transient Presence failure keeps a previously proven capability', async () => {
+  const { rc, client } = makeRemoteChannel();
+  rc.transportCapableWritten = true;
+  rc.channel = { state: 'joined', track: async () => 'timed out' };
+
+  await rc.trackPresenceInner(0, 1);
+
+  assert(rc.transportCapableWritten === true, 'short Presence outage must keep broadcast capability');
+  assert(rc.presenceFailureStartedAt !== null, 'Presence grace timer should start');
+  assert(
+    !client.writes.some((w) => w.capabilities && w.capabilities.transport_broadcast_v1 === undefined),
+    'grace period must not write a withdrawn capability'
+  );
+});
+
+await test('sustained Presence failure withdraws after the grace period', async () => {
+  const { rc, client } = makeRemoteChannel();
+  rc.transportCapableWritten = true;
+  rc.channel = { state: 'joined', track: async () => 'timed out' };
+  rc.presenceFailureStartedAt = performance.now() - (6 * 60 * 1000);
+
+  await rc.trackPresenceInner(0, 1);
+
+  assert(rc.transportCapableWritten === false, 'sustained Presence outage must eventually withdraw');
+  const capWrite = client.writes.find((w) => w.capabilities);
+  assert(capWrite, 'withdrawal should write capabilities');
+  assert(
+    capWrite.capabilities.transport_broadcast_v1 === undefined,
+    'withdrawn payload must remove broadcast capability'
+  );
+});
+
+await test('Presence recovery clears the withdrawal grace timer', async () => {
+  const { rc } = makeRemoteChannel();
+  rc.transportCapableWritten = true;
+  rc.presenceFailureStartedAt = performance.now() - 30_000;
+  rc.channel = { state: 'joined', track: async () => 'ok' };
+
+  await rc.trackPresenceInner(0, 1);
+
+  assert(rc.presenceTracked === true, 'Presence should recover');
+  assert(rc.presenceFailureStartedAt === null, 'successful Presence must reset hysteresis');
+});
 
 await test('sustained recreate failure withdraws the transport capability', async () => {
   const { rc, client } = makeRemoteChannel();
