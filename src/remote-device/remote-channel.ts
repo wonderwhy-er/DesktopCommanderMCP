@@ -694,38 +694,34 @@ export class RemoteChannel {
     }
 
     /**
-     * Take one repair attempt, or refuse and burn a cooldown tick. Bursts of
-     * CAPABILITY_REPUBLISH_MAX_ATTEMPTS, then a pause: retrying every tick costs
-     * a REST write and a log line each time, and stopping for good would strand
-     * the device undispatchable with a fresh last_seen and status 'online'.
+     * Bursts, then a pause: retrying every tick costs a REST write and a log
+     * line each time, and stopping for good would strand the device
+     * undispatchable with a fresh last_seen and status 'online'.
      */
     private claimCapabilityRepublishAttempt(): boolean {
         if (this.capabilityRepublishCooldown > 0) {
             this.capabilityRepublishCooldown--;
             return false;
         }
-        // The burst is spent; afterCapabilityRepairAttempt() opens the cooldown
-        // once the try it belongs to has actually resolved.
         if (this.capabilityRepublishAttempts >= CAPABILITY_REPUBLISH_MAX_ATTEMPTS) return false;
         this.capabilityRepublishAttempts++;
         return true;
     }
 
     /**
-     * Called once a repair attempt has resolved. Only here is the outcome known:
-     * announcing on the claim instead would tell the operator the device cannot
-     * receive tool calls, and count that against the burst, even when the try
-     * being claimed goes on to land.
+     * Only here is the outcome known. Announcing on the claim instead would
+     * tell the operator the device cannot receive tool calls, and count that
+     * against the burst, even when the try being claimed goes on to land.
      */
     private afterCapabilityRepairAttempt(): void {
         if (this.transportCapableWritten === true) return; // landed; budget already reset
         if (this.capabilityRepublishAttempts < CAPABILITY_REPUBLISH_MAX_ATTEMPTS) return;
         this.capabilityRepublishAttempts = 0;
         this.capabilityRepublishCooldown = CAPABILITY_REPUBLISH_COOLDOWN_TICKS;
+        // From here the device looks online, answers the metadata tools the
+        // server handles itself, and fails every tool call. The silence that
+        // follows must not read as health.
         const pauseMin = Math.round(CAPABILITY_REPUBLISH_COOLDOWN_TICKS * HEALTH_CHECK_INTERVAL_MS / 60_000);
-        // Said out loud: from here the device looks online, answers the metadata
-        // tools the server handles itself, and fails every tool call. The
-        // silence that follows must not read as health.
         console.error(`❌ Transport capability still unpublished after ${CAPABILITY_REPUBLISH_MAX_ATTEMPTS} attempts — this device cannot receive tool calls; retrying in at least ${pauseMin}min`);
         captureRemote('remote_channel_capability_republish_exhausted', {
             attempts: CAPABILITY_REPUBLISH_MAX_ATTEMPTS
@@ -751,9 +747,7 @@ export class RemoteChannel {
                 return false;
             }
             this.transportCapableWritten = capable;
-            // Only a landed PUBLISH is evidence the repair can land. A landed
-            // withdrawal says nothing about that, and the missing flag it
-            // leaves behind is the very thing the repair exists to fix.
+            // A landed withdrawal is no evidence that publishing would land.
             if (capable) this.resetCapabilityRepublishBudget();
             console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
             // Tier changed — move last_seen onto the cadence that tier's sweep
@@ -1003,25 +997,15 @@ export class RemoteChannel {
                 }
             }
 
-            // Self-heal a proven channel: it is up, so nothing else will ever
-            // retry (SUBSCRIBED won't fire again). Until the repair lands the
-            // dashboard shows this device offline and the server fails every
-            // dispatch to it fast.
-            //
-            // One repair for both halves: push presence again. That push is
-            // what earns the capability flag — trackPresenceInner writes it on
-            // 'ok' and withdraws when it cannot — so the flag is re-earned
-            // rather than re-asserted, and isTrackingPresence is the single
-            // guard. The flag can also be missing while presence still reads
-            // tracked, because the withdrawal path leaves that marker set, so
-            // ask about both.
+            // Nothing else retries a channel that stays joined: SUBSCRIBED
+            // will not fire again. The flag can be missing while presence
+            // still reads tracked, because withdrawal leaves that marker set,
+            // so both are asked about.
             if (this.deviceId && !this.isTrackingPresence
                 && (!this.presenceTracked || this.transportCapableWritten !== true)) {
-                // Which half failed decides whether the retry is bounded. An
-                // unacknowledged push is a channel push, cheap to repeat every
-                // tick. A failed row write is a REST call, and repeating that
-                // every tick for the life of the process is the log flood #697
-                // also reported.
+                // An unacknowledged push costs a channel push; a failed row
+                // write costs a REST call, and one per tick for the life of the
+                // process is the log flood #697 also reported.
                 const rowWriteRepair = this.rowWriteIsWhatFailed
                     || (this.presenceTracked && this.transportCapableWritten !== true);
 
@@ -1029,9 +1013,8 @@ export class RemoteChannel {
                     console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                     this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
                 } else if (this.claimCapabilityRepublishAttempt()) {
-                    // Claimed as a statement, not as an && operand: it spends the
-                    // budget and can open the cooldown, and reordering the
-                    // condition must not silently move when that happens.
+                    // A statement, not an && operand: it spends the budget and
+                    // can open the cooldown, so reordering must not move it.
                     console.debug('[DEBUG] Channel joined but transport capability not published — re-proving presence');
                     this.trackPresenceWithRetry(0, 1, 'capability-repair')
                         .catch(() => { /* logged inside */ })
