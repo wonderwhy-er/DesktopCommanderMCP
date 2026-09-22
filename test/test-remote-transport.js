@@ -476,11 +476,25 @@ await test('heartbeat stays silent when no transport is joined', async () => {
   assert(client.writes.length === 0, 'a deaf device must let the sweep age its row out');
 });
 
-await test('heartbeat writes when the private channel is joined', async () => {
+// Joined is only half of it. The capability the server checks before it will
+// dispatch is written when presence is published, so a joined channel whose
+// presence never landed is undispatchable — and a heartbeat there would keep
+// the row young and online, which is the one thing that stops the server's
+// sweep from correcting it. Reachability is now both.
+await test('heartbeat stays silent when joined but presence was never published', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
+  rc.presenceTracked = false;
   await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 1, 'joined channel, no executor probe registered = reachable');
+  assert(client.writes.length === 0, 'no presence = no delivery path = let the row age out');
+});
+
+await test('heartbeat writes when the channel is joined and presence is published', async () => {
+  const { rc, client } = makeRemoteChannel();
+  rc.channel = makeChannelState('joined');
+  rc.presenceTracked = true;
+  await rc.updateHeartbeat(DEVICE_ID);
+  assert(client.writes.length === 1, 'joined + presence published = reachable');
 });
 
 await test('status goes offline when the private channel is not joined', async () => {

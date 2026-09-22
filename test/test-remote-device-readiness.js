@@ -166,6 +166,9 @@ function makeDevice({ channelState = 'joined', latencyByStatus = {} } = {}) {
     device.remoteChannel.client = client;
     device.remoteChannel.deviceId = DEVICE_ID;
     device.remoteChannel.channel = { state: channelState };
+    // A joined channel models a device that also published its presence: the
+    // readiness predicate needs both halves of the remote side, plus the executor.
+    device.remoteChannel.presenceTracked = channelState === 'joined';
     return { device, client };
 }
 
