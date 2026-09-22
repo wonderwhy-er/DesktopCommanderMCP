@@ -38,6 +38,13 @@ const PLATFORMS = [
 const TEMP_DIR = path.join(__dirname, '../.ripgrep-downloads');
 const OUTPUT_DIR = path.join(__dirname, '../node_modules/@vscode/ripgrep/bin');
 
+const MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 2000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -160,26 +167,39 @@ async function downloadAndExtractPlatform(platform) {
     return;
   }
   
-  try {
-    // Download if not already cached
-    if (!fs.existsSync(tempFile)) {
-      await downloadFile(url, tempFile);
+  // The release CDN returns the occasional 5xx, and a dropped connection can
+  // leave a truncated archive behind, so retry from a clean temp file.
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      // Download if not already cached
+      if (!fs.existsSync(tempFile)) {
+        await downloadFile(url, tempFile);
+      }
+
+      // Extract
+      ensureDir(OUTPUT_DIR);
+
+      if (ext === 'zip') {
+        await extractZip(tempFile, OUTPUT_DIR, binaryName);
+      } else {
+        await extractTarGz(tempFile, OUTPUT_DIR, binaryName);
+      }
+
+      console.log(`  ✓ ${name}`);
+      return;
+    } catch (error) {
+      lastError = error;
+      fs.rmSync(tempFile, { force: true });
+      if (attempt === MAX_ATTEMPTS) break;
+      const delayMs = RETRY_BASE_MS * attempt;
+      console.warn(`  ⚠ ${name} attempt ${attempt}/${MAX_ATTEMPTS} failed (${error.message}) — retrying in ${delayMs / 1000}s`);
+      await sleep(delayMs);
     }
-    
-    // Extract
-    ensureDir(OUTPUT_DIR);
-    
-    if (ext === 'zip') {
-      await extractZip(tempFile, OUTPUT_DIR, binaryName);
-    } else {
-      await extractTarGz(tempFile, OUTPUT_DIR, binaryName);
-    }
-    
-    console.log(`  ✓ ${name}`);
-  } catch (error) {
-    console.error(`  ✗ Failed: ${name} - ${error.message}`);
-    throw error;
   }
+
+  console.error(`  ✗ Failed: ${name} - ${lastError.message}`);
+  throw lastError;
 }
 
 async function main() {

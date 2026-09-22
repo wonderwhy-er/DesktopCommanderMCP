@@ -142,6 +142,8 @@ export class RemoteChannel {
     private localExecutorProbe: () => boolean = () => true;
     /** Tokens from the last setSession / TOKEN_REFRESHED, for setOffline(). */
     private lastKnownSession: { access_token: string; refresh_token: string | null } | null = null;
+    /** Notified when auth-js rotates the session; the device persists it. */
+    private sessionRefreshedHandler: ((session: AuthSession) => void) | null = null;
     /** Set by unsubscribe(): suppresses status/heartbeat writes so they can't
      * land after setOffline()'s durable write. */
     private shuttingDown = false;
@@ -232,6 +234,16 @@ export class RemoteChannel {
         this.localExecutorProbe = probe;
     }
 
+    /**
+     * Register a callback fired when auth-js rotates the session. auth-js
+     * rotates the refresh token on every refresh and the previous one is spent,
+     * so a config written once at startup replays a dead token on the next
+     * restart and the device demands browser authorization again.
+     */
+    onSessionRefreshed(handler: (session: AuthSession) => void) {
+        this.sessionRefreshedHandler = handler;
+    }
+
     async setSession(session: AuthSession): Promise<{ error: any }> {
         if (!this.client) throw new Error('Client not initialized');
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
@@ -278,6 +290,14 @@ export class RemoteChannel {
                         access_token: newSession.access_token,
                         refresh_token: newSession.refresh_token ?? this.lastKnownSession?.refresh_token ?? null,
                     };
+                    // Memory alone is not enough: the token we just replaced is
+                    // spent, so whatever is on disk is now unusable.
+                    // Hand over the session we were just given. A listener that
+                    // re-read it could find a sign-out instead and persist that.
+                    this.sessionRefreshedHandler?.({
+                        access_token: newSession.access_token,
+                        refresh_token: newSession.refresh_token ?? null,
+                    } as AuthSession);
                 } else if (event === 'SIGNED_OUT') {
                     void this.handleSignedOut();
                 }
@@ -668,13 +688,14 @@ export class RemoteChannel {
     }
 
     /**
-     * Handle a 'new_call' doorbell. It carries ids only; the row is fetched by
-     * primary key and handed to device.ts.
+     * Handle a 'new_call' doorbell. It carries ids only; one conditional update
+     * claims the row (pending -> executing) and returns it, and it is handed to
+     * device.ts marked as claimed.
      */
     private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
         if (!callId) return;
-        if (payload?.device_id && payload.device_id !== this.deviceId) {
+        if (payload?.device_id !== this.deviceId) {
             console.debug('[DEBUG] Ignoring doorbell for different device');
             return;
         }
@@ -686,45 +707,70 @@ export class RemoteChannel {
         if (!this.client) return;
 
         // Retry on transient failures (a REST blip while the socket stays
-        // healthy). Post-flip this fetch is the only way we learn about a call,
+        // healthy). This claim is the only way we learn about a call,
         // so a hiccup must not cost a 5-minute timeout.
         let row: any = null;
-        let lastError: any = null;
+        let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
             if (delayMs > 0) await this.sleep(delayMs);
             const { data, error } = await this.client
                 .from('mcp_remote_calls')
-                .select('*')
+                .update({ status: 'executing' })
                 .eq('id', callId)
-                .maybeSingle();
+                .eq('device_id', this.deviceId)
+                .eq('status', 'pending')
+                .select('*');
             if (!error) {
-                row = data;
-                lastError = null;
+                row = data?.[0] ?? null;
                 break;
             }
-            lastError = error;
-            console.debug(`[DEBUG] Doorbell row fetch attempt failed for ${callId}: ${error.message} — retrying`);
+            // Left set on purpose: a later clean empty result may still mean our
+            // own attempt committed, so the read-back below must run.
+            claimError = error;
+            console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
 
-        if (lastError) {
-            console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after retries:`, lastError.message);
-            await captureRemote('remote_channel_doorbell_fetch_error', { error: lastError });
+        if (row) {
+            this.dispatchToolCall({ new: row, claimed: true });
             return;
         }
-        if (!row) {
-            // Already claimed and deleted, or cleanup raced delivery. Not
-            // retried: the row is always inserted before the doorbell is sent.
-            await captureRemote('remote_channel_doorbell_row_missing', { call_id: callId });
-            return;
-        }
-        // Optimization, not a guard — saves a hop on a duplicate doorbell
-        // (retry, reconnect). Exactly-once lives in device.ts (seenCallIds + DB claim).
-        if (row.status !== 'pending') {
-            console.debug('[DEBUG] Doorbell call already claimed:', callId);
+        if (!claimError) {
+            // Claimed by a duplicate doorbell or another process, or cleaned up.
+            console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
+            await captureRemote('remote_channel_doorbell_claim_no_row', { call_id: callId });
             return;
         }
 
-        this.dispatchToolCall({ new: row });
+        await captureRemote('remote_channel_mark_call_executing_error', { error: claimError });
+
+        // A failed claim may never have reached the database, so read the row
+        // back: still 'pending' means nobody holds it and it can be delivered.
+        const { data: current, error } = await this.client
+            .from('mcp_remote_calls')
+            .select('*')
+            .eq('id', callId)
+            .eq('device_id', this.deviceId)
+            .maybeSingle();
+        if (error) {
+            console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after claim errors:`, error.message);
+            await captureRemote('remote_channel_doorbell_fetch_error', { error });
+            return;
+        }
+        if (current?.status === 'pending') {
+            // No claim landed; device.ts claims it.
+            this.dispatchToolCall({ new: current });
+        } else {
+            // 'executing' reads the same whether our own claim committed with its
+            // response lost or another process holding this device_id won it, and
+            // the row carries no claimant. Running it on that guess executes a
+            // side-effecting tool twice; skipping costs one call its timeout, which
+            // is what a failed doorbell read already cost before the claim path.
+            console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
+            await captureRemote('remote_channel_doorbell_claim_unresolved', {
+                call_id: callId,
+                status: current?.status ?? null,
+            });
+        }
     }
 
     /**
