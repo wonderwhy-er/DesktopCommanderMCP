@@ -484,6 +484,10 @@ export class TerminalManager {
       // rather than announcing a result that is still arriving.
       let exitStatus: { code: number | null; signal: NodeJS.Signals | null; at: Date } | null = null;
       let closeGrace: NodeJS.Timeout | null = null;
+      // Held from where it is created. Looking it up by pid at answer time
+      // would, after a long wait for 'close', find whatever session the OS has
+      // since given that pid to.
+      let completedRecord: CompletedSession | null = null;
 
       const finishAfterExit = (outputComplete: boolean) => {
         if (closeGrace) {
@@ -494,25 +498,26 @@ export class TerminalManager {
         // completed-session snapshot up to this same moment. Whatever arrived
         // in between is in this reply, and a later read of the same pid must
         // not show less than the caller has already seen.
-        const completed = childProcess.pid ? this.completedSessions.get(childProcess.pid) : undefined;
-        if (completed) {
-          completed.outputLines = [...session.outputLines];
-          completed.evictedLines = session.evictedLines;
-          completed.evictedChars = session.evictedChars;
+        if (completedRecord) {
+          completedRecord.outputLines = [...session.outputLines];
+          completedRecord.evictedLines = session.evictedLines;
+          completedRecord.evictedChars = session.evictedChars;
         }
         exitReason = 'process_exit';
-        if (!exitStatus || !outputComplete) {
+        if (!exitStatus) {
           resolveOnce({ pid: childProcess.pid!, output, isBlocked: false });
           return;
         }
-        // The caller must be able to tell "finished, code 255" from "still
-        // running, nothing printed yet"; the exit code used to live only in
-        // completedSessions, one extra read_process_output call away (#702).
+        // Two independent facts: the process is gone, with this code, and its
+        // output is complete. The first is certain here; the second only once
+        // 'close' lands. The caller must be able to tell "finished, code 255"
+        // from "still running, nothing printed yet" (#702), so the exit is
+        // reported either way and only completeness waits for 'close'.
         resolveOnce({
           pid: childProcess.pid!,
           output,
           isBlocked: false,
-          isComplete: true,
+          ...(outputComplete ? { isComplete: true } : {}),
           exitCode: exitStatus.code,
           signal: exitStatus.signal,
           runtimeMs: exitStatus.at.getTime() - session.startTime.getTime()
@@ -524,7 +529,7 @@ export class TerminalManager {
         exitStatus = { code, signal, at: endTime };
         if (childProcess.pid) {
           // Store completed session before removing active session
-          this.completedSessions.set(childProcess.pid, {
+          completedRecord = {
             pid: childProcess.pid,
             outputLines: [...session.outputLines], // Copy line buffer
             exitCode: code,
@@ -533,7 +538,8 @@ export class TerminalManager {
             endTime,
             evictedLines: session.evictedLines,
             evictedChars: session.evictedChars
-          });
+          };
+          this.completedSessions.set(childProcess.pid, completedRecord);
 
           // Keep only last 100 completed sessions
           if (this.completedSessions.size > 100) {
@@ -543,12 +549,18 @@ export class TerminalManager {
 
           this.sessions.delete(childProcess.pid);
         }
-        // From here the answer comes from 'close' or from the grace below. The
-        // wait timeout must not fire in between and report a process that has
-        // already exited as still running.
+        // From here the answer comes from 'close' or from the grace below.
+        // Neither of the other timers may speak in between: the wait timeout
+        // would report an exited process as still running, and the prompt check
+        // would read a prompt-shaped tail as "waiting for input" — a process
+        // that has exited is waiting for nothing.
         if (waitTimeout) {
           clearTimeout(waitTimeout);
           waitTimeout = null;
+        }
+        if (periodicCheck) {
+          clearInterval(periodicCheck);
+          periodicCheck = null;
         }
         closeGrace = setTimeout(() => finishAfterExit(false), EXIT_TO_CLOSE_GRACE_MS);
       });

@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, formatProcessCompletion, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, formatProcessCompletion, formatProcessExitPending, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -188,6 +188,11 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     // answer. analyzeProcessState reads the output text, which says nothing at
     // all about a process that exited without printing anything (#702).
     statusMessage = `\n${formatProcessCompletion(result.exitCode, result.runtimeMs, result.signal)}`;
+  } else if (result.exitCode !== undefined || result.signal) {
+    // Gone, but something else still holds its pipe. Reporting the exit here is
+    // what keeps this case from looking like #702 all over again; completeness
+    // is the part that is still unknown.
+    statusMessage = `\n${formatProcessExitPending(result.exitCode, result.signal)}`;
   } else {
     // Still running, or still writing: reading the output text is all there is,
     // and it is what prompt detection needs anyway.
@@ -205,7 +210,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   // above can be missing its beginning — and a completion line under truncated
   // output would otherwise read as the whole story.
   const truncationMessage = result.outputTruncated
-    ? '\n[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. Use read_process_output for the full output]'
+    ? '\n[Output truncated: the process wrote more than the initial wait buffer holds, so only its tail is shown above. read_process_output has the rest, up to its own buffer cap]'
     : '';
 
   // Add timing information if requested

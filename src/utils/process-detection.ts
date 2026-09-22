@@ -192,6 +192,22 @@ export function formatProcessCompletion(
 /**
  * Format process state for user display
  */
+/**
+ * The process is gone, but its output pipe is not: something else inherited it
+ * and can still write. Both halves are certain enough to say, and saying only
+ * one of them is how a reply either overstates completion or goes silent about
+ * a process that has already died (#702).
+ */
+export function formatProcessExitPending(
+  exitCode: number | null | undefined,
+  signal?: NodeJS.Signals | null
+): string {
+  const ended = signal
+    ? `terminated by ${signal}`
+    : (exitCode === null || exitCode === undefined ? 'exited' : `exited with code ${exitCode}`);
+  return `⏳ Process ${ended}, but its output pipe is still open, so more output may follow. Use read_process_output for the rest`;
+}
+
 export function formatProcessStateMessage(state: ProcessState, pid: number): string {
   if (state.isWaitingForInput) {
     return `Process ${pid} is waiting for input${state.detectedPrompt ? ` (detected: "${state.detectedPrompt.trim()}")` : ''}`;
