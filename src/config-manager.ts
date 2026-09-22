@@ -45,6 +45,16 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
+// Windows refuses to rename onto a path another process has open. The other
+// process is a reader or an older build mid-write, and it lets go in
+// milliseconds, so the commit waits it out rather than failing the caller.
+// The poll is deliberately short and frequent: a handle is held for the length
+// of one read, so waiting tens of milliseconds between tries costs throughput
+// against a busy reader without making the commit any more likely to land.
+const SHARING_VIOLATION_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const CONFIG_COMMIT_RETRIES = 40;
+const CONFIG_COMMIT_RETRY_CAP_MS = 25;
+
 /**
  * Singleton config manager for the server
  */
@@ -213,9 +223,30 @@ class ConfigManager {
     const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      await fs.rename(tempPath, this.configPath);
+      await this.commitConfigFile(tempPath);
     } finally {
       await fs.unlink(tempPath).catch(() => {});
+    }
+  }
+
+  /**
+   * Replace config.json with the temp file. The rename is the commit, and on
+   * Windows it is refused with EPERM while another process holds the target
+   * open -- a reader mid-read, or an older Desktop Commander that rewrites the
+   * file in place. Nothing is wrong with the write; the handle closes in
+   * milliseconds. Without this the failure leaves setValue for the caller,
+   * which on the tools/list path is what reached the client as -32603.
+   * POSIX renames over an open file, so this loop never runs a second pass there.
+   */
+  private async commitConfigFile(tempPath: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(tempPath, this.configPath);
+        return;
+      } catch (error: any) {
+        if (attempt >= CONFIG_COMMIT_RETRIES || !SHARING_VIOLATION_CODES.has(error?.code)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2 * (attempt + 1), CONFIG_COMMIT_RETRY_CAP_MS)));
+      }
     }
   }
 
