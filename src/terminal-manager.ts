@@ -626,7 +626,8 @@ export class TerminalManager {
         updateLastRead: (newIndex) => { session.lastReadIndex = newIndex; },
         outcome: 'running',
         outputShortfalls: [],
-        evictedLines: session.evictedLines
+        evictedLines: session.evictedLines,
+        canGrow: true
       });
     }
 
@@ -636,11 +637,14 @@ export class TerminalManager {
       const runtimeMs = completedSession.endTime.getTime() - completedSession.session.startTime.getTime();
       return this.readFromLineBuffer(offset, length, {
         lines: completedSession.session.outputLines,
-        lastReadIndex: 0,                       // completed sessions do not track one
-        updateLastRead: () => {},
+        // The session keeps its read position after it ends: a caller that read
+        // while it was alive must not be handed those lines a second time.
+        lastReadIndex: completedSession.session.lastReadIndex,
+        updateLastRead: (newIndex) => { completedSession.session.lastReadIndex = newIndex; },
         outcome: 'exited',
         outputShortfalls: completedSession.outputShortfalls,
         evictedLines: completedSession.session.evictedLines,
+        canGrow: completedSession.outputShortfalls.includes('pipe-still-open'),
         exitCode: completedSession.exitCode,
         runtimeMs,
         signal: completedSession.signal
@@ -663,6 +667,10 @@ export class TerminalManager {
       outcome: ProcessOutcome;
       outputShortfalls: OutputShortfall[];
       evictedLines: number;
+      // The last line of a buffer is the open one: appendToLineBuffer writes
+      // into it until a newline arrives. While that can still happen, a read
+      // must not count it as seen, or the rest of that line is skipped.
+      canGrow: boolean;
       exitCode?: number | null;
       runtimeMs?: number;
       signal?: NodeJS.Signals | null;
@@ -685,7 +693,8 @@ export class TerminalManager {
       startIndex = lastReadIndex;
       linesToRead = lines.slice(startIndex, startIndex + length);
       // Update lastReadIndex for "new output" behavior
-      updateLastRead(Math.min(startIndex + linesToRead.length, totalLines));
+      const consumable = from.canGrow ? Math.max(totalLines - 1, 0) : totalLines;
+      updateLastRead(Math.min(startIndex + linesToRead.length, consumable));
     } else {
       // Positive offset = absolute position
       startIndex = offset;
