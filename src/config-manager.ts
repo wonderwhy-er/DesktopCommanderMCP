@@ -215,15 +215,12 @@ class ConfigManager {
    * setValue, which on the tools/list path reached the client of #697 as
    * -32603. ENOENT is not a SyntaxError, so a missing file still throws at once.
    */
-  private async readConfigFromDisk(): Promise<ServerConfig> {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
-      } catch (error: any) {
-        if (attempt >= CONFIG_READ_ATTEMPTS || !(error instanceof SyntaxError)) throw error;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(2 * attempt, CONFIG_RETRY_CAP_MS)));
-      }
-    }
+  private readConfigFromDisk(): Promise<ServerConfig> {
+    return retry(async () => JSON.parse(await fs.readFile(this.configPath, 'utf8')), {
+      attempts: CONFIG_READ_ATTEMPTS,
+      delayMs: (attempt) => Math.min(2 * attempt, CONFIG_RETRY_CAP_MS),
+      retryOn: (error) => error instanceof SyntaxError,
+    });
   }
 
   private async writeConfigAtomically(config: ServerConfig): Promise<void> {
