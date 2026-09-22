@@ -3,7 +3,7 @@ import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
-import { analyzeProcessState, cleanProcessOutput, describeOutputShortfall, describeProcessExit, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
+import { analyzeProcessState, cleanProcessOutput, describeOutputShortfall, describeProcessExit, formatProcessStateMessage, OutputShortfall, ProcessState } from '../utils/process-detection.js';
 import * as os from 'os';
 import { configManager } from '../config-manager.js';
 import { spawn } from 'child_process';
@@ -15,6 +15,13 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const mcpRoot = path.resolve(__dirname, '..', '..');
+
+// Reported once per run, from start_process, so polling a process does not
+// count its shortfall again.
+const SHORTFALL_EVENTS: Record<OutputShortfall, string> = {
+  'head-dropped': 'process_output_truncated',
+  'pipe-still-open': 'process_output_incomplete'
+};
 
 // Track virtual Node sessions (PIDs that are actually Node fallback sessions)
 const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
@@ -186,6 +193,10 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
       content: [{ type: "text", text: `${result.output}${rewriteMessage}` }],
       isError: true,
     };
+  }
+
+  for (const shortfall of result.outputShortfalls ?? []) {
+    capture(SHORTFALL_EVENTS[shortfall]);
   }
 
   let statusMessage = '';
