@@ -203,6 +203,7 @@ class ConfigManager {
   private watcher: FSWatcher | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
   private pendingCorruptConfigTelemetry: CorruptConfigRecoveryTelemetry[] = [];
+  private failClosedFields: RecoverablePolicyField[] = [];
 
   constructor() {
     // Get user's home directory
@@ -548,6 +549,7 @@ class ConfigManager {
     this.config = { ...defaults, version: VERSION };
 
     console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
+    this.failClosedFields = failedClosed;
     if (failedClosed.length > 0) console.error(this.failClosedNotice(failedClosed));
     return {
       config: defaults,
@@ -560,6 +562,33 @@ class ConfigManager {
    * and the one file that undoes it. Without this the install simply stops
    * working - every command refused - with nothing on stderr to explain why.
    */
+  private applyFailClosedPolicy(fields: RecoverablePolicyField[]): void {
+    for (const field of fields) this.config[field.key] = field.failClosed(this.configPath);
+    this.failClosedFields = fields;
+    console.error(this.failClosedNotice(fields));
+  }
+
+  /**
+   * Why a request was refused, when the policy in force is recovery's fallback
+   * rather than the user's own setting - otherwise null. stderr is not where the
+   * user is looking; the tool that just refused them is.
+   */
+  failClosedExplanation(): string | null {
+    return this.failClosedFields.length > 0 ? this.failClosedNotice(this.failClosedFields) : null;
+  }
+
+  /** A fail-closed value stands only until the config carries its own again. */
+  private syncFailClosedState(config: ServerConfig): void {
+    if (this.failClosedFields.length === 0) return;
+    this.failClosedFields = this.failClosedFields.filter((field) => {
+      const current = config[field.key];
+      const failClosed = field.failClosed(this.configPath);
+      return Array.isArray(current)
+        && current.length === failClosed.length
+        && current.every((item, index) => item === failClosed[index]);
+    });
+  }
+
   private failClosedNotice(fields: RecoverablePolicyField[]): string {
     const effects = fields.map((field) => field.failClosedEffect(this.configPath)).join(' and ');
     const names = fields.map((field) => field.key).join(' and ');
@@ -660,6 +689,7 @@ class ConfigManager {
       mutate(latest, existed);
       await this.writeConfigAtomically(latest);
       this.config = { ...latest, version: VERSION };
+      this.syncFailClosedState(this.config);
       result = latest;
     } finally {
       try {
@@ -725,6 +755,7 @@ class ConfigManager {
       for (const mutate of this.pendingMutations) mutate(latest);
       latest['version'] = VERSION;
       this.config = latest;
+      this.syncFailClosedState(this.config);
     } catch (error: any) {
       if (error instanceof SyntaxError) {
         try {
