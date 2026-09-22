@@ -8,6 +8,9 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -286,6 +289,44 @@ function testReadDoesNotFreeResults(searchManager, sessionId) {
   console.log(`✓ retention: ${again.results.length} entries still readable after a full read`);
 }
 
+/**
+ * A start that never produced a child hands the caller an error, not an id, so
+ * a session kept behind it is one nobody can read, page or terminate.
+ *
+ * Nothing a caller can pass makes a child fail to appear: the resolver only
+ * ever returns a binary that exists. The case therefore runs against a copy of
+ * dist whose resolver returns a path that holds none, which is the one thing it
+ * changes.
+ */
+async function testFailedStartLeavesNoSession(dir) {
+  const stubRoot = path.join(REPO_ROOT, 'node_modules', '.dc716-failed-start');
+  fs.rmSync(stubRoot, { recursive: true, force: true });
+  tempDirs.push(stubRoot);
+  fs.cpSync(path.join(REPO_ROOT, 'dist'), path.join(stubRoot, 'dist'), { recursive: true });
+
+  const missingBinary = path.join(dir, 'no-such-ripgrep.exe');
+  fs.writeFileSync(
+    path.join(stubRoot, 'dist', 'utils', 'ripgrep-resolver.js'),
+    `export async function getRipgrepPath() { return ${JSON.stringify(missingBinary)}; }
+export function clearRipgrepCache() {}
+`);
+
+  const stubbed = await import(pathToFileURL(path.join(stubRoot, 'dist', 'search-manager.js')).href);
+  const manager = stubbed.searchManager;
+
+  let failure = null;
+  try {
+    await manager.startSearch({ rootPath: dir, pattern: NEEDLE, searchType: 'content', contextLines: 0 });
+  } catch (err) {
+    failure = err;
+  }
+
+  assert.ok(failure, 'a search whose child never starts must report that it failed');
+  assert.strictEqual(manager.sessions.size, 0,
+    `the caller was given an error and no id, so nothing may be left behind, got ${manager.sessions.size}`);
+  console.log(`✓ failed start: "${failure.message}", no session left behind`);
+}
+
 async function main() {
   try {
     const home = makeTempHome();
@@ -305,6 +346,7 @@ async function main() {
     await testCancellationReachesOfficeProducers(searchManager, slowProducerDir);
     await testTruncatedAnswerPages(searchManager, pagingDir);
     await testCancelledSearchKeepsWhatItHad(searchManager, slowDir);
+    await testFailedStartLeavesNoSession(pagingDir);
 
     // A finished session to clean up, and a running one that must survive it
     const { sessionId: finished } = await runToCompletion(searchManager, {
