@@ -570,11 +570,8 @@ class ConfigManager {
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
     defaults['pendingWelcomeOnboarding'] = false;
-    // The mark goes to disk with the values it describes: later starts read a
-    // valid config and would otherwise have nothing to tell them where this
-    // policy came from. A mark carried in from the damaged config counts too -
-    // a fallback that gets damaged again salvages as an ordinary policy, and
-    // without this it would quietly become one.
+    // A fallback that is damaged again salvages as an ordinary policy, so a mark
+    // carried in from the damaged config counts alongside what just failed.
     const carriedMark = Array.isArray(this.config[RECOVERY_FAIL_CLOSED_KEY])
       ? this.config[RECOVERY_FAIL_CLOSED_KEY] as string[]
       : extractTopLevelStringArray(corruptText, RECOVERY_FAIL_CLOSED_KEY) ?? [];
@@ -582,15 +579,7 @@ class ConfigManager {
       .filter((field) => failedClosed.includes(field) || carriedMark.includes(field.key))
       .map((field) => field.key);
     const stillFailClosed = this.failClosedFieldsIn({ ...defaults, [RECOVERY_FAIL_CLOSED_KEY]: marked });
-    // The mark leads the file. Truncation eats a config from the end - it is the
-    // damage this recovers from - so a mark written after the policy is the part
-    // a cut takes first, leaving deny-all values that read as an ordinary policy
-    // nobody has to explain. Ahead of them, no cut can keep the policy and drop
-    // the mark; a cut that reaches the mark has taken the policy with it, and
-    // recovery starts over fail-closed.
-    const recovered: ServerConfig = stillFailClosed.length > 0
-      ? { [RECOVERY_FAIL_CLOSED_KEY]: stillFailClosed.map((field) => field.key), ...defaults }
-      : defaults;
+    const recovered = this.markFailClosed(defaults, stillFailClosed);
     await this.writeConfigAtomically(recovered);
     this.config = { ...recovered, version: VERSION };
 
@@ -603,13 +592,18 @@ class ConfigManager {
   }
 
   /**
-   * What the user is left with when recovery could not restore a policy field,
-   * and the one file that undoes it. Without this the install simply stops
-   * working - every command refused - with nothing on stderr to explain why.
+   * The mark leads the config it describes. Truncation eats a file from the end,
+   * so a mark written behind the policy is what a cut takes first, leaving
+   * deny-all values that read as a policy nobody has to explain.
    */
+  private markFailClosed(config: ServerConfig, fields: RecoverablePolicyField[]): ServerConfig {
+    if (fields.length === 0) return config;
+    return { [RECOVERY_FAIL_CLOSED_KEY]: fields.map((field) => field.key), ...config };
+  }
+
   private applyFailClosedPolicy(fields: RecoverablePolicyField[]): void {
     for (const field of fields) this.config[field.key] = field.failClosed(this.configPath);
-    this.config[RECOVERY_FAIL_CLOSED_KEY] = fields.map((field) => field.key);
+    this.config = this.markFailClosed(this.config, fields);
     console.error(this.failClosedNotice(fields));
   }
 
