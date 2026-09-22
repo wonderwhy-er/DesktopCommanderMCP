@@ -117,8 +117,8 @@ export interface SearchSessionOptions {
     let killTimer: NodeJS.Timeout | null = null;
     if (timeoutMs) {
       killTimer = setTimeout(() => {
-        if (!session.isComplete && !session.process.killed) {
-          session.process.kill('SIGTERM');
+        if (!session.isComplete) {
+          this.killProcess(session);
         }
       }, timeoutMs);
     }
@@ -162,10 +162,10 @@ export interface SearchSessionOptions {
         options.filePattern,  // Pass filePattern to filter Excel files too
         options.literalSearch  // Respect literalSearch flag for Office files
       ).then(excelResults => {
-        // Add Excel results to session (merged after initial response)
+        // Add Excel results to session (merged after initial response).
+        // Shares the session budget with ripgrep, so the merge stops once it is spent.
         for (const result of excelResults) {
-          session.results.push(result);
-          session.totalMatches++;
+          if (!this.addResult(session, result, false)) break;
         }
       }).catch((err) => {
         // Log Excel search errors but don't fail the whole search
@@ -187,8 +187,7 @@ export interface SearchSessionOptions {
         options.literalSearch  // Respect literalSearch flag for Office files
       ).then(docxResults => {
         for (const result of docxResults) {
-          session.results.push(result);
-          session.totalMatches++;
+          if (!this.addResult(session, result, false)) break;
         }
       }).catch((err) => {
         capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
@@ -296,9 +295,7 @@ export interface SearchSessionOptions {
       return false;
     }
 
-    if (!session.process.killed) {
-      session.process.kill('SIGTERM');
-    }
+    this.killProcess(session);
 
     // Don't delete session immediately - let user read final results
     // It will be cleaned up by cleanup process
@@ -759,9 +756,9 @@ export interface SearchSessionOptions {
       args.push('--hidden');
     }
     
-    if (options.maxResults && options.maxResults > 0) {
-      args.push('-m', options.maxResults.toString());
-    }
+    // maxResults is deliberately not passed to ripgrep: -m caps matching lines
+    // per file, not per search, and in --files mode it does nothing at all.
+    // addResult() owns the limit and stops the process once it is reached.
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
@@ -905,27 +902,76 @@ export interface SearchSessionOptions {
     });
   }
 
+  private killProcess(session: SearchSession): void {
+    if (!session.process.killed) {
+      session.process.kill('SIGTERM');
+    }
+  }
+
+  /**
+   * Has this session collected everything maxResults allows?
+   * maxResults of 0 or undefined means no limit.
+   */
+  private isBudgetExhausted(session: SearchSession): boolean {
+    const limit = session.options.maxResults;
+    return !!limit && limit > 0 && session.totalMatches >= limit;
+  }
+
+  /**
+   * The one place a result enters a session. Every producer (ripgrep, Excel,
+   * DOCX) goes through here, so maxResults is counted once, for the whole
+   * search, instead of once per producer or once per file.
+   *
+   * Context lines are stored but not charged to the budget: they belong to a
+   * match that was already accepted rather than being results of their own, and
+   * they never stop collection. They stay bounded by the matches that carry
+   * them: ripgrep only reports context around a match.
+   *
+   * Collection runs until a match has to be turned away — that match, not the
+   * budget going to zero, is what proves something was left behind. A tree
+   * holding exactly maxResults matches therefore finishes whole and unmarked,
+   * while a larger one is stopped by its next match and says so: a budget-sized
+   * answer out of a much larger tree otherwise looks exactly like a search that
+   * found that much.
+   *
+   * Returns false when a result was turned away and the caller must stop.
+   */
+  private addResult(session: SearchSession, result: SearchResult, isContext: boolean): boolean {
+    if (!isContext && this.isBudgetExhausted(session)) {
+      return false;
+    }
+
+    session.results.push(result);
+    if (isContext) {
+      session.totalContextLines++;
+    } else {
+      session.totalMatches++;
+    }
+
+    return true;
+  }
+
   private processBufferedOutput(session: SearchSession, isFinal: boolean = false): void {
     const lines = session.buffer.split('\n');
-    
+
     // Keep the last incomplete line in the buffer unless this is final processing
     if (!isFinal) {
       session.buffer = lines.pop() || '';
     } else {
       session.buffer = '';
     }
-    
+
     for (const line of lines) {
       if (!line.trim()) continue;
       
       const result = this.parseLine(line, session.options.searchType);
       if (result) {
-        session.results.push(result);
-        // Separate counting of matches vs context lines
-        if (result.type === 'content' && line.includes('"type":"context"')) {
-          session.totalContextLines++;
-        } else {
-          session.totalMatches++;
+        const isContext = result.type === 'content' && line.includes('"type":"context"');
+        if (!this.addResult(session, result, isContext)) {
+          // A match past maxResults: drop what is still buffered and stop ripgrep
+          session.buffer = '';
+          this.killProcess(session);
+          return;
         }
 
         // Early termination for exact filename matches (if enabled)
@@ -940,11 +986,7 @@ export interface SearchSessionOptions {
             : filePath.endsWith(pat);
           if (ends) {
             // Found exact match, terminate search early
-            setTimeout(() => {
-              if (!session.process.killed) {
-                session.process.kill('SIGTERM');
-              }
-            }, 100); // Small delay to allow any remaining results
+            setTimeout(() => this.killProcess(session), 100); // Small delay to allow any remaining results
             break;
           }
         }
