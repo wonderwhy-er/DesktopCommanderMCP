@@ -437,6 +437,54 @@ async function worker() {
 
     console.log('✓ every early return of a command that ran carries an outcome');
 
+    // 20. An open line is one nobody has finished writing. Reading it must not
+    // hand it back unchanged for ever, and appending to it must still count as
+    // new output — line counts cannot tell either, only its text can.
+    const triggerAppend = path.join(helpers, 'trigger-append');
+    const openLine = replyText(await startProcess({
+      command: `node ${path.join(helpers, 'open-line.cjs')} ${triggerAppend}`,
+      timeout_ms: 1_500
+    }));
+    const openLinePid = pidOf(openLine);
+    const read1 = replyText(await readProcessOutput({ pid: openLinePid, timeout_ms: 1_000 }));
+    assert.ok(
+      read1.includes('ready>'),
+      `the first read must return the open line, got: ${JSON.stringify(read1)}`
+    );
+    const read2 = replyText(await readProcessOutput({ pid: openLinePid, timeout_ms: 800 }));
+    assert.ok(
+      !read2.includes('ready>'),
+      `an unchanged open line must not be handed back again, got: ${JSON.stringify(read2)}`
+    );
+    writeFileSync(triggerAppend, '');
+    const read3 = replyText(await readProcessOutput({ pid: openLinePid, timeout_ms: 4_000 }));
+    assert.ok(
+      read3.includes('ready> more'),
+      `appending to the open line must count as new output, got: ${JSON.stringify(read3)}`
+    );
+    console.log('✓ an open line is returned again only when it changed');
+
+    // 21. A known verdict is not traded for an unknown one: the process exited
+    // 255, only its output is incomplete, so the failure and its runtime must
+    // survive beside the warning about the pipe.
+    const failedWithPipe = await describeStart(
+      startProcess,
+      `node ${path.join(helpers, 'fail-and-hand-over.cjs')}`
+    );
+    assert.ok(
+      /output pipe is still open/.test(failedWithPipe),
+      `this case needs the grandchild to hold the pipe, got: ${JSON.stringify(failedWithPipe)}`
+    );
+    assert.ok(
+      failedWithPipe.includes('❌') && /exit code 255/.test(failedWithPipe),
+      `the failure verdict must survive the open pipe, got: ${JSON.stringify(failedWithPipe)}`
+    );
+    assert.ok(
+      /runtime: \d+\.\d\ds/.test(failedWithPipe),
+      `the runtime must survive the open pipe, got: ${JSON.stringify(failedWithPipe)}`
+    );
+    console.log('✓ a failing exit keeps its verdict when the pipe is still held');
+
     await report({ type: 'done' });
   } catch (error) {
     // The assertion message is the point; the parent fails once, with that text.
@@ -565,6 +613,28 @@ async function parent() {
     '}, 20);',
     'setTimeout(() => process.exit(0), 20000);'
   ].join('\n'));
+
+  // Writes a prompt with no newline, then appends to that same open line when
+  // the test says so, and never exits on its own.
+  writeFileSync(path.join(home, 'open-line.cjs'), [
+    "const fs = require('fs');",
+    'const trigger = process.argv[2];',
+    "process.stdout.write('ready>');",
+    'const wait = setInterval(() => {',
+    '  if (!fs.existsSync(trigger)) return;',
+    '  clearInterval(wait);',
+    "  process.stdout.write(' more');",
+    '}, 20);',
+    'setTimeout(() => process.exit(0), 20000);'
+  ].join(String.fromCharCode(10)));
+
+  // Exits non-zero and hands the pipe to a grandchild that keeps it open.
+  writeFileSync(path.join(home, 'fail-and-hand-over.cjs'), [
+    "const { spawn } = require('child_process');",
+    "const kid = spawn(process.execPath, [__dirname + '/hold-pipe.cjs'], { stdio: ['ignore', 1, 2], detached: true });",
+    'kid.unref();',
+    'process.exit(255);'
+  ].join(String.fromCharCode(10)));
 
   // Prints a line analyzeProcessState reads as completion, then keeps running.
   writeFileSync(path.join(home, 'error-then-run.cjs'), [
