@@ -9,7 +9,7 @@
  *   3. Result write ordering
  *   4. Heartbeat cadence tiers
  *   5. Reachability and status writes
- *   6. Capability withdrawal
+ *   6. Capability publication and withdrawal
  *   7. Shutdown
  *
  * Run: npm run build && node test/test-remote-transport.js
@@ -49,6 +49,26 @@ const makeChannelState = (state) => ({ state });
 // globalThis.setTimeout to never fire, and the fake client's write completion
 // must not silently depend on that.
 const realSetTimeout = globalThis.setTimeout;
+/** Let queued fake-client writes settle. The file's one wait idiom. */
+const settleWrites = () => new Promise((resolve) => realSetTimeout(resolve, 5));
+/** Run fn with console.log/error collected, so a test can assert on what an
+ *  operator is told. console.debug stays on stderr as usual. */
+async function withCapturedLogs(fn) {
+  const lines = [];
+  const [log, error] = [console.log, console.error];
+  const collect = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.log = collect;
+  console.error = collect;
+  try {
+    await fn();
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+  return lines;
+}
+/** A joined channel whose presence push the test drives. */
+const makePresenceChannel = (track) => ({ state: 'joined', track });
 
 /** MCPDevice with the network and desktop edges stubbed. */
 function makeDevice({ claimResults = [] } = {}) {
@@ -77,7 +97,7 @@ function makeDevice({ claimResults = [] } = {}) {
  * `update(...).eq(...)` (awaited) and `select(...).eq(...).maybeSingle()`.
  * Records every mcp_devices write in `writes`.
  */
-function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaims = 0, writeLatencies = [], claimDeviceId = DEVICE_ID } = {}) {
+function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaims = 0, writeLatencies = [], claimDeviceId = DEVICE_ID, failCapabilityWrites = 0 } = {}) {
   const writes = [];
   // Recorded when a write COMPLETES, not when it is issued. `writes` alone
   // cannot test ordering: setOnlineStatus evaluates .update() synchronously
@@ -88,6 +108,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
   let claimAttempts = 0;
   let pendingWrite = null;
   let lastClaim = null;
+  let capabilityWriteAttempts = 0;
 
   // The claim, update({status:'executing'}).eq(...).select(...): it records the
   // filters and the select, because both decide what PostgREST returns — a
@@ -161,6 +182,14 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
       const p = new Promise((resolve) => {
         const settle = () => {
           completions.push(payload);
+          // A capability write that fails on its own. supabase-js surfaces the
+          // reporter's `TypeError: fetch failed` as a returned error, not a
+          // rejection, so this models the same shape.
+          const capabilityWrite = payload.capabilities !== undefined;
+          if (capabilityWrite && ++capabilityWriteAttempts <= failCapabilityWrites) {
+            resolve({ data: null, error: { message: 'fetch failed' } });
+            return;
+          }
           resolve({ data: null, error: null });
         };
         // Only defer when a test actually asked for latency, so every other
@@ -520,7 +549,7 @@ await test('concurrent status writes stay ordered', async () => {
   // serialise, so this fails on ORDER — the actual bug — rather than on timing.
   const deadline = Date.now() + 500;
   while (client.completions.length < 2 && Date.now() < deadline) {
-    await new Promise((r) => realSetTimeout(r, 5));
+    await settleWrites();
   }
   assert(client.writes.length === 2, 'both writes issued');
   assert(client.completions.length === 2, 'both writes completed');
@@ -532,7 +561,7 @@ await test('concurrent status writes stay ordered', async () => {
   );
 });
 
-// --- 6. Capability withdrawal -----------------------------------------------
+// --- 6. Capability publication and withdrawal -------------------------------
 // For a flagged device the server treats absent presence as authoritative
 // offline and applies that overlay before selection, overriding `status`. So a
 // device that cannot join the private channel must stop advertising the flag
@@ -580,6 +609,326 @@ await test('a hanging capability withdrawal cannot pin the recreate guard', asyn
   for (let i = 0; i < 3; i++) await rc.recreateChannel();
 
   assert(rc.isRecreatingChannel === false, 'the guard must be released even if the write hangs');
+});
+
+// Withdrawal is not the only way the flag goes missing: the publish can fail on
+// its own while the channel stays joined and presence stays tracked, which is
+// what the reporter of issue #697 hit (`Failed to update transport capability:
+// TypeError: fetch failed`).
+//
+// The contract these cases hold the health check to:
+//   - it repairs that by pushing presence again, so the flag is re-earned on a
+//     fresh 'ok' rather than re-asserted from state that may be stale;
+//   - it never pushes while a track is already unresolved;
+//   - it retries in bounded bursts, says so when a burst fails, and comes back
+//     after a cooldown instead of giving up on a channel that never leaves
+//     'joined' -- which is #697's own topology.
+
+const capabilityWrites = (client) => client.writes.filter((w) => w.capabilities !== undefined);
+
+await test('a capability publish that failed is retried while the channel is healthy', async () => {
+  const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 1 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+
+  // The real entry, not hand-set state: the push is acknowledged, the row
+  // write after it is not. Since #724 that leaves presence unproven as well,
+  // which is what rowWriteIsWhatFailed records.
+  await rc.trackPresenceWithRetry(0, 1);
+  assert(rc.rowWriteIsWhatFailed === true, 'precondition: the push landed, the row write did not');
+  assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
+
+  rc.checkConnectionHealth(); // the 10s tick that sees a healthy channel
+  await settleWrites();
+
+  assert(rc.transportCapableWritten === true, 'a failed publish must be repaired, not left withdrawn forever');
+  const writes = capabilityWrites(client);
+  assert(writes.length === 2, `expected a second capability write, got ${writes.length}`);
+  assert(
+    writes[1].capabilities.transport_broadcast_v1 === true,
+    'the repair must advertise the flag the server dispatches on'
+  );
+});
+
+await test('a capability already published is not rewritten on every health check', async () => {
+  const { rc, client } = makeRemoteChannel();
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = true;
+
+  for (let i = 0; i < 3; i++) rc.checkConnectionHealth();
+  await settleWrites();
+
+  assert(capabilityWrites(client).length === 0, 'a landed capability must not be rewritten every tick');
+});
+
+await test('an unpublished capability does not preempt the presence retry', async () => {
+  const { rc } = makeRemoteChannel();
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = false; // presence is the missing half here
+  rc.transportCapableWritten = false; // ... and the flag is missing too
+  let tracked = 0;
+  rc.trackPresenceWithRetry = async () => { tracked++; };
+
+  rc.checkConnectionHealth();
+  await settleWrites();
+
+  // Both branches call trackPresenceWithRetry, so the count alone proves
+  // nothing. Only the capability branch spends the budget.
+  assert(tracked === 1, 'presence must still be the repair that runs first');
+  assert(
+    rc.capabilityRepublishAttempts === 0,
+    'the presence branch must have run, not the capability branch'
+  );
+});
+
+// presenceTracked is set before the flag write (trackPresenceInner) and only two
+// paths clear it -- CHANNEL_ERROR and exhausted presence retries. Withdrawing the
+// flag after sustained recreate failures leaves it set. So "presence tracked,
+// flag missing" is reachable while track() is in flight on a half-open socket,
+// and publishing there claims the capable tier (5min heartbeat, 15min server
+// sweep) on evidence that is in the middle of failing.
+
+await test('the flag is not published while a presence track is still in flight', async () => {
+  const { rc, client } = makeRemoteChannel();
+  let release;
+  rc.channel = makePresenceChannel(() => new Promise((resolve) => { release = resolve; }));
+  rc.presenceTracked = true; // stale: the withdrawal path does not clear it
+  rc.transportCapableWritten = false; // withdrawn after sustained recreate failures
+
+  const inFlight = rc.trackPresenceWithRetry(0, 1);
+  await settleWrites();
+  assert(rc.isTrackingPresence === true, 'precondition: a track is in flight');
+
+  rc.checkConnectionHealth();
+  await settleWrites();
+
+  assert(
+    capabilityWrites(client).length === 0,
+    'publishing on a stale presenceTracked while track() is unresolved claims the capable tier on failing evidence'
+  );
+
+  release('ok');
+  await inFlight;
+});
+
+await test('a withdrawn flag is re-proven, not re-asserted', async () => {
+  const { rc, client } = makeRemoteChannel();
+  let tracks = 0;
+  rc.channel = makePresenceChannel(async () => { tracks++; return 'ok'; });
+  rc.presenceTracked = true; // stale
+  rc.transportCapableWritten = false; // deliberately withdrawn
+
+  rc.checkConnectionHealth();
+  await settleWrites();
+
+  assert(tracks === 1, 'the flag must be re-earned by a fresh presence push, not re-asserted from stale state');
+  const writes = capabilityWrites(client);
+  assert(
+    writes.length === 1 && writes[0].capabilities.transport_broadcast_v1 === true,
+    'and only then published'
+  );
+});
+
+await test('a publish that keeps failing stops retrying instead of writing every tick', async () => {
+  const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 99 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = false;
+
+  for (let i = 0; i < 8; i++) {
+    rc.checkConnectionHealth();
+    await settleWrites();
+  }
+
+  const writes = capabilityWrites(client);
+  assert(writes.length > 0, 'it must try at least once');
+  assert(writes.length <= 3, `a permanent failure must be bounded, got ${writes.length} writes in 8 ticks`);
+});
+
+await test('a repair that cannot land says so instead of failing silently', async () => {
+  const { rc } = makeRemoteChannel({ failCapabilityWrites: 99 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = false;
+
+  const lines = await withCapturedLogs(async () => {
+    for (let i = 0; i < 4; i++) {
+      rc.checkConnectionHealth();
+      await settleWrites();
+    }
+  });
+
+  assert(
+    // Not the per-write error line -- that one fires on every attempt. The
+    // burst giving up has to say it will come back, or an operator reads the
+    // silence that follows as the device being fine.
+    lines.some((l) => /capability/i.test(l) && /retry|again|cooldown/i.test(l)),
+    `an exhausted burst must announce itself; logged instead: ${lines.join(' | ')}`
+  );
+});
+
+await test('a repair comes back after its cooldown instead of giving up for good', async () => {
+  const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 99 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = false;
+
+  // A channel that never leaves 'joined' is #697's own topology: no confirmed
+  // write and no fresh join will ever arrive to refill the budget.
+  await withCapturedLogs(async () => {
+    for (let i = 0; i < 40; i++) {
+      rc.checkConnectionHealth();
+      await settleWrites();
+    }
+  });
+
+  const writes = capabilityWrites(client).length;
+  assert(writes > 3, `the device must try again after the cooldown, stalled at ${writes} writes`);
+  assert(writes <= 6, `and still in bursts, got ${writes} writes in 40 ticks`);
+});
+
+await test('a successful withdrawal does not refill the repair budget', async () => {
+  const { rc } = makeRemoteChannel();
+  rc.transportCapableWritten = true;
+  rc.capabilityRepublishAttempts = 2;
+
+  await rc.setTransportCapable(false);
+
+  assert(rc.transportCapableWritten === false, 'precondition: the withdrawal landed');
+  assert(
+    rc.capabilityRepublishAttempts === 2,
+    'a landed withdrawal says nothing about whether publishing would succeed'
+  );
+});
+
+await test('a capability repair is not reported as presence recovery', async () => {
+  const { rc } = makeRemoteChannel();
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = false;
+
+  const lines = await withCapturedLogs(async () => {
+    rc.checkConnectionHealth();
+    await settleWrites();
+  });
+
+  assert(
+    !lines.some((l) => l.includes('Presence tracked')),
+    `a flag repair must not announce a presence recovery; logged: ${lines.join(' | ')}`
+  );
+  assert(
+    lines.some((l) => /capability/i.test(l)),
+    `it must say what it actually did; logged: ${lines.join(' | ')}`
+  );
+});
+
+await test('the exhaustion notice is not printed when the last try of a burst lands', async () => {
+  const { rc } = makeRemoteChannel({ failCapabilityWrites: 2 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+  rc.presenceTracked = true;
+  rc.transportCapableWritten = false;
+
+  // Two writes fail, the third lands -- the burst succeeded on its last try.
+  const lines = await withCapturedLogs(async () => {
+    for (let i = 0; i < 3; i++) {
+      rc.checkConnectionHealth();
+      await settleWrites();
+    }
+  });
+
+  assert(rc.transportCapableWritten === true, 'precondition: the third try landed');
+  assert(
+    !lines.some((l) => /cannot receive tool calls/i.test(l)),
+    `a burst that landed must not be reported as exhausted; logged: ${lines.join(' | ')}`
+  );
+});
+
+await test('a failed repair is not reported as a presence track error', async () => {
+  const { rc } = makeRemoteChannel();
+  rc.channel = makePresenceChannel(async () => 'timeout');
+  rc.presenceTracked = true; // stale
+  rc.transportCapableWritten = false;
+
+  const lines = await withCapturedLogs(async () => {
+    rc.checkConnectionHealth();
+    await settleWrites();
+  });
+
+  assert(
+    !lines.some((l) => l.includes('Presence track failed')),
+    `a flag repair that failed must not be filed as a presence failure; logged: ${lines.join(' | ')}`
+  );
+  assert(
+    lines.some((l) => /capability repair/i.test(l)),
+    `it must say which repair failed; logged: ${lines.join(' | ')}`
+  );
+});
+
+// Since #724 a failed row write leaves presence unproven, so the repair is
+// reached with presenceTracked false -- the same state as a push that was never
+// acknowledged. Only rowWriteIsWhatFailed tells the two apart, and the cases
+// above reach the bounded branch by the other disjunct (presence tracked, flag
+// missing), so none of them would notice if the field stopped mattering.
+
+await test('a row write that keeps failing is repaired in bursts, not on every tick', async () => {
+  const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 99 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+
+  // The real post-#724 shape, nothing set by hand: the push is acknowledged,
+  // the row write after it fails, and presence is left unproven because of it.
+  await rc.trackPresenceWithRetry(0, 1);
+  assert(rc.presenceTracked === false, 'precondition: a failed row write leaves presence unproven');
+  assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
+
+  const lines = await withCapturedLogs(async () => {
+    for (let i = 0; i < 8; i++) {
+      rc.checkConnectionHealth();
+      await settleWrites();
+    }
+  });
+
+  // One write from the attempt above, then a bounded burst -- not one per tick.
+  const writes = capabilityWrites(client).length;
+  assert(writes <= 4, `the repair must stay bounded in this state, got ${writes} writes over 8 ticks`);
+  assert(
+    lines.some((l) => /cannot receive tool calls/i.test(l)),
+    `and the spent burst must be announced; logged: ${lines.join(' | ')}`
+  );
+});
+
+// The card asks for the far end of the scenario, not just the flag write: a
+// device that lost the capability and got it back has to actually serve a call.
+// Everything above stops at the row write, so this one carries a claim through
+// the doorbell into the tool.
+
+await test('the device serves a tool call once the repair has landed', async () => {
+  const row = {
+    id: 'call-after-repair',
+    status: 'pending',
+    tool_name: 'start_process',
+    tool_args: { command: 'echo hi' },
+    device_id: DEVICE_ID,
+    metadata: {},
+  };
+  const { device, executed } = makeDevice();
+  const { rc } = makeRemoteChannel({ row, failCapabilityWrites: 1 });
+  rc.channel = makePresenceChannel(async () => 'ok');
+  let inflight = null;
+  rc.onToolCall = (payload) => { inflight = device.handleNewToolCall(payload); return inflight; };
+
+  // The publish fails, so the server would fail every dispatch to this device.
+  await rc.trackPresenceWithRetry(0, 1);
+  assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
+
+  rc.checkConnectionHealth();
+  await settleWrites();
+  assert(rc.transportCapableWritten === true, 'precondition: the repair landed');
+
+  await rc.onDoorbell({ call_id: row.id, device_id: DEVICE_ID });
+  await inflight;
+
+  assert(executed.length === 1, `the recovered device must run the call, executed ${executed.length}`);
+  assert(executed[0].toolName === 'start_process', `wrong tool ran: ${executed[0]?.toolName}`);
 });
 
 // --- 7. Shutdown ------------------------------------------------------------
