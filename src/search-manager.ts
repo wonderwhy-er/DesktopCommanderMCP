@@ -8,6 +8,24 @@ import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
 
 /**
+ * How much text a session may keep. maxResults bounds the number of entries,
+ * never their size, and a context line is stored whole: 400 context lines of a
+ * 100KiB file held 78MiB in one session.
+ *
+ * The per-entry cap is well above what a caller is shown — both handlers print
+ * at most 100 characters of a result — so it costs nothing visible.
+ */
+const MAX_RESULT_TEXT_CHARS = 2000;
+const MAX_RETAINED_TEXT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * How much of a single line the collector may hold before it gives up on it.
+ * ripgrep writes one JSON object per line, so a minified bundle can put
+ * megabytes on the wire with no newline to break at.
+ */
+const MAX_BUFFERED_LINE_BYTES = 1024 * 1024;
+
+/**
  * Why an answer holds less than the tree it came from. A session can hit more
  * than one of these, and a new one costs a member here rather than a field in
  * every caller.
@@ -47,6 +65,8 @@ export interface SearchSession {
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
   shortfalls: Set<SearchShortfall>;
+  retainedBytes: number;    // Size of the result text held in results[]
+  skippingOversizedLine?: boolean;  // Discarding a line too large to buffer
 }
 
 export interface SearchSessionOptions {
@@ -120,6 +140,7 @@ export interface SearchSessionOptions {
       buffer: '',
       totalMatches: 0,
       totalContextLines: 0,
+      retainedBytes: 0,
       shortfalls: new Set()
     };
 
@@ -967,6 +988,9 @@ export interface SearchSessionOptions {
    * answer out of a much larger tree otherwise looks exactly like a search that
    * found that much.
    *
+   * The same door holds the byte budget: an entry's text is capped, and once the
+   * session has kept MAX_RETAINED_TEXT_BYTES it stops taking anything at all.
+   *
    * Returns false when a result was turned away and the caller must stop.
    */
   private addResult(session: SearchSession, result: SearchResult, isContext: boolean): boolean {
@@ -974,6 +998,20 @@ export interface SearchSessionOptions {
       this.recordShortfall(session, 'max-results');
       return false;
     }
+
+    if (session.retainedBytes >= MAX_RETAINED_TEXT_BYTES) {
+      // Out of bytes, so nothing more can be kept — not even context, which
+      // would otherwise ride along free.
+      this.recordShortfall(session, 'output-size');
+      return false;
+    }
+
+    if (result.match && result.match.length > MAX_RESULT_TEXT_CHARS) {
+      // Not worth reporting: both handlers print at most 100 characters of a
+      // result, so the caller cannot tell the difference.
+      result.match = `${result.match.slice(0, MAX_RESULT_TEXT_CHARS - 1)}…`;
+    }
+    session.retainedBytes += (result.match?.length || 0) + result.file.length;
 
     session.results.push(result);
     if (isContext) {
@@ -986,12 +1024,33 @@ export interface SearchSessionOptions {
   }
 
   private processBufferedOutput(session: SearchSession, isFinal: boolean = false): void {
+    if (session.skippingOversizedLine) {
+      // Mid-line, with no way to parse what has already been thrown away: drop
+      // everything up to the newline that ends it, then carry on.
+      const end = session.buffer.indexOf('\n');
+      if (end === -1) {
+        session.buffer = '';
+        return;
+      }
+      session.buffer = session.buffer.slice(end + 1);
+      session.skippingOversizedLine = false;
+    }
+
     const lines = session.buffer.split('\n');
 
     // Keep the last incomplete line in the buffer unless this is final processing
     if (!isFinal) {
       session.buffer = lines.pop() || '';
     } else {
+      session.buffer = '';
+    }
+
+    if (session.buffer.length > MAX_BUFFERED_LINE_BYTES) {
+      // One line, already larger than anything worth holding, and still no
+      // newline: give up on it rather than grow with it. The match it carried
+      // is lost, which is what the caller is told.
+      session.skippingOversizedLine = true;
+      this.recordShortfall(session, 'output-size');
       session.buffer = '';
     }
 
