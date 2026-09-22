@@ -1,35 +1,9 @@
 #!/usr/bin/env node
 
 /**
- * DC-697: a controlled reproduction of the pairing the reporter ran — two
- * Desktop Commander builds writing ~/.claude-server-commander/config.json at
- * the same time.
- *
- * They ran 0.2.50 via `npx ... remote` beside 0.2.46 served by Claude Desktop.
- * 0.2.46 rewrites the whole file in place, with no lock and no temp file:
- *
- *   await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
- *   -- v0.2.46:src/config-manager.ts:198
- *
- * The current build writes through a temp file and a rename while holding a
- * cross-process lock, so it cannot tear the file itself. What it cannot do is
- * stop an older build from tearing it, and the issue reported the reader side:
- * a startup that died with -32603 "Unexpected end of JSON input", and a flood
- * of "Failed to reload config".
- *
- * So: run both writers against one config and measure what a starting process
- * sees. Two claims are checked, both about the reader.
- *
- *   1. A process that starts during the storm gets the config that is on disk,
- *      not silently a default one. init() catches a parse failure and falls
- *      back to getDefaultConfig(), which loses allowedDirectories, the block
- *      list and the telemetry choice for the life of that process.
- *   2. A durable write issued during the storm does not throw. That throw is
- *      what reached the client as -32603 through the tools/list handler.
- *
- * Every run gets its own HOME, so the real ~/.claude-server-commander is never
- * touched. Runs as part of `npm test`, or standalone:
- *   npm run build && node test/test-config-concurrent-writers.js
+ * A start beside an older Desktop Commander must read the config that is on
+ * disk and write durably. 0.2.46 rewrites config.json whole, with no lock and
+ * no temp file (writeConfigToDisk). Own HOME per run.
  */
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
@@ -42,19 +16,17 @@ import { fileURLToPath } from 'node:url';
 const TEST_FILE = fileURLToPath(import.meta.url);
 const ROLE = process.env.DC_CONCURRENT_ROLE;
 
-// The marker lives in a key the defaults also carry, so a reader that fell back
-// to getDefaultConfig() is distinguishable from one that read the real file.
+// In a key the defaults also carry: without it a fall back to
+// getDefaultConfig() would read as a successful read.
 const MARKER = 'dc697-marker-directory';
 // Large enough that a non-atomic rewrite has a real window to be caught in.
 const PADDING = 'x'.repeat(300 * 1024);
 const STORM_MS = 4000;
 const READER_ROUNDS = 3;
 const READERS_PER_ROUND = 4;
-// Held long enough that a single rename cannot get through, short enough that
-// the commit's retry budget (~856ms) covers it several times over.
+// Longer than one rename and one read budget, far shorter than the ~856ms
+// either waits: raise these past that and both cases pass against no fix.
 const HELD_WINDOW_MS = 150;
-// Longer than the read budget was when this was written, so the torn file
-// outlives it; well inside what a commit already waits out on the write side.
 const TORN_WINDOW_MS = 150;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -82,7 +54,6 @@ async function legacyWriter() {
   process.send?.({ type: 'done', writes });
 }
 
-/** The current build: temp file, rename, cross-process lock. */
 async function modernWriter() {
   const { configManager } = await import('../dist/config-manager.js');
   await configManager.getConfig();
@@ -94,11 +65,7 @@ async function modernWriter() {
   process.send?.({ type: 'done', writes });
 }
 
-/**
- * One durable write, on the parent's word. The handshake is what makes the
- * case deterministic: the parent opens its handle only once this process is
- * loaded and ready, so the handle is certainly held when the rename runs.
- */
+/** Waits for the parent's word; without the handshake the rename can beat it. */
 async function singleWrite() {
   const { configManager } = await import('../dist/config-manager.js');
   await configManager.getConfig();
@@ -115,7 +82,6 @@ async function singleWrite() {
   process.send?.(out);
 }
 
-/** One durable write, for the case that tears the file underneath it. */
 async function tornWriter() {
   const { configManager } = await import('../dist/config-manager.js');
   await configManager.getConfig();
@@ -124,7 +90,6 @@ async function tornWriter() {
 
   const out = { type: 'write', error: null };
   try {
-    // What getOrCreateClientId() does on the tools/list path.
     await configManager.setValue('__tornWindowProbe', Date.now());
   } catch (error) {
     out.error = String(error?.message ?? error);
@@ -132,7 +97,6 @@ async function tornWriter() {
   process.send?.(out);
 }
 
-/** A Desktop Commander starting up while the storm runs. */
 async function reader() {
   const result = { type: 'read', sawRealConfig: null, mutationError: null };
   try {
@@ -169,18 +133,9 @@ function collect(child) {
 }
 
 /**
- * The same sharing violation as the storm below, without the race.
- *
- * Windows refuses to rename onto a path another process has open, and a plain
- * read handle is enough. The storm reproduces what the reporter ran, but it
- * lands the violation only in some runs -- 0 to 3 starts of 12 here, and whole
- * runs where it never fires -- which makes it a reproduction, not a guard.
- *
- * This is the guard. The handle is opened once the writer is loaded and
- * waiting, so it is certainly held when the rename runs, and it is released
- * HELD_WINDOW_MS later: longer than one rename, far shorter than the commit's
- * retry budget. A commit that does not wait fails immediately; one that waits
- * lands as soon as the handle goes. Both outcomes are deterministic.
+ * The guard for the commit. Windows refuses to rename onto an open path, and a
+ * read handle is enough. The storm below lands that only in some runs, so it
+ * reproduces the report but cannot guard against the defect returning.
  */
 async function heldHandle() {
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc697-held-'));
@@ -213,16 +168,8 @@ async function heldHandle() {
 }
 
 /**
- * The other half of the same -32603, on the read side.
- *
- * A mutation reads the file under the lock before writing it, so an older
- * build caught mid-rewrite makes that read fail to parse. The commit waits a
- * sharing violation out for ~856ms; the read gave up in ~40ms, and the
- * SyntaxError left setValue for the caller -- "Unexpected end of JSON input",
- * the string in the title of #697.
- *
- * Deterministic in both directions, like the case above: the file is torn only
- * once the writer is loaded and waiting, and healed TORN_WINDOW_MS later.
+ * The guard for the read. A mutation reads under the lock before writing, so a
+ * neighbour mid-rewrite makes that read fail to parse.
  */
 async function tornWindow() {
   const home = mkdtempSync(path.join(os.tmpdir(), 'dc697-torn-'));
@@ -287,8 +234,8 @@ async function parent() {
     `${mutationsThrew.length} of ${answered.length} durable writes threw: ${mutationsThrew.map((s) => s.mutationError).join(' | ')}`);
 
   console.log(`✓ ${answered.length} starts during a 0.2.46-style storm read the real config and wrote durably`);
-  // How many of them would have failed without the fix varies run to run; the
-  // case above is the one that fails every time.
+  // Control: how many of these would fail without the fix varies run to run,
+  // so this count proves nothing on its own -- the two cases above do.
   rmSync(home, { recursive: true, force: true });
 }
 

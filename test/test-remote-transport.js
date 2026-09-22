@@ -611,18 +611,8 @@ await test('a hanging capability withdrawal cannot pin the recreate guard', asyn
   assert(rc.isRecreatingChannel === false, 'the guard must be released even if the write hangs');
 });
 
-// Withdrawal is not the only way the flag goes missing: the publish can fail on
-// its own while the channel stays joined and presence stays tracked, which is
-// what the reporter of issue #697 hit (`Failed to update transport capability:
-// TypeError: fetch failed`).
-//
-// The contract these cases hold the health check to:
-//   - it repairs that by pushing presence again, so the flag is re-earned on a
-//     fresh 'ok' rather than re-asserted from state that may be stale;
-//   - it never pushes while a track is already unresolved;
-//   - it retries in bounded bursts, says so when a burst fails, and comes back
-//     after a cooldown instead of giving up on a channel that never leaves
-//     'joined' -- which is #697's own topology.
+// Withdrawal is not the only way the flag goes missing: the publish can fail
+// on its own, which is what #697 reported.
 
 const capabilityWrites = (client) => client.writes.filter((w) => w.capabilities !== undefined);
 
@@ -630,9 +620,7 @@ await test('a capability publish that failed is retried while the channel is hea
   const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 1 });
   rc.channel = makePresenceChannel(async () => 'ok');
 
-  // The real entry, not hand-set state: the push is acknowledged, the row
-  // write after it is not. Since #724 that leaves presence unproven as well,
-  // which is what rowWriteFailedAfterPush records.
+  // Since #724 a failed row write leaves presence unproven too.
   await rc.trackPresenceUnlessInFlight(0, 1);
   assert(rc.rowWriteFailedAfterPush === true, 'precondition: the push landed, the row write did not');
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
@@ -681,12 +669,8 @@ await test('an unpublished capability does not preempt the presence retry', asyn
   );
 });
 
-// presenceTracked is set before the flag write (trackPresenceInner) and only two
-// paths clear it -- CHANNEL_ERROR and exhausted presence retries. Withdrawing the
-// flag after sustained recreate failures leaves it set. So "presence tracked,
-// flag missing" is reachable while track() is in flight on a half-open socket,
-// and publishing there claims the capable tier (5min heartbeat, 15min server
-// sweep) on evidence that is in the middle of failing.
+// Withdrawal does not clear presenceTracked, so "presence tracked, flag
+// missing" is reachable while a track is still in flight.
 
 await test('the flag is not published while a presence track is still in flight', async () => {
   const { rc, client } = makeRemoteChannel();
@@ -759,9 +743,8 @@ await test('a repair that cannot land says so instead of failing silently', asyn
   });
 
   assert(
-    // Not the per-write error line -- that one fires on every attempt. The
-    // burst giving up has to say it will come back, or an operator reads the
-    // silence that follows as the device being fine.
+    // Control: the per-write error line fires on every attempt, so matching
+    // that would pass without any notice of the burst giving up.
     lines.some((l) => /capability/i.test(l) && /retry|again|cooldown/i.test(l)),
     `an exhausted burst must announce itself; logged instead: ${lines.join(' | ')}`
   );
@@ -773,8 +756,7 @@ await test('a repair comes back after its cooldown instead of giving up for good
   rc.presenceTracked = true;
   rc.transportCapableWritten = false;
 
-  // A channel that never leaves 'joined' is #697's own topology: no confirmed
-  // write and no fresh join will ever arrive to refill the budget.
+  // Nothing refills the budget here: no confirmed write, no fresh join.
   await withCapturedLogs(async () => {
     for (let i = 0; i < 40; i++) {
       rc.checkConnectionHealth();
@@ -864,18 +846,15 @@ await test('a failed repair is not reported as a presence track error', async ()
   );
 });
 
-// Since #724 a failed row write leaves presence unproven, so the repair is
-// reached with presenceTracked false -- the same state as a push that was never
-// acknowledged. Only rowWriteFailedAfterPush tells the two apart, and the cases
-// above reach the bounded branch by the other disjunct (presence tracked, flag
-// missing), so none of them would notice if the field stopped mattering.
+// Control: the cases above reach the bounded branch by the other disjunct
+// (presence tracked, flag missing), so none of them would notice if
+// rowWriteFailedAfterPush stopped mattering. This one enters the way #724
+// leaves it -- presence unproven -- where only that field tells the two apart.
 
 await test('a row write that keeps failing is repaired in bursts, not on every tick', async () => {
   const { rc, client } = makeRemoteChannel({ failCapabilityWrites: 99 });
   rc.channel = makePresenceChannel(async () => 'ok');
 
-  // The real post-#724 shape, nothing set by hand: the push is acknowledged,
-  // the row write after it fails, and presence is left unproven because of it.
   await rc.trackPresenceUnlessInFlight(0, 1);
   assert(rc.presenceTracked === false, 'precondition: a failed row write leaves presence unproven');
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
@@ -896,9 +875,7 @@ await test('a row write that keeps failing is repaired in bursts, not on every t
   );
 });
 
-// The card asks for the far end of the scenario, not just the flag write: a
-// device that lost the capability and got it back has to actually serve a call.
-// Everything above stops at the row write, so this one carries a claim through
+// Every case above stops at the row write; this one carries a claim through
 // the doorbell into the tool.
 
 await test('the device serves a tool call once the repair has landed', async () => {
@@ -916,7 +893,6 @@ await test('the device serves a tool call once the repair has landed', async () 
   let inflight = null;
   rc.onToolCall = (payload) => { inflight = device.handleNewToolCall(payload); return inflight; };
 
-  // The publish fails, so the server would fail every dispatch to this device.
   await rc.trackPresenceUnlessInFlight(0, 1);
   assert(rc.transportCapableWritten !== true, 'precondition: the flag is unpublished');
 
