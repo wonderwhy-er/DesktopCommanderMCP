@@ -58,37 +58,111 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
-function extractRecoverableStringArray(text: string, key: string): string[] | null {
-  const marker = new RegExp(`(?:^|[,{])\\s*"${key}"\\s*:\\s*\\[`);
-  const match = marker.exec(text);
-  if (!match) return null;
+/** Index just past a string token starting at `start`, or -1 if it never closes. */
+function scanStringToken(text: string, start: number): number {
+  for (let i = start + 1; i < text.length; i++) {
+    if (text[i] === '\\') { i++; continue; }
+    if (text[i] === '"') return i + 1;
+  }
+  return -1;
+}
 
-  const start = match.index + match[0].lastIndexOf('[');
-  let inString = false;
-  let escaped = false;
+/** Index just past the container opening at `start`, or -1 if it never closes. */
+function scanContainer(text: string, start: number): number {
+  const open = text[start];
+  const close = open === '[' ? ']' : '}';
   let depth = 0;
 
   for (let i = start; i < text.length; i++) {
     const char = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
+    if (char === '"') {
+      const stringEnd = scanStringToken(text, i);
+      if (stringEnd === -1) return -1;
+      i = stringEnd - 1;
       continue;
     }
-    if (char === '"') { inString = true; continue; }
-    if (char === '[') depth++;
-    else if (char === ']' && --depth === 0) {
+    if (char === open) depth++;
+    else if (char === close && --depth === 0) return i + 1;
+  }
+  return -1;
+}
+
+function skipWhitespace(text: string, start: number): number {
+  let i = start;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  return i;
+}
+
+/**
+ * Read one field of the root object out of a damaged config.
+ *
+ * The text is not parseable, so this walks it the way a parser would: quoted
+ * text cannot open or close a container, and a field only counts when it is a
+ * key of the root object. A `blockedCommands` nested inside some other object
+ * is not this install's policy, and accepting it would hand the user a policy
+ * they never set instead of the fail-closed fallback. Anything incomplete or
+ * not an array of strings reads as unsalvageable.
+ */
+function extractTopLevelStringArray(text: string, key: string): string[] | null {
+  const rootStart = skipWhitespace(text, 0);
+  if (text[rootStart] !== '{') return null;
+
+  let depth = 0;
+
+  for (let i = rootStart; i < text.length; i++) {
+    const char = text[i];
+
+    if (char === '"') {
+      const stringEnd = scanStringToken(text, i);
+      if (stringEnd === -1) return null;
+      const isCandidateKey = depth === 1 && text.slice(i + 1, stringEnd - 1) === key;
+      i = stringEnd - 1;
+      if (!isCandidateKey) continue;
+
+      // A value that happens to equal the key name is not a field.
+      const colon = skipWhitespace(text, stringEnd);
+      if (text[colon] !== ':') continue;
+
+      const valueStart = skipWhitespace(text, colon + 1);
+      if (text[valueStart] !== '[') return null;
+      const valueEnd = scanContainer(text, valueStart);
+      if (valueEnd === -1) return null;
+
       try {
-        const value = JSON.parse(text.slice(start, i + 1));
+        const value = JSON.parse(text.slice(valueStart, valueEnd));
         return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
       } catch {
         return null;
       }
     }
+
+    if (char === '{' || char === '[') depth++;
+    else if (char === '}' || char === ']') depth--;
   }
   return null;
 }
+
+/**
+ * The security policy fields recovery may carry over from a damaged config,
+ * each with the value to write when nothing can be trusted. Salvage and
+ * fallback both read this table, so a field cannot gain one without the other.
+ */
+const RECOVERABLE_POLICY_FIELDS: ReadonlyArray<{
+  key: string;
+  failClosed: (configPath: string) => string[];
+}> = [
+  {
+    key: 'blockedCommands',
+    // We cannot know a user's custom blocklist from an incomplete value.
+    // `*` is treated by command validation as deny-all until the user resets it.
+    failClosed: () => ['*'],
+  },
+  {
+    key: 'allowedDirectories',
+    // Never turn an unknown prior allowlist into unrestricted filesystem access.
+    failClosed: (configPath) => [path.dirname(configPath)],
+  },
+];
 
 /**
  * Singleton config manager for the server
@@ -345,22 +419,21 @@ class ConfigManager {
     const forensics = await this.inspectCorruptConfig(error, phase);
 
     // Prefer the last parsed in-memory policy during runtime recovery. On startup,
-    // salvage only complete string-array policy fields from the damaged JSON.
-    // This keeps recovery narrow without introducing a persistent shadow config.
+    // salvage only complete string-array policy fields from the root of the
+    // damaged JSON. This keeps recovery narrow without introducing a persistent
+    // shadow config.
     const corruptText = await fs.readFile(this.configPath, 'utf8').catch(() => '');
     const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
     const preservedClientId = clientIdMatch?.[1];
     const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
-    const inMemoryBlockedCommands = Array.isArray(this.config.blockedCommands)
-      && this.config.blockedCommands.every((item) => typeof item === 'string')
-      ? this.config.blockedCommands : null;
-    const inMemoryAllowedDirectories = Array.isArray(this.config.allowedDirectories)
-      && this.config.allowedDirectories.every((item) => typeof item === 'string')
-      ? this.config.allowedDirectories : null;
-    const preservedBlockedCommands = inMemoryBlockedCommands
-      ?? extractRecoverableStringArray(corruptText, 'blockedCommands');
-    const preservedAllowedDirectories = inMemoryAllowedDirectories
-      ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
+    const preservedPolicy = new Map<string, string[] | null>();
+    for (const field of RECOVERABLE_POLICY_FIELDS) {
+      const inMemory = this.config[field.key];
+      preservedPolicy.set(field.key, Array.isArray(inMemory)
+        && inMemory.every((item) => typeof item === 'string')
+        ? [...inMemory]
+        : extractTopLevelStringArray(corruptText, field.key));
+    }
 
     let backupCreated = false;
     if (existsSync(this.configPath)) {
@@ -377,18 +450,8 @@ class ConfigManager {
     const defaults = this.getDefaultConfig();
     if (preservedClientId) defaults['clientId'] = preservedClientId;
     if (telemetryWasDisabled) defaults['telemetryEnabled'] = false;
-    if (preservedBlockedCommands !== null) {
-      defaults['blockedCommands'] = [...preservedBlockedCommands];
-    } else {
-      // We cannot know a user's custom blocklist from an incomplete value.
-      // `*` is treated by command validation as deny-all until the user resets it.
-      defaults['blockedCommands'] = ['*'];
-    }
-    if (preservedAllowedDirectories !== null) {
-      defaults['allowedDirectories'] = [...preservedAllowedDirectories];
-    } else {
-      // Never turn an unknown prior allowlist into unrestricted filesystem access.
-      defaults['allowedDirectories'] = [path.dirname(this.configPath)];
+    for (const field of RECOVERABLE_POLICY_FIELDS) {
+      defaults[field.key] = preservedPolicy.get(field.key) ?? field.failClosed(this.configPath);
     }
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
