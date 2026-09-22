@@ -55,6 +55,20 @@ UNIT
 unit fixed 1
 unit broken 0
 systemctl --user daemon-reload
+
+# Installed before the first start, not after the report: these units carry
+# Restart=always with no start-rate limit, so an interrupted sleep would leave
+# them restarting for as long as the session lives.
+cleanup() {
+    systemctl --user stop dc695-fixed.service dc695-broken.service 2>/dev/null || true
+    if [ "$KEEP" = "0" ]; then
+        rm -f ~/.config/systemd/user/dc695-fixed.service ~/.config/systemd/user/dc695-broken.service
+        rm -rf "$HOME/dc695-fixed" "$HOME/dc695-broken"
+        systemctl --user daemon-reload 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
 systemctl --user start dc695-fixed.service --no-block
 systemctl --user start dc695-broken.service --no-block
 
@@ -72,11 +86,4 @@ for name in fixed broken; do
     echo "    token on disk:      $(grep -o '"refresh_token": "[^"]*"' "$w/device.json" | head -1)"
     echo "    already used:       $(grep -c 'Invalid Refresh Token: Already Used' "$w/out.log" || true)"
     echo "    session invalid:    $(grep -c 'Persisted session invalid' "$w/out.log" || true)"
-    systemctl --user stop "dc695-$name.service" || true
 done
-
-if [ "$KEEP" = "0" ]; then
-    rm -f ~/.config/systemd/user/dc695-fixed.service ~/.config/systemd/user/dc695-broken.service
-    rm -rf "$HOME/dc695-fixed" "$HOME/dc695-broken"
-    systemctl --user daemon-reload
-fi
