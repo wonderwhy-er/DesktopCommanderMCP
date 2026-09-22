@@ -50,12 +50,14 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 // Windows refuses to rename onto a path another process has open. The other
 // process is a reader or an older build mid-write, and it lets go in
 // milliseconds, so the commit waits it out rather than failing the caller.
-// A handle is held for the length of one read, so the poll is short and
-// frequent: waiting tens of milliseconds between tries costs throughput
-// against a busy reader without making the commit any likelier to land.
-// 41 tries capped at 25ms is ~856ms of waiting before the error is rethrown.
+// Both halves of a mutation wait out a neighbour the same way: the read until
+// a torn file is whole again, the commit until a held handle closes. Neither
+// lasts longer than the write that causes it, so the poll is short and
+// frequent -- tens of milliseconds between tries would cost throughput without
+// making either likelier to land. 41 tries capped at 25ms is ~856ms.
+const CONFIG_READ_ATTEMPTS = 41;
 const CONFIG_COMMIT_ATTEMPTS = 41;
-const CONFIG_COMMIT_RETRY_CAP_MS = 25;
+const CONFIG_RETRY_CAP_MS = 25;
 
 /**
  * Singleton config manager for the server
@@ -206,19 +208,22 @@ class ConfigManager {
     };
   }
 
+  /**
+   * A torn read is a neighbour mid-write, not a broken config: an older build
+   * rewrites the file in place, and the window measured against 0.2.46 closes
+   * within 13ms. Giving up on it rethrew "Unexpected end of JSON input" out of
+   * setValue, which on the tools/list path reached the client of #697 as
+   * -32603. ENOENT is not a SyntaxError, so a missing file still throws at once.
+   */
   private async readConfigFromDisk(): Promise<ServerConfig> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 1; ; attempt++) {
       try {
         return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
       } catch (error: any) {
-        lastError = error;
-        if (error?.code === 'ENOENT') throw error;
-        if (!(error instanceof SyntaxError) || attempt === 4) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (attempt >= CONFIG_READ_ATTEMPTS || !(error instanceof SyntaxError)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2 * attempt, CONFIG_RETRY_CAP_MS)));
       }
     }
-    throw lastError;
   }
 
   private async writeConfigAtomically(config: ServerConfig): Promise<void> {
@@ -244,7 +249,7 @@ class ConfigManager {
   private commitConfigFile(tempPath: string): Promise<void> {
     return retry(() => fs.rename(tempPath, this.configPath), {
       attempts: CONFIG_COMMIT_ATTEMPTS,
-      delayMs: (attempt) => Math.min(2 * attempt, CONFIG_COMMIT_RETRY_CAP_MS),
+      delayMs: (attempt) => Math.min(2 * attempt, CONFIG_RETRY_CAP_MS),
       retryOn: isSharingViolation,
     });
   }
