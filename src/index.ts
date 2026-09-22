@@ -131,10 +131,14 @@ async function runServer() {
       transport.sendLog('info', 'Server connected successfully');
       transport.sendLog('info', 'MCP fully initialized, all startup messages sent');
 
-      // Preemptively check/download Chrome for PDF generation (runs in background).
-      // Loaded here rather than at startup: this is the only use, it happens
-      // after the handshake, and the module pulls in md-to-pdf and puppeteer,
-      // which would otherwise be loaded on every launch.
+      // Preemptively find Chrome for PDF generation, downloading it only if it
+      // is missing. Kicked off here, after the handshake, and not awaited, so
+      // the lookup and any download proceed while the server serves.
+      //
+      // The module load itself is not free and not backgrounded: it runs on the
+      // main thread like any import. That is why the accessor points at
+      // tools/pdf/chrome.ts and not at the renderer — this path runs on every
+      // launch, so it has to stay cheap.
       chromeTools()
         .then(({ ensureChromeAvailable }) => ensureChromeAvailable())
         .catch((error) => {

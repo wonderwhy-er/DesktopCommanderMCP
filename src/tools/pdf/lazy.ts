@@ -6,13 +6,16 @@
  * actually loads the module lives here, in one place, instead of being spelled
  * out at every call site.
  *
- * These modules are not in the startup graph because they are expensive:
- * ./index.js pulls in unpdf and pdf-lib and, through markdown.js, md-to-pdf;
- * ./markdown.js pulls in md-to-pdf, and with it puppeteer.
+ * ./index.js is not in the startup graph because it is expensive: it pulls in
+ * unpdf and pdf-lib and, through markdown.js, md-to-pdf and with it puppeteer.
+ *
+ * ./chrome.js is the cheap half. The server warms Chrome up on every launch, so
+ * that path must not reach the renderer; @puppeteer/browsers is loaded inside it
+ * only when a download is actually needed.
  */
 
 /** PDF reading, writing and editing: parsePdfToMarkdown, parseMarkdownToPdf, editPdf. */
 export const pdfTools = () => import('./index.js');
 
 /** Chrome discovery and download for PDF generation: ensureChromeAvailable. */
-export const chromeTools = () => import('./markdown.js');
+export const chromeTools = () => import('./chrome.js');
