@@ -286,19 +286,36 @@ export class MCPDevice {
 
 
 
-    private async findPersistedDeviceWithRetry(deviceId: string) {
-        let lastError: any;
-        for (let attempt = 1; attempt <= PERSISTED_DEVICE_LOOKUP_ATTEMPTS; attempt++) {
+    /**
+     * The one retry shape in this file. The last attempt runs outside the loop,
+     * so its failure reaches the caller unwrapped and the loop stays bounded by
+     * its own counter rather than by a throw inside it.
+     */
+    private async withRetry<T>(work: () => Promise<T>, options: {
+        attempts: number;
+        delayMs: number;
+        retryOn?: (error: any) => boolean;
+        onRetry?: (attempt: number) => void;
+    }): Promise<T> {
+        for (let attempt = 1; attempt < options.attempts; attempt++) {
             try {
-                return await this.remoteChannel.findDevice(deviceId);
+                return await work();
             } catch (error: any) {
-                lastError = error;
-                if (attempt === PERSISTED_DEVICE_LOOKUP_ATTEMPTS) break;
-                console.warn(`   - ⚠️ Device lookup failed (${attempt}/${PERSISTED_DEVICE_LOOKUP_ATTEMPTS}); retrying...`);
-                await new Promise((resolve) => setTimeout(resolve, PERSISTED_DEVICE_LOOKUP_RETRY_MS * attempt));
+                if (options.retryOn && !options.retryOn(error)) throw error;
+                options.onRetry?.(attempt);
+                await new Promise((resolve) => setTimeout(resolve, options.delayMs * attempt));
             }
         }
-        throw lastError;
+        return await work();
+    }
+
+    private async findPersistedDeviceWithRetry(deviceId: string) {
+        return this.withRetry(() => this.remoteChannel.findDevice(deviceId), {
+            attempts: PERSISTED_DEVICE_LOOKUP_ATTEMPTS,
+            delayMs: PERSISTED_DEVICE_LOOKUP_RETRY_MS,
+            onRetry: (attempt) => console.warn(
+                `   - ⚠️ Device lookup failed (${attempt}/${PERSISTED_DEVICE_LOOKUP_ATTEMPTS}); retrying...`),
+        });
     }
 
     async loadPersistedConfig() {
