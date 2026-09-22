@@ -4,7 +4,7 @@
  * Regression test for DC-695 (#695): clearing the persisted device config has
  * to actually clear it.
  *
- * Every write to `device.json` goes through `configWriteChain`, which exists so
+ * Every write to `device.json` goes through `configWriteQueue`, which exists so
  * that two saves in flight land in the order they were queued. The removal does
  * not: `clearPersistedConfig()` calls fs.rm directly. A save queued a moment
  * earlier therefore lands AFTER the removal and puts the file back.
@@ -64,7 +64,7 @@ await test('a save in flight cannot outlive the clear that was meant to erase it
     const { device, client } = await makeDevice(configPath);
     assert.ok(existsSync(configPath), 'precondition: startup persisted a config');
 
-    // A save is in flight when the clear runs - the case configWriteChain
+    // A save is in flight when the clear runs - the case configWriteQueue
     // exists for. The rotation behind it is what the 45-minute refresh queues
     // while start() is still asking the server whether this device was revoked.
     client.delaySaves(300);

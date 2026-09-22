@@ -123,7 +123,7 @@ export async function makeDevice(configPath, { deviceId = DEVICE_ID, persist = t
  * polling for a file that should never appear can only ever time out. Private
  * in TS, a plain property at runtime, like rc.client above.
  */
-export const drainWrites = (device) => device.configWriteChain;
+export const drainWrites = (device) => device.configWriteQueue;
 
 export const readPersisted = (configPath) => JSON.parse(readFileSync(configPath, 'utf8'));
 

@@ -170,7 +170,7 @@ if (process.env.DC_BREAK_WRITES) {
 
 if (process.env.DC_ROTATE === '1') {
     client.rotate();
-    await device.configWriteChain; // let the rotation reach disk, if it is going to
+    await device.configWriteQueue; // let the rotation reach disk, if it is going to
 }
 
 // A config write that failed leaves the same empty directory as one that was
