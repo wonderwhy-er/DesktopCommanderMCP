@@ -81,7 +81,7 @@ async function makeSlowProducerFixture() {
   const ExcelJS = (await import('exceljs')).default;
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Sheet1');
-  for (let i = 0; i < 8000; i++) sheet.addRow([`row ${i} ${NEEDLE}`]);
+  for (let i = 0; i < SLOW_PRODUCER_ROWS; i++) sheet.addRow([`row ${i} ${NEEDLE}`]);
   await workbook.xlsx.writeFile(path.join(dir, 'book.xlsx'));
   return dir;
 }
@@ -128,6 +128,7 @@ async function runToCompletion(searchManager, options, until = null) {
 
 const isDocxResult = result => result.file.toLowerCase().includes('.docx');
 const isWorkbookResult = result => result.file.toLowerCase().includes('.xlsx');
+const SLOW_PRODUCER_ROWS = 8000;
 
 async function testDocxProducerSharesTheBudget(searchManager, docxDir) {
   const { sessionId, state } = await runToCompletion(searchManager, {
@@ -162,6 +163,34 @@ async function testCompletionWaitsForOfficeProducers(searchManager, slowDir) {
     'a session is not complete while a producer it started is still running');
   searchManager.terminateSearch(sessionId);
   console.log(`✓ completion: ${state.results.length} results, document among them, at the first complete read`);
+}
+
+async function testCancellationReachesOfficeProducers(searchManager, slowDir) {
+  // Cancelling has to reach every producer the session started, or the session
+  // waits for a reader nobody wants any more.
+  const { sessionId } = await searchManager.startSearch({
+    rootPath: slowDir,
+    pattern: NEEDLE,
+    searchType: 'content',
+    filePattern: '*.txt|*.xlsx',
+    contextLines: 0
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 40));
+  const cancelledAt = Date.now();
+  searchManager.terminateSearch(sessionId);
+
+  const deadline = cancelledAt + COMPLETION_TIMEOUT_MS;
+  let state = searchManager.readSearchResults(sessionId, 0, 100000);
+  while (!state.isComplete && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+    state = searchManager.readSearchResults(sessionId, 0, 100000);
+  }
+
+  assert.strictEqual(state.isComplete, true, 'a cancelled search must settle');
+  assert.ok(state.totalMatches < SLOW_PRODUCER_ROWS,
+    `cancelling must stop the workbook reader, it kept ${state.totalMatches} of ${SLOW_PRODUCER_ROWS} rows`);
+  console.log(`✓ cancellation reaches producers: ${state.totalMatches} of ${SLOW_PRODUCER_ROWS} rows kept, settled in ${Date.now() - cancelledAt}ms`);
 }
 
 async function testTruncatedAnswerPages(searchManager, pagingDir) {
@@ -272,6 +301,7 @@ async function main() {
     console.log('=== search session lifecycle ===\n');
     await testDocxProducerSharesTheBudget(searchManager, docxDir);
     await testCompletionWaitsForOfficeProducers(searchManager, slowProducerDir);
+    await testCancellationReachesOfficeProducers(searchManager, slowProducerDir);
     await testTruncatedAnswerPages(searchManager, pagingDir);
     await testCancelledSearchKeepsWhatItHad(searchManager, slowDir);
 
