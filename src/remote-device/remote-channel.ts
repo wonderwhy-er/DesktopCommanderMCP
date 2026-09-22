@@ -1,9 +1,7 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
-import { captureRemote, isTelemetryDisabledByEnv } from '../utils/capture.js';
-import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
-import { BroadcastAnalytics, captureArrival, observeRequest, type BroadcastObservation } from './broadcast-analytics.js';
+import { capture, captureRemote } from '../utils/capture.js';
+import { broadcastReceipt } from './broadcast-analytics.js';
 import { VERSION } from '../version.js';
-import { sendBroadcastObservations } from './broadcast-telemetry.js';
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -183,25 +181,6 @@ export class RemoteChannel {
     /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
     private tokenRefreshInterval: NodeJS.Timeout | null = null;
 
-    private readonly broadcastAnalytics: BroadcastAnalytics;
-    private observationGeneration = 0;
-    private observationSessionChanging = false;
-
-    /** Enabled for registered connectors; public telemetry never uses the backend bearer token. */
-    constructor(serverUrl?: string, telemetryEndpoints?: readonly [string, string]) {
-        this.broadcastAnalytics = new BroadcastAnalytics(serverUrl && !isTelemetryDisabledByEnv()
-            ? async (observations, signal) => {
-                const generation = this.observationGeneration;
-                if (isTelemetryDisabledByEnv() ||
-                    isTelemetryDisabledValue(await configManager.getValue('telemetryEnabled'))) return observations.length;
-                if (signal.aborted || generation !== this.observationGeneration || this.shuttingDown ||
-                    this.sessionLost || this.handlingSignedOut || this.observationSessionChanging || !this.deviceId || !this.user?.id) {
-                    throw new Error('Broadcast reporting session unavailable');
-                }
-                return sendBroadcastObservations(this.deviceId, observations, signal, telemetryEndpoints);
-            } : undefined);
-    }
-
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
@@ -252,9 +231,6 @@ export class RemoteChannel {
     }
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
-        this.observationGeneration++;
-        this.observationSessionChanging = true;
-        this.broadcastAnalytics.reset();
         if (!this.client) throw new Error('Client not initialized');
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
         // setSession() already fetches the user from GoTrue (or refreshes), so no getUser() after it.
@@ -289,8 +265,6 @@ export class RemoteChannel {
             access_token: realtimeToken,
             refresh_token: currentSession?.refresh_token ?? session.refresh_token ?? null,
         };
-        this.observationSessionChanging = false;
-        this.broadcastAnalytics.reset();
         console.debug('[DEBUG] Realtime socket authorized with current session JWT');
         if (!this.authListenerRegistered) {
             this.authListenerRegistered = true;
@@ -329,8 +303,6 @@ export class RemoteChannel {
     private async handleSignedOut(): Promise<void> {
         if (this.handlingSignedOut || this.sessionLost || this.shuttingDown) return;
         this.handlingSignedOut = true;
-        this.observationGeneration++;
-        this.broadcastAnalytics.reset();
         try {
             const cached = this.lastKnownSession;
             if (cached?.refresh_token && this.client) {
@@ -492,7 +464,6 @@ export class RemoteChannel {
             });
 
             // Store parameters for channel recreation
-            if (this.deviceId !== existingDevice.id) this.broadcastAnalytics.reset();
             this.deviceId = existingDevice.id;
             this.deviceName = deviceName;
             this.onToolCall = onToolCall;
@@ -636,8 +607,13 @@ export class RemoteChannel {
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
-                        const arrival = captureArrival();
-                        this.onDoorbell(payload, arrival).catch((e: any) => {
+                        // Capture callback entry before claim/fetch work changes the timestamp.
+                        const arrival = { timestamp_utc: new Date(Date.now()).toISOString(), monotonic_ms: performance.now() };
+                        if (!this.shuttingDown) {
+                            const receipt = broadcastReceipt(payload, this.deviceId, this.user?.id, arrival);
+                            if (receipt) void capture('broadcast', receipt);
+                        }
+                        this.onDoorbell(payload).catch((e: any) => {
                             console.error('[DEBUG] Doorbell handling failed:', e?.message);
                         });
                     }
@@ -706,47 +682,34 @@ export class RemoteChannel {
      * claims the row (pending -> executing) and returns it, and it is handed to
      * device.ts marked as claimed.
      */
-    private async onDoorbell(payload: any, arrival = captureArrival()): Promise<void> {
+    private async onDoorbell(payload: any): Promise<void> {
         const callId = payload?.call_id;
-        if (!callId) { this.broadcastAnalytics.rejectMalformed(); return; }
+        if (!callId) return;
         if (payload?.device_id !== this.deviceId) {
             console.debug('[DEBUG] Ignoring doorbell for different device');
             return;
         }
 
-        // Per-user fan-out is deliberately excluded: only the target above is observed.
-        let observation: BroadcastObservation | undefined;
-        try {
-            const safeId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
-            if (!safeId(callId) || !safeId(this.deviceId) ||
-                (payload.user_id !== undefined && payload.user_id !== this.user?.id)) {
-                this.broadcastAnalytics.rejectMalformed();
-            } else if (this.user?.id && !this.observationSessionChanging && !this.handlingSignedOut &&
-                !this.sessionLost && !this.shuttingDown) {
-                observation = this.broadcastAnalytics.receipt(callId, arrival);
-            }
-        } catch { /* Observation failures never change existing claim/execution behavior. */ }
+        // Not a telemetry event on purpose: ~126k/day in prod. Transport usage
+        // is already segmentable server-side via metadata.transport.
         console.debug('[DEBUG] Doorbell received for call:', callId);
 
-        if (!this.client) { observation?.stage('handling_rejected', 'unavailable'); return; }
+        if (!this.client) return;
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
         // so a hiccup must not cost a 5-minute timeout.
         let row: any = null;
         let claimError: any = null;
-        let operationAttempt = 0;
         for (const delayMs of [0, 500, 1500]) {
-            const waitStarted = performance.now();
             if (delayMs > 0) await this.sleep(delayMs);
-            const retryWaitMs = delayMs > 0 ? performance.now() - waitStarted : undefined;
-            const { data, error } = await observeRequest(observation, 'claim_fetch', ++operationAttempt,
-                () => this.client!.from('mcp_remote_calls')
-                    .update({ status: 'executing' })
-                    .eq('id', callId)
-                    .eq('device_id', this.deviceId)
-                    .eq('status', 'pending')
-                    .select('*'), retryWaitMs);
+            const { data, error } = await this.client
+                .from('mcp_remote_calls')
+                .update({ status: 'executing' })
+                .eq('id', callId)
+                .eq('device_id', this.deviceId)
+                .eq('status', 'pending')
+                .select('*');
             if (!error) {
                 row = data?.[0] ?? null;
                 break;
@@ -758,11 +721,10 @@ export class RemoteChannel {
         }
 
         if (row) {
-            this.dispatchToolCall({ new: row, claimed: true, broadcastObservation: observation });
+            this.dispatchToolCall({ new: row, claimed: true });
             return;
         }
         if (!claimError) {
-            observation?.stage('handling_rejected', 'claim_lost');
             // Claimed by a duplicate doorbell or another process, or cleaned up.
             console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
             await captureRemote('remote_channel_doorbell_claim_no_row', { call_id: callId });
@@ -773,21 +735,20 @@ export class RemoteChannel {
 
         // A failed claim may never have reached the database, so read the row
         // back: still 'pending' means nobody holds it and it can be delivered.
-        const { data: current, error } = await observeRequest(observation, 'fallback_read', 1,
-            () => this.client!.from('mcp_remote_calls')
-                .select('*')
-                .eq('id', callId)
-                .eq('device_id', this.deviceId)
-                .maybeSingle());
+        const { data: current, error } = await this.client
+            .from('mcp_remote_calls')
+            .select('*')
+            .eq('id', callId)
+            .eq('device_id', this.deviceId)
+            .maybeSingle();
         if (error) {
-            observation?.stage('handling_rejected', 'request_failed');
             console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after claim errors:`, error.message);
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
             return;
         }
         if (current?.status === 'pending') {
             // No claim landed; device.ts claims it.
-            this.dispatchToolCall({ new: current, broadcastObservation: observation });
+            this.dispatchToolCall({ new: current });
         } else {
             // 'executing' reads the same whether our own claim committed with its
             // response lost or another process holding this device_id won it, and
@@ -795,7 +756,6 @@ export class RemoteChannel {
             // side-effecting tool twice; skipping costs one call its timeout, which
             // is what a failed doorbell read already cost before the claim path.
             console.debug('[DEBUG] Doorbell call already claimed or gone:', callId);
-            observation?.stage('handling_rejected', 'claim_unresolved');
             await captureRemote('remote_channel_doorbell_claim_unresolved', {
                 call_id: callId,
                 status: current?.status ?? null,
@@ -1037,14 +997,14 @@ export class RemoteChannel {
      * anyway), matching prior behaviour — so device.ts's in-memory guard is what
      * actually guarantees exactly-once within a process.
      */
-    async markCallExecuting(callId: string, observation?: BroadcastObservation): Promise<boolean> {
+    async markCallExecuting(callId: string): Promise<boolean> {
         if (!this.client) throw new Error('Client not initialized');
-        const { data, error } = await observeRequest(observation, 'fallback_claim', 1,
-            () => this.client!.from('mcp_remote_calls')
-                .update({ status: 'executing' })
-                .eq('id', callId)
-                .eq('status', 'pending')
-                .select('id'));
+        const { data, error } = await this.client
+            .from('mcp_remote_calls')
+            .update({ status: 'executing' })
+            .eq('id', callId)
+            .eq('status', 'pending')
+            .select('id');
 
         if (error) {
             console.error('[DEBUG] Failed to mark call executing:', error.message);
@@ -1061,7 +1021,7 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null, observation?: BroadcastObservation) {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
@@ -1088,10 +1048,10 @@ export class RemoteChannel {
                 (result !== null ? ` resultBytes=~${JSON.stringify(updateData.result)?.length ?? 0}` : '')
             );
         }
-        const { error } = await observeRequest(observation, 'result_write', undefined,
-            () => this.client!.from('mcp_remote_calls')
-                .update(updateData)
-                .eq('id', callId));
+        const { error } = await this.client
+            .from('mcp_remote_calls')
+            .update(updateData)
+            .eq('id', callId);
 
         if (error) {
             console.error('[DEBUG] Failed to update call result:', error.message);
@@ -1107,8 +1067,7 @@ export class RemoteChannel {
                     callId,
                     'failed',
                     null,
-                    `Result could not be stored (${error.message})`,
-                    observation
+                    `Result could not be stored (${error.message})`
                 );
             }
         } else {
@@ -1413,7 +1372,6 @@ export class RemoteChannel {
         // SIGINT during recreateChannel()'s backoff, where the later join's
         // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
-        this.broadcastAnalytics.stop();
         // Budget against device.ts's 5s force-exit, worst case:
         //   250 drain + 2x300 leave + 500 session + 3000 spawnSync = 4350ms.
         // In practice only the untrack bound binds — removeChannel/unsubscribe

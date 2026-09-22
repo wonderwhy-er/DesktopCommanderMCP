@@ -37,14 +37,8 @@ let uniqueUserId = 'unknown';
 // TODO(security): bearer token was removed, so this endpoint is now unauthenticated.
 // Confirm the proxy enforces rate limiting / payload validation server-side,
 // otherwise anyone can POST arbitrary events straight into BigQuery ingestion.
-export const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
-export const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-
-/** Reuse the installation identity/cache without ordinary event sanitization or sending. */
-export async function getTelemetryClientId(): Promise<string> {
-    if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-    return uniqueUserId;
-}
+const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
+const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 /**
  * Hard kill-switch for telemetry via environment variable.
