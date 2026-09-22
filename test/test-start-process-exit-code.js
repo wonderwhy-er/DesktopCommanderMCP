@@ -384,8 +384,9 @@ async function worker() {
     // A completed session was read from line 0 with the new index thrown away,
     // so the second read repeated what the caller had already seen and buried
     // the late lines behind it.
+    const triggerSecondLine = path.join(helpers, 'trigger-second-line');
     const twoLines = replyText(await startProcess({
-      command: `node ${path.join(helpers, 'two-lines.cjs')}`,
+      command: `node ${path.join(helpers, 'two-lines.cjs')} ${triggerSecondLine}`,
       timeout_ms: 600
     }));
     const twoLinesPid = pidOf(twoLines);
@@ -394,7 +395,14 @@ async function worker() {
       firstRead.includes('line one'),
       `the first read must return what the process printed, got: ${JSON.stringify(firstRead)}`
     );
-    await sleep(2_000);
+    // Only now may the second line exist, and only once the session has left
+    // the live map has its exit been taken in.
+    writeFileSync(triggerSecondLine, '');
+    for (let i = 0; i < 100 && terminalManager.getSession(twoLinesPid); i++) {
+      await sleep(100);
+    }
+    assert.equal(terminalManager.getSession(twoLinesPid), undefined,
+      'the process was supposed to exit once triggered');
     const secondRead = replyText(await readProcessOutput({ pid: twoLinesPid, timeout_ms: 1_000 }));
     assert.ok(
       secondRead.includes('line two'),
@@ -543,11 +551,19 @@ async function parent() {
     'setTimeout(() => {}, 20000);'
   ].join('\n'));
 
-  // One line now, one after the first read, then leaves.
+  // One line now, the second only once the test has read the first, so the case
+  // cannot depend on how fast this machine is.
   writeFileSync(path.join(home, 'two-lines.cjs'), [
+    "const fs = require('fs');",
+    'const trigger = process.argv[2];',
     "console.log('line one');",
-    "setTimeout(() => console.log('line two'), 1200);",
-    'setTimeout(() => process.exit(0), 1600);'
+    'const wait = setInterval(() => {',
+    '  if (!fs.existsSync(trigger)) return;',
+    '  clearInterval(wait);',
+    "  console.log('line two');",
+    '  process.exit(0);',
+    '}, 20);',
+    'setTimeout(() => process.exit(0), 20000);'
   ].join('\n'));
 
   // Prints a line analyzeProcessState reads as completion, then keeps running.

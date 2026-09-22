@@ -2,7 +2,7 @@
 // Windows with the system OpenSSH client, separating the ssh -t rewrite, the
 // stdio shape and whether the parent has a console. Reports, does not assert.
 //   node test/repro/ssh-702-factor-matrix.mjs
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +42,19 @@ function configurations() {
   ];
 }
 
+/** Kills the wrapper and everything it started; a lone kill() misses those. */
+function killTree(child) {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' });
+      return;
+    } catch {
+      // already gone
+    }
+  }
+  if (!child.killed) child.kill();
+}
+
 function runOne(label, file, args, options) {
   return new Promise((resolve) => {
     let stdout = '';
@@ -59,17 +72,20 @@ function runOne(label, file, args, options) {
     child.stdout?.on('data', (d) => { stdout += d.toString(); });
     child.stderr?.on('data', (d) => { stderr += d.toString(); });
     child.on('error', (err) => { spawnError = err.message; });
-    child.on('close', (exitCode) => finish({
+    child.on('close', (exitCode, signal) => finish({
       label,
       exitCode,
+      signal,
       spawnError,
       bytes: stdout.length + stderr.length,
       sample: (stdout + stderr).trim().split('\n')[0]?.slice(0, 48) ?? ''
     }));
     timer = setTimeout(() => {
-      // Nothing else will kill it: this probe runs binaries that may hang, and
-      // one left behind burns a core until someone notices.
-      if (!child.killed) child.kill();
+      // Configurations 5-8 spawn a shell, so the binary under test is a
+      // grandchild; killing the wrapper leaves it running with the pipes in
+      // hand. Measured: after child.kill() the grandchild is still alive, after
+      // taskkill /T it is not.
+      killTree(child);
       finish({ label, exitCode: null, timedOut: true, bytes: stdout.length + stderr.length, sample: '' });
     }, SPAWN_TIMEOUT_MS);
   });
@@ -193,7 +209,7 @@ for (const [name, pass] of passes) {
   for (const r of pass.results) {
     total += 1;
     if (r.exitCode === 255 && r.bytes === 0) silent255 += 1;
-    const code = r.timedOut ? 'timeout' : String(r.exitCode);
+    const code = r.timedOut ? 'timeout' : (r.signal ? `${r.exitCode} (${r.signal})` : String(r.exitCode));
     console.log(`    exit=${code.padEnd(7)} bytes=${String(r.bytes).padEnd(5)} ${r.label}`);
     if (r.spawnError) console.log(`      spawn error: ${r.spawnError}`);
   }
