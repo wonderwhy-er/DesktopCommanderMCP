@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { configManager } from '../dist/config-manager.js';
 import { terminalManager } from '../dist/terminal-manager.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { getSystemInfo } from '../dist/utils/system-info.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -68,9 +70,13 @@ async function testPythonREPL() {
   console.log(`${colors.cyan}Running Python REPL interaction test...${colors.reset}`);
   
   try {
-    // Setup Python test
-    // Find Python executable
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    // Use the Python the server itself detected
+    const { pythonInfo } = getSystemInfo();
+    if (!pythonInfo.available) {
+      skip('Python REPL interaction test: Python 3 is not installed');
+      return true;
+    }
+    const pythonCmd = pythonInfo.command;
     
     // Start a Python REPL process
     const result = await terminalManager.executeCommand(pythonCmd + ' -i', 5000);
@@ -240,9 +246,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error(`${colors.red}✗ Unhandled error: ${error}${colors.reset}`);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

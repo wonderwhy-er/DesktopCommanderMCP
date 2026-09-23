@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { DeviceAuthenticator } from '../dist/remote-device/device-authenticator.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 function recorder() {
     const events = [];
@@ -127,9 +128,13 @@ async function testBrowserLaunchTelemetry() {
     ]);
     assert.match(failure.events[0].properties.error.message, /no browser/);
 }
-await testSuccessfulDeviceStart();
-await testInitialNetworkFailure();
-await testInitialHttpFailure();
-await testBrowserLaunchTelemetry();
+async function runTests() {
+  await testSuccessfulDeviceStart();
+  await testInitialNetworkFailure();
+  await testInitialHttpFailure();
+  await testBrowserLaunchTelemetry();
 
-console.log('PASS remote install telemetry behavior');
+  console.log('PASS remote install telemetry behavior');
+}
+
+runIfMain(import.meta.url, runTests);

@@ -12,6 +12,7 @@
  */
 import assert from 'node:assert';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -378,12 +379,9 @@ async function main() {
 
   if (failures > 0) {
     console.error(`\n${failures} test(s) failed`);
-    process.exit(1);
+    return false;
   }
   console.log('\nremote-channel signed-out tests passed');
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+runIfMain(import.meta.url, main);
