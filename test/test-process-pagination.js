@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { startProcess, readProcessOutput, interactWithProcess } from '../dist/tools/improved-process-tools.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 /**
  * Test suite for process output pagination features
@@ -260,9 +261,4 @@ async function runAllTests() {
   }
 }
 
-runAllTests()
-  .then(success => process.exit(success ? 0 : 1))
-  .catch(error => {
-    console.error('Test error:', error);
-    process.exit(1);
-  });
+runIfMain(import.meta.url, runAllTests);

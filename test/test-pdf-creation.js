@@ -9,6 +9,7 @@ import { writePdf } from '../dist/tools/filesystem.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,7 +76,7 @@ console.log('Line 3');
             }
         } catch (e) {
             console.error('❌ Failed to verify created PDF:', e);
-            process.exit(1);
+            return false;
         }
 
         // --- Modification Test ---
@@ -126,7 +127,7 @@ console.log('Line 3');
             console.log(`   Modified File Size: ${modStats.size} bytes`);
         } else {
             console.error('❌ Modified PDF file is empty');
-            process.exit(1);
+            return false;
         }
 
         // Cleanup temp file
@@ -134,7 +135,7 @@ console.log('Line 3');
 
     } catch (error) {
         console.error('❌ Failed:', error);
-        process.exit(1);
+        return false;
     }
 
     // --- Modification Test ---
@@ -158,6 +159,4 @@ console.log('Line 3');
     console.log(`   Saved to: ${SAMPLE_FILE_MODIFIED}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-    main().catch(console.error);
-}
+runIfMain(import.meta.url, main);

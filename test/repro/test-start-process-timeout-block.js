@@ -1,4 +1,5 @@
 import assert from 'assert';
+import { runIfMain } from '../helpers/run-if-main.js';
 import { terminalManager } from '../../dist/terminal-manager.js';
 
 /**
@@ -130,6 +131,4 @@ async function runAllTests() {
   }
 }
 
-runAllTests()
-  .then(success => process.exit(success ? 0 : 1))
-  .catch(error => { console.error('Test error:', error); process.exit(1); });
+runIfMain(import.meta.url, runAllTests);
