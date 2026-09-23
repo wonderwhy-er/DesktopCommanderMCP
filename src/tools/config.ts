@@ -1,10 +1,9 @@
 import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
+import { detectAvailableShells } from '../utils/shell.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
-import { access, readFile } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
 import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
@@ -12,77 +11,6 @@ import {
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
-
-async function pathExists(pathValue: string): Promise<boolean> {
-  try {
-    await access(pathValue, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function detectAvailableShells(systemInfo: ReturnType<typeof getSystemInfo>): Promise<string[]> {
-  const detected = new Set<string>();
-  const add = (shell: string): void => {
-    if (shell.trim().length > 0) {
-      detected.add(shell.trim());
-    }
-  };
-
-  add(systemInfo.defaultShell);
-
-  if (systemInfo.isWindows) {
-    add(process.env.ComSpec ?? '');
-    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const candidates = [
-      `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
-      `${systemRoot}\\System32\\cmd.exe`,
-      `${systemRoot}\\System32\\bash.exe`,
-      'powershell.exe',
-      'pwsh.exe',
-      'cmd.exe',
-      'bash.exe',
-    ];
-
-    for (const shell of candidates) {
-      if (shell.includes('\\')) {
-        if (await pathExists(shell)) {
-          add(shell);
-        }
-      } else {
-        add(shell);
-      }
-    }
-
-    return [...detected];
-  }
-
-  add(process.env.SHELL ?? '');
-
-  const shellFiles = ['/etc/shells'];
-  for (const shellFile of shellFiles) {
-    try {
-      const content = await readFile(shellFile, 'utf8');
-      content
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0 && !line.startsWith('#'))
-        .forEach(add);
-    } catch {
-      // Best-effort discovery only.
-    }
-  }
-
-  const fallbackCandidates = ['/bin/zsh', '/bin/bash', '/bin/sh', '/usr/bin/fish'];
-  for (const shell of fallbackCandidates) {
-    if (await pathExists(shell)) {
-      add(shell);
-    }
-  }
-
-  return [...detected];
-}
 
 /**
  * Get the entire config including system information
@@ -114,7 +42,7 @@ export async function getConfig() {
         memory
       }
     };
-    const availableShells = await detectAvailableShells(systemInfo);
+    const availableShells = detectAvailableShells();
     
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
