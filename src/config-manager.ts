@@ -6,6 +6,7 @@ import os from 'os';
 import lockfile from 'proper-lockfile';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
+import { writeFileAtomic } from './utils/atomic-write.js';
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -209,16 +210,6 @@ class ConfigManager {
     throw lastError;
   }
 
-  private async writeConfigAtomically(config: ServerConfig): Promise<void> {
-    const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-    try {
-      await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      await fs.rename(tempPath, this.configPath);
-    } finally {
-      await fs.unlink(tempPath).catch(() => {});
-    }
-  }
-
   private async acquireConfigLock(): Promise<() => Promise<void>> {
     return lockfile.lock(this.configPath, {
       realpath: false,
@@ -243,7 +234,7 @@ class ConfigManager {
         existed = false;
       }
       mutate(latest, existed);
-      await this.writeConfigAtomically(latest);
+      await writeFileAtomic(this.configPath, JSON.stringify(latest, null, 2));
       this.config = { ...latest, version: VERSION };
       return latest;
     } finally {
