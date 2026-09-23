@@ -44,7 +44,7 @@ export class ExcelFileHandler implements FileHandler {
         await workbook.xlsx.readFile(path);
 
         const metadata = await this.extractMetadata(workbook, path);
-        const { sheetName, data, totalRows, returnedRows } = this.worksheetToArray(
+        const { sheetName, data, totalRows, returnedRows, firstRow } = this.worksheetToArray(
             workbook,
             options?.sheet,
             options?.range,
@@ -52,10 +52,13 @@ export class ExcelFileHandler implements FileHandler {
             options?.length
         );
 
-        // Format output with sheet info header, usage hint, and JSON data
-        const paginationInfo = totalRows > returnedRows
-            ? `\n[Showing rows ${(options?.offset || 0) + 1}-${(options?.offset || 0) + returnedRows} of ${totalRows} total. Use offset/length to paginate.]`
-            : '';
+        // Format output with sheet info header, usage hint, and JSON data.
+        // No rows while there are some means the offset starts past the end.
+        const paginationInfo = totalRows <= returnedRows
+            ? ''
+            : returnedRows > 0
+            ? `\n[Showing rows ${firstRow}-${firstRow + returnedRows - 1} of ${totalRows} total. Use offset/length to paginate.]`
+            : `\n[No rows returned: row ${firstRow} is past the end (${totalRows} rows total). Use offset/length to paginate.]`;
 
         const sheetHasSpace = /\s/.test(sheetName);
         const exampleSheet = sheetHasSpace ? sheetName : 'Sheet1';
@@ -110,7 +113,7 @@ ${JSON.stringify(data)}`;
                     if (!worksheet) {
                         worksheet = workbook.addWorksheet('Sheet1');
                     }
-                    const startRow = (worksheet.actualRowCount || 0) + 1;
+                    const startRow = this.dataExtent(worksheet).lastRow + 1;
                     this.writeRowsStartingAt(worksheet, startRow, parsedContent);
                 } else if (typeof parsedContent === 'object' && parsedContent !== null) {
                     // Append to each named sheet
@@ -120,7 +123,7 @@ ${JSON.stringify(data)}`;
                             if (!worksheet) {
                                 worksheet = workbook.addWorksheet(sheetName);
                             }
-                            const startRow = (worksheet.actualRowCount || 0) + 1;
+                            const startRow = this.dataExtent(worksheet).lastRow + 1;
                             this.writeRowsStartingAt(worksheet, startRow, data as any[][]);
                         }
                     }
@@ -297,11 +300,10 @@ ${JSON.stringify(data)}`;
     private async extractMetadata(workbook: ExcelJS.Workbook, path: string): Promise<ExcelMetadata> {
         const stats = await fs.stat(path);
 
-        const sheets: ExcelSheet[] = workbook.worksheets.map(ws => ({
-            name: ws.name,
-            rowCount: ws.actualRowCount || 0,
-            colCount: ws.actualColumnCount || 0
-        }));
+        const sheets: ExcelSheet[] = workbook.worksheets.map(ws => {
+            const { lastRow, lastCol } = this.dataExtent(ws);
+            return { name: ws.name, rowCount: lastRow, colCount: lastCol };
+        });
 
         return {
             sheets,
@@ -310,15 +312,33 @@ ${JSON.stringify(data)}`;
         };
     }
 
+    /**
+     * The last row and the last column holding a value (0 for an empty sheet):
+     * where the sheet's data ends, for reads, sheet info and appends alike.
+     * Not actualRowCount/actualColumnCount: those COUNT the used rows and
+     * columns, so data in columns A and AH only would end at column B.
+     */
+    private dataExtent(worksheet: ExcelJS.Worksheet): { lastRow: number; lastCol: number } {
+        let lastRow = 0;
+        let lastCol = 0;
+        worksheet.eachRow((row, rowNumber) => {
+            lastRow = rowNumber;
+            row.eachCell((_cell, colNumber) => {
+                lastCol = Math.max(lastCol, colNumber);
+            });
+        });
+        return { lastRow, lastCol };
+    }
+
     private worksheetToArray(
         workbook: ExcelJS.Workbook,
         sheetRef?: string | number,
         range?: string,
         offset?: number,
         length?: number
-    ): { sheetName: string; data: any[][]; totalRows: number; returnedRows: number } {
+    ): { sheetName: string; data: any[][]; totalRows: number; returnedRows: number; firstRow: number } {
         if (workbook.worksheets.length === 0) {
-            return { sheetName: '', data: [], totalRows: 0, returnedRows: 0 };
+            return { sheetName: '', data: [], totalRows: 0, returnedRows: 0, firstRow: 1 };
         }
 
         // Accept range with embedded sheet prefix (parity with edit_block).
@@ -355,11 +375,12 @@ ${JSON.stringify(data)}`;
             sheetName = sheetRef;
         }
 
-        // Determine range to read
+        // Determine range to read: from A1 to the last cell of the data
+        const { lastRow, lastCol } = this.dataExtent(worksheet);
         let startRow = 1;
-        let endRow = worksheet.actualRowCount || 1;
+        let endRow = lastRow || 1;
         let startCol = 1;
-        let endCol = worksheet.actualColumnCount || 1;
+        let endCol = lastCol || 1;
 
         if (cellRangeOnly) {
             const parsed = this.parseCellRange(cellRangeOnly);
@@ -369,8 +390,11 @@ ${JSON.stringify(data)}`;
             if (parsed.endCol) endCol = parsed.endCol;
         }
 
-        // Calculate total rows before pagination
-        const totalRows = endRow - startRow + 1;
+        // Calculate total rows before pagination. A single cell reads to the end
+        // of the data, so one below the data (A10 on a 5-row sheet) has no rows,
+        // and one right of it (Z1 on a sheet ending at column C) has no cells.
+        const totalRows = startCol > endCol ? 0 : Math.max(0, endRow - startRow + 1);
+        const rangeStartRow = startRow;
 
         // Apply offset/length pagination (row-based, matching text file behavior)
         if (offset !== undefined) {
@@ -390,9 +414,13 @@ ${JSON.stringify(data)}`;
             endRow = Math.min(endRow, startRow + length - 1);
         }
 
+        // 1-based position of the first returned row within the totalRows,
+        // taken from the pagination actually applied (not the raw offset)
+        const firstRow = startRow - rangeStartRow + 1;
+
         // Ensure valid range
-        if (startRow > endRow) {
-            return { sheetName, data: [], totalRows, returnedRows: 0 };
+        if (startRow > endRow || startCol > endCol) {
+            return { sheetName, data: [], totalRows, returnedRows: 0, firstRow };
         }
 
         // Build 2D array (preserving types)
@@ -430,7 +458,7 @@ ${JSON.stringify(data)}`;
             data.push(rowData);
         }
 
-        return { sheetName, data, totalRows, returnedRows: data.length };
+        return { sheetName, data, totalRows, returnedRows: data.length, firstRow };
     }
 
     private writeDataToSheet(workbook: ExcelJS.Workbook, sheetName: string, data: any[][]): void {
