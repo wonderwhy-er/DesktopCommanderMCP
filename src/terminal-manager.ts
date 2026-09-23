@@ -70,6 +70,10 @@ export function getProcessWaitLimit(timeoutMs: number, capMs: number = MAX_PROCE
   return { waitMs: Math.min(timeoutMs, capMs), capMs, capped: timeoutMs > capMs };
 }
 
+export interface ProcessStartResult extends CommandExecutionResult {
+  waitCappedAtMs?: number;     // Set when the wait stopped at the wait ceiling before timeout_ms; the process keeps running
+}
+
 /**
  * Output buffering caps. Without a cap, a process emitting enough output makes
  * string concatenation throw "RangeError: Invalid string length" at V8's max
@@ -125,7 +129,7 @@ export class TerminalManager {
     }
   }
   
-  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false): Promise<CommandExecutionResult> {
+  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ProcessStartResult> {
     let config: ServerConfig = {};
     try {
       config = await configManager.getConfig();
@@ -134,6 +138,7 @@ export class TerminalManager {
     }
     // Get the shell from config if not specified
     const shellToUse = shell || config.defaultShell || getDefaultShell();
+    const waitLimit = getProcessWaitLimit(timeoutMs, maxWaitMs);
 
     // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
     // Note: No special stdio options needed here, Node.js handles pipes by default
@@ -374,16 +379,18 @@ export class TerminalManager {
         }
       }, 100);
 
-      // Timeout fallback
+      // Timeout fallback, bounded by the wait ceiling so the call returns
+      // before the MCP client gives up on it; the process keeps running.
       setTimeout(() => {
         session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
           pid: childProcess.pid!,
           output,
-          isBlocked: true
+          isBlocked: true,
+          ...(waitLimit.capped && { waitCappedAtMs: waitLimit.capMs })
         });
-      }, timeoutMs);
+      }, waitLimit.waitMs);
 
       childProcess.on('exit', (code: any) => {
         if (childProcess.pid) {
