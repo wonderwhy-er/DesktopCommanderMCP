@@ -8,6 +8,7 @@ import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
 import { captureRemote } from '../utils/capture.js';
+import { writeFileAtomic } from '../utils/atomic-write.js';
 import { exitProcess } from '../utils/exit-process.js';
 
 export interface MCPDeviceOptions {
@@ -395,16 +396,11 @@ export class MCPDevice {
             // Ensure the config directory exists
             console.debug('[DEBUG] Creating config directory:', path.dirname(this.configPath));
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
-            // Write then rename: the rename is the commit boundary, so a write
-            // cut short leaves the previous complete session rather than a
-            // truncated file. loadPersistedConfig() answers a JSON.parse
-            // failure with null, which costs a full browser reauthorization.
-            // Same shape as ConfigManager's atomic save; the pid keeps two
-            // processes off each other's temp file, and configWriteChain keeps
-            // this one off its own.
-            const tempPath = `${this.configPath}.${process.pid}.tmp`;
-            await fs.writeFile(tempPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            await fs.rename(tempPath, this.configPath);
+            // Atomic write: a save cut short leaves the previous complete
+            // session rather than a truncated file. loadPersistedConfig()
+            // answers a JSON.parse failure with null, which costs a full
+            // browser reauthorization.
+            await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
             console.debug('[DEBUG] Config saved to:', this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
