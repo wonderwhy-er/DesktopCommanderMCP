@@ -212,17 +212,26 @@ async function testSymlinkWithinAllowed() {
 async function testBrokenSymlink() {
     console.log('\n--- Test 7: Broken symlink ---');
     
-    const brokenSymlink = path.join(ALLOWED_DIR, 'broken_link');
-    await fs.symlink('/nonexistent/path/that/does/not/exist', brokenSymlink).catch(() => {});
-    
+    // A dangling link whose target is outside the allowed dirs: writing through it
+    // would create the target there, so it must be refused like any outside link
+    const danglingOutside = path.join(ALLOWED_DIR, 'broken_link_outside');
+    await createLink(path.join(RESTRICTED_DIR, 'not-yet-created.txt'), danglingOutside);
+    assert((await fs.lstat(danglingOutside)).isSymbolicLink(), 'Test setup should have created the link');
+
+    // Control: a dangling link whose target is inside the allowed dirs is fine
+    const danglingInside = path.join(ALLOWED_DIR, 'broken_link_inside');
+    await createLink(path.join(ALLOWED_DIR, 'not-yet-created.txt'), danglingInside);
+
     await configManager.setValue('allowedDirectories', [ALLOWED_DIR]);
-    
-    const result = await canAccessPath(brokenSymlink);
-    
-    // Broken symlinks should be handled gracefully - the behavior depends on implementation
-    // Current PR falls back to original path for ENOENT
-    console.log(`  Broken symlink result: success=${result.success}`);
-    console.log('✓ Test 7 passed: Broken symlinks handled gracefully');
+
+    const outside = await canAccessPath(danglingOutside);
+    const inside = await canAccessPath(danglingInside);
+
+    assert.strictEqual(outside.success, false,
+        'SECURITY: A dangling link pointing outside allowed directories should be BLOCKED');
+    assert.strictEqual(inside.success, true,
+        'A dangling link pointing inside allowed directories should be accessible');
+    console.log('✓ Test 7 passed: Dangling links are checked against their target');
 }
 
 /**
