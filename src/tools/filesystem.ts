@@ -168,6 +168,68 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
     }
 }
 
+// Most links followed while resolving one path before it counts as a loop (Linux's limit)
+const MAX_LINKS_FOLLOWED = 40;
+
+/**
+ * Resolves a path to where file operations on it land, like fs.realpath, but
+ * also for paths that don't exist yet (e.g. a file about to be written).
+ *
+ * Missing names are kept under their resolved parent. A dangling link (a
+ * symlink or Windows junction - Node reports both as symlinks - whose target
+ * doesn't exist) is followed to its target, because writing through it creates
+ * the target. Relative targets resolve against the link's real directory,
+ * chains are followed link by link, and loops fail with ELOOP.
+ *
+ * @param absolutePath Absolute path to resolve
+ * @returns Promise<string> The real path, or where the path would be created
+ * @throws Filesystem errors other than ENOENT, or ELOOP for a link loop
+ */
+async function resolveRealPath(absolutePath: string): Promise<string> {
+    let linksFollowed = 0;
+
+    const resolveFrom = async (currentPath: string): Promise<string> => {
+        try {
+            return await fs.realpath(currentPath, { encoding: 'utf8' });
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+
+        const parent = path.dirname(currentPath);
+        if (parent === currentPath) {
+            return currentPath; // a root that doesn't exist, e.g. an unmapped drive
+        }
+
+        // Resolve the parent first so links along the way are followed, and a
+        // relative link target is read against the link's real directory
+        const resolvedParent = await resolveFrom(parent);
+        const candidate = path.join(resolvedParent, path.basename(currentPath));
+
+        let isLink: boolean;
+        try {
+            isLink = (await fs.lstat(candidate)).isSymbolicLink();
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            return candidate; // doesn't exist yet: this is where it would be created
+        }
+        if (!isLink) {
+            return candidate;
+        }
+
+        // Dangling link: a write through it lands on its target, so resolve that instead
+        if (++linksFollowed > MAX_LINKS_FOLLOWED) {
+            throw Object.assign(
+                new Error(`ELOOP: too many symbolic links encountered, resolving '${absolutePath}'`),
+                { code: 'ELOOP' }
+            );
+        }
+        const target = await fs.readlink(candidate, { encoding: 'utf8' });
+        return resolveFrom(path.resolve(resolvedParent, target));
+    };
+
+    return resolveFrom(absolutePath);
+}
+
 /**
  * An allowed directory's real path, or null when it can't be read. validatePath
  * checks real paths, so an allowed directory reached through a symlink or
@@ -257,7 +319,8 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
 /**
  * Validates a path to ensure it can be accessed or created.
  * For existing paths, returns the real path (resolving symlinks).
- * For non-existent paths, validates parent directories to ensure they exist.
+ * For non-existent paths, returns where they would be created (resolving the
+ * existing ancestors and any dangling link), and validates parent directories.
  *
  * @param requestedPath The path to validate
  * @returns Promise<string> The validated path
@@ -273,57 +336,23 @@ export async function validatePath(requestedPath: string): Promise<string> {
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
 
-        // Attempt to resolve symlinks to get the real path
-        // This will succeed if the path exists and all symlinks in the chain are valid
-        // It will fail with ENOENT if:
-        //   - The path itself doesn't exist, OR
-        //   - A symlink exists but points to a non-existent target (broken symlink)
-        let resolvedRealPath: string | null = null;
+        // SECURITY: Resolve symlinks (and Windows junctions) to where file operations
+        // on this path actually land, and check that location. This covers paths that
+        // don't exist yet (a new file under a linked directory) and dangling links:
+        // otherwise a link inside an allowed directory pointing to a missing file
+        // elsewhere would let a write create that file outside the allowed directories.
+        let pathForNextCheck: string;
         try {
-            resolvedRealPath = await fs.realpath(absoluteOriginal, { encoding: 'utf8' });
+            pathForNextCheck = await resolveRealPath(absoluteOriginal);
         } catch (error) {
+            // Permission denied, I/O errors, link loops, ...
             const err = error as NodeJS.ErrnoException;
-            // Only throw for non-ENOENT errors (e.g., permission denied, I/O errors)
-            if (!err.code || err.code !== 'ENOENT') {
-                capture('server_path_realpath_error', {
-                    error: err.message,
-                    path: absoluteOriginal
-                });
-                throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
-            }
-
-            // SECURITY FIX: When the full path doesn't exist (e.g., writing a new file),
-            // resolve the parent directory to detect symlinks in the path chain.
-            // Without this, an attacker could create a symlink inside an allowed directory
-            // pointing to a restricted location, then write to a non-existent file through
-            // that symlink — bypassing the directory restriction check.
-            try {
-                const parentDir = path.dirname(absoluteOriginal);
-                const resolvedParent = await fs.realpath(parentDir, { encoding: 'utf8' });
-                const basename = path.basename(absoluteOriginal);
-                resolvedRealPath = path.join(resolvedParent, basename);
-            } catch {
-                // Parent also doesn't exist — walk up the tree to find
-                // the deepest existing ancestor and resolve it
-                let current = absoluteOriginal;
-                let remaining: string[] = [];
-                while (true) {
-                    const parent = path.dirname(current);
-                    if (parent === current) break; // reached filesystem root
-                    remaining.unshift(path.basename(current));
-                    current = parent;
-                    try {
-                        const resolvedAncestor = await fs.realpath(current, { encoding: 'utf8' });
-                        resolvedRealPath = path.join(resolvedAncestor, ...remaining);
-                        break;
-                    } catch {
-                        // keep walking up
-                    }
-                }
-            }
+            capture('server_path_realpath_error', {
+                error: err.message,
+                path: absoluteOriginal
+            });
+            throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
         }
-
-        const pathForNextCheck = resolvedRealPath ?? absoluteOriginal;
 
         // Check if path is allowed
         if (!(await isPathAllowed(pathForNextCheck))) {
@@ -338,7 +367,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // SECURITY: Always return the resolved path (with symlinks resolved) so that
         // all subsequent file operations (read, write, mkdir, etc.) operate on the
         // canonical target, not on a symlink that could point outside allowed directories.
-        // pathForNextCheck already holds resolvedRealPath ?? absoluteOriginal from above.
+        // pathForNextCheck already holds that resolved path from above.
 
         // Check if path exists
         try {
