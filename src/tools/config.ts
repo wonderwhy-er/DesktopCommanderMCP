@@ -172,6 +172,21 @@ export async function setConfigValue(args: unknown) {
         }
       }
 
+      // Numbers may arrive as strings ("5000"); null clears the value back to its default.
+      if (fieldDefinition.valueType === 'number' && valueToStore !== null) {
+        const numeric = typeof valueToStore === 'string' && valueToStore.trim() !== '' ? Number(valueToStore) : valueToStore;
+        if (typeof numeric !== 'number' || !Number.isFinite(numeric)) {
+          return {
+            content: [{
+              type: "text",
+              text: `Value for ${parsed.data.key} must be a number.`
+            }],
+            isError: true
+          };
+        }
+        valueToStore = numeric;
+      }
+
       await configManager.setValue(parsed.data.key, valueToStore);
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
