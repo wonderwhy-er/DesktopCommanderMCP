@@ -67,6 +67,11 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
 
     return {
       content: [{ type: "text", text: output }],
+      structuredContent: {
+        sessionId: result.sessionId,
+        isComplete: result.isComplete,
+        totalResults: result.totalResults,
+      },
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -163,6 +168,15 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
 
     return {
       content: [{ type: "text", text: output }],
+      structuredContent: {
+        sessionId: parsed.data.sessionId,
+        isComplete: results.isComplete,
+        totalResults: results.totalResults,
+        totalMatches: results.totalMatches,
+        returnedCount: results.returnedCount,
+        hasMoreResults: results.hasMoreResults,
+        wasIncomplete: results.wasIncomplete ?? false,
+      },
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
