@@ -1,10 +1,10 @@
 import { spawn } from 'child_process';
-import path from 'path';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
-import { configManager } from './config-manager.js';
+import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState } from './utils/process-detection.js';
+import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -70,80 +70,6 @@ export interface PaginatedOutputResult {
   evictedLines?: number;       // Lines dropped by the buffer cap; when > 0, line numbers are relative to the retained buffer
 }
 
-/**
- * Configuration for spawning a shell with appropriate flags
- */
-interface ShellSpawnConfig {
-  executable: string;
-  args: string[];
-  useShellOption: string | boolean;
-  // When true, pass args verbatim on Windows (see executeCommand). Only cmd.exe
-  // needs this; its quote parsing conflicts with libuv's default \" escaping.
-  windowsVerbatim?: boolean;
-}
-
-/**
- * Get the appropriate spawn configuration for a given shell
- * This handles login shell flags for different shell types
- */
-function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
-  const shellName = path.basename(shellPath).toLowerCase();
-  
-  // Unix shells with login flag support
-  if (shellName.includes('bash') || shellName.includes('zsh')) {
-    return { 
-      executable: shellPath, 
-      args: ['-l', '-c', command],
-      useShellOption: false 
-    };
-  }
-  
-  // PowerShell Core (cross-platform, supports -Login)
-  if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['-Login', '-Command', command],
-      useShellOption: false 
-    };
-  }
-  
-  // Windows PowerShell 5.1 (no login flag support)
-  if (shellName === 'powershell' || shellName === 'powershell.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['-Command', command],
-      useShellOption: false 
-    };
-  }
-  
-  // CMD
-  if (shellName === 'cmd' || shellName === 'cmd.exe') {
-    return { 
-      executable: shellPath, 
-      args: ['/c', command],
-      windowsVerbatim: true,
-      useShellOption: false 
-    };
-  }
-  
-  // Fish shell (uses -l for login, -c for command)
-  if (shellName.includes('fish')) {
-    return { 
-      executable: shellPath, 
-      args: ['-l', '-c', command],
-      useShellOption: false 
-    };
-  }
-  
-  // Unknown/other shells - use shell option for safety
-  // This provides a fallback for shells we don't explicitly handle
-  return { 
-    executable: command,
-    args: [],
-    useShellOption: shellPath 
-  };
-}
-
 export class TerminalManager {
   private sessions: Map<number, TerminalSession> = new Map();
   private completedSessions: Map<number, CompletedSession> = new Map();
@@ -175,17 +101,14 @@ export class TerminalManager {
   }
   
   async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false): Promise<CommandExecutionResult> {
-    // Get the shell from config if not specified
-    let shellToUse: string | boolean | undefined = shell;
-    if (!shellToUse) {
-      try {
-        const config = await configManager.getConfig();
-        shellToUse = config.defaultShell || true;
-      } catch (error) {
-        // If there's an error getting the config, fall back to default
-        shellToUse = true;
-      }
+    let config: ServerConfig = {};
+    try {
+      config = await configManager.getConfig();
+    } catch (error) {
+      // If there's an error getting the config, fall back to the default shell
     }
+    // Get the shell from config if not specified
+    const shellToUse = shell || config.defaultShell || getDefaultShell();
 
     // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
     // Note: No special stdio options needed here, Node.js handles pipes by default
@@ -197,40 +120,19 @@ export class TerminalManager {
       console.log(`Enhanced SSH command: ${enhancedCommand}`);
     }
 
-    // Get the appropriate spawn configuration for the shell
-    let spawnConfig: ShellSpawnConfig;
-    let spawnOptions: any;
-    
-    if (typeof shellToUse === 'string') {
-      // Use shell-specific configuration with login flags where appropriate
-      spawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
-      spawnOptions = {
-        env: {
-          ...process.env,
-          TERM: 'xterm-256color'  // Better terminal compatibility
-        },
-        windowsHide: true  // Prevent visible console windows on Windows
-      };
+    // Get the appropriate spawn configuration for the shell, with login flags where appropriate
+    const spawnConfig: ShellSpawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
+    const spawnOptions: any = {
+      env: {
+        ...process.env,
+        TERM: 'xterm-256color'  // Better terminal compatibility
+      },
+      windowsHide: true  // Prevent visible console windows on Windows
+    };
 
-      // Add shell option if needed (for unknown shells)
-      if (spawnConfig.useShellOption) {
-        spawnOptions.shell = spawnConfig.useShellOption;
-      }
-    } else {
-      // Boolean or undefined shell - use default shell option behavior
-      spawnConfig = {
-        executable: enhancedCommand,
-        args: [],
-        useShellOption: shellToUse
-      };
-      spawnOptions = {
-        shell: shellToUse,
-        env: {
-          ...process.env,
-          TERM: 'xterm-256color'
-        },
-        windowsHide: true  // Prevent visible console windows on Windows
-      };
+    // Add shell option if needed (for unknown shells)
+    if (spawnConfig.useShellOption) {
+      spawnOptions.shell = spawnConfig.useShellOption;
     }
 
     // Repair PATHEXT on Windows before spawning. On some Windows DXT launches

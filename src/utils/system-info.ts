@@ -2,6 +2,7 @@ import os from 'os';
 import fs from 'fs';
 import path from 'path';
 import { execSync } from 'child_process';
+import { getDefaultShell } from './shell.js';
 
 export interface DockerMount {
     hostPath: string;
@@ -508,13 +509,12 @@ export function getSystemInfo(): SystemInfo {
     const mountPoints = containerDetection.isContainer ? discoverContainerMounts(containerDetection.isContainer) : [];
     
     let platformName: string;
-    let defaultShell: string;
+    const defaultShell = getDefaultShell();
     let pathSeparator: string;
     let examplePaths: SystemInfo['examplePaths'];
     
     if (isWindows) {
         platformName = 'Windows';
-        defaultShell = 'powershell.exe';
         pathSeparator = '\\';
         examplePaths = {
             home: 'C:\\Users\\username',
@@ -523,7 +523,6 @@ export function getSystemInfo(): SystemInfo {
         };
     } else if (isMacOS) {
         platformName = 'macOS';
-        defaultShell = 'zsh';
         pathSeparator = '/';
         examplePaths = {
             home: '/Users/username',
@@ -532,7 +531,6 @@ export function getSystemInfo(): SystemInfo {
         };
     } else if (isLinux) {
         platformName = 'Linux';
-        defaultShell = 'bash';
         pathSeparator = '/';
         examplePaths = {
             home: '/home/username',
@@ -542,7 +540,6 @@ export function getSystemInfo(): SystemInfo {
     } else {
         // Fallback for other Unix-like systems
         platformName = 'Unix';
-        defaultShell = 'bash';
         pathSeparator = '/';
         examplePaths = {
             home: '/home/username',
