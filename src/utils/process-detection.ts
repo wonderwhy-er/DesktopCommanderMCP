@@ -49,18 +49,42 @@ const COMPLETION_INDICATORS = [
 ];
 
 /**
- * Analyze process output to determine current state
+ * How much of the end of the output state detection examines. Prompts and
+ * completion or error messages are the last thing a process writes before it
+ * waits or exits, so the end of the output decides the state; examining only
+ * this much keeps detection's cost the same however much output there is.
  */
-export function analyzeProcessState(output: string, pid?: number): ProcessState {
-  if (!output || output.trim().length === 0) {
-    return {
+export const STATE_DETECTION_TAIL_CHARS = 4096;
+
+/**
+ * Analyze process output to determine current state.
+ *
+ * `output` is what the process wrote most recently. For a process writing to
+ * both stdout and stderr it can be the recent output of each stream that may
+ * have written last (see TerminalManager.getProcessState): their relative
+ * order is unknown, so the process is waiting for input, or finished, if any
+ * of them ends that way. Only the last STATE_DETECTION_TAIL_CHARS of each are
+ * examined.
+ */
+export function analyzeProcessState(output: string | readonly string[], pid?: number): ProcessState {
+  const tails = (typeof output === 'string' ? [output] : output)
+    .map(text => text.slice(-STATE_DETECTION_TAIL_CHARS))
+    .filter(text => text.trim().length > 0);
+  const states = tails.map(analyzeOutputTail);
+  return states.find(state => state.isWaitingForInput)
+    ?? states.find(state => state.isFinished)
+    ?? {
       isWaitingForInput: false,
       isFinished: false,
       isRunning: true,
-      lastOutput: output
+      lastOutput: tails.join('\n')
     };
-  }
+}
 
+/**
+ * The state the end of one stream's output shows (see analyzeProcessState).
+ */
+function analyzeOutputTail(output: string): ProcessState {
   const lines = output.split('\n');
   const lastLine = lines[lines.length - 1] || '';
   const lastFewLines = lines.slice(-3).join('\n');
