@@ -461,13 +461,20 @@ export class TerminalManager {
     // Enforce the per-session cap by evicting the oldest lines. Keeps the
     // buffer far below V8's max string length so concatenation and join()
     // can never throw "Invalid string length" and kill the server.
-    while (session.bufferedChars > MAX_BUFFERED_OUTPUT_CHARS && session.outputLines.length > 1) {
-      const dropped = session.outputLines.shift()!;
-      const droppedJoinedChars = dropped.length + 1; // +1 for its join separator
+    // Count them first and drop them with one splice: on an array this large
+    // every shift() copies the whole array, and a line-by-line shift() stalled
+    // the event loop for seconds per chunk once a session reached the cap.
+    let evicted = 0;
+    while (session.bufferedChars > MAX_BUFFERED_OUTPUT_CHARS && evicted < session.outputLines.length - 1) {
+      const droppedJoinedChars = session.outputLines[evicted].length + 1; // +1 for its join separator
       session.bufferedChars -= droppedJoinedChars;
       session.evictedChars += droppedJoinedChars;
-      session.evictedLines++;
-      if (session.lastReadIndex > 0) session.lastReadIndex--;
+      evicted++;
+    }
+    if (evicted > 0) {
+      session.outputLines.splice(0, evicted);
+      session.evictedLines += evicted;
+      session.lastReadIndex = Math.max(0, session.lastReadIndex - evicted);
     }
   }
 
