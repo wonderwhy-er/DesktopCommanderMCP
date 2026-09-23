@@ -7,6 +7,11 @@ import lockfile from 'proper-lockfile';
 import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 
+// Upper bound for retrying a rename blocked by a transient open handle on Windows.
+// Well under the 30s stale window of the config lock held during the write.
+const RENAME_RETRY_BUDGET_MS = 2_000;
+const RENAME_RETRY_DELAY_MS = 10;
+
 export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
@@ -213,9 +218,27 @@ class ConfigManager {
     const tempPath = `${this.configPath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     try {
       await fs.writeFile(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      await fs.rename(tempPath, this.configPath);
+      await this.renameWithRetry(tempPath, this.configPath);
     } finally {
       await fs.unlink(tempPath).catch(() => {});
+    }
+  }
+
+  /**
+   * On Windows, renaming over a file that another handle holds open fails with
+   * EPERM/EACCES/EBUSY. Readers without the lock (e.g. another process's watcher
+   * reload) hold config.json only for milliseconds, so retry briefly.
+   */
+  private async renameWithRetry(from: string, to: string): Promise<void> {
+    const deadline = Date.now() + RENAME_RETRY_BUDGET_MS;
+    for (;;) {
+      try {
+        return await fs.rename(from, to);
+      } catch (error: any) {
+        const retryable = process.platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes(error?.code);
+        if (!retryable || Date.now() >= deadline) throw error;
+        await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAY_MS));
+      }
     }
   }
 
