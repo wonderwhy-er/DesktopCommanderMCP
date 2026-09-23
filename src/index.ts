@@ -93,22 +93,18 @@ async function runServer() {
       exitProcess(1);
     });
 
-    // Handle unhandled rejections
+    // Handle unhandled rejections: log and keep serving. The code that created
+    // the promise has already moved on (often a library's detached cleanup, as
+    // with puppeteer's profile removal), so the server's state is intact, and
+    // exiting would drop every running process, session and search.
     process.on('unhandledRejection', async (reason) => {
       const errorMessage = reason instanceof Error ? reason.message : String(reason);
-
-      // If this is a JSON parsing error, log it to stderr but don't crash
-      if (errorMessage.includes('JSON') && errorMessage.includes('Unexpected token')) {
-        logger.error(`JSON parsing rejection: ${errorMessage}`);
-        return; // Don't exit on JSON parsing errors
-      }
 
       capture('run_server_unhandled_rejection', {
         error: errorMessage
       });
 
       logger.error(`Unhandled rejection: ${errorMessage}`);
-      process.exit(1);
     });
 
     capture('run_server_start');
