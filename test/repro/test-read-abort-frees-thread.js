@@ -11,9 +11,8 @@
 // and one that can't be faithfully reproduced on a local disk. So we assert the
 // cancellation (deterministic) and print timing as informational only.
 //
-// Run: UV_THREADPOOL_SIZE=1 node test/repro/test-read-abort-frees-thread.js
+// Run: UV_THREADPOOL_SIZE=1 node test/repro/run-repro.js test-read-abort-frees-thread.js
 import assert from 'assert';
-import { execSync } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -21,7 +20,10 @@ import { withTimeout, runWithAbortableTimeout } from '../../dist/utils/withTimeo
 
 const big = path.join(os.tmpdir(), `dc-big-${Date.now()}.bin`);
 console.log('creating 800MB temp file...');
-execSync(`dd if=/dev/zero of=${big} bs=1m count=800 2>/dev/null`);
+// Extending an empty file yields 800MB of zeros instantly on every platform
+const handle = await fs.open(big, 'w');
+await handle.truncate(800 * 1024 * 1024);
+await handle.close();
 
 // Abortable read with a 0ms budget: must reject (read cancelled), NOT return 800MB.
 let rejected = false;
@@ -37,7 +39,7 @@ try {
   rejected = true;
   console.log(`abortable read rejected with code=${e.code} (read was cut short) ✓`);
 }
-execSync(`rm -f ${big}`);
+await fs.rm(big, { force: true });
 assert.ok(rejected, `expected abortable read to be cancelled, but it returned ${returnedBytes} bytes`);
 console.log('PASS: AbortController propagated to fs and cancelled the read.');
 process.exit(0);
