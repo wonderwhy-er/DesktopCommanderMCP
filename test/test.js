@@ -4,6 +4,7 @@ import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { configManager } from '../dist/config-manager.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,40 +35,28 @@ async function teardown(originalConfig) {
 
 // Export the main test function
 async function testEditBlock() {
-    try {
-        await configManager.setValue('allowedDirectories', [__dirname]);
-        
-        // Create a test file
-        const fs = await import('fs/promises');
-        await fs.writeFile(TEST_FILEPATH, 'This is old content to replace');
+    await configManager.setValue('allowedDirectories', [__dirname]);
 
-        // Test handleEditBlock
-        const result = await handleEditBlock({
-            file_path: TEST_FILEPATH,
-            old_string: 'old content',
-            new_string: 'new content',
-            expected_replacements: 1
-        });
+    // Create a test file
+    await fs.writeFile(TEST_FILEPATH, 'This is old content to replace');
 
-        console.log('Edit block result:', result);
+    // Test handleEditBlock
+    const result = await handleEditBlock({
+        file_path: TEST_FILEPATH,
+        old_string: 'old content',
+        new_string: 'new content',
+        expected_replacements: 1
+    });
 
-        const fileContent = await fs.readFile(TEST_FILEPATH, 'utf8');
-        console.log('File content after replacement:', fileContent);
+    console.log('Edit block result:', result);
 
-        if (fileContent.includes('new content')) {
-            console.log('Replace test passed!');
-        } else {
-            throw new Error('Replace test failed!');
-        }
+    const fileContent = await fs.readFile(TEST_FILEPATH, 'utf8');
+    console.log('File content after replacement:', fileContent);
 
-        // Cleanup
-        await fs.unlink(TEST_FILEPATH);
-        console.log('All tests passed! 🎉');
-        return true;
-    } catch (error) {
-        console.error('Test failed:', error);
-        return false;
+    if (fileContent !== 'This is new content to replace') {
+        throw new Error(`Replace test failed! File content: ${fileContent}`);
     }
+    console.log('All tests passed! 🎉');
 }
 
 
@@ -90,9 +79,4 @@ export default async function runTests() {
 
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-});
-}
+runIfMain(import.meta.url, runTests);

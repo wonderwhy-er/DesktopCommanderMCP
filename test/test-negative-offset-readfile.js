@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -21,6 +22,13 @@ const __dirname = path.dirname(__filename);
 
 // Define test paths
 const TEST_FILE = path.join(__dirname, 'test-negative-offset.txt');
+
+/** Line numbers of the fixture lines ("Line N: ...") in a read_file result */
+function lineNumbers(content) {
+  return content.split('\n').filter((line) => line.startsWith('Line ')).map((line) => Number(line.match(/^Line (\d+):/)[1]));
+}
+
+const range = (first, last) => Array.from({ length: last - first + 1 }, (_, i) => first + i);
 
 /**
  * Setup function to prepare test environment
@@ -75,22 +83,22 @@ async function testNegativeOffset() {
     {
       name: 'Negative offset -10 (last 10 lines)',
       args: { path: TEST_FILE, offset: -10, length: 20 },
-      expectLines: ['Line 41:', 'Line 42:', 'Line 43:', 'Line 44:', 'Line 45:', 'Line 46:', 'Line 47:', 'Line 48:', 'Line 49:', 'Line 50:']
+      expectLineNumbers: range(41, 50)
     },
     {
       name: 'Negative offset -5 (last 5 lines)',
       args: { path: TEST_FILE, offset: -5, length: 10 },
-      expectLines: ['Line 46:', 'Line 47:', 'Line 48:', 'Line 49:', 'Line 50:']
+      expectLineNumbers: range(46, 50)
     },
     {
       name: 'Negative offset -1 (last 1 line)',
       args: { path: TEST_FILE, offset: -1, length: 5 },
-      expectLines: ['Line 50:']
+      expectLineNumbers: [50]
     },
     {
-      name: 'Large negative offset -100 (beyond file size)',
+      name: 'Large negative offset -100 (beyond file size, length ignored as documented)',
       args: { path: TEST_FILE, offset: -100, length: 10 },
-      expectLines: ['Line 1:', 'Line 2:', 'Line 3:', 'Line 4:', 'Line 5:', 'Line 6:', 'Line 7:', 'Line 8:', 'Line 9:', 'Line 10:']
+      expectLineNumbers: range(1, 50)
     }
   ];
   
@@ -110,20 +118,13 @@ async function testNegativeOffset() {
       const content = result.content[0].text;
       console.log(`  📄 Result (first 200 chars): ${content.substring(0, 200)}...`);
       
-      // Check if expected lines are present
-      let foundExpected = 0;
-      for (const expectedLine of test.expectLines) {
-        if (content.includes(expectedLine)) {
-          foundExpected++;
-        }
-      }
-      
-      if (foundExpected === test.expectLines.length) {
-        console.log(`  ✅ PASS: Found all ${foundExpected} expected lines`);
+      // Exactly the expected lines, no more and no fewer
+      const actual = lineNumbers(content);
+      if (JSON.stringify(actual) === JSON.stringify(test.expectLineNumbers)) {
+        console.log(`  ✅ PASS: Got exactly lines ${test.expectLineNumbers[0]}-${test.expectLineNumbers.at(-1)}`);
         passedTests++;
       } else {
-        console.log(`  ❌ FAIL: Found only ${foundExpected}/${test.expectLines.length} expected lines`);
-        console.log(`  Expected: ${test.expectLines.join(', ')}`);
+        console.log(`  ❌ FAIL: Expected lines [${test.expectLineNumbers}], got [${actual}]`);
       }
       
     } catch (error) {
@@ -173,7 +174,8 @@ async function testOffsetComparison() {
     const negativeLines = negativeContent.split('\n').filter(line => line.startsWith('Line '));
     const positiveLines = positiveContent.split('\n').filter(line => line.startsWith('Line '));
     
-    const isMatching = negativeLines.join('\\n') === positiveLines.join('\\n');
+    // Both must be the last 5 lines (two empty results would also be "equal")
+    const isMatching = negativeLines.length === 5 && negativeLines.join('\\n') === positiveLines.join('\\n');
     
     if (isMatching) {
       console.log('  ✅ PASS: Negative and positive offsets return same content');
@@ -201,17 +203,20 @@ async function testEdgeCases() {
     {
       name: 'Zero offset with length',
       args: { path: TEST_FILE, offset: 0, length: 3 },
-      shouldPass: true
+      shouldPass: true,
+      expectLineNumbers: range(1, 3)
     },
     {
       name: 'Very large negative offset',
       args: { path: TEST_FILE, offset: -1000, length: 5 },
-      shouldPass: true // Should handle gracefully
+      shouldPass: true, // Tail larger than the file: the whole file (length is ignored for negative offsets)
+      expectLineNumbers: range(1, 50)
     },
     {
       name: 'Negative offset with zero length',
       args: { path: TEST_FILE, offset: -5, length: 0 },
-      shouldPass: true // Should return empty or minimal content
+      shouldPass: true, // length is ignored for negative offsets: still the last 5 lines
+      expectLineNumbers: range(46, 50)
     }
   ];
   
@@ -226,9 +231,13 @@ async function testEdgeCases() {
       if (result.isError && test.shouldPass) {
         console.log(`  ❌ Unexpected error: ${result.content[0].text}`);
       } else if (!result.isError && test.shouldPass) {
-        console.log(`  ✅ PASS: Handled gracefully`);
-        console.log(`  📄 Result length: ${result.content[0].text.length} chars`);
-        passedEdgeTests++;
+        const actual = lineNumbers(result.content[0].text);
+        if (JSON.stringify(actual) === JSON.stringify(test.expectLineNumbers)) {
+          console.log(`  ✅ PASS: Got exactly lines [${actual.length ? `${actual[0]}-${actual.at(-1)}` : ''}]`);
+          passedEdgeTests++;
+        } else {
+          console.log(`  ❌ FAIL: Expected lines [${test.expectLineNumbers}], got [${actual}]`);
+        }
       } else if (result.isError && !test.shouldPass) {
         console.log(`  ✅ PASS: Expected error occurred`);
         passedEdgeTests++;
@@ -288,11 +297,4 @@ async function runAllTests() {
 export default runAllTests;
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runAllTests().then(success => {
-    process.exit(success ? 0 : 1);
-  }).catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runAllTests);
