@@ -588,6 +588,7 @@ The server provides a comprehensive set of tools organized into several categori
 | | `create_directory` | Create a new directory or ensure it exists |
 | | `list_directory` | Get detailed recursive listing of files and directories (supports depth parameter, default depth=2) |
 | | `move_file` | Move or rename files and directories |
+| | `copy_file_exclusive` | Copy a regular file to a new destination with no-overwrite creation and exact size/SHA-256 verification |
 | | `start_search` | Start streaming search for files by name or content patterns (searches text files and Excel content) |
 | | `get_more_search_results` | Get paginated results from active search with offset support |
 | | `stop_search` | Stop an active search gracefully |
@@ -1150,3 +1151,5 @@ For complete details, see our [Privacy Policy](PRIVACY.md).
 ## License
 
 MIT
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]

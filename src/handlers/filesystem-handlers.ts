@@ -11,6 +11,7 @@ import {
     type FileResult,
     type MultiFileResult
 } from '../tools/filesystem.js';
+import { copyFileExclusive } from '../tools/copy-file-exclusive.js';
 import type { ReadOptions } from '../utils/files/base.js';
 
 import { ServerResult } from '../types.js';
@@ -25,6 +26,7 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
+    CopyFileExclusiveArgsSchema,
     GetFileInfoArgsSchema,
     WritePdfArgsSchema
 } from '../tools/schemas.js';
@@ -427,6 +429,30 @@ export async function handleMoveFile(args: unknown): Promise<ServerResult> {
 }
 
 /**
+ * Handle copy_file_exclusive command.
+ */
+export async function handleCopyFileExclusive(args: unknown): Promise<ServerResult> {
+    try {
+        const parsed = CopyFileExclusiveArgsSchema.parse(args);
+        const result = await copyFileExclusive(
+            parsed.source,
+            parsed.destination,
+            parsed.expected_size,
+            parsed.expected_sha256,
+        );
+        return {
+            content: [{
+                type: "text",
+                text: JSON.stringify({ status: "COPIED_EXCLUSIVE_VERIFIED", ...result }),
+            }],
+        };
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return createErrorResponse(errorMessage);
+    }
+}
+
+/**
  * Format a value for display, handling objects and arrays
  */
 function formatValue(value: unknown, indent: string = ''): string {
@@ -496,3 +522,5 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
         return createErrorResponse(errorMessage);
     }
 }
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]
