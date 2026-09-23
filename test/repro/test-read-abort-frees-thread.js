@@ -17,6 +17,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { withTimeout, runWithAbortableTimeout } from '../../dist/utils/withTimeout.js';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const big = path.join(os.tmpdir(), `dc-big-${Date.now()}.bin`);
 console.log('creating 800MB temp file...');
@@ -42,4 +43,4 @@ try {
 await fs.rm(big, { force: true });
 assert.ok(rejected, `expected abortable read to be cancelled, but it returned ${returnedBytes} bytes`);
 console.log('PASS: AbortController propagated to fs and cancelled the read.');
-process.exit(0);
+exitProcess(0);

@@ -9,6 +9,7 @@ process.env.UV_THREADPOOL_SIZE = '8';   // set BEFORE any fs/threadpool use
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
@@ -19,9 +20,11 @@ log(`set UV_THREADPOOL_SIZE=8 in-process; firing 4 stalled-read blockers`);
 for (let i = 0; i < 4; i++) fs.readFile(stalled.path).catch(() => {});
 setTimeout(async () => {
   const t = Date.now();
-  const guard = setTimeout(() => { log(`BLOCKED >3000ms -> env set too late, pool still 4`); stalled.close(); process.exit(1); }, 3000);
+  let blocked = false;
+  const guard = setTimeout(() => { blocked = true; log(`BLOCKED >3000ms -> env set too late, pool still 4`); stalled.close(); exitProcess(1); }, 3000);
   await fs.writeFile(path.join(os.tmpdir(), 'dc-envtest-probe'), 'x');
+  if (blocked) return; // the guard closed the pipe, which is what let the write finish
   clearTimeout(guard);
   log(`write completed in ${Date.now() - t}ms -> in-process env set WORKS (pool=8)`);
-  stalled.close(); process.exit(0);
+  stalled.close(); exitProcess(0);
 }, 150);

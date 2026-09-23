@@ -27,6 +27,7 @@ import { spawn } from 'child_process';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SCRIPT = path.join(PROJECT_ROOT, 'dist/remote-device/scripts/blocking-offline-update.js');
@@ -126,4 +127,4 @@ const total = UPDATE_RUNS + SILENT_RUNS;
 console.log(unexpected > 0
   ? `REPRODUCED: ${unexpected} of ${total} runs did not end the way the parent expects`
   : `OK: all ${total} runs ended with the expected exit code within the parent's ${PARENT_TIMEOUT_MS}ms`);
-process.exitCode = unexpected > 0 ? 1 : 0;
+exitProcess(unexpected > 0 ? 1 : 0);

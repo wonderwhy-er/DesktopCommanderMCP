@@ -39,6 +39,7 @@ import assert from 'node:assert';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DesktopCommanderIntegration } from '../dist/remote-device/desktop-commander-integration.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -212,4 +213,4 @@ await test('a protocol error on a healthy child is not treated as a disconnect',
 await integration.shutdown().catch(() => { });
 
 console.log(`\n${failures ? '🔴' : '✅'} remote in-flight fast-fail: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

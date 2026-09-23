@@ -32,6 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MCPDevice } from '../dist/remote-device/device.js';
 import { DesktopCommanderIntegration } from '../dist/remote-device/desktop-commander-integration.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -414,4 +415,4 @@ await test('recovery does not announce online while the channel is down', async 
 });
 
 console.log(`\n${failures ? '🔴' : '✅'} remote device readiness: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

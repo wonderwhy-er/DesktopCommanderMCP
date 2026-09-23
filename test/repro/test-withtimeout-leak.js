@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { withTimeout } from '../../dist/utils/withTimeout.js';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
@@ -31,14 +32,19 @@ const timed = withTimeout(fs.readFile(stalled.path), 1000, 'Read file operation'
 await timed;
 log(`timeout fired; now trying a fresh fs.writeFile on the single thread...`);
 const t = Date.now();
+let leaked = false;
 const guard = setTimeout(() => {
+  leaked = true;
   log(`next fs op STILL BLOCKED ${Date.now() - t}ms after timeout -> THREAD LEAKED`);
   log(`(withTimeout freed the JS promise, not the OS thread)`);
   stalled.close();
-  process.exit(0);
+  exitProcess(0);
 }, 4000);
 await fs.writeFile(path.join(os.tmpdir(), 'dc-leak-probe'), 'x');
-clearTimeout(guard);
-log(`next fs op completed in ${Date.now() - t}ms (thread was freed) -> leak NOT reproduced`);
-stalled.close();
-process.exit(1);
+// Once the guard gave its verdict, the write finished only because it closed the pipe
+if (!leaked) {
+  clearTimeout(guard);
+  log(`next fs op completed in ${Date.now() - t}ms (thread was freed) -> leak NOT reproduced`);
+  stalled.close();
+  exitProcess(1);
+}

@@ -9,6 +9,7 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const POOL = Number(process.env.UV_THREADPOOL_SIZE || 4);
@@ -32,22 +33,26 @@ for (let i = 0; i < BLOCKERS; i++) {
 setTimeout(async () => {
   log(`firing trivial write (proxy for list_processes' config save)...`);
   const t = Date.now();
+  let blocked = false;
   const guard = setTimeout(() => {
+    blocked = true;
     log(`STILL BLOCKED after 5000ms -> STARVATION REPRODUCED. Exiting.`);
     stalled.close();
-    process.exit(0);
+    exitProcess(0);
   }, 5000);
   try {
     await fs.writeFile(probe, '{}');
+    if (blocked) return; // the guard closed the pipe, which is what let the write finish
     clearTimeout(guard);
     log(`trivial write completed in ${Date.now() - t}ms (NOT starved) -> hazard not reproduced`);
     await fs.rm(probe, { force: true });
     stalled.close();
-    process.exit(1);
+    exitProcess(1);
   } catch (e) {
+    if (blocked) return;
     clearTimeout(guard);
     log(`trivial write errored: ${e.message}`);
     stalled.close();
-    process.exit(1);
+    exitProcess(1);
   }
 }, 200);

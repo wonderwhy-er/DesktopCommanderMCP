@@ -21,6 +21,7 @@
  */
 import assert from 'node:assert';
 import { terminalManager } from '../dist/terminal-manager.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -90,7 +91,8 @@ async function main() {
   console.log('\nAll spawn-error tests passed.');
 }
 
-main().catch((err) => {
+// The uncaughtException handler above may have set the exit code already
+main().then(() => exitProcess(process.exitCode ?? 0)).catch((err) => {
   console.error('✗ FAILED:', err.message);
-  process.exit(1);
+  exitProcess(1);
 });
