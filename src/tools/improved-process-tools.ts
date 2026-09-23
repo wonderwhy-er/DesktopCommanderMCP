@@ -1,4 +1,4 @@
-import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS } from '../terminal-manager.js';
+import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
 import { capture } from "../utils/capture.js";
@@ -6,6 +6,7 @@ import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { configManager } from '../config-manager.js';
 import { getDefaultShell } from '../utils/shell.js';
+import { MAX_PROCESS_WAIT_MS } from '../config.js';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
@@ -103,8 +104,10 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
 /**
  * Start a new process (renamed from execute_command)
  * Includes early detection of process waiting for input
+ * maxWaitMs: ceiling for this call's wait. The tools always use MAX_PROCESS_WAIT_MS;
+ * only in-process callers (tests) pass a smaller one. Not part of the tool schema.
  */
-export async function startProcess(args: unknown): Promise<ServerResult> {
+export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ServerResult> {
   const parsed = StartProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
     capture('server_start_process_failed');
@@ -174,7 +177,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     commandToRun,
     parsed.data.timeout_ms,
     shellUsed,
-    parsed.data.verbose_timing || false
+    parsed.data.verbose_timing || false,
+    maxWaitMs
   );
 
   if (result.pid === -1) {
@@ -192,6 +196,8 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
   } else if (processState.isFinished) {
     statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
+  } else if (result.waitCappedAtMs !== undefined) {
+    statusMessage = `\n${formatWaitCappedMessage(result.pid, result.waitCappedAtMs, parsed.data.timeout_ms)}`;
   } else if (result.isBlocked) {
     statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
   }
@@ -211,6 +217,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
       pid: result.pid,
       shell: shellUsed,
       status: getProcessStatus(processState),
+      ...getWaitCapFields(result.waitCappedAtMs),
     },
   };
 }
@@ -225,6 +232,25 @@ function getProcessStatus(state: ProcessState, timedOut = false): ProcessStatus 
   if (state.isWaitingForInput) return 'waiting_for_input';
   if (state.isFinished) return 'finished';
   return timedOut ? 'timeout' : 'running';
+}
+
+/**
+ * structuredContent fields telling the caller whether the wait ceiling
+ * (not timeout_ms) ended the wait. When it did, status is 'running'
+ * and the caller continues with read_process_output.
+ */
+function getWaitCapFields(waitCappedAtMs: number | undefined): { waitCapped: boolean; waitLimitMs?: number } {
+  return waitCappedAtMs !== undefined
+    ? { waitCapped: true, waitLimitMs: waitCappedAtMs }
+    : { waitCapped: false };
+}
+
+/**
+ * Status line for a wait that stopped at the wait ceiling before
+ * timeout_ms elapsed (see getProcessWaitLimit).
+ */
+function formatWaitCappedMessage(pid: number, capMs: number, timeoutMs: number): string {
+  return `⏳ Process ${pid} is still running. Stopped waiting after ${capMs}ms (the per-call wait limit; timeout_ms was ${timeoutMs}ms) so this call returns before the client's request time limit. Use read_process_output to get more output.`;
 }
 
 function formatTimingInfo(timing: any): string {
@@ -257,8 +283,10 @@ function formatTimingInfo(timing: any): string {
 /**
  * Read output from a running process with file-like pagination
  * Supports offset/length parameters for controlled reading
+ * maxWaitMs: ceiling for this call's wait. The tools always use MAX_PROCESS_WAIT_MS;
+ * only in-process callers (tests) pass a smaller one. Not part of the tool schema.
  */
-export async function readProcessOutput(args: unknown): Promise<ServerResult> {
+export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ServerResult> {
   const parsed = ReadProcessOutputArgsSchema.safeParse(args);
   if (!parsed.success) {
     return {
@@ -281,6 +309,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 
   // Timing telemetry
   const startTime = Date.now();
+  const { waitMs } = getProcessWaitLimit(timeout_ms, maxWaitMs);
 
   // For active sessions with no new output yet, optionally wait for output
   const session = terminalManager.getSession(pid);
@@ -322,7 +351,7 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
         // Timeout
         timeout = setTimeout(() => {
           resolveOnce();
-        }, timeout_ms);
+        }, waitMs);
       });
     };
 
@@ -403,8 +432,10 @@ export async function readProcessOutput(args: unknown): Promise<ServerResult> {
 /**
  * Interact with a running process (renamed from send_input)
  * Automatically detects when process is ready and returns output
+ * maxWaitMs: ceiling for this call's wait. The tools always use MAX_PROCESS_WAIT_MS;
+ * only in-process callers (tests) pass a smaller one. Not part of the tool schema.
  */
-export async function interactWithProcess(args: unknown): Promise<ServerResult> {
+export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ServerResult> {
   const parsed = InteractWithProcessArgsSchema.safeParse(args);
   if (!parsed.success) {
     capture('server_interact_with_process_failed', {
@@ -427,6 +458,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
   // Get config for output line limit
   const config = await configManager.getConfig();
   const maxOutputLines = config.fileReadLineLimit ?? 1000;
+  const waitLimit = getProcessWaitLimit(timeout_ms, maxWaitMs);
 
   // Check if this is a virtual Node session (node:local)
   if (virtualNodeSessions.has(pid)) {
@@ -500,6 +532,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     let output = "";
     let processState: ProcessState | undefined;
     let earlyExit = false;
+    let waitCapped = false;
 
     // Quick prompt patterns for immediate detection
     const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
@@ -507,9 +540,9 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     const waitForResponse = (): Promise<void> => {
       return new Promise((resolve) => {
         let resolved = false;
-        let attempts = 0;
         const pollIntervalMs = 50; // Poll every 50ms for faster response
-        const maxAttempts = Math.ceil(timeout_ms / pollIntervalMs);
+        // A deadline, not a poll count, so a busy event loop can't stretch the wait past the ceiling
+        const deadline = Date.now() + waitLimit.waitMs;
         let interval: NodeJS.Timeout | null = null;
         let lastOutputLength = 0; // Track output length to detect new output
 
@@ -571,9 +604,9 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
             }
           }
 
-          attempts++;
-          if (attempts >= maxAttempts) {
+          if (Date.now() >= deadline) {
             exitReason = 'timeout';
+            waitCapped = waitLimit.capped;
             resolveOnce();
           }
         }, pollIntervalMs);
@@ -608,6 +641,8 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       statusMessage = `\n🔄 ${formatProcessStateMessage(processState, pid)}`;
     } else if (processState.isFinished) {
       statusMessage = `\n✅ ${formatProcessStateMessage(processState, pid)}`;
+    } else if (timeoutReached && waitCapped) {
+      statusMessage = `\n${formatWaitCappedMessage(pid, waitLimit.capMs, timeout_ms)}`;
     } else if (timeoutReached) {
       statusMessage = '\n⏱️ Response may be incomplete (timeout reached)';
     }
@@ -629,12 +664,15 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       timingMessage = formatTimingInfo(timingInfo);
     }
 
+    // A capped wait didn't reach the caller's timeout_ms: the process is still
+    // running and the caller continues with read_process_output
     const structuredContent = {
       pid,
-      status: getProcessStatus(processState, timeoutReached),
+      status: getProcessStatus(processState, timeoutReached && !waitCapped),
       truncated: totalLines > shownLines,
       shownLines,
       totalLines,
+      ...getWaitCapFields(timeoutReached && waitCapped ? waitLimit.capMs : undefined),
     };
 
     if (cleanOutput.trim().length === 0 && !timeoutReached) {
