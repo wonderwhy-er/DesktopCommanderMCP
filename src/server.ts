@@ -15,6 +15,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { getSystemInfo, getOSSpecificGuidance, getPathGuidance, getDevelopmentToolGuidance } from './utils/system-info.js';
+import { CONFIG_FIELD_DEFINITIONS, CONFIG_FIELD_KEYS } from './config-field-definitions.js';
+import { MAX_PROCESS_WAIT_MS } from './config.js';
 
 // Get system information once at startup
 const SYSTEM_INFO = getSystemInfo();
@@ -23,6 +25,11 @@ const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
 const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
+
+// Editable config keys, listed from the field definitions so the tool descriptions never drift from them
+const CONFIG_KEYS_DESCRIPTION = CONFIG_FIELD_KEYS
+    .map((key) => `- ${key} (${CONFIG_FIELD_DEFINITIONS[key].valueType}): ${CONFIG_FIELD_DEFINITIONS[key].description}`)
+    .join('\n                        ');
 
 import {
     StartProcessArgsSchema,
@@ -308,13 +315,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "get_config",
                 description: `
-                        Get the complete server configuration as JSON. Config includes fields for:
-                        - blockedCommands (array of blocked shell commands)
-                        - defaultShell (shell to use for commands)
-                        - allowedDirectories (paths the server can access)
-                        - fileReadLineLimit (max lines for read_file, default 1000)
-                        - fileWriteLineLimit (max lines per write_file call, default 50)
-                        - telemetryEnabled (boolean for telemetry opt-in/out)
+                        Get the complete server configuration as JSON. Config includes the editable fields:
+                        ${CONFIG_KEYS_DESCRIPTION}
+                        and read-only information:
                         - currentClient (information about the currently connected MCP client)
                         - clientHistory (history of all clients that have connected)
                         - version (version of the DesktopCommander)
@@ -335,14 +338,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         WARNING: Should be used in a separate chat from file operations and 
                         command execution to prevent security issues.
                         
-                        Config keys include:
-                        - blockedCommands (array)
-                        - defaultShell (string)
-                        - allowedDirectories (array of paths)
-                        - fileReadLineLimit (number, max lines for read_file)
-                        - fileWriteLineLimit (number, max lines per write_file call)
-                        - telemetryEnabled (boolean)
-                        
+                        Config keys:
+                        ${CONFIG_KEYS_DESCRIPTION}
+
                         IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
                         to the entire file system, regardless of the operating system.
                         
@@ -905,6 +903,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Process waiting for input (shows prompt)
                         Process finished execution
                         Process running (use read_process_output)
+
+                        WAIT LIMIT:
+                        One call waits at most ${MAX_PROCESS_WAIT_MS}ms, even when timeout_ms is larger. The process
+                        keeps running, structuredContent.waitCapped is true, and the rest of the output is read
+                        with read_process_output.
 
                         PERFORMANCE DEBUGGING (verbose_timing parameter):
                         Set verbose_timing: true to get detailed timing information including:
