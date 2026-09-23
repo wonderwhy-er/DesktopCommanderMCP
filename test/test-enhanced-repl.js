@@ -32,7 +32,7 @@ async function testEnhancedREPL() {
   const result = await startProcess({
     command: `${pythonCommand} -i`,
     timeout_ms: 10000,
-    shell: '/bin/bash'
+    shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
   });
   
   console.log('Result from start_process:', result);
