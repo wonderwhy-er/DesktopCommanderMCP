@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
+import ExcelJS from 'exceljs';
 import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
@@ -210,6 +211,24 @@ async function testOffsetLengthRead() {
 }
 
 /**
+ * Test 5b: Offset past the last row
+ */
+async function testOffsetPastEnd() {
+  console.log('\n--- Test 5b: Offset Past the Last Row ---');
+
+  // basic.xlsx has 4 rows; offset: 10 starts at row 11
+  const result = await readFile(BASIC_EXCEL, { offset: 10 });
+  const content = result.content.toString();
+
+  assert.deepStrictEqual(sheetRows(content), [], 'offset past the last row should return no rows');
+  assert.strictEqual(content.split('\n')[1],
+    '[No rows returned: row 11 is past the end (4 rows total). Use offset/length to paginate.]',
+    `Status line should say no rows were returned and give the total, got: ${content}`);
+
+  console.log('✓ Offset past the last row reports no rows and the total');
+}
+
+/**
  * Test 6: Edit Excel range
  */
 async function testEditRange() {
@@ -350,6 +369,218 @@ async function testRangeWithSheetPrefix() {
 }
 
 /**
+ * Test 11: A range written end-first is the same range, as in Excel:
+ * A5:C2 is A2:C5, for read_file and edit_block alike
+ */
+async function testReversedRange() {
+  console.log('\n--- Test 11: Range with its end before its start ---');
+
+  const FILE = path.join(TEST_DIR, 'reversed_range.xlsx');
+  await writeFile(FILE, JSON.stringify([
+    ['Name', 'Age', 'City'],
+    ['Alice', 30, 'New York'],
+    ['Bob', 25, 'Los Angeles'],
+    ['Charlie', 35, 'Chicago'],
+    ['Dana', 28, 'Denver']
+  ]));
+
+  const forward = (await readFile(FILE, { range: 'A2:C5' })).content.toString();
+  assert.deepStrictEqual(sheetRows(forward),
+    [['Alice', 30, 'New York'], ['Bob', 25, 'Los Angeles'], ['Charlie', 35, 'Chicago'], ['Dana', 28, 'Denver']],
+    'A2:C5 should return rows 2-5, columns A-C');
+  assert.ok(forward.split('\n')[1].startsWith('[To MODIFY cells:'),
+    `The whole range is returned, so there should be no status line, got: ${forward}`);
+
+  // Any two opposite corners name the same range
+  for (const range of ['A5:C2', 'C2:A5', 'C5:A2']) {
+    const content = (await readFile(FILE, { range })).content.toString();
+    assert.strictEqual(content, forward, `${range} should read exactly what A2:C5 reads`);
+  }
+
+  // Pagination counts the rows of that range: 4, not 2 - 5 + 1 = -2
+  const page = (await readFile(FILE, { range: 'A5:C2', offset: 1, length: 2 })).content.toString();
+  assert.deepStrictEqual(sheetRows(page), [['Bob', 25, 'Los Angeles'], ['Charlie', 35, 'Chicago']],
+    'A5:C2 with offset: 1, length: 2 should return rows 3-4 of the sheet');
+  assert.strictEqual(page.split('\n')[1], '[Showing rows 2-3 of 4 total. Use offset/length to paginate.]',
+    `Status line should report rows 2-3 of 4, got: ${page}`);
+
+  // edit_block writes from the range's top-left cell, B2
+  const editResult = await handleEditBlock({
+    file_path: FILE,
+    range: 'Sheet1!C3:B2',
+    content: [[31, 'Boston'], [26, 'Austin']]
+  });
+  assert.ok(!editResult.isError, `Edit should succeed: ${editResult.content?.[0]?.text}`);
+  const edited = (await readFile(FILE)).content.toString();
+  assert.deepStrictEqual(sheetRows(edited), [
+    ['Name', 'Age', 'City'],
+    ['Alice', 31, 'Boston'],
+    ['Bob', 26, 'Austin'],
+    ['Charlie', 35, 'Chicago'],
+    ['Dana', 28, 'Denver']
+  ], 'edit_block with C3:B2 should write B2:C3');
+
+  console.log('✓ A5:C2, C2:A5 and C5:A2 read and edit the range A2:C5');
+}
+
+/**
+ * Test 12: Column letters are case-insensitive, as in Excel: a1:c2 is A1:C2,
+ * for read_file and edit_block alike
+ */
+async function testLowercaseRange() {
+  console.log('\n--- Test 12: Range with lowercase column letters ---');
+
+  const FILE = path.join(TEST_DIR, 'lowercase_range.xlsx');
+  const sheet = [
+    ['Name', 'Age', 'City'],
+    ['Alice', 30, 'New York'],
+    ['Bob', 25, 'Los Angeles'],
+    ['Charlie', 35, 'Chicago']
+  ];
+  // A second sheet 28 columns wide (A..AB), for two-letter columns
+  const wide = [Array.from({ length: 28 }, (_, i) => `col${i + 1}`)];
+  await writeFile(FILE, JSON.stringify({ Sheet1: sheet, Wide: wide }));
+
+  // Each lowercase or mixed-case range reads exactly what its uppercase form reads
+  const cases = [
+    { range: 'a1:c2', upper: 'A1:C2', rows: [['Name', 'Age', 'City'], ['Alice', 30, 'New York']] },
+    { range: 'Sheet1!b2', upper: 'Sheet1!B2', rows: [[30, 'New York'], [25, 'Los Angeles'], [35, 'Chicago']] },
+    { range: 'b3:C4', upper: 'B3:C4', rows: [[25, 'Los Angeles'], [35, 'Chicago']] },
+    { range: 'Wide!aa1:ab1', upper: 'Wide!AA1:AB1', rows: [['col27', 'col28']] }
+  ];
+  for (const { range, upper, rows } of cases) {
+    const content = (await readFile(FILE, { range })).content.toString();
+    assert.deepStrictEqual(sheetRows(content), rows, `${range} should read the cells of ${upper}`);
+    const upperContent = (await readFile(FILE, { range: upper })).content.toString();
+    assert.strictEqual(content, upperContent, `${range} should read exactly what ${upper} reads`);
+  }
+
+  // edit_block writes to the cells a lowercase range names: b2:c3 is B2:C3
+  const editResult = await handleEditBlock({
+    file_path: FILE,
+    range: 'Sheet1!b2:c3',
+    content: [[31, 'Boston'], [26, 'Austin']]
+  });
+  assert.ok(!editResult.isError, `Edit should succeed: ${editResult.content?.[0]?.text}`);
+  const edited = (await readFile(FILE)).content.toString();
+  assert.deepStrictEqual(sheetRows(edited), [
+    ['Name', 'Age', 'City'],
+    ['Alice', 31, 'Boston'],
+    ['Bob', 26, 'Austin'],
+    ['Charlie', 35, 'Chicago']
+  ], 'edit_block with b2:c3 should write B2:C3 and leave the rest of the sheet unchanged');
+
+  console.log('✓ a1:c2, b2, b3:C4 and aa1:ab1 read and edit the same cells as their uppercase forms');
+}
+
+/**
+ * Test 13: A single-cell range reads from that cell to the end of the data; one
+ * that starts below the data has no rows, and its row count says so
+ */
+async function testRangeStartingPastTheData() {
+  console.log('\n--- Test 13: Single-cell range starting below the data ---');
+
+  const FILE = path.join(TEST_DIR, 'range_past_data.xlsx');
+  await writeFile(FILE, JSON.stringify([
+    ['Row', 'Value'],
+    ['1', 'First'],
+    ['2', 'Second'],
+    ['3', 'Third'],
+    ['4', 'Fourth']
+  ]));
+
+  // The sheet has 5 rows; A10 starts 5 rows below them
+  const content = (await readFile(FILE, { range: 'A10' })).content.toString();
+  assert.deepStrictEqual(sheetRows(content), [], 'A10 on a 5-row sheet should return no rows');
+  assert.ok(content.split('\n')[1].startsWith('[To MODIFY cells:'),
+    `An empty range is returned whole, so there should be no status line, got: ${content}`);
+
+  // The status line is built from the handler's (private) worksheetToArray totals
+  // and prints nothing for any totalRows <= returnedRows, so a wrong count never
+  // shows in the output - check the totals themselves: 0 rows, not 5 - 10 + 1 = -4
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(FILE);
+  const handler = await getFileHandler(FILE);
+  for (const range of ['A10', 'Sheet1!A10', 'a10']) {
+    assert.deepStrictEqual(handler.worksheetToArray(workbook, undefined, range),
+      { sheetName: 'Sheet1', data: [], totalRows: 0, returnedRows: 0, firstRow: 1 },
+      `${range} on a 5-row sheet should count 0 rows`);
+  }
+
+  console.log('✓ A range starting below the data returns no rows and counts 0');
+}
+
+/**
+ * Test 14: A sparse sheet is read up to its last used row and column, not up to
+ * the COUNT of used rows and columns: with data only in columns A and AH (2 used
+ * columns) and an empty row, every cell comes back in its own position
+ */
+async function testSparseSheet() {
+  console.log('\n--- Test 14: Sparse sheet (data in columns A and AH, gaps) ---');
+
+  const FILE = path.join(TEST_DIR, 'sparse.xlsx');
+  // Column AH is column 34. Row 2 is empty, A5 and AH4 are empty: 4 used rows, the last is 5
+  const cells = { A1: 'Name', AH1: 'Total', A3: 'Alice', AH3: 42, A4: 'Bob', AH5: 7 };
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Sheet1');
+  for (const [address, value] of Object.entries(cells)) worksheet.getCell(address).value = value;
+  await workbook.xlsx.writeFile(FILE);
+
+  /** A row of 34 cells (A..AH), null except the given 1-based columns */
+  const row = (values = {}) => Array.from({ length: 34 }, (_, i) => values[i + 1] ?? null);
+  const sheet = [
+    row({ 1: 'Name', 34: 'Total' }),
+    row(),
+    row({ 1: 'Alice', 34: 42 }),
+    row({ 1: 'Bob' }),
+    row({ 34: 7 })
+  ];
+
+  const full = (await readFile(FILE)).content.toString();
+  assert.deepStrictEqual(sheetRows(full), sheet, 'A full read should return rows 1-5, columns A-AH, each cell in place');
+  assert.ok(full.split('\n')[1].startsWith('[To MODIFY cells:'),
+    `The whole sheet is returned, so there should be no status line, got: ${full}`);
+
+  // A single cell reads to the last used row and column: Z1 is Z1:AH5
+  const fromZ1 = (await readFile(FILE, { range: 'Z1' })).content.toString();
+  assert.deepStrictEqual(sheetRows(fromZ1), sheet.map(r => r.slice(25)),
+    'Z1 should return rows 1-5, columns Z-AH');
+
+  // The last row is row 5 (only AH5 is used), not row 4 (the 4th used row)
+  const tail = (await readFile(FILE, { offset: -1 })).content.toString();
+  assert.deepStrictEqual(sheetRows(tail), [row({ 34: 7 })], 'offset: -1 should return row 5');
+  assert.strictEqual(tail.split('\n')[1], '[Showing rows 5-5 of 5 total. Use offset/length to paginate.]',
+    `Status line should report row 5 of 5, got: ${tail}`);
+
+  // Sheet info gives the same extent the reads use
+  const info = await getFileInfo(FILE);
+  assert.deepStrictEqual(info.sheets, [{ name: 'Sheet1', rowCount: 5, colCount: 34 }],
+    'Sheet info should report the last used row (5) and column (AH = 34)');
+
+  // Appending starts below the last used row: row 6, leaving row 5 (A5 empty, AH5 = 7) as it is
+  await writeFile(FILE, JSON.stringify([['Carol', 'new']]), 'append');
+  const appended = (await readFile(FILE)).content.toString();
+  assert.deepStrictEqual(sheetRows(appended), [...sheet, row({ 1: 'Carol', 2: 'new' })],
+    'Appending should write row 6 and leave rows 1-5 unchanged');
+
+  // A single cell right of the data has no cells: Z1 on a sheet ending at column C
+  const NARROW = path.join(TEST_DIR, 'narrow.xlsx');
+  await writeFile(NARROW, JSON.stringify([['Name', 'Age', 'City'], ['Alice', 30, 'New York']]));
+  const narrow = (await readFile(NARROW, { range: 'Z1' })).content.toString();
+  assert.deepStrictEqual(sheetRows(narrow), [], 'Z1 on a sheet ending at column C should return no rows');
+  assert.ok(narrow.split('\n')[1].startsWith('[To MODIFY cells:'),
+    `An empty range is returned whole, so there should be no status line, got: ${narrow}`);
+  const narrowBook = new ExcelJS.Workbook();
+  await narrowBook.xlsx.readFile(NARROW);
+  const handler = await getFileHandler(NARROW);
+  assert.deepStrictEqual(handler.worksheetToArray(narrowBook, undefined, 'Z1'),
+    { sheetName: 'Sheet1', data: [], totalRows: 0, returnedRows: 0, firstRow: 1 },
+    'Z1 on a sheet ending at column C should count 0 rows');
+
+  console.log('✓ A sparse sheet is read, sized and appended to by its last used row and column');
+}
+
+/**
  * Test 9: Negative offset (read from end)
  */
 async function testNegativeOffset() {
@@ -372,6 +603,7 @@ async function testNegativeOffset() {
 
   assert.deepStrictEqual(sheetRows(content), [['4', 'Fourth'], ['5', 'Fifth']],
     'offset: -2 should return exactly the last 2 rows');
+  assert.ok(content.includes('[Showing rows 5-6 of 6 total.'), `Status line should report rows 5-6, got: ${content}`);
 
   console.log('✓ Negative offset reads from end');
 }
@@ -387,11 +619,16 @@ async function runAllTests() {
   await testMultiSheetWriteRead();
   await testRangeRead();
   await testOffsetLengthRead();
+  await testOffsetPastEnd();
   await testEditRange();
   await testGetFileInfo();
   await testAppendMode();
   await testNegativeOffset();
   await testRangeWithSheetPrefix();
+  await testReversedRange();
+  await testLowercaseRange();
+  await testRangeStartingPastTheData();
+  await testSparseSheet();
 
   console.log('\n✅ All Excel tests passed!');
 }
