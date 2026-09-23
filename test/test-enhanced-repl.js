@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } from '../dist/tools/improved-process-tools.js';
 
 /**
@@ -7,19 +7,14 @@ import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } 
  * @returns {string} 'python3' or 'python'
  */
 function getPythonCommand() {
-  try {
-    // Prefer python3 if available
-    execSync('command -v python3', { stdio: 'ignore' });
-    return 'python3';
-  } catch (e) {
-    // Fallback to python
-    try {
-      execSync('command -v python', { stdio: 'ignore' });
-      return 'python';
-    } catch (error) {
-      throw new Error('Neither python3 nor python command is available in the PATH');
-    }
+  // On Windows, python3 is often the Microsoft Store stub in WindowsApps, so
+  // prefer python there. Running --version rejects the stub on either order.
+  const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
+  for (const command of candidates) {
+    const probe = spawnSync(command, ['--version'], { encoding: 'utf8' });
+    if (probe.status === 0 && /^Python 3\./.test(`${probe.stdout}${probe.stderr}`.trim())) return command;
   }
+  throw new Error('Neither python3 nor python command is available in the PATH');
 }
 
 
