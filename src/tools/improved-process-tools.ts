@@ -188,8 +188,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     };
   }
 
-  // Analyze the process state to detect if it's waiting for input
-  const processState = analyzeProcessState(result.output, result.pid);
+  // Whether the process is waiting for input, as detected when the wait ended
+  const { processState } = result;
 
   let statusMessage = '';
   if (processState.isWaitingForInput) {
@@ -405,9 +405,8 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
     processStateMessage = `\n✅ Process completed with exit code ${result.exitCode}${runtimeStr}`;
   } else if (session) {
     // Analyze state for running processes
-    const fullOutput = session.outputLines.join('\n');
-    const processState = analyzeProcessState(fullOutput, pid);
-    if (processState.isWaitingForInput) {
+    const processState = terminalManager.getProcessState(pid);
+    if (processState?.isWaitingForInput) {
       processStateMessage = `\n🔄 ${formatProcessStateMessage(processState, pid)}`;
     }
   }
@@ -491,7 +490,8 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     // This handles REPLs where output is appended to the prompt line
     const outputSnapshot = terminalManager.captureOutputSnapshot(pid);
 
-    const success = terminalManager.sendInputToProcess(pid, input);
+    // No snapshot means no active session, which can't take input either
+    const success = outputSnapshot !== null && terminalManager.sendInputToProcess(pid, input);
 
     if (!success) {
       return {
@@ -544,7 +544,9 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
         // A deadline, not a poll count, so a busy event loop can't stretch the wait past the ceiling
         const deadline = Date.now() + waitLimit.waitMs;
         let interval: NodeJS.Timeout | null = null;
-        let lastOutputLength = 0; // Track output length to detect new output
+        // Advances every poll, so each poll reads only the output that arrived since the
+        // previous one (snapshot-based, which handles REPL prompt line appending)
+        let readPosition = outputSnapshot;
 
         let resolveOnce = () => {
           if (resolved) return;
@@ -557,12 +559,11 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
         interval = setInterval(() => {
           if (resolved) return;
 
-          // Use snapshot-based reading to handle REPL prompt line appending
-          const newOutput = outputSnapshot 
-            ? terminalManager.getOutputSinceSnapshot(pid, outputSnapshot)
-            : terminalManager.getNewOutput(pid);
-            
-          if (newOutput && newOutput.length > lastOutputLength) {
+          const read = terminalManager.readOutputSince(pid, readPosition);
+          if (read) readPosition = read.next;
+          const newOutput = read?.output ?? '';
+
+          if (newOutput.length > 0) {
             const now = Date.now();
             if (!firstOutputTime) firstOutputTime = now;
             lastOutputTime = now;
@@ -572,16 +573,19 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
                 timestamp: now,
                 deltaMs: now - startTime,
                 source: 'periodic_poll',
-                length: newOutput.length - lastOutputLength,
-                snippet: newOutput.slice(lastOutputLength, lastOutputLength + 50).replace(/\n/g, '\\n')
+                length: newOutput.length,
+                snippet: newOutput.slice(0, 50).replace(/\n/g, '\\n')
               });
             }
 
-            output = newOutput; // Replace with full output since snapshot
-            lastOutputLength = newOutput.length;
+            // Full output since the snapshot, bounded like the session buffer it came from
+            output += newOutput;
+            if (output.length > MAX_BUFFERED_OUTPUT_CHARS) {
+              output = output.slice(-MAX_BUFFERED_OUTPUT_CHARS);
+            }
 
-            // Analyze current state
-            processState = analyzeProcessState(output, pid);
+            // Analyze current state from the end of the output since the snapshot
+            processState = terminalManager.getProcessState(pid, outputSnapshot) ?? analyzeProcessState(output, pid);
 
             // Exit early if we detect the process is waiting for input
             if (processState.isWaitingForInput) {
@@ -633,7 +637,7 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     
     // Determine final state
     if (!processState) {
-      processState = analyzeProcessState(output, pid);
+      processState = terminalManager.getProcessState(pid, outputSnapshot) ?? analyzeProcessState(output, pid);
     }
     
     let statusMessage = '';

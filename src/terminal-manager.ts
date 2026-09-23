@@ -3,7 +3,7 @@ import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, Out
 import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import { analyzeProcessState } from './utils/process-detection.js';
+import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
 import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 
 /**
@@ -35,14 +35,50 @@ function getRepairedPathExt(): string {
   return current;
 }
 
+/** A child process's output pipes. */
+type OutputStream = 'stdout' | 'stderr';
+const OUTPUT_STREAMS: readonly OutputStream[] = ['stdout', 'stderr'];
+
+/** The end of one output pipe, kept for process-state detection (see getProcessState). */
+interface StreamTail {
+  text: string;    // Its last STATE_DETECTION_TAIL_CHARS chars
+  chars: number;   // Chars it has delivered since process start
+  turn: number;    // Event-loop turn that delivered its latest chunk (see currentDeliveryTurn)
+}
+type StreamTails = Record<OutputStream, StreamTail>;
+
+function newStreamTails(): StreamTails {
+  return { stdout: { text: '', chars: 0, turn: 0 }, stderr: { text: '', chars: 0, turn: 0 } };
+}
+
+/** An active session plus the per-stream tails that state detection reads. */
+interface ManagedSession extends TerminalSession {
+  streams: StreamTails;
+}
+
 interface CompletedSession {
   pid: number;
   outputLines: string[];       // Line-based buffer (consistent with active sessions)
   exitCode: number | null;
   startTime: Date;
   endTime: Date;
-  evictedLines: number;        // Carried over from the active session (see TerminalSession)
+  bufferedChars: number;       // Carried over from the active session (see TerminalSession)
+  evictedLines: number;
   evictedChars: number;
+  streams: StreamTails;
+}
+
+/** The retained-output fields shared by active and completed sessions. */
+type OutputBuffer = Pick<ManagedSession, 'outputLines' | 'bufferedChars' | 'evictedLines' | 'evictedChars' | 'streams'>;
+
+/**
+ * A position in a session's output, absolute since process start (evicted
+ * output included), so it stays valid while the buffer cap evicts lines.
+ */
+export interface OutputSnapshot {
+  totalChars: number;
+  lineCount: number;
+  streamChars: Record<OutputStream, number>;  // Chars each stream had delivered, for getProcessState
 }
 
 /**
@@ -70,7 +106,9 @@ export function getProcessWaitLimit(timeoutMs: number, capMs: number = MAX_PROCE
   return { waitMs: Math.min(timeoutMs, capMs), capMs, capped: timeoutMs > capMs };
 }
 
+/** executeCommand result: CommandExecutionResult plus the process state and whether the wait ceiling ended the wait. */
 export interface ProcessStartResult extends CommandExecutionResult {
+  processState: ProcessState;  // State of the process when the wait ended (see getProcessState)
   waitCappedAtMs?: number;     // Set when the wait stopped at the wait ceiling before timeout_ms; the process keeps running
 }
 
@@ -79,12 +117,12 @@ export interface ProcessStartResult extends CommandExecutionResult {
  * string concatenation throw "RangeError: Invalid string length" at V8's max
  * string size (~536M chars) inside a stdout 'data' handler — an uncaught
  * exception that kills the whole server (index.ts exits on uncaughtException).
- * The cap also bounds the join() cost in snapshot reads and the periodic
- * process-state scan, both of which are O(total output).
+ * The cap also bounds the cost of the reads that are O(total output), such as
+ * since-start snapshot reads.
  */
 export const MAX_BUFFERED_OUTPUT_CHARS = 50 * 1024 * 1024;  // per session; oldest lines evicted first
 const MAX_LINE_CHARS = 1024 * 1024;                  // force-split longer lines so eviction can work
-const MAX_WAIT_OUTPUT_CHARS = 2 * 1024 * 1024;       // start_process wait buffer (prompt/state detection)
+const MAX_WAIT_OUTPUT_CHARS = 2 * 1024 * 1024;       // start_process wait buffer (the initial output it returns)
 
 // Result type for paginated output reading
 export interface PaginatedOutputResult {
@@ -100,9 +138,11 @@ export interface PaginatedOutputResult {
 }
 
 export class TerminalManager {
-  private sessions: Map<number, TerminalSession> = new Map();
+  private sessions: Map<number, ManagedSession> = new Map();
   private completedSessions: Map<number, CompletedSession> = new Map();
-  
+  private deliveryTurn = 0;
+  private deliveryTurnOpen = false;
+
   /**
    * Send input to a running process
    * @param pid Process ID
@@ -213,14 +253,16 @@ export class TerminalManager {
     // Ensure childProcess.pid is defined before proceeding
     if (!childProcess.pid) {
       // Return a consistent error object instead of throwing
+      const output = 'Error: Failed to get process ID. The command could not be executed.';
       return {
         pid: -1,  // Use -1 to indicate an error state
-        output: 'Error: Failed to get process ID. The command could not be executed.',
-        isBlocked: false
+        output,
+        isBlocked: false,
+        processState: analyzeProcessState(output)
       };
     }
 
-    const session: TerminalSession = {
+    const session: ManagedSession = {
       pid: childProcess.pid,
       process: childProcess,
       outputLines: [],           // Line-based buffer
@@ -229,7 +271,8 @@ export class TerminalManager {
       startTime: new Date(),
       bufferedChars: 0,
       evictedLines: 0,
-      evictedChars: 0
+      evictedChars: 0,
+      streams: newStreamTails()
     };
 
     this.sessions.set(childProcess.pid, session);
@@ -248,10 +291,17 @@ export class TerminalManager {
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
 
-      const resolveOnce = (result: CommandExecutionResult) => {
+      const resolveOnce = (waitResult: Omit<ProcessStartResult, 'processState'>) => {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+
+        // The state the wait ended in, from the session's output. A process
+        // error leaves no session behind, so the text it returns is judged.
+        const result: ProcessStartResult = {
+          ...waitResult,
+          processState: this.getProcessState(childProcess.pid!) ?? analyzeProcessState(waitResult.output)
+        };
 
         // Add timing info if requested
         if (collectTiming) {
@@ -296,16 +346,15 @@ export class TerminalManager {
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        // `output` only feeds the wait-phase result and prompt/state detection,
-        // so stop growing it once resolved and keep only a bounded tail.
+        // `output` only feeds the wait-phase result, so stop growing it once
+        // resolved and keep only a bounded tail.
         if (!resolved) {
           output += text;
           if (output.length > MAX_WAIT_OUTPUT_CHARS) {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
           }
         }
-        // Append to line-based buffer
-        this.appendToLineBuffer(session, text);
+        this.recordOutput(session, 'stdout', text);
 
         // Record output event if collecting timing
         if (collectTiming) {
@@ -348,8 +397,7 @@ export class TerminalManager {
             output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
           }
         }
-        // Append to line-based buffer
-        this.appendToLineBuffer(session, text);
+        this.recordOutput(session, 'stderr', text);
 
         // Record output event if collecting timing
         if (collectTiming) {
@@ -365,17 +413,14 @@ export class TerminalManager {
 
       // Periodic comprehensive check every 100ms
       periodicCheck = setInterval(() => {
-        if (output.trim()) {
-          const processState = analyzeProcessState(output, childProcess.pid);
-          if (processState.isWaitingForInput) {
-            session.isBlocked = true;
-            exitReason = 'early_exit_periodic_check';
-            resolveOnce({
-              pid: childProcess.pid!,
-              output,
-              isBlocked: true
-            });
-          }
+        if (this.getProcessState(childProcess.pid!)?.isWaitingForInput) {
+          session.isBlocked = true;
+          exitReason = 'early_exit_periodic_check';
+          resolveOnce({
+            pid: childProcess.pid!,
+            output,
+            isBlocked: true
+          });
         }
       }, 100);
 
@@ -401,8 +446,10 @@ export class TerminalManager {
             exitCode: code,
             startTime: session.startTime,
             endTime: new Date(),
+            bufferedChars: session.bufferedChars,
             evictedLines: session.evictedLines,
-            evictedChars: session.evictedChars
+            evictedChars: session.evictedChars,
+            streams: { stdout: { ...session.streams.stdout }, stderr: { ...session.streams.stderr } }
           });
 
           // Keep only last 100 completed sessions
@@ -421,6 +468,37 @@ export class TerminalManager {
         });
       });
     });
+  }
+
+  /**
+   * Add a chunk of one stream's output to the session: to the merged line
+   * buffer, and to that stream's tail for state detection.
+   */
+  private recordOutput(session: ManagedSession, stream: OutputStream, text: string): void {
+    this.appendToLineBuffer(session, text);
+    const tail = session.streams[stream];
+    tail.text = (text.length >= STATE_DETECTION_TAIL_CHARS ? text : tail.text + text).slice(-STATE_DETECTION_TAIL_CHARS);
+    tail.chars += text.length;
+    tail.turn = this.currentDeliveryTurn();
+  }
+
+  /**
+   * Number of the event-loop turn now delivering output; every chunk
+   * dispatched before the next check phase (setImmediate) shares it.
+   *
+   * stdout and stderr are separate pipes. Each turn delivers what the OS had
+   * ready when the loop polled, so a chunk delivered in a later turn was
+   * written after the chunks of earlier turns. Within one turn the pipes come
+   * in either order: when python -i's final stdout newline and its stderr
+   * ">>> " prompt are both waiting, the prompt is often delivered first.
+   */
+  private currentDeliveryTurn(): number {
+    if (!this.deliveryTurnOpen) {
+      this.deliveryTurnOpen = true;
+      this.deliveryTurn++;
+      setImmediate(() => { this.deliveryTurnOpen = false; });
+    }
+    return this.deliveryTurn;
   }
 
   /**
@@ -636,19 +714,9 @@ export class TerminalManager {
    * Capture a snapshot of current output state for interaction tracking.
    * Used by interactWithProcess to know what output existed before sending input.
    */
-  captureOutputSnapshot(pid: number): { totalChars: number; lineCount: number } | null {
+  captureOutputSnapshot(pid: number): OutputSnapshot | null {
     const session = this.sessions.get(pid);
-    if (session) {
-      const fullOutput = session.outputLines.join('\n');
-      return {
-        // Absolute since process start (includes evicted output), so the
-        // offset stays valid even if the cap evicts lines between
-        // snapshot and read.
-        totalChars: session.evictedChars + fullOutput.length,
-        lineCount: session.evictedLines + session.outputLines.length
-      };
-    }
-    return null;
+    return session ? TerminalManager.endOfOutput(session) : null;
   }
 
   /**
@@ -656,34 +724,100 @@ export class TerminalManager {
    * This handles the case where output is appended to the last line (REPL prompts).
    * Also checks completed sessions in case process finished between snapshot and poll.
    */
-  getOutputSinceSnapshot(pid: number, snapshot: { totalChars: number; lineCount: number }): string | null {
-    // Check active session first
-    const session = this.sessions.get(pid);
-    if (session) {
-      return TerminalManager.outputSinceSnapshot(session.outputLines, session.evictedChars, snapshot.totalChars);
-    }
-
-    // Fallback to completed sessions - process may have finished between snapshot and poll
-    const completedSession = this.completedSessions.get(pid);
-    if (completedSession) {
-      return TerminalManager.outputSinceSnapshot(completedSession.outputLines, completedSession.evictedChars, snapshot.totalChars);
-    }
-
-    return null;
+  getOutputSinceSnapshot(pid: number, snapshot: OutputSnapshot): string | null {
+    return this.readOutputSince(pid, snapshot)?.output ?? null;
   }
 
   /**
-   * New output since a snapshot, in absolute (since process start) offsets.
-   * If eviction dropped part of the unseen output, returns what the buffer
-   * still holds — the oldest unseen chars are lost to the cap.
+   * Output that appeared since `snapshot`, plus the snapshot at the current end
+   * of output. A poller passes `next` back in to read only the output that
+   * arrived since its previous poll. Costs O(output since snapshot), never
+   * O(whole buffer), so polling stays cheap however much history the session
+   * has retained. Also checks completed sessions in case the process finished
+   * between snapshot and poll.
    */
-  private static outputSinceSnapshot(outputLines: string[], evictedChars: number, snapshotTotalChars: number): string {
-    const fullOutput = outputLines.join('\n');
-    const newChars = evictedChars + fullOutput.length - snapshotTotalChars;
-    if (newChars <= 0) {
+  readOutputSince(pid: number, snapshot: OutputSnapshot): { output: string; next: OutputSnapshot } | null {
+    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid);
+    if (!buffer) {
+      return null;
+    }
+    return {
+      output: TerminalManager.outputSinceSnapshot(buffer, snapshot.totalChars),
+      next: TerminalManager.endOfOutput(buffer)
+    };
+  }
+
+  /**
+   * Snapshot at the current end of a buffer, in O(1): bufferedChars is the
+   * joined length of the retained lines, so nothing is joined here.
+   */
+  private static endOfOutput(buffer: OutputBuffer): OutputSnapshot {
+    return {
+      // Absolute since process start (includes evicted output), so the
+      // offset stays valid even if the cap evicts lines between
+      // snapshot and read.
+      totalChars: buffer.evictedChars + buffer.bufferedChars,
+      lineCount: buffer.evictedLines + buffer.outputLines.length,
+      streamChars: { stdout: buffer.streams.stdout.chars, stderr: buffer.streams.stderr.chars }
+    };
+  }
+
+  /**
+   * The process's state (waiting for input, finished or running), judged from
+   * the end of the output it wrote since `since` (default: since it started).
+   * Reads only the per-stream tails, so it costs the same however much output
+   * the process has produced. Also checks completed sessions. The one place
+   * start_process, interact_with_process and read_process_output get the
+   * state from.
+   */
+  getProcessState(pid: number, since?: OutputSnapshot): ProcessState | null {
+    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid);
+    if (!buffer) {
+      return null;
+    }
+    return analyzeProcessState(TerminalManager.lastWrittenOutput(buffer.streams, since), pid);
+  }
+
+  /**
+   * The output since `since` of each stream that may have written last: the
+   * streams delivered in the latest turn that delivered anything since then.
+   * Their relative order within that turn is unknown (see
+   * currentDeliveryTurn), so each is judged on its own; streams last
+   * delivered in an earlier turn wrote before them and can't end the output.
+   */
+  private static lastWrittenOutput(streams: StreamTails, since?: OutputSnapshot): string[] {
+    const recent = OUTPUT_STREAMS
+      .map(name => {
+        const { text, chars, turn } = streams[name];
+        const newChars = chars - (since?.streamChars[name] ?? 0);
+        return { text: newChars > 0 ? text.slice(-newChars) : '', turn };
+      })
+      .filter(stream => stream.text.length > 0);
+    const lastTurn = Math.max(...recent.map(stream => stream.turn));
+    return recent.filter(stream => stream.turn === lastTurn).map(stream => stream.text);
+  }
+
+  /**
+   * New output since a snapshot, in absolute (since process start) offsets:
+   * the last (end - snapshot) chars of the joined buffer. Walks back from the
+   * newest line only until the snapshot position is covered and joins just
+   * those lines. If eviction dropped part of the unseen output, returns what
+   * the buffer still holds — the oldest unseen chars are lost to the cap.
+   */
+  private static outputSinceSnapshot(buffer: OutputBuffer, snapshotTotalChars: number): string {
+    const { outputLines } = buffer;
+    const newChars = buffer.evictedChars + buffer.bufferedChars - snapshotTotalChars;
+    if (newChars <= 0 || outputLines.length === 0) {
       return ''; // No new output
     }
-    return fullOutput.substring(Math.max(0, fullOutput.length - newChars));
+    let firstLine = outputLines.length - 1;
+    let tailChars = outputLines[firstLine].length; // Joined length of outputLines[firstLine..]
+    while (tailChars < newChars && firstLine > 0) {
+      firstLine--;
+      tailChars += outputLines[firstLine].length + 1; // +1 for its join separator
+    }
+    const tail = outputLines.slice(firstLine).join('\n');
+    return tail.substring(Math.max(0, tail.length - newChars));
   }
 
     /**
