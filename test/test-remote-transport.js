@@ -17,6 +17,7 @@
 
 import { MCPDevice } from '../dist/remote-device/device.js';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 // Server-side thresholds this device must fit inside. Hand-copied from
 // remote-dc-mcp/src/server/constants.ts — the repos ship separately and nothing
@@ -686,4 +687,4 @@ await test('setOffline does not hang when getSession stalls', async () => {
 });
 
 console.log(`\n${failures ? '🔴' : '✅'} remote transport: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

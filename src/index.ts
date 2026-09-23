@@ -12,6 +12,7 @@ import { runSetup } from './npm-scripts/setup.js';
 import { runUninstall } from './npm-scripts/uninstall.js';
 import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
+import { exitProcess } from './utils/exit-process.js';
 import { runRemote } from './npm-scripts/remote.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 
@@ -89,7 +90,7 @@ async function runServer() {
       });
 
       logger.error(`Uncaught exception: ${errorMessage}`);
-      process.exit(1);
+      exitProcess(1);
     });
 
     // Handle unhandled rejections
@@ -158,7 +159,7 @@ async function runServer() {
     capture('run_server_failed_start_error', {
       error: errorMessage
     });
-    process.exit(1);
+    exitProcess(1);
   }
 }
 
@@ -176,5 +177,5 @@ runServer().catch(async (error) => {
   capture('run_server_fatal_error', {
     error: errorMessage
   });
-  process.exit(1);
+  exitProcess(1);
 });

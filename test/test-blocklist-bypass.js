@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { commandManager } from '../dist/command-manager.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 async function runTests() {
     // mock config with blocked commands
@@ -57,11 +58,11 @@ async function runTests() {
         console.log('\nAll tests passed!');
     } catch (error) {
         console.error('Test failed:', error.message);
-        process.exit(1);
+        exitProcess(1);
     }
 }
 
 runTests().catch((error) => {
     console.error('Test execution failed:', error);
-    process.exit(1);
+    exitProcess(1);
 });

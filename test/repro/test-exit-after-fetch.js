@@ -19,6 +19,7 @@ import { spawn } from 'child_process';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.resolve(path.dirname(THIS_FILE), '..', '..');
@@ -100,5 +101,5 @@ if (ROLE === 'server') {
   console.log(unexpected > 0
     ? `REPRODUCED: ${unexpected} of ${RUNS * paths.length} runs did not end with the product's exit code`
     : `OK: all ${RUNS * paths.length} runs ended with the product's exit code`);
-  process.exitCode = unexpected > 0 ? 1 : 0;
+  exitProcess(unexpected > 0 ? 1 : 0);
 }

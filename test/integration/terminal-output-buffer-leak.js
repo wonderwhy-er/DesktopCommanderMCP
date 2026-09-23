@@ -31,6 +31,7 @@
 
 import assert from 'assert';
 import { performance } from 'perf_hooks';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = 'true';
 
@@ -121,11 +122,11 @@ async function main() {
   console.log(`flood: ${totalEmittedMB} MB emitted, ${(joinedLength / 1024 / 1024).toFixed(1)} MB retained (cap ${BUFFER_CAP_CHARS / 1024 / 1024} MB)`);
   console.log(`max event-loop stall: ${maxStallMs.toFixed(0)}ms | exit code: ${exitCode}`);
   console.log('PASS — output buffer stayed bounded, server-side state healthy throughout.');
-  process.exit(0);
+  exitProcess(0);
 }
 
 main().catch((err) => {
   // On unfixed code the flood itself crashes here ("Invalid string length").
   console.error('FAIL:', err.message);
-  process.exit(1);
+  exitProcess(1);
 });

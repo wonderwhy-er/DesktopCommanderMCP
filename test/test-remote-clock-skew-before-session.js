@@ -40,6 +40,7 @@
 import assert from 'node:assert';
 import http from 'node:http';
 import { observeServerDate } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -162,4 +163,4 @@ await test('the authorization poll corrects a skewed clock before the session is
 
 server.close();
 console.log(`\n${failures ? '🔴' : '✅'} remote clock skew before session: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

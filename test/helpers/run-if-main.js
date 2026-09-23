@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 /**
  * Returns true when the calling module is the script Node was started with
@@ -45,15 +46,20 @@ export function skip(reason) {
  * Runs a test file's entry function when the file is executed directly, and
  * exits with the result: 1 if it throws or returns false, 0 otherwise.
  * Usage: `runIfMain(import.meta.url, runTests);`
+ *
+ * Exits the way the product does (exitProcess): Node exits on its own once
+ * the test is done, or after a grace period if something the test left open
+ * (a timer, socket, child process) keeps it alive. process.exit() straight
+ * away can abort Node on Windows right after a fetch() download.
  */
 export async function runIfMain(importMetaUrl, run) {
   if (!isMainModule(importMetaUrl)) return;
 
   try {
     const result = await run();
-    process.exit(result === false ? 1 : 0);
+    exitProcess(result === false ? 1 : 0);
   } catch (error) {
     console.error('❌ Unhandled error:', error);
-    process.exit(1);
+    exitProcess(1);
   }
 }

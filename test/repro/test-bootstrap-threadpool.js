@@ -8,6 +8,7 @@ import '../../dist/bootstrap.js';           // first import, exactly like index.
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
@@ -18,9 +19,11 @@ log(`UV_THREADPOOL_SIZE after bootstrap = ${process.env.UV_THREADPOOL_SIZE}`);
 for (let i = 0; i < 4; i++) fs.readFile(stalled.path).catch(() => {});
 setTimeout(async () => {
   const t = Date.now();
-  const guard = setTimeout(() => { log(`BLOCKED >3000ms -> bootstrap did NOT help`); stalled.close(); process.exit(1); }, 3000);
+  let blocked = false;
+  const guard = setTimeout(() => { blocked = true; log(`BLOCKED >3000ms -> bootstrap did NOT help`); stalled.close(); exitProcess(1); }, 3000);
   await fs.writeFile(path.join(os.tmpdir(), 'dc-boot-probe'), 'x');
+  if (blocked) return; // the guard closed the pipe, which is what let the write finish
   clearTimeout(guard);
   log(`trivial write completed in ${Date.now() - t}ms -> bootstrap headroom WORKS`);
-  stalled.close(); process.exit(0);
+  stalled.close(); exitProcess(0);
 }, 150);

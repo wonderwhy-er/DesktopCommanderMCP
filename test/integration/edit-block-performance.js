@@ -12,6 +12,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { performance } from 'perf_hooks';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -893,5 +894,5 @@ async function main() {
 
 main().catch((error) => {
   console.error('FAIL Edit block large-file performance integration test failed:', error);
-  process.exit(1);
+  exitProcess(1);
 });
