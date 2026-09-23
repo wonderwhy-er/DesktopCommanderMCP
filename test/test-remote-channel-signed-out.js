@@ -55,10 +55,10 @@ class FakeAuth {
     const next = this.setSessionResults.shift();
     if (next && next.error) {
       this.session = null;
-      return { data: { session: null }, error: next.error };
+      return { data: { session: null, user: null }, error: next.error };
     }
     this.session = { access_token: payload.access_token, refresh_token: payload.refresh_token };
-    return { data: { session: this.session }, error: null };
+    return { data: { session: this.session, user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
   }
   async getSession() {
     return { data: { session: this.session }, error: null };
@@ -113,35 +113,21 @@ class FakeClient {
 // Harness
 // ---------------------------------------------------------------------------
 
-function makeRemoteChannel() {
+async function makeRemoteChannel() {
   const rc = new RemoteChannel();
   const client = new FakeClient();
   rc.client = client;                 // private at TS level, plain property at runtime
-  rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.onToolCall = () => {};
   rc.deviceId = 'device-1';
   rc.deviceName = 'test-device';
-  rc.lastKnownSession = { access_token: USER_JWT, refresh_token: 'rt-1' };
-  rc.registerAuthListener(); // installs the handler under test
+  // The real setSession() signs in and installs the auth listener under test
+  const { error } = await rc.setSession({ access_token: USER_JWT, refresh_token: 'rt-1' });
+  assert.ifError(error);
+  // Count only the calls the tests trigger, not the sign-in above
+  client.auth.setSessionCalls = [];
+  client.realtime.setAuthCalls = [];
   return { rc, client };
 }
-
-/** Register the auth listener the way setSession() does, without the network. */
-RemoteChannel.prototype.registerAuthListener = function () {
-  if (this.authListenerRegistered) return;
-  this.authListenerRegistered = true;
-  this.client.auth.onAuthStateChange((event, newSession) => {
-    if (event === 'TOKEN_REFRESHED' && newSession?.access_token && this.client) {
-      this.client.realtime.setAuth(newSession.access_token);
-      this.lastKnownSession = {
-        access_token: newSession.access_token,
-        refresh_token: newSession.refresh_token ?? this.lastKnownSession?.refresh_token ?? null,
-      };
-    } else if (event === 'SIGNED_OUT') {
-      void this.handleSignedOut();
-    }
-  });
-};
 
 const flush = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
@@ -203,7 +189,7 @@ async function main() {
   // --- SIGNED_OUT: transient failure recovers ---
 
   await test('SIGNED_OUT with a still-valid refresh token restores the session and stays online', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: null }]; // a 429/500 case: token is fine
     await withQuietLogs(async () => {
       client.auth.emit('SIGNED_OUT');
@@ -216,7 +202,7 @@ async function main() {
   // --- SIGNED_OUT: revoked family gives up cleanly ---
 
   await test('SIGNED_OUT with a revoked token marks the session lost and stops retrying', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
     const channelsBefore = client.channels.length;
 
@@ -240,7 +226,7 @@ async function main() {
   // THROWS on error instead of returning { error }.
 
   await test('SIGNED_OUT restore that throws (unexpired JWT, revoked session) still ends offline', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSession = async (payload) => {
       client.auth.setSessionCalls.push(payload);
       throw Object.assign(new Error('session_not_found'), { status: 403, name: 'AuthApiError' });
@@ -264,7 +250,7 @@ async function main() {
     // GoTrue may still accept the JWT for /user while the refresh family is
     // already revoked. Reporting "recovered" here is a false positive: the next
     // tick 400s again and the process loops until the JWT expires.
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: null }]; // JWT accepted, refresh token never checked
     client.auth.refreshSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
 
@@ -278,7 +264,7 @@ async function main() {
   });
 
   await test('SIGNED_OUT restore succeeds only when the refresh token is actually renewed', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: null }];
     client.auth.refreshSessionResults = [{ error: null }];
 
@@ -295,7 +281,7 @@ async function main() {
     // sessionLost only gates OUR health loop — an errored channel left behind
     // keeps realtime-js's own ~10s rejoin timer firing expired-JWT joins
     // forever (staging rig 2026-08-18: ~2.5k joins/device/day post-give-up).
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
     const stale = client.channel('user:user-1');
     stale.state = 'errored';
@@ -312,7 +298,7 @@ async function main() {
   });
 
   await test('the user-facing notice prints once, not once per health tick', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400 }) }];
     const { lines } = await withQuietLogs(async () => {
       client.auth.emit('SIGNED_OUT');
@@ -329,7 +315,7 @@ async function main() {
     // The real overlap: auth-js can emit twice (the refresh tick and the
     // in-flight refresh both fail) while the first restore is still awaiting.
     // sessionLost is still false then, so handlingSignedOut is the only guard.
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     let release;
     const gate = new Promise((r) => { release = r; });
     client.auth.setSession = async (payload) => {
@@ -354,7 +340,7 @@ async function main() {
   // --- Regression guard on the path that already worked ---
 
   await test('TOKEN_REFRESHED still re-authorizes the socket with the new token', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     await withQuietLogs(async () => {
       client.auth.emit('TOKEN_REFRESHED', { access_token: 'eyJ-fresh', refresh_token: 'rt-2' });
       await flush(10);
@@ -366,7 +352,7 @@ async function main() {
   });
 
   await test('realtime.setAuth is never called with a null/undefined token', async () => {
-    const { rc, client } = makeRemoteChannel();
+    const { rc, client } = await makeRemoteChannel();
     client.auth.setSessionResults = [{ error: Object.assign(new Error('revoked'), { status: 400 }) }];
     await withQuietLogs(async () => {
       client.auth.emit('TOKEN_REFRESHED', { access_token: 'eyJ-fresh', refresh_token: 'rt-2' });

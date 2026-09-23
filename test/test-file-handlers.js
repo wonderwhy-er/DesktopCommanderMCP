@@ -20,6 +20,7 @@ import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
 import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -153,16 +154,16 @@ async function testReadOptionsInterface() {
 
   await fs.writeFile(TEXT_FILE, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
 
+  // The file's lines in a read result (the status header is not a file line)
+  const fileLines = (result) => result.content.toString().split('\n').filter((line) => /^Line \d$/.test(line));
+
   // Test offset option
   const result1 = await readFile(TEXT_FILE, { offset: 2 });
-  const content1 = result1.content.toString();
-  assert.ok(content1.includes('Line 3'), 'Offset should skip to line 3');
+  assert.deepStrictEqual(fileLines(result1), ['Line 3', 'Line 4', 'Line 5'], 'Offset 2 should skip the first two lines');
 
   // Test length option
   const result2 = await readFile(TEXT_FILE, { offset: 0, length: 2 });
-  const content2 = result2.content.toString();
-  assert.ok(content2.includes('Line 1'), 'Should include Line 1');
-  assert.ok(content2.includes('Line 2'), 'Should include Line 2');
+  assert.deepStrictEqual(fileLines(result2), ['Line 1', 'Line 2'], 'Length 2 should return only the first two lines');
 
   console.log('✓ ReadOptions work correctly');
 }
@@ -514,11 +515,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly, execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then(success => {
-    process.exit(success ? 0 : 1);
-  }).catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

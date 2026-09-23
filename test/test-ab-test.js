@@ -1,103 +1,99 @@
 /**
  * Unit tests for A/B test feature flag system
  * Tests that missing/empty experiments config doesn't break anything
+ *
+ * Tests 1-9 run the real ab-test module (dist/utils/ab-test.js) in a fresh
+ * process per scenario: the experiments go into the feature-flag cache and
+ * assignments into config.json under a temporary HOME, exactly where the
+ * product reads them. The MCP UI tests call resolveMcpUiPreviewDecision with
+ * injected dependencies.
  */
 
 import assert from 'assert';
+import { spawn } from 'child_process';
+import { mkdtempSync, rmSync } from 'fs';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import {
   MCP_UI_EXPERIMENT_NAME,
   MCP_UI_HIDE_VARIANT,
   MCP_UI_SHOW_VARIANT,
   resolveMcpUiPreviewDecision,
 } from '../dist/utils/mcp-ui-ab-test.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
-// Mock the dependencies before importing ab-test
-let mockExperiments = {};
-let mockConfigValues = {};
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distModule = (file) => pathToFileURL(path.join(__dirname, '..', 'dist', ...file.split('/'))).href;
 
-// Mock featureFlagManager
-const mockFeatureFlagManager = {
-  get: (key, defaultValue) => {
-    if (key === 'experiments') return mockExperiments;
-    return defaultValue;
-  }
+// Weighted variants, the format the product reads (v2 feature flags)
+const ONBOARDING_EXPERIMENT = {
+  OnboardingPreTool: {
+    variants: [
+      { name: 'noOnboardingPage', weight: 50 },
+      { name: 'showOnboardingPage', weight: 50 },
+    ],
+  },
 };
 
-// Mock configManager
-const mockConfigManager = {
-  getValue: async (key) => mockConfigValues[key],
-  setValue: async (key, value) => { mockConfigValues[key] = value; },
-  getOrCreateClientId: async () => {
-    if (!mockConfigValues.clientId) {
-      mockConfigValues.clientId = 'auto-generated-uuid-' + Math.random().toString(36).slice(2);
-    }
-    return mockConfigValues.clientId;
-  }
-};
-
-// We need to test the logic directly since we can't easily mock ES modules
-// Recreate the core functions with injected dependencies
-
-function getExperiments() {
-  return mockFeatureFlagManager.get('experiments', {});
+const CHILD_SCRIPT = `
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+const dir = path.join(os.homedir(), '.claude-server-commander');
+fs.mkdirSync(dir, { recursive: true });
+fs.writeFileSync(path.join(dir, 'feature-flags.json'), JSON.stringify({ version: '1', flags: JSON.parse(process.env.FLAGS) }));
+fs.writeFileSync(path.join(dir, 'config.json'), process.env.CONFIG);
+const { featureFlagManager } = await import(process.env.FLAGS_MODULE);
+await featureFlagManager.initialize();
+const { hasFeature } = await import(process.env.AB_MODULE);
+const { configManager } = await import(process.env.CONFIG_MODULE);
+const result = { features: {} };
+try {
+  for (const name of JSON.parse(process.env.FEATURES)) result.features[name] = await hasFeature(name);
+} catch (error) {
+  result.error = error.message;
 }
+result.config = await configManager.getConfig();
+console.log('RESULT ' + JSON.stringify(result));
+process.exit(0);
+`;
 
-function hashCode(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
+/**
+ * Put `experiments` into the feature flags and `config` into config.json, then ask the
+ * real hasFeature() about each name in `features`. Returns the answers and the final config.
+ */
+async function runAbTest({ experiments, config = {}, features }) {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'dc-abtest-home-'));
+  try {
+    const flags = experiments === undefined ? {} : { experiments };
+    const child = spawn(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT], {
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        DC_FLAG_URL: 'http://127.0.0.1:9/flags.json',
+        DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1',
+        FLAGS_MODULE: distModule('utils/feature-flags.js'),
+        AB_MODULE: distModule('utils/ab-test.js'),
+        CONFIG_MODULE: distModule('config-manager.js'),
+        FLAGS: JSON.stringify(flags),
+        CONFIG: JSON.stringify({ telemetryEnabled: false, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false, ...config }),
+        FEATURES: JSON.stringify(features),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const code = await new Promise((resolve) => child.on('close', resolve));
+    const line = stdout.split('\n').find((l) => l.startsWith('RESULT '));
+    assert(line, `ab-test process failed (exit ${code}): ${stderr || stdout}`);
+    return JSON.parse(line.slice('RESULT '.length));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
-  return Math.abs(hash);
-}
-
-const variantCache = {};
-
-async function getVariant(experimentName) {
-  const experiments = getExperiments();
-  const experiment = experiments[experimentName];
-  if (!experiment?.variants?.length) return null;
-  
-  if (variantCache[experimentName]) {
-    return variantCache[experimentName];
-  }
-  
-  const configKey = `abTest_${experimentName}`;
-  const existing = await mockConfigManager.getValue(configKey);
-  
-  if (existing && experiment.variants.includes(existing)) {
-    variantCache[experimentName] = existing;
-    return existing;
-  }
-  
-  const clientId = await mockConfigManager.getOrCreateClientId();
-  const hash = hashCode(clientId + experimentName);
-  const variantIndex = hash % experiment.variants.length;
-  const variant = experiment.variants[variantIndex];
-  
-  await mockConfigManager.setValue(configKey, variant);
-  variantCache[experimentName] = variant;
-  return variant;
-}
-
-async function hasFeature(featureName) {
-  const experiments = getExperiments();
-  if (!experiments || typeof experiments !== 'object') return false;
-  
-  for (const [expName, experiment] of Object.entries(experiments)) {
-    if (experiment?.variants?.includes(featureName)) {
-      const variant = await getVariant(expName);
-      return variant === featureName;
-    }
-  }
-  return false;
-}
-
-// Clear state between tests
-function resetState() {
-  mockExperiments = {};
-  mockConfigValues = {};
-  Object.keys(variantCache).forEach(k => delete variantCache[k]);
 }
 
 function createMcpUiDeps(overrides = {}) {
@@ -130,9 +126,8 @@ function createMcpUiDeps(overrides = {}) {
 async function runTests() {
   let passed = 0;
   let failed = 0;
-  
+
   const test = async (name, fn) => {
-    resetState();
     try {
       await fn();
       console.log(`✅ ${name}`);
@@ -148,113 +143,88 @@ async function runTests() {
 
   // Test 1: No experiments at all
   await test('hasFeature returns false when no experiments exist', async () => {
-    mockExperiments = {};
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({ experiments: undefined, features: ['showOnboardingPage'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, false);
   });
 
-  // Test 2: Experiments is undefined/null
-  await test('hasFeature returns false when experiments is undefined', async () => {
-    mockExperiments = undefined;
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, false);
+  // Test 2: Experiments is null
+  await test('hasFeature returns false when experiments is null', async () => {
+    const { features, error } = await runAbTest({ experiments: null, features: ['showOnboardingPage'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, false);
   });
 
   // Test 3: Empty experiments object
   await test('hasFeature returns false with empty experiments object', async () => {
-    mockExperiments = {};
-    const result = await hasFeature('anyFeature');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({ experiments: {}, features: ['anyFeature'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.anyFeature, false);
   });
 
   // Test 4: Experiment exists but variants array is empty
   await test('hasFeature returns false when experiment has empty variants', async () => {
-    mockExperiments = {
-      'TestExp': { variants: [] }
-    };
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({ experiments: { TestExp: { variants: [] } }, features: ['showOnboardingPage'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, false);
   });
 
   // Test 5: Experiment exists but variants is undefined
   await test('hasFeature returns false when variants is undefined', async () => {
-    mockExperiments = {
-      'TestExp': {}
-    };
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({ experiments: { TestExp: {} }, features: ['showOnboardingPage'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, false);
   });
 
   // Test 6: Feature not in any experiment
   await test('hasFeature returns false for unknown feature', async () => {
-    mockExperiments = {
-      'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
-      }
-    };
-    const result = await hasFeature('unknownFeature');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({ experiments: ONBOARDING_EXPERIMENT, features: ['unknownFeature'] });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.unknownFeature, false);
   });
 
   // Test 7: Feature exists, user assigned to it
   await test('hasFeature returns true when user is assigned to that variant', async () => {
-    mockExperiments = {
-      'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
-      }
-    };
-    mockConfigValues = { 'abTest_OnboardingPreTool': 'showOnboardingPage' };
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, true);
+    const { features, error } = await runAbTest({
+      experiments: ONBOARDING_EXPERIMENT,
+      config: { abTest_OnboardingPreTool: 'showOnboardingPage' },
+      features: ['showOnboardingPage'],
+    });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, true);
   });
 
   // Test 8: Feature exists, user assigned to different variant
   await test('hasFeature returns false when user is assigned to different variant', async () => {
-    mockExperiments = {
-      'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
-      }
-    };
-    mockConfigValues = { 'abTest_OnboardingPreTool': 'noOnboardingPage' };
-    const result = await hasFeature('showOnboardingPage');
-    assert.strictEqual(result, false);
+    const { features, error } = await runAbTest({
+      experiments: ONBOARDING_EXPERIMENT,
+      config: { abTest_OnboardingPreTool: 'noOnboardingPage' },
+      features: ['showOnboardingPage'],
+    });
+    assert.strictEqual(error, undefined);
+    assert.strictEqual(features.showOnboardingPage, false);
   });
 
   // Test 9: New user gets deterministic assignment
   await test('new user gets deterministic variant assignment based on clientId', async () => {
-    mockExperiments = {
-      'OnboardingPreTool': {
-        variants: ['noOnboardingPage', 'showOnboardingPage']
-      }
+    const scenario = {
+      experiments: ONBOARDING_EXPERIMENT,
+      config: { clientId: 'test-client-123' },
+      features: ['showOnboardingPage', 'noOnboardingPage'],
     };
-    mockConfigValues = { clientId: 'test-client-123' };
-    
-    const result1 = await hasFeature('showOnboardingPage');
-    const result2 = await hasFeature('noOnboardingPage');
-    
+    const first = await runAbTest(scenario);
+    const second = await runAbTest(scenario);
+    assert.strictEqual(first.error, undefined);
+
     // One must be true, one must be false
-    assert.strictEqual(result1 !== result2, true, 'User should be in exactly one variant');
-    
-    // Check it was persisted
-    const persisted = mockConfigValues['abTest_OnboardingPreTool'];
-    assert.ok(persisted, 'Assignment should be persisted to config');
-    assert.ok(['noOnboardingPage', 'showOnboardingPage'].includes(persisted));
+    assert.strictEqual(first.features.showOnboardingPage !== first.features.noOnboardingPage, true, 'User should be in exactly one variant');
+
+    // Check it was persisted, and the same clientId always gets the same variant
+    const persisted = first.config.abTest_OnboardingPreTool;
+    assert.ok(['noOnboardingPage', 'showOnboardingPage'].includes(persisted), 'Assignment should be persisted to config');
+    assert.strictEqual(second.config.abTest_OnboardingPreTool, persisted, 'Same clientId should get the same variant');
   });
 
-  // Test 10: Malformed experiment data doesn't crash
-  await test('malformed experiment data does not throw', async () => {
-    mockExperiments = {
-      'BadExp1': null,
-      'BadExp2': 'not an object',
-      'BadExp3': { variants: 'not an array' },
-      'GoodExp': { variants: ['a', 'b'] }
-    };
-    
-    // Should not throw
-    const result = await hasFeature('a');
-    // Result depends on assignment, but shouldn't crash
-    assert.ok(typeof result === 'boolean');
-  });
 
   await test('MCP UI constants match remote experiment contract', async () => {
     assert.strictEqual(MCP_UI_EXPERIMENT_NAME, 'McpUiPreviews');
@@ -366,10 +336,4 @@ async function runTests() {
   return failed === 0;
 }
 
-// Run tests
-runTests().then(success => {
-  process.exit(success ? 0 : 1);
-}).catch(err => {
-  console.error('Test runner error:', err);
-  process.exit(1);
-});
+runIfMain(import.meta.url, runTests);
