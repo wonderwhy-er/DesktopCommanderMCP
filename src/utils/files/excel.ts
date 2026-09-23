@@ -491,18 +491,27 @@ ${JSON.stringify(data)}`;
         const startRow = parseInt(match[2], 10);
 
         if (match[3] && match[4]) {
+            // Any two opposite corners name the range, as in Excel: A5:C2,
+            // C2:A5 and C5:A2 are all A2:C5
             const endCol = this.columnToNumber(match[3]);
             const endRow = parseInt(match[4], 10);
-            return { startRow, startCol, endRow, endCol };
+            return {
+                startRow: Math.min(startRow, endRow),
+                startCol: Math.min(startCol, endCol),
+                endRow: Math.max(startRow, endRow),
+                endCol: Math.max(startCol, endCol)
+            };
         }
 
         return { startRow, startCol };
     }
 
     private columnToNumber(col: string): number {
+        // Column letters are case-insensitive, as in Excel: "b" is column B (2)
+        const letters = col.toUpperCase();
         let result = 0;
-        for (let i = 0; i < col.length; i++) {
-            result = result * 26 + col.charCodeAt(i) - 64;
+        for (let i = 0; i < letters.length; i++) {
+            result = result * 26 + letters.charCodeAt(i) - 64;
         }
         return result;
     }
