@@ -31,3 +31,23 @@ export function broadcastReceipt(
         ...arrival,
     };
 }
+
+/** A device checkpoint with only bounded identifiers and timing metadata. */
+export function broadcastStage(callId: string, deviceId: string | undefined | null, stage: string, fields: Record<string, string | number> = {}) {
+    if (typeof callId !== 'string' || !ID.test(callId) || typeof deviceId !== 'string' || !ID.test(deviceId)) return null;
+    return {
+        ...fields,
+        call_id: callId,
+        device_id: deviceId,
+        transport: 'broadcast',
+        stage,
+        notification_id: `${callId}:broadcast:1`,
+        attempt_number: 1,
+        ...(stage === 'operation_end' ? { operation_id: randomUUID(), operation_attempt: 1 } : {}),
+        observation_id: randomUUID(),
+        source_process_id: PROCESS_ID,
+        schema_version: 1,
+        timestamp_utc: new Date(Date.now()).toISOString(),
+        monotonic_ms: performance.now(),
+    };
+}
