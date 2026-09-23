@@ -1,4 +1,4 @@
-import { platform } from 'os';
+import { platform, homedir } from 'os';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
@@ -77,15 +77,69 @@ export function sanitizeError(error: any): { message: string, code?: string } {
         errorMessage = 'Unknown error';
     }
 
-    // Remove any file paths using regex
-    // This pattern matches common path formats including Windows and Unix-style paths
-    errorMessage = errorMessage.replace(/(?:\/|\\)[\w\d_.-\/\\]+/g, '[PATH]');
-    errorMessage = errorMessage.replace(/[A-Za-z]:\\[\w\d_.-\/\\]+/g, '[PATH]');
-
     return {
-        message: errorMessage,
+        message: redactPaths(errorMessage),
         code: errorCode
     };
+}
+
+// Quoted text containing a separator is a path, whatever else it contains
+// (Node quotes paths in fs errors: open 'C:\Users\John Smith\a.txt').
+const QUOTED_PATH_PATTERN = /(['"`])(?:(?!\1)[^\r\n])*[\\/](?:(?!\1)[^\r\n])*\1/g;
+// An unquoted path starts at a separator (optionally after a drive letter) and
+// runs to whitespace or a quote. A space is part of it when more path follows
+// (C:\Users\John Smith\a.txt), so no name fragment survives between two [PATH]s.
+const PATH_PATTERN = /(?:[A-Za-z]:)?[\\/][^\s'"`]*(?: +[^\s'"`\\/]+[\\/][^\s'"`]*)*/g;
+
+/**
+ * Replaces every file path in a message with [PATH]. The home directory is
+ * replaced first because it is the part that identifies the user, and it may
+ * contain spaces that the generic pattern cannot attribute to a path.
+ */
+function redactPaths(message: string): string {
+    const home = homedir();
+    if (home && home.replace(/[\\/]/g, '').length > 0) {
+        const homeSource = home.split(/[\\/]+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+') + '(?=[\\\\/\'"`\\s]|$)';
+        message = message.replace(new RegExp(homeSource, platform() === 'win32' ? 'gi' : 'g'), '[PATH]');
+    }
+    return message
+        .replace(QUOTED_PATH_PATTERN, '$1[PATH]$1')
+        .replace(PATH_PATTERN, '[PATH]')
+        .replace(/(?:\[PATH\])+/g, '[PATH]');
+}
+
+/**
+ * Copies caller-supplied event properties into a telemetry-safe object.
+ * The copy is deep so we never alter objects the caller keeps using (e.g. error
+ * objects that are also returned to the AI). `error` is sanitized from the
+ * ORIGINAL value: an Error's name, message and code are not enumerable, so the
+ * JSON copy reduces it to {} and would report "Unknown error".
+ */
+function sanitizeEventProperties(properties?: any): Record<string, any> {
+    let sanitizedProperties: any;
+    try {
+        sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
+    } catch {
+        sanitizedProperties = {};
+    }
+
+    const error = properties?.error;
+    if (error && (typeof error === 'object' || typeof error === 'string')) {
+        const sanitized = sanitizeError(error);
+        sanitizedProperties.error = sanitized.message;
+        if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
+    }
+
+    // Remove any properties that might contain paths
+    const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
+    for (const key of Object.keys(sanitizedProperties)) {
+        const lowerKey = key.toLowerCase();
+        if (sensitiveKeys.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension') { // keep fileExtension as it's safe
+            delete sanitizedProperties[key];
+        }
+    }
+
+    return sanitizedProperties;
 }
 
 /**
@@ -135,38 +189,7 @@ export const captureBase = async (captureURL: string, event: string, properties?
             clientContext = { ...clientContext, saw_onboarding_page: sawOnboardingPage };
         }
 
-        // Create a deep copy of properties to avoid modifying the original objects
-        // This ensures we don't alter error objects that are also returned to the AI
-        let sanitizedProperties;
-        try {
-            sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
-        } catch (e) {
-            sanitizedProperties = {}
-        }
-
-        // Sanitize error objects if present
-        if (sanitizedProperties.error) {
-            // Handle different types of error objects
-            if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
-                const sanitized = sanitizeError(sanitizedProperties.error);
-                sanitizedProperties.error = sanitized.message;
-                if (sanitized.code) {
-                    sanitizedProperties.errorCode = sanitized.code;
-                }
-            } else if (typeof sanitizedProperties.error === 'string') {
-                sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
-            }
-        }
-
-        // Remove any properties that might contain paths
-        const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
-        for (const key of Object.keys(sanitizedProperties)) {
-            const lowerKey = key.toLowerCase();
-            if (sensitiveKeys.some(sensitiveKey => lowerKey.includes(sensitiveKey)) &&
-                lowerKey !== 'fileextension') { // keep fileExtension as it's safe
-                delete sanitizedProperties[key];
-            }
-        }
+        const sanitizedProperties = sanitizeEventProperties(properties);
 
         // Is MCP installed with DXT
         let isDXT: string = 'false';
@@ -333,30 +356,7 @@ export const buildEventProperties = async (properties?: any) => {
         clientContext.saw_onboarding_page = sawOnboardingPage;
     }
 
-    let sanitizedProperties: any;
-    try {
-        sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
-    } catch {
-        sanitizedProperties = {};
-    }
-
-    if (sanitizedProperties.error) {
-        if (typeof sanitizedProperties.error === 'object' && sanitizedProperties.error !== null) {
-            const sanitized = sanitizeError(sanitizedProperties.error);
-            sanitizedProperties.error = sanitized.message;
-            if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
-        } else if (typeof sanitizedProperties.error === 'string') {
-            sanitizedProperties.error = sanitizeError(sanitizedProperties.error).message;
-        }
-    }
-
-    const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
-    for (const key of Object.keys(sanitizedProperties)) {
-        const lowerKey = key.toLowerCase();
-        if (sensitiveKeys.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension') {
-            delete sanitizedProperties[key];
-        }
-    }
+    const sanitizedProperties = sanitizeEventProperties(properties);
 
     let isDXT = 'false';
     if (process.env.MCP_DXT) isDXT = 'true';
