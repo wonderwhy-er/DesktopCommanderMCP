@@ -2,7 +2,7 @@
  * Unit tests for A/B test feature flag system
  * Tests that missing/empty experiments config doesn't break anything
  *
- * Tests 1-9 run the real ab-test module (dist/utils/ab-test.js) in a fresh
+ * Tests 1-10 run the real ab-test module (dist/utils/ab-test.js) in a fresh
  * process per scenario: the experiments go into the feature-flag cache and
  * assignments into config.json under a temporary HOME, exactly where the
  * product reads them. The MCP UI tests call resolveMcpUiPreviewDecision with
@@ -223,6 +223,21 @@ async function runTests() {
     const persisted = first.config.abTest_OnboardingPreTool;
     assert.ok(['noOnboardingPage', 'showOnboardingPage'].includes(persisted), 'Assignment should be persisted to config');
     assert.strictEqual(second.config.abTest_OnboardingPreTool, persisted, 'Same clientId should get the same variant');
+  });
+
+  // Test 10: Malformed experiment data doesn't crash
+  await test('malformed experiment data does not throw', async () => {
+    const { features, error } = await runAbTest({
+      experiments: {
+        BadExp1: null,
+        BadExp2: 'not an object',
+        BadExp3: { variants: 'not an array' },
+        GoodExp: { variants: [{ name: 'a', weight: 50 }, { name: 'b', weight: 50 }] },
+      },
+      features: ['a'],
+    });
+    assert.strictEqual(error, undefined, 'hasFeature should not throw on malformed experiments');
+    assert.ok(typeof features.a === 'boolean');
   });
 
 

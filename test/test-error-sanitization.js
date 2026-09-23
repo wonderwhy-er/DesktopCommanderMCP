@@ -1,6 +1,7 @@
 import assert from 'assert';
+import os from 'os';
 import path from 'path';
-import { sanitizeError } from '../dist/utils/capture.js';
+import { sanitizeError, buildEventProperties } from '../dist/utils/capture.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 // Helper function to run a test and report results
@@ -76,6 +77,24 @@ const runAllTests = async () => {
         assert(!sanitized.message.includes('/path/with-special_chars/file!@#$%.txt'), 'Error message should sanitize paths with special characters');
     }) && allPassed;
 
+    // No fragment of a path may survive: names with spaces, hyphens and quotes
+    allPassed = await runTest('sanitizeError - No path fragments survive', () => {
+        const home = os.homedir();
+        const cases = [
+            ['Failed to read C:\\Users\\John Smith\\secret-project\\a.txt', 'Error: Failed to read [PATH]'],
+            ["ENOENT: no such file or directory, open 'C:\\Users\\John Smith\\my notes.txt'", "Error: ENOENT: no such file or directory, open '[PATH]'"],
+            ['Cannot open "/home/jane doe/private-docs/tax 2025.pdf"', 'Error: Cannot open "[PATH]"'],
+            ['Failed to process /path/with-special_chars/file!@#$%.txt', 'Error: Failed to process [PATH]'],
+            ['Failed to move file from /path/source.txt to /path/destination.txt', 'Error: Failed to move file from [PATH] to [PATH]'],
+            [`Failed to read ${process.cwd()}${path.sep}sensitive${path.sep}file.txt`, 'Error: Failed to read [PATH]'],
+            [`Failed to read ${home}`, 'Error: Failed to read [PATH]'],
+            [`Failed to read ${home}${path.sep}notes.txt: permission denied`, 'Error: Failed to read [PATH] permission denied'],
+        ];
+        for (const [message, expected] of cases) {
+            assert.strictEqual(sanitizeError(new Error(message)).message, expected);
+        }
+    }) && allPassed;
+
     // Test non-error input
     allPassed = await runTest('sanitizeError - Non-error input', () => {
         const nonError = { custom: 'object' };
@@ -96,34 +115,17 @@ const runAllTests = async () => {
         assert(!sanitized.message.includes(homeDir), 'Error message should not contain home directory');
     }) && allPassed;
 
-    // Integration test with capture function mock
-    allPassed = await runTest('Integration - capture with error object', () => {
-        // Create a mock capture function to test integration
-        const mockCapture = (event, properties) => {
-            // Check that no file paths are in the properties
-            const stringified = JSON.stringify(properties);
-            const containsPaths = /(?:\/|\\)[\w\d_.-\/\\]+/.test(stringified) || 
-                                 /[A-Za-z]:\\[\w\d_.-\/\\]+/.test(stringified);
-            
-            assert(!containsPaths, 'Capture properties should not contain file paths');
-            return properties;
-        };
-        
-        // Create an error with file path
-        const mockError = new Error(`Failed to read ${process.cwd()}/sensitive/file.txt`);
-        
-        // Manually sanitize for test
-        const sanitizedError = sanitizeError(mockError).message;
-        
-        // Call the mock capture with the error
-        const properties = mockCapture('test_event', {
-            error: sanitizedError,
-            operation: 'read_file'
-        });
-        
-        // Verify the error was properly processed
+    // Integration: the properties capture() actually sends for an Error object
+    allPassed = await runTest('Integration - capture with error object', async () => {
+        const error = new Error(`Failed to read ${process.cwd()}/sensitive/file.txt`);
+        error.code = 'ENOENT';
+
+        const properties = await buildEventProperties({ error, operation: 'read_file' });
+
         assert(typeof properties.error === 'string', 'Error property should be a string');
-        assert(!properties.error.includes(process.cwd()), 'Error should not contain file path');
+        assert(!properties.error.includes(process.cwd()), `Error should not contain file path, got: ${properties.error}`);
+        assert(properties.error.includes('Failed to read'), `Error message should survive sanitization, got: ${properties.error}`);
+        assert.strictEqual(properties.errorCode, 'ENOENT', 'Error code should be kept');
     }) && allPassed;
 
     console.log('All error sanitization tests complete.');
