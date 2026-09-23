@@ -3,6 +3,22 @@ import fs from 'fs/promises';
 import os from 'os';
 import { captureRemote } from '../utils/capture.js';
 
+const BLUE = '\x1b[34m';
+const RESET = '\x1b[0m';
+
+function printRemoteHeader() {
+    console.log();
+    console.log(`${BLUE}██████╗ ███████╗███████╗██╗  ██╗████████╗ ██████╗ ██████╗     ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗ ███████╗██████╗${RESET}`);
+    console.log(`${BLUE}██╔══██╗██╔════╝██╔════╝██║ ██╔╝╚══██╔══╝██╔═══██╗██╔══██╗   ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗██╔════╝██╔══██╗${RESET}`);
+    console.log(`${BLUE}██║  ██║█████╗  ███████╗█████╔╝    ██║   ██║   ██║██████╔╝   ██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║█████╗  ██████╔╝${RESET}`);
+    console.log(`${BLUE}██║  ██║██╔══╝  ╚════██║██╔═██╗    ██║   ██║   ██║██╔═══╝    ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗${RESET}`);
+    console.log(`${BLUE}██████╔╝███████╗███████║██║  ██╗   ██║   ╚██████╔╝██║        ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝███████╗██║  ██║${RESET}`);
+    console.log(`${BLUE}╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝         ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝${RESET}`);
+    console.log();
+    console.log(`${BLUE}🌐 Remote Connection${RESET}`);
+    console.log();
+}
+
 export async function runRemote() {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
         console.log(`Desktop Commander Remote MCP device
@@ -39,6 +55,8 @@ Note:
         }
         return;
     }
+    printRemoteHeader();
+
     // --persist-session is kept as an accepted no-op so existing invocations
     // and docs keep working; --no-persist-session opts back out.
     const persistSession = !process.argv.includes('--no-persist-session');

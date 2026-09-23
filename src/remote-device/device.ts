@@ -260,6 +260,20 @@ export class MCPDevice {
             console.log(`   - Device Name:  ${deviceName}`);
             if (!reachable) {
                 console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
+            } else {
+                console.log('');
+                console.log('✅ Desktop Commander Remote is connected');
+                console.log('');
+                console.log(`   Device: ${deviceName}`);
+                console.log('   Status: Online');
+                console.log('');
+                console.log('Return to ChatGPT or Claude and continue your conversation.');
+                console.log('');
+                console.log('Keep this Terminal running while you use Desktop Commander Remote.');
+                console.log('You can minimize Terminal.');
+                console.log('');
+                console.log('Close Terminal or press Ctrl+C to disconnect.');
+                console.log('');
             }
 
             // Keep process alive
