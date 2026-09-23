@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
-import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
+import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState } from './utils/process-detection.js';
@@ -43,6 +43,31 @@ interface CompletedSession {
   endTime: Date;
   evictedLines: number;        // Carried over from the active session (see TerminalSession)
   evictedChars: number;
+}
+
+/**
+ * Ceiling for a single blocking process wait (start_process's initial wait,
+ * interact_with_process, read_process_output). The wait is otherwise bounded
+ * only by the caller's timeout_ms, and MCP clients abandon a tool call after
+ * ~4 minutes (Claude Desktop: "No result received ... after 4 minutes"), so a
+ * large timeout_ms on a long, prompt-less command used to outlive the client.
+ * The ceiling is MAX_PROCESS_WAIT_MS; callers other than the tools (tests) may
+ * pass a smaller one.
+ */
+
+export interface ProcessWaitLimit {
+  waitMs: number;   // How long this call may block: min(timeout_ms, capMs)
+  capMs: number;    // Ceiling in effect (MAX_PROCESS_WAIT_MS unless a caller passed another)
+  capped: boolean;  // True when the ceiling, not timeout_ms, bounds this wait
+}
+
+/**
+ * The one place that turns a caller's timeout_ms into the time a process wait
+ * may actually block. When `capped`, the call returns at the ceiling with the
+ * process still running and the caller continues with read_process_output.
+ */
+export function getProcessWaitLimit(timeoutMs: number, capMs: number = MAX_PROCESS_WAIT_MS): ProcessWaitLimit {
+  return { waitMs: Math.min(timeoutMs, capMs), capMs, capped: timeoutMs > capMs };
 }
 
 /**
