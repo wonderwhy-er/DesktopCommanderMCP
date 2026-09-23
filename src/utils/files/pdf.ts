@@ -82,7 +82,8 @@ export class PdfFileHandler implements FileHandler {
     async write(path: string, content: any, mode?: 'rewrite' | 'append'): Promise<void> {
         // If content is string, treat as markdown to convert
         if (typeof content === 'string') {
-            await parseMarkdownToPdf(content, path);
+            const pdfBuffer = await parseMarkdownToPdf(content);
+            await fs.writeFile(path, pdfBuffer);
         } else if (Array.isArray(content)) {
             // Array of operations - use editPdf
             const resultBuffer = await editPdf(path, content);
