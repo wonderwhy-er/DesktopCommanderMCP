@@ -199,6 +199,8 @@ await test('the next call still works (PR #598 restart path intact)', async () =
 
 await test('a protocol error on a healthy child is not treated as a disconnect', async () => {
     assert(!noisy.rejected, `the call itself must still succeed: ${noisy.error?.message}`);
+    assert(!noisy.stillPending, `the call hung for ${noisy.elapsedMs}ms after harmless protocol noise`);
+    assert(/fixture-ok/.test(JSON.stringify(noisy.result)), `expected the real result, got ${JSON.stringify(noisy.result)}`);
     assert.deepStrictEqual(
         healthyDisconnects, [],
         `a live child was reported dead: ${healthyDisconnects.join('; ')}`

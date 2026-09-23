@@ -133,6 +133,11 @@ function callToolOnFreshServer({ home, flagUrl, followUpDelayMs = null }) {
           // what races (and beats) the background flag fetch.
           toolCall(2);
         } else if (msg.id === 2 || msg.id === 3) {
+          // A failed call has no marker either; it must not pass as "no injection"
+          if (msg.error || msg.result?.isError) {
+            finish({ error: `tool call ${msg.id} failed: ${JSON.stringify(msg.error ?? msg.result)}` });
+            return;
+          }
           texts.push(
             (msg.result?.content ?? []).map((c) => c.text ?? '').join('\n')
           );
