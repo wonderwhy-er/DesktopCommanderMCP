@@ -15,6 +15,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import os from 'os';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { createLink } from './helpers/links.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +26,9 @@ const ALLOWED_DIR = path.join(__dirname, 'test_symlink_allowed');
 const RESTRICTED_DIR = path.join(__dirname, 'test_symlink_restricted');
 const SYMLINK_TO_RESTRICTED = path.join(ALLOWED_DIR, 'link_to_restricted');
 const SYMLINK_TO_RESTRICTED_FILE = path.join(ALLOWED_DIR, 'link_to_secret');
+
+// File symlinks need Developer Mode or admin rights on Windows
+let canLinkFiles = true;
 
 /**
  * Clean up test directories
@@ -52,15 +57,17 @@ async function setup() {
     
     // Create symlinks pointing to restricted locations
     // Symlink to restricted directory
-    await fs.symlink(RESTRICTED_DIR, SYMLINK_TO_RESTRICTED);
+    await createLink(RESTRICTED_DIR, SYMLINK_TO_RESTRICTED);
     // Symlink to specific restricted file
-    await fs.symlink(path.join(RESTRICTED_DIR, 'secret.txt'), SYMLINK_TO_RESTRICTED_FILE);
-    
+    canLinkFiles = await createLink(path.join(RESTRICTED_DIR, 'secret.txt'), SYMLINK_TO_RESTRICTED_FILE);
+
     console.log('✓ Setup complete');
     console.log(`  Allowed dir: ${ALLOWED_DIR}`);
     console.log(`  Restricted dir: ${RESTRICTED_DIR}`);
     console.log(`  Symlink (dir): ${SYMLINK_TO_RESTRICTED} → ${RESTRICTED_DIR}`);
-    console.log(`  Symlink (file): ${SYMLINK_TO_RESTRICTED_FILE} → ${RESTRICTED_DIR}/secret.txt`);
+    console.log(`  Symlink (file): ${canLinkFiles
+        ? `${SYMLINK_TO_RESTRICTED_FILE} → ${RESTRICTED_DIR}/secret.txt`
+        : 'not permitted on this machine (Windows without Developer Mode)'}`);
     
     // Save original config
     return await configManager.getConfig();
@@ -135,7 +142,12 @@ async function testSymlinkDirectoryBypass() {
 async function testSymlinkFileBypass() {
     console.log('\n--- Test 4: SYMLINK BYPASS - File symlink pointing outside ---');
     console.log('  Attack scenario: symlink inside allowed dir points to restricted file');
-    
+
+    if (!canLinkFiles) {
+        skip('Test 4 (file symlink bypass): this user cannot create file symlinks (Windows needs Developer Mode or admin)');
+        return;
+    }
+
     await configManager.setValue('allowedDirectories', [ALLOWED_DIR]);
     
     const result = await canAccessPath(SYMLINK_TO_RESTRICTED_FILE);
@@ -182,8 +194,9 @@ async function testSymlinkWithinAllowed() {
     await fs.writeFile(path.join(subdir, 'allowed_secret.txt'), 'Allowed secret');
     
     const internalSymlink = path.join(ALLOWED_DIR, 'link_to_subdir');
-    await fs.symlink(subdir, internalSymlink).catch(() => {});
-    
+    await createLink(subdir, internalSymlink);
+    assert((await fs.lstat(internalSymlink)).isSymbolicLink(), 'Test setup should have created the link');
+
     await configManager.setValue('allowedDirectories', [ALLOWED_DIR]);
     
     const result = await canAccessPath(internalSymlink);
@@ -261,18 +274,13 @@ async function runAllTests() {
     
     if (failed > 0) {
         console.log('\n⚠️  SECURITY TESTS FAILED - symlink bypass may be possible!');
-        process.exit(1);
+        return false;
     } else {
         console.log('\n✅ All symlink security tests passed!');
     }
 }
 
 // Run if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-    runAllTests().catch(error => {
-        console.error('❌ Unhandled error:', error);
-        process.exit(1);
-    });
-}
+runIfMain(import.meta.url, runAllTests);
 
 export default runAllTests;

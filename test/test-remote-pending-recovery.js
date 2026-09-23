@@ -10,6 +10,7 @@
 
 import assert from 'node:assert';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -136,54 +137,58 @@ const baseRow = (id, overrides = {}) => ({
   ...overrides,
 });
 
-{
-  const rows = [
-    baseRow('live-old', { created_at: iso(-10_000) }),
-    baseRow('live-new', { created_at: iso(-1_000) }),
-    baseRow('expired', { timeout_at: iso(-1_000) }),
-    baseRow('other-device', { device_id: OTHER_DEVICE_ID }),
-    baseRow('completed', { status: 'completed' }),
-  ];
-  const { rc, delivered } = makeRemoteChannel(rows);
+async function runTests() {
+  {
+    const rows = [
+      baseRow('live-old', { created_at: iso(-10_000) }),
+      baseRow('live-new', { created_at: iso(-1_000) }),
+      baseRow('expired', { timeout_at: iso(-1_000) }),
+      baseRow('other-device', { device_id: OTHER_DEVICE_ID }),
+      baseRow('completed', { status: 'completed' }),
+    ];
+    const { rc, delivered } = makeRemoteChannel(rows);
 
-  await rc.recoverPendingCalls();
+    await rc.recoverPendingCalls();
 
-  assert.deepEqual(
-    delivered.map((payload) => payload.new.id),
-    ['live-old', 'live-new'],
-    'only live pending calls for this device should be recovered in creation order',
-  );
-  assert(delivered.every((payload) => payload.claimed === true), 'recovered rows must be atomically claimed before dispatch');
-  assert.equal(rows.find((row) => row.id === 'expired').status, 'pending', 'expired call must not be claimed');
-  assert.equal(rows.find((row) => row.id === 'other-device').status, 'pending', 'another device call must not be claimed');
+    assert.deepEqual(
+      delivered.map((payload) => payload.new.id),
+      ['live-old', 'live-new'],
+      'only live pending calls for this device should be recovered in creation order',
+    );
+    assert(delivered.every((payload) => payload.claimed === true), 'recovered rows must be atomically claimed before dispatch');
+    assert.equal(rows.find((row) => row.id === 'expired').status, 'pending', 'expired call must not be claimed');
+    assert.equal(rows.find((row) => row.id === 'other-device').status, 'pending', 'another device call must not be claimed');
+  }
+
+  {
+    const rows = [baseRow('expires-before-claim', { timeout_at: iso(-1) })];
+    const { rc, delivered } = makeRemoteChannel(rows);
+
+    await rc.onDoorbell({ call_id: 'expires-before-claim', device_id: DEVICE_ID });
+
+    assert.equal(delivered.length, 0, 'the atomic claim must reject an already-expired call');
+    assert.equal(rows[0].status, 'pending');
+  }
+
+  {
+    const rc = new RemoteChannel();
+    let recoveryCalls = 0;
+
+    rc.client = {};
+    rc.deviceId = DEVICE_ID;
+    rc.deviceName = 'test-device';
+    rc.channel = { state: 'joined', track: async () => 'ok' };
+    rc.localExecutorProbe = () => true;
+    rc.setTransportCapable = async () => true;
+    rc.queueStatusWrite = async () => true;
+    rc.recoverPendingCalls = async () => { recoveryCalls++; };
+
+    await rc.trackPresenceInner(2, 1);
+
+    assert.equal(recoveryCalls, 1, 'successful presence/reconnect must trigger one pending-call recovery scan');
+  }
+
+  console.log('✅ Remote pending-call recovery tests passed');
 }
 
-{
-  const rows = [baseRow('expires-before-claim', { timeout_at: iso(-1) })];
-  const { rc, delivered } = makeRemoteChannel(rows);
-
-  await rc.onDoorbell({ call_id: 'expires-before-claim', device_id: DEVICE_ID });
-
-  assert.equal(delivered.length, 0, 'the atomic claim must reject an already-expired call');
-  assert.equal(rows[0].status, 'pending');
-}
-
-{
-  const rc = new RemoteChannel();
-  let recoveryCalls = 0;
-
-  rc.client = {};
-  rc.deviceId = DEVICE_ID;
-  rc.deviceName = 'test-device';
-  rc.channel = { state: 'joined', track: async () => 'ok' };
-  rc.localExecutorProbe = () => true;
-  rc.setTransportCapable = async () => true;
-  rc.queueStatusWrite = async () => true;
-  rc.recoverPendingCalls = async () => { recoveryCalls++; };
-
-  await rc.trackPresenceInner(2, 1);
-
-  assert.equal(recoveryCalls, 1, 'successful presence/reconnect must trigger one pending-call recovery scan');
-}
-
-console.log('✅ Remote pending-call recovery tests passed');
+runIfMain(import.meta.url, runTests);
