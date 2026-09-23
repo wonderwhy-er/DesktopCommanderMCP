@@ -93,6 +93,10 @@ const OFFLINE_SESSION_TIMEOUT_MS = 500;
 // already covers.
 const SOCKET_SETTLE_MAX_MS = 300;
 const SOCKET_SETTLE_POLL_MS = 20;
+// Reconnect recovery is a safety net, not the primary transport. Bound each
+// scan so a pathological backlog cannot turn one reconnect into an unbounded
+// burst of REST claims/tool executions.
+const PENDING_RECOVERY_BATCH_SIZE = 100;
 
 // auth-js compares token expiry against this device's own Date.now(), with no
 // clock-skew tolerance — a fast clock treats every fresh token as expired and
@@ -609,6 +613,18 @@ export class RemoteChannel {
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
                 // Reconnect attempts preceding this join (0 on a first join).
                 captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
+
+                // Broadcast is only a wake-up signal; mcp_remote_calls is the
+                // durable queue. A call inserted while this socket was briefly
+                // disconnected can miss its one new_call doorbell and otherwise
+                // stay pending until the server reaper times it out. Drain that
+                // durable backlog whenever the channel becomes genuinely usable.
+                // Fire-and-forget so readiness does not wait on backlog recovery;
+                // each row still goes through the atomic pending -> executing
+                // claim, so a late/duplicate doorbell can safely race this scan.
+                this.recoverPendingCalls().catch((error: any) => {
+                    console.error('[DEBUG] Pending call recovery failed:', error?.message);
+                });
                 return;
             }
 
@@ -754,6 +770,54 @@ export class RemoteChannel {
         });
     }
 
+    /**
+     * Recover calls whose Realtime doorbell was missed while this device was
+     * disconnected. Broadcast provides the fast path; the DB row is the source
+     * of truth. Only still-live pending rows for this device are considered.
+     *
+     * The follow-up onDoorbell() call performs the existing conditional claim,
+     * which makes this safe against a doorbell arriving at the same time.
+     */
+    private async recoverPendingCalls(): Promise<void> {
+        if (!this.client || !this.deviceId || !this.isReachable()) return;
+
+        // Date.now() is deliberately used here: this process may patch it from
+        // Supabase's Date header to correct a badly skewed device clock.
+        const now = new Date(Date.now()).toISOString();
+        const { data: pending, error } = await this.client
+            .from('mcp_remote_calls')
+            .select('id,device_id')
+            .eq('device_id', this.deviceId)
+            .eq('status', 'pending')
+            .gt('timeout_at', now)
+            .order('created_at', { ascending: true })
+            .limit(PENDING_RECOVERY_BATCH_SIZE);
+
+        if (error) {
+            console.error('[DEBUG] Failed to query pending calls after reconnect:', error.message);
+            await captureRemote('remote_channel_pending_recovery_error', { error });
+            return;
+        }
+
+        if (!pending?.length) return;
+
+        console.log(`♻️  Recovering ${pending.length} pending remote call${pending.length === 1 ? '' : 's'} after reconnect`);
+        captureRemote('remote_channel_pending_recovery', {
+            pending_count: pending.length,
+            batch_capped: pending.length === PENDING_RECOVERY_BATCH_SIZE,
+        }).catch(() => { });
+
+        // Claim quickly; dispatchToolCall() does not await tool execution, so
+        // this loop serializes only the small REST claim operations.
+        for (const row of pending) {
+            if (!this.isReachable()) break;
+            await this.onDoorbell({
+                call_id: row.id,
+                device_id: row.device_id,
+            });
+        }
+    }
+
     /** Hand a call to device.ts, observing the rejection — the handler is async
      * and an unhandled rejection terminates the process. */
     private dispatchToolCall(payload: any): void {
@@ -801,6 +865,7 @@ export class RemoteChannel {
                 .eq('id', callId)
                 .eq('device_id', this.deviceId)
                 .eq('status', 'pending')
+                .gt('timeout_at', new Date(Date.now()).toISOString())
                 .select('*');
             if (!error) {
                 row = data?.[0] ?? null;
@@ -838,8 +903,13 @@ export class RemoteChannel {
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
             return;
         }
-        if (current?.status === 'pending') {
-            // No claim landed; device.ts claims it.
+        if (
+            current?.status === 'pending'
+            && current.timeout_at
+            && new Date(current.timeout_at).getTime() > Date.now()
+        ) {
+            // No claim landed; device.ts claims it. Do not hand an expired
+            // side-effecting call to the executor while it races the reaper.
             this.dispatchToolCall({ new: current });
         } else {
             // 'executing' reads the same whether our own claim committed with its
@@ -1096,6 +1166,7 @@ export class RemoteChannel {
             .update({ status: 'executing' })
             .eq('id', callId)
             .eq('status', 'pending')
+            .gt('timeout_at', new Date(Date.now()).toISOString())
             .select('id');
 
         if (error) {

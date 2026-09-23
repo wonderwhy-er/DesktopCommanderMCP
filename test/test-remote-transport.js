@@ -115,6 +115,10 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
         filters[col] = value;
         return builder;
       },
+      // Claims now also guard timeout_at > corrected-now. These transport
+      // tests focus on claim routing/atomicity, so the fake accepts the range
+      // predicate without adding clock behavior of its own.
+      gt: () => builder,
       select: (cols = '*') => {
         selected = cols;
         return builder;
@@ -337,7 +341,10 @@ await test('a claim that reads back executing is never delivered — the claiman
 });
 
 await test('every claim failing falls back to an unclaimed delivery', async () => {
-  const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' }, failClaims: 3 });
+  const { rc, client } = makeRemoteChannel({
+    row: { id: 'x', status: 'pending', timeout_at: new Date(Date.now() + 60_000).toISOString() },
+    failClaims: 3,
+  });
   const delivered = [];
   rc.onToolCall = (p) => delivered.push(p);
   rc.sleep = () => Promise.resolve();
