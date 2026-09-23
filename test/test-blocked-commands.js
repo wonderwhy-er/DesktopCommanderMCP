@@ -31,6 +31,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import os from 'os';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -69,41 +70,24 @@ async function cleanupTestDirectories() {
 }
 
 /**
- * Execute a command and return true if it executed successfully, false if blocked
+ * Run a command: returns { blocked: true } if the blocklist refused it, or
+ * { blocked: false, pid, output } if it started. Any other failure throws.
  */
 async function tryCommand(command) {
-  try {
-    const result = await executeCommand(command, null, 2000);
-    
-    // Check if the result indicates the command was blocked
-    if (result.isError && result.content && result.content[0] && 
-        result.content[0].text && result.content[0].text.includes('Command not allowed')) {
-      return {
-        blocked: true,
-        error: result.content[0].text
-      };
-    }
-    
-    // Command was executed successfully
-    return {
-      blocked: false,
-      output: result.content && result.content[0] ? result.content[0].text : '',
-      pid: result.content && result.content[0] && result.content[0].text ? 
-           parseInt(result.content[0].text.match(/PID (\d+)/)?.[1] || '-1') : -1
-    };
-  } catch (error) {
-    // Check if the error message indicates blocking
-    if (error.message && (
-        error.message.includes('Command not allowed') || 
-        error.message.includes('blocked by configuration'))) {
-      return {
-        blocked: true,
-        error: error.message
-      };
-    }
-    // Otherwise it's another type of error
-    throw error;
+  const result = await executeCommand(command, 2000);
+  const text = result.content?.[0]?.text ?? '';
+
+  if (result.structuredContent?.blocked) {
+    return { blocked: true, error: text };
   }
+  if (result.isError) {
+    throw new Error(`"${command}" failed without being blocked: ${text}`);
+  }
+  return {
+    blocked: false,
+    output: text,
+    pid: result.structuredContent.pid
+  };
 }
 
 /**
@@ -166,7 +150,8 @@ async function testNonBlockedCommands() {
     console.log(`Testing command: ${command}`);
     const result = await tryCommand(command);
     assert.strictEqual(result.blocked, false, `Command should not be blocked: ${command}`);
-    console.log(`✓ Command executed successfully: ${command}`);
+    assert(result.pid > 0, `Command should start a process: ${command}, got: ${result.output}`);
+    console.log(`✓ Command executed successfully: ${command} (PID ${result.pid})`);
   }
 }
 
@@ -288,9 +273,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);
