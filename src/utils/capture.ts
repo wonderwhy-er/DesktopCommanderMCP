@@ -310,7 +310,8 @@ export const captureBase = async (captureURL: string, event: string, properties?
  * Build the standard event properties used by the telemetry proxy.
  * Extracted from captureBase so both paths get identical data.
  */
-const buildEventProperties = async (properties?: any) => {
+/** Builds the telemetry payload properties for an event, with paths and errors sanitized. */
+export const buildEventProperties = async (properties?: any) => {
     if (uniqueUserId === 'unknown') {
         uniqueUserId = await configManager.getOrCreateClientId();
     }
