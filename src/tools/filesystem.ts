@@ -12,6 +12,7 @@ import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.j
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
+import { renameWithRetry } from '../utils/rename.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -870,7 +871,7 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
 export async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
     const validSourcePath = await validatePath(sourcePath);
     const validDestPath = await validatePath(destinationPath);
-    await fs.rename(validSourcePath, validDestPath);
+    await renameWithRetry(validSourcePath, validDestPath);
 }
 
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
