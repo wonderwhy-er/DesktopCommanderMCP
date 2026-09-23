@@ -54,7 +54,7 @@ export class DeviceAuthenticator {
     }
 
     async authenticate(deviceId?: string): Promise<AuthSession> {
-        console.log('🔐 Starting device authorization flow...\n');
+        console.log('🔐 Connecting this computer...\n');
 
         // Generate PKCE
         const pkce = this.generatePKCE();
@@ -68,7 +68,7 @@ export class DeviceAuthenticator {
         // Step 3: Poll for authorization
         const tokens = await this.pollForAuthorization(deviceAuth, pkce.verifier);
 
-        console.log('   - ✅ Authorization successful!\n');
+        console.log('✅ Device verified\n');
 
         return tokens;
     }

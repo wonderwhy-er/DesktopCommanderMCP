@@ -168,7 +168,6 @@ export class MCPDevice {
                     session = null;
                 } else {
                     console.log('   - ✅ Session restored');
-                    console.log('   - ℹ️  To log out locally: npx @wonderwhy-er/desktop-commander@latest remote --logout');
 
                     // Revoking a device removes its server-side mcp_devices row, but the
                     // local config can still hold a valid user session + the now-deleted
@@ -260,6 +259,23 @@ export class MCPDevice {
             console.log(`   - Device Name:  ${deviceName}`);
             if (!reachable) {
                 console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
+            } else {
+                console.log('');
+                console.log('✅ Desktop Commander Remote is connected');
+                console.log('');
+                console.log(`   Device: ${deviceName}`);
+                console.log('   Status: Online');
+                console.log('');
+                console.log('┌─ Next');
+                console.log('│ Return to ChatGPT or Claude and continue your conversation.');
+                console.log('│ Keep this Terminal running. You can minimize it.');
+                console.log('└─ Press Ctrl+C to disconnect.');
+                console.log('');
+                console.log('┌─ Commands');
+                console.log('│ Help:    npx @wonderwhy-er/desktop-commander@latest remote --help');
+                console.log('│ Log out: npx @wonderwhy-er/desktop-commander@latest remote --logout');
+                console.log('└─ Run these in a new Terminal, or after disconnecting.');
+                console.log('');
             }
 
             // Keep process alive
