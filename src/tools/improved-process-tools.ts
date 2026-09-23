@@ -124,6 +124,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
     return {
       content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
       isError: true,
+      structuredContent: { blocked: true, command: parsed.data.command },
     };
   }
 
@@ -207,7 +208,24 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
       type: "text",
       text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
     }],
+    structuredContent: {
+      pid: result.pid,
+      shell: shellUsed,
+      status: getProcessStatus(processState),
+    },
   };
+}
+
+type ProcessStatus = 'waiting_for_input' | 'finished' | 'running' | 'timeout';
+
+/**
+ * Machine-readable process state for structuredContent, mirroring the
+ * status line shown in the text response.
+ */
+function getProcessStatus(state: ProcessState, timedOut = false): ProcessStatus {
+  if (state.isWaitingForInput) return 'waiting_for_input';
+  if (state.isFinished) return 'finished';
+  return timedOut ? 'timeout' : 'running';
 }
 
 function formatTimingInfo(timing: any): string {
@@ -570,6 +588,8 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     // Apply output line limit to prevent context overflow
     let truncationMessage = '';
     const outputLines = cleanOutput.split('\n');
+    const totalLines = cleanOutput.trim().length > 0 ? outputLines.length : 0;
+    const shownLines = Math.min(totalLines, maxOutputLines);
     if (outputLines.length > maxOutputLines) {
       const truncatedLines = outputLines.slice(0, maxOutputLines);
       cleanOutput = truncatedLines.join('\n');
@@ -608,12 +628,21 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
       timingMessage = formatTimingInfo(timingInfo);
     }
 
+    const structuredContent = {
+      pid,
+      status: getProcessStatus(processState, timeoutReached),
+      truncated: totalLines > shownLines,
+      shownLines,
+      totalLines,
+    };
+
     if (cleanOutput.trim().length === 0 && !timeoutReached) {
       return {
         content: [{
           type: "text",
           text: `✅ Input executed in process ${pid}.\n📭 (No output produced)${statusMessage}${timingMessage}`
         }],
+        structuredContent,
       };
     }
 
@@ -643,6 +672,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
         type: "text",
         text: responseText
       }],
+      structuredContent,
     };
     
   } catch (error) {
@@ -723,5 +753,11 @@ export async function listSessions(): Promise<ServerResult> {
         ? 'No active sessions'
         : allSessions.join('\n')
     }],
+    structuredContent: {
+      sessions: [
+        ...sessions.map(s => ({ pid: s.pid, type: 'process', isBlocked: s.isBlocked, runtimeMs: s.runtime })),
+        ...virtualSessions.map(s => ({ pid: s.pid, type: s.type, timeoutMs: s.timeout_ms })),
+      ],
+    },
   };
 }
