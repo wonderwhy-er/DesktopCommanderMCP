@@ -10,7 +10,7 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 import { movePath } from '../utils/rename.js';
 
@@ -1113,13 +1113,14 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
  * @param filePath Path to the output PDF file
  * @param content Markdown string (for creation) or array of operations (for modification)
  * @param options Options for PDF generation or modification. For modification, can include `sourcePdf`.
+ * @returns The render options Desktop Commander ignored (see resolveRender), so the caller can report them.
  */
 export async function writePdf(
     filePath: string,
     content: string | PdfOperations[],
     outputPath?: string,
     options: any = {}
-): Promise<void> {
+): Promise<IgnoredRenderOption[]> {
     const validPath = await validatePath(filePath);
     const fileExtension = getFileExtension(validPath);
 
@@ -1135,6 +1136,8 @@ export async function writePdf(
         // Use outputPath if provided, otherwise overwrite input file
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
         await fs.writeFile(targetPath, pdfBuffer);
+        // The render succeeded; report which of the caller's/front matter's options were ignored
+        return resolveRender(content, options).ignoredOptions;
     } else if (Array.isArray(content)) {
 
         // Use outputPath if provided, otherwise overwrite input file
@@ -1165,6 +1168,17 @@ export async function writePdf(
 
         // Write the modified PDF to the output path
         await fs.writeFile(targetPath, modifiedPdfBuffer);
+
+        // Report the options ignored in any inserted page's front matter (once per option)
+        const ignored = new Map<string, IgnoredRenderOption>();
+        for (const op of operations) {
+            if (op.type === 'insert' && op.markdown !== undefined) {
+                for (const ignoredOption of resolveRender(op.markdown).ignoredOptions) {
+                    ignored.set(ignoredOption.option, ignoredOption);
+                }
+            }
+        }
+        return [...ignored.values()];
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }

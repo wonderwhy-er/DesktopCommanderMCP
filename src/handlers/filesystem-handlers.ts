@@ -490,10 +490,17 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
 export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
-        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const ignoredOptions = await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         const targetPath = parsed.outputPath || parsed.path;
+        let text = `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}`;
+        if (ignoredOptions.length > 0) {
+            // The PDF was still written; tell the model which options it sent (or the markdown set) were ignored and why
+            text += `\n\nIgnored ${ignoredOptions.length === 1 ? 'option' : 'options'}:\n`
+                + ignoredOptions.map(({ option, reason }) => `- ${option}: ${reason}`).join('\n');
+        }
         return {
-            content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            content: [{ type: "text", text }],
+            ...(ignoredOptions.length > 0 ? { structuredContent: { ignoredOptions } } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
