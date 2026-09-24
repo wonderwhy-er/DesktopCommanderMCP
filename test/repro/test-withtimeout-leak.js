@@ -7,7 +7,9 @@
 // Exit code: 0 when the leak is demonstrated; 1 if the thread was freed, which
 // means withTimeout's behavior changed and this repro (and its callers' reliance
 // on the bootstrap's extra threads) needs revisiting.
-process.env.UV_THREADPOOL_SIZE ||= '1';  // one thread, set before any threadpool use
+// Always one thread, set before any threadpool use: an inherited larger pool
+// would leave free threads and hide the leak
+process.env.UV_THREADPOOL_SIZE = '1';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
