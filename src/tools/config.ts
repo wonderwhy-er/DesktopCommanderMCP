@@ -143,8 +143,9 @@ export async function setConfigValue(args: unknown) {
           valueToStore = [String(valueToStore)];
         }
         
-        // Ensure the value is an array after all our conversions
-        if (!Array.isArray(valueToStore)) {
+        // Ensure the value is an array after all our conversions; null stays
+        // null and clears the value back to its default, as for number fields
+        if (valueToStore !== null && !Array.isArray(valueToStore)) {
           console.error(`Value for ${parsed.data.key} is still not an array, converting to array`);
           valueToStore = [String(valueToStore)];
         }
