@@ -91,7 +91,7 @@ export async function getFileHandler(filePath: string, options?: { svgAsImage?: 
     }
 
     // Check Image (extension-based, sync - images are binary but handled specially)
-    if (getImageHandler().canHandle(filePath) || (options?.svgAsImage && ImageFileHandler.isSvg(filePath))) {
+    if (getImageHandler().canHandle(filePath, options)) {
         return getImageHandler();
     }
 

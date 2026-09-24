@@ -11,16 +11,24 @@ import {
     FileInfo
 } from './base.js';
 
+const SVG_MIME_TYPE = 'image/svg+xml';
+
+/**
+ * Whether content of this MIME type is answered as an image: every image type
+ * but SVG, which is text (XML), read and written as text. Only the file preview
+ * widget draws an SVG as an image (svgAsImage). Files and URLs both decide here.
+ */
+export function isImageAnswer(mimeType: string, svgAsImage = false): boolean {
+    const type = mimeType.toLowerCase().split(';')[0].trim();
+    return type.startsWith('image/') && (svgAsImage || type !== SVG_MIME_TYPE);
+}
+
 /**
  * Image file handler implementation
- * Supports: PNG, JPEG, GIF, WebP, BMP. An SVG is text, read and written by the
- * text handler; only the file preview widget draws it as an image (svgAsImage).
+ * Supports: PNG, JPEG, GIF, WebP, BMP; an SVG only for the file preview widget
+ * (isImageAnswer), everyone else reads and writes it as text.
  */
 export class ImageFileHandler implements FileHandler {
-    private static readonly IMAGE_EXTENSIONS = [
-        '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'
-    ];
-
     private static readonly IMAGE_MIME_TYPES: { [key: string]: string } = {
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
@@ -31,14 +39,8 @@ export class ImageFileHandler implements FileHandler {
         '.svg': 'image/svg+xml'
     };
 
-    canHandle(path: string): boolean {
-        const lowerPath = path.toLowerCase();
-        return ImageFileHandler.IMAGE_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
-    }
-
-    /** An SVG, which this handler reads only for the file preview widget */
-    static isSvg(path: string): boolean {
-        return path.toLowerCase().endsWith('.svg');
+    canHandle(path: string, options?: { svgAsImage?: boolean }): boolean {
+        return isImageAnswer(this.getMimeType(path), options?.svgAsImage);
     }
 
     async read(path: string, options?: ReadOptions): Promise<FileResult> {
