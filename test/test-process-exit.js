@@ -9,6 +9,8 @@
  * - a line ending in ">" is a prompt only at the very end of the output
  * - a process ended by a signal is reported with that signal, not
  *   "exit code null"
+ * - a process error while the process runs on (a failed kill) keeps its
+ *   session: it stays listed, readable and terminable, and its exit is recorded
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -205,6 +207,23 @@ async function testSignalIsReported() {
     `an exit code should still read as before, got: ${JSON.stringify(read0)}`);
 }
 
+async function testProcessErrorKeepsTheSession() {
+  const { pid } = await start(fixture('stays-alive'), 1_000);
+  // What Node emits when a kill fails or a message can't be sent: the process runs on
+  terminalManager.getSession(pid)?.process.emit('error', Object.assign(new Error('kill EPERM'), { code: 'EPERM', syscall: 'kill' }));
+
+  const listed = text(await listSessions());
+  check(listed.includes(`PID: ${pid},`),
+    `after a process error, the process that runs on should still be listed by list_sessions, got: ${JSON.stringify(listed)}`);
+  const read = text(await readProcessOutput({ pid, timeout_ms: 200 }));
+  check(!read.includes('No session found'), `read_process_output should still read it, got: ${JSON.stringify(read)}`);
+  const terminated = text(await forceTerminate({ pid }));
+  check(terminated.includes('Successfully initiated termination'), `force_terminate should still end it, got: ${JSON.stringify(terminated)}`);
+  await waitUntil(() => exited(pid), 10_000, 'force_terminate ends the process');
+  const final = text(await readProcessOutput({ pid, timeout_ms: 200 }));
+  check(final.includes('Process completed with'), `its exit should be recorded, got: ${JSON.stringify(final)}`);
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
@@ -215,6 +234,7 @@ const CASES = [
   ['read_process_output returns when the process exits', testReadEndsWhenTheProcessExits],
   ['a line ending in ">" is not a prompt', testLineEndingInGreaterThanIsNotAPrompt],
   ['a killed process is reported with its signal', testSignalIsReported],
+  ['a process error while the process runs keeps its session', testProcessErrorKeepsTheSession],
 ];
 
 async function runTests() {

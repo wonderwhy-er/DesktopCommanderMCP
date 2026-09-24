@@ -300,8 +300,8 @@ export class TerminalManager {
         if (waitTimer) clearTimeout(waitTimer);
 
         // The state the wait ended in, from the session: finished if the
-        // process exited, else judged from its output. A process error leaves
-        // no session behind, so the text it returns is judged.
+        // process exited, else judged from its output. A process error after
+        // the exit leaves no session behind, so the text it returns is judged.
         const result: ProcessStartResult = {
           ...waitResult,
           processState: this.getProcessState(childProcess.pid!) ?? analyzeProcessState(waitResult.output)
@@ -325,11 +325,15 @@ export class TerminalManager {
         resolve(result);
       };
 
-      // Now that resolveOnce exists, route process errors into it: an error after
-      // a successful spawn means the process is gone, so the caller must not sit
-      // waiting for output that will never arrive.
+      // Now that resolveOnce exists, route process errors into it, so the caller
+      // doesn't sit waiting for output. The session goes only if the process
+      // has exited: Node also emits 'error' when a kill fails or a message can't
+      // be sent, and the process runs on. It then stays listed, readable and
+      // terminable, and its 'exit' records the completion as usual.
       forwardProcessError = (err: Error) => {
-        this.sessions.delete(childProcess.pid!);
+        if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
+          this.sessions.delete(childProcess.pid!);
+        }
         exitReason = 'process_exit';
         resolveOnce({
           pid: childProcess.pid!,
