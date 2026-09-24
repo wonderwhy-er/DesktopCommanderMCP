@@ -7,8 +7,9 @@ import os from 'os';
  * Windows refuses to rename a file, or replace a destination, while another
  * process has it open (readers, antivirus and search indexers hold such
  * handles briefly) and reports EPERM, EACCES or EBUSY. Those errors are
- * retried with a short backoff. Any other error, and every error on
- * macOS/Linux, is thrown immediately.
+ * retried with a short backoff. Any other error, one onto an existing
+ * directory (Windows answers that with EPERM too, and it never succeeds), and
+ * every error on macOS/Linux, is thrown immediately.
  */
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -21,9 +22,19 @@ export async function renameWithRetry(from: string, to: string): Promise<void> {
       await fs.rename(from, to);
       return;
     } catch (error: any) {
-      const transient = os.platform() === 'win32' && WINDOWS_TRANSIENT_RENAME_ERRORS.has(error?.code);
+      const transient = os.platform() === 'win32' && WINDOWS_TRANSIENT_RENAME_ERRORS.has(error?.code)
+        && !(await isDirectory(to));
       if (!transient || Date.now() >= deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, Math.min(10 * attempt, 100)));
     }
+  }
+}
+
+async function isDirectory(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(filePath)).isDirectory();
+  } catch {
+    // Missing or unreadable: nothing says the rename can't succeed, so keep treating it as a held file
+    return false;
   }
 }

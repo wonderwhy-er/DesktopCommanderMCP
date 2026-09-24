@@ -6,6 +6,8 @@
  * can't be renamed until it lets go: the rename fails with EPERM/EBUSY. Both
  * operations must wait that out instead of failing. On macOS/Linux an open
  * file never blocks a rename, so there this only checks the operations work.
+ * A rename that can never succeed (onto an existing folder, which Windows also
+ * answers with EPERM) must fail at once instead of waiting out the retries.
  */
 
 import assert from 'assert';
@@ -62,6 +64,24 @@ async function testLogRotationWhileHeldOpen() {
   console.log('✓ Test 2 passed: the log was rotated once the other process let go');
 }
 
+async function testMoveOntoFolderFailsAtOnce(dir) {
+  console.log('\nTest 3: move_file onto an existing folder fails at once');
+
+  const folder = path.join(dir, 'full');
+  await fs.mkdir(folder);
+  await fs.writeFile(path.join(folder, 'keep.txt'), 'keep');
+  const source = path.join(dir, 'a.txt');
+  await fs.writeFile(source, 'a');
+
+  const started = Date.now();
+  await assert.rejects(moveFile(source, folder));
+  const elapsed = Date.now() - started;
+  // The retries last up to 5 s; failing at once takes milliseconds (×10 margin)
+  assert.ok(elapsed < 500, `move_file onto an existing folder can never succeed, but it failed only after ${elapsed}ms of retries`);
+  assert.strictEqual(await fs.readFile(source, 'utf8'), 'a', 'the source should be left as it was');
+  console.log(`✓ Test 3 passed: failed after ${elapsed}ms`);
+}
+
 export default async function runTests() {
   // Test 2 replaces the tool-call log, so never run this in a real home
   if (!isTestHome()) {
@@ -71,7 +91,7 @@ export default async function runTests() {
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dc-rename-held-'));
   let failed = 0;
-  for (const test of [() => testMoveFileWhileHeldOpen(dir), testLogRotationWhileHeldOpen]) {
+  for (const test of [() => testMoveFileWhileHeldOpen(dir), testLogRotationWhileHeldOpen, () => testMoveOntoFolderFailsAtOnce(dir)]) {
     try {
       await test();
     } catch (error) {
