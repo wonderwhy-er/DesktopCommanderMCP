@@ -266,7 +266,6 @@ export class TerminalManager {
       outputLines: [],           // Line-based buffer
       lastReadIndex: 0,          // Track where "new" output starts
       lastReadOpenLine: '',
-      isBlocked: false,
       startTime: new Date(),
       bufferedChars: 0,
       evictedLines: 0,
@@ -377,7 +376,6 @@ export class TerminalManager {
 
         // Immediate check for obvious prompts
         if (quickPromptPatterns.test(text)) {
-          session.isBlocked = true;
           exitReason = 'early_exit_quick_pattern';
 
           if (collectTiming && outputEvents.length > 0) {
@@ -422,7 +420,6 @@ export class TerminalManager {
       // Periodic comprehensive check every 100ms
       periodicCheck = setInterval(() => {
         if (this.getProcessState(childProcess.pid!)?.isWaitingForInput) {
-          session.isBlocked = true;
           exitReason = 'early_exit_periodic_check';
           resolveOnce({
             pid: childProcess.pid!,
@@ -435,7 +432,6 @@ export class TerminalManager {
       // Timeout fallback, bounded by the wait ceiling so the call returns
       // before the MCP client gives up on it; the process keeps running.
       waitTimer = setTimeout(() => {
-        session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
           pid: childProcess.pid!,
@@ -801,8 +797,8 @@ export class TerminalManager {
    * says; otherwise waiting for input or running, judged from the end of the
    * output it wrote since `since` (default: since it started). Reads only the
    * per-stream tails, so it costs the same however much output the process
-   * has produced. The one place start_process, interact_with_process and
-   * read_process_output get the state from.
+   * has produced. The one place start_process, interact_with_process,
+   * read_process_output and list_sessions get the state from.
    */
   getProcessState(pid: number, since?: OutputSnapshot): ProcessState | null {
     const session = this.sessions.get(pid);
@@ -894,7 +890,8 @@ export class TerminalManager {
     const now = new Date();
     return Array.from(this.sessions.values()).map(session => ({
       pid: session.pid,
-      isBlocked: session.isBlocked,
+      // Waiting for input now, judged from its output like every other state answer
+      isBlocked: this.getProcessState(session.pid)?.isWaitingForInput ?? false,
       runtime: now.getTime() - session.startTime.getTime()
     }));
   }
