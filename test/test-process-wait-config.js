@@ -1,12 +1,14 @@
 /**
  * The ceiling on one blocking process wait is a fixed constant, not a config
- * value: timeout_ms is the only knob callers have. Checks the ceiling the
+ * value: timeout_ms is the only knob callers have. Checks that a wait the
+ * ceiling ends answers before the client's request timeout, the ceiling the
  * product computes, that set_config_value refuses the old maxProcessWaitMs key
  * and get_config doesn't list it, and set_config_value's handling of number
  * fields (numeric strings stored as numbers, non-numbers rejected, null resets).
  * A wait the ceiling ends answers with the same status line as before.
  */
 import assert from 'assert';
+import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { configManager } from '../dist/config-manager.js';
 import { MAX_PROCESS_WAIT_MS } from '../dist/config.js';
 import { getProcessWaitLimit } from '../dist/terminal-manager.js';
@@ -14,9 +16,24 @@ import { getConfig, setConfigValue } from '../dist/tools/config.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
+// A capped wait answers after MAX_PROCESS_WAIT_MS, and that answer still has to
+// be built and delivered (through the remote device's relay, too) before the
+// client gives up on the call: at the MCP SDK's default request timeout, which
+// Claude Desktop and the remote device's own client use (-32001 "Request timed out").
+const MIN_MARGIN_UNDER_CLIENT_TIMEOUT_MS = 10000;
+
+async function testCeilingUnderClientTimeout() {
+  console.log('\n--- Test 0: a capped wait answers before the client gives up ---');
+  const margin = DEFAULT_REQUEST_TIMEOUT_MSEC - MAX_PROCESS_WAIT_MS;
+  assert(margin >= MIN_MARGIN_UNDER_CLIENT_TIMEOUT_MS,
+    `a wait capped at ${MAX_PROCESS_WAIT_MS}ms leaves ${margin}ms before the client's ${DEFAULT_REQUEST_TIMEOUT_MSEC}ms request timeout: ` +
+    `the answer arrives after the client has given up (-32001); it needs at least ${MIN_MARGIN_UNDER_CLIENT_TIMEOUT_MS}ms`);
+  console.log(`ok: ${margin}ms margin under the SDK's ${DEFAULT_REQUEST_TIMEOUT_MSEC}ms request timeout`);
+}
+
 async function testFixedCeiling() {
   console.log('\n--- Test 1: the wait ceiling is the fixed constant ---');
-  assert.strictEqual(MAX_PROCESS_WAIT_MS, 60000);
+  assert.strictEqual(MAX_PROCESS_WAIT_MS, 50000);
   assert.deepStrictEqual(getProcessWaitLimit(MAX_PROCESS_WAIT_MS * 5),
     { waitMs: MAX_PROCESS_WAIT_MS, capMs: MAX_PROCESS_WAIT_MS, capped: true });
   assert.deepStrictEqual(getProcessWaitLimit(1000),
@@ -86,6 +103,7 @@ async function testCappedWaitAnswers() {
 }
 
 async function runAllTests() {
+  await testCeilingUnderClientTimeout();
   await testFixedCeiling();
   await testNotConfigurable();
   await testNumberFields();
