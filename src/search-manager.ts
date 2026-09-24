@@ -104,7 +104,14 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
  */
 function ripgrepGlobMatcher(glob: string, ignoreCase: boolean): (relativePath: string) => boolean {
   const byPath = glob.includes('/');  // "/x.ts" too: x.ts in the search path itself
-  const regex = new RegExp(`^${globRegexSource(glob.replace(/^\//, ''))}$`, ignoreCase ? 'i' : '');
+  let regex: RegExp;
+  try {
+    regex = new RegExp(`^${globRegexSource(glob.replace(/^\//, ''))}$`, ignoreCase ? 'i' : '');
+  } catch {
+    // A glob ripgrep rejects too ("[z-a]"): every glob a search uses reaches
+    // ripgrep (see buildRipgrepArgs), and the search answers with its error
+    return () => false;
+  }
   return relativePath => regex.test(byPath ? relativePath : relativePath.slice(relativePath.lastIndexOf('/') + 1));
 }
 
@@ -941,9 +948,11 @@ function characterClassEnd(glob: string, start: number): number {
       }
       // filePattern narrows the files the pattern finds. Its "!" alternatives
       // come after the pattern's glob, since ripgrep's last matching glob wins;
-      // the others are checked on what ripgrep finds (filePatternSelects)
+      // the others are checked on what ripgrep finds (filePatternSelects), and
+      // still reach ripgrep as --pre-globs: it parses them (an invalid one is its
+      // error, as for any glob) but without --pre never applies them
       for (const p of filePatternAlternatives(options.filePattern)) {
-        if (p.startsWith('!')) args.push(globFlag, p);
+        args.push(...(p.startsWith('!') ? [globFlag, p] : ['--pre-glob', p]));
       }
       // Add the root path for file mode
       args.push(options.rootPath);
@@ -1031,8 +1040,10 @@ function characterClassEnd(glob: string, start: number): number {
       // A content search's ripgrep prints a JSON line for each file it searches
       // and a summary at the end: exiting 2 with nothing printed, it could not
       // search at all (an invalid pattern or glob), rather than meeting files it
-      // couldn't read. Its error is the answer.
-      if (code === 2 && session.options.searchType === 'content' && !session.printedOutput && session.error?.trim()) {
+      // couldn't read. A file search prints only the names it finds, so for it
+      // the error must say so: a glob it could not parse. Its error is the answer.
+      const couldNotSearch = session.options.searchType === 'content' || /^rg: error parsing glob /m.test(session.error ?? '');
+      if (code === 2 && !session.printedOutput && session.error?.trim() && couldNotSearch) {
         session.isError = true;
       }
 
