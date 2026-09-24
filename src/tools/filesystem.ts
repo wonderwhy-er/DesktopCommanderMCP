@@ -232,6 +232,19 @@ async function resolveRealPath(absolutePath: string): Promise<string> {
 }
 
 /**
+ * Resolves the folder an entry is in, like resolveRealPath, and keeps the
+ * entry's own name as written: the entry itself (a link, not what it points
+ * to), in the letter case given.
+ */
+async function resolveEntryPath(absolutePath: string): Promise<string> {
+    const parent = path.dirname(absolutePath);
+    if (parent === absolutePath) {
+        return resolveRealPath(absolutePath); // a root has no folder above it
+    }
+    return path.join(await resolveRealPath(parent), path.basename(absolutePath));
+}
+
+/**
  * An allowed directory's real path, or null when it can't be read. validatePath
  * checks real paths, so an allowed directory reached through a symlink or
  * junction (macOS: /var -> /private/var) must match by its real path too.
@@ -323,11 +336,16 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
  * For non-existent paths, returns where they would be created (resolving the
  * existing ancestors and any dangling link), and validates parent directories.
  *
+ * With `entry`, the path names an entry to rename (move_file): links are
+ * followed up to its folder, and its own name is kept as written, so a link
+ * is renamed as a link and a change of letter case is kept. A rename only
+ * ever touches that entry, never what a link at that name points to.
+ *
  * @param requestedPath The path to validate
  * @returns Promise<string> The validated path
  * @throws Error if the path or its parent directories don't exist or if the path is not allowed
  */
-export async function validatePath(requestedPath: string): Promise<string> {
+export async function validatePath(requestedPath: string, { entry = false }: { entry?: boolean } = {}): Promise<string> {
     const validationOperation = async (): Promise<string> => {
         // Expand home directory if present
         const expandedPath = expandHome(requestedPath);
@@ -346,7 +364,9 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // elsewhere would let a write create that file outside the allowed directories.
         let pathForNextCheck: string;
         try {
-            pathForNextCheck = await resolveRealPath(absoluteOriginal);
+            pathForNextCheck = entry
+                ? await resolveEntryPath(absoluteOriginal)
+                : await resolveRealPath(absoluteOriginal);
         } catch (error) {
             // Permission denied, I/O errors, link loops, ...
             const err = error as NodeJS.ErrnoException;
@@ -869,8 +889,10 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
 }
 
 export async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
-    const validSourcePath = await validatePath(sourcePath);
-    const validDestPath = await validatePath(destinationPath);
+    // The entries themselves: a link moves as a link, and a rename that only
+    // changes letter case keeps the new case
+    const validSourcePath = await validatePath(sourcePath, { entry: true });
+    const validDestPath = await validatePath(destinationPath, { entry: true });
     await renameWithRetry(validSourcePath, validDestPath);
 }
 
