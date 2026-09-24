@@ -28,7 +28,8 @@ const REPL_PROMPTS = {
   mysql: ['mysql> ', '    -> '],
   postgres: ['=# ', '-# '],
   redis: ['redis> '],
-  mongo: ['> ', '... ']
+  mongo: ['> ', '... '],
+  powershell: ['>> '] // continuation; after "> ", so it is reported as "> ", as before
 };
 
 const PROMPTS = [...new Set(Object.values(REPL_PROMPTS).flat())];
@@ -39,12 +40,25 @@ const PROMPTS_ONLY = new RegExp(`^(?:${PROMPTS.map(escapeRegExp).join('|')})+$`)
 // prompt's end ("bash-5.2$ ", "user@host dir % ", "postgres=# ")
 const LINE_END_PROMPTS = ['>>> ', 'julia> ', 'mysql> ', 'redis> ', '$ ', '# ', '% '];
 
+// PowerShell's prompt (powershell.exe, pwsh), at the end of a line: "PS ", a
+// location (a drive, provider or path: "C:\Users\me", "/Users/me", "HKLM:\"),
+// then "> " (">> " in a nested or debugger prompt, "[DBG]: PS C:\>> ")
+const POWERSHELL_PROMPT = /PS [^<>|\n]*[\\/:][^<>|\n]*>>? $/;
+
+// cmd.exe's prompt: the whole last line is a path and ">", with nothing after
+// it ("C:\Users\me>"); output lines end in a newline, a prompt doesn't
+const CMD_PROMPT = /^[A-Za-z]:\\[^<>|"*?\n]*>$/;
+
 /** The prompt the last line of output is, or ends in, if any */
 function findPrompt(lastLine: string): string | undefined {
   if (PROMPTS_ONLY.test(lastLine)) {
     return PROMPTS.find(prompt => lastLine.endsWith(prompt));
   }
-  return LINE_END_PROMPTS.find(prompt => lastLine.endsWith(prompt));
+  const lineEnd = LINE_END_PROMPTS.find(prompt => lastLine.endsWith(prompt));
+  if (lineEnd) return lineEnd;
+  // Reported as "> ", which a PowerShell prompt was reported as before #196
+  if (POWERSHELL_PROMPT.test(lastLine) || CMD_PROMPT.test(lastLine)) return '> ';
+  return undefined;
 }
 
 /**
