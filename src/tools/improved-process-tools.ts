@@ -6,6 +6,7 @@ import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { configManager } from '../config-manager.js';
 import { getDefaultShell } from '../utils/shell.js';
+import { terminateProcessTree } from '../utils/process-tree.js';
 import { MAX_PROCESS_WAIT_MS } from '../config.js';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
@@ -31,15 +32,23 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
   try {
     await fs.writeFile(tempFile, code, 'utf8');
 
-    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>((resolve) => {
       const proc = spawn(process.execPath, [tempFile], {
         cwd: mcpRoot,
-        timeout: timeout_ms,
         windowsHide: true  // Prevent visible console windows on Windows
       });
 
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
+
+      // Not spawn's own timeout option: that kills only the script, leaving the
+      // processes it started running and holding its output pipes open, so
+      // 'close' never came and the call never returned.
+      const timer = setTimeout(() => {
+        timedOut = true;
+        void terminateProcessTree(proc);
+      }, timeout_ms);
 
       proc.stdout.on('data', (data) => {
         stdout += data.toString();
@@ -50,22 +59,27 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
       });
 
       proc.on('close', (exitCode) => {
-        resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
+        clearTimeout(timer);
+        resolve({ stdout, stderr, exitCode: exitCode ?? 1, timedOut });
       });
 
       proc.on('error', (err) => {
-        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1 });
+        clearTimeout(timer);
+        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1, timedOut });
       });
     });
 
     // Clean up temp file
     await fs.unlink(tempFile).catch(() => {});
 
-    if (result.exitCode !== 0) {
+    if (result.timedOut || result.exitCode !== 0) {
+      const reason = result.timedOut
+        ? `Execution timed out after ${timeout_ms}ms`
+        : `Execution failed (exit code ${result.exitCode})`;
       return {
         content: [{
           type: "text",
-          text: `Execution failed (exit code ${result.exitCode}):\n${result.stderr}\n${result.stdout}`
+          text: `${reason}:\n${result.stderr}\n${result.stdout}`
         }],
         isError: true
       };
