@@ -191,7 +191,22 @@ ${JSON.stringify(data)}`;
 
         if (cellRange) {
             // Write to specific range
-            const { startRow, startCol } = this.parseCellRange(cellRange);
+            const { startRow, startCol, endRow, endCol } = this.parseCellRange(cellRange);
+
+            // A FROM:TO range bounds the write: content that doesn't fit is refused
+            // before any cell changes, so no cell outside the range is overwritten
+            if (endRow !== undefined && endCol !== undefined) {
+                const rows = content.length;
+                const columns = Math.max(0, ...content.map((row: unknown) => Array.isArray(row) ? row.length : 0));
+                const rangeRows = endRow - startRow + 1;
+                const rangeColumns = endCol - startCol + 1;
+                if (rows > rangeRows || columns > rangeColumns) {
+                    throw new Error(
+                        `Content has ${rows} row(s) and ${columns} column(s) but range ${cellRange} holds ` +
+                        `${rangeRows} row(s) and ${rangeColumns} column(s); nothing was written`
+                    );
+                }
+            }
 
             for (let r = 0; r < content.length; r++) {
                 const rowData = content[r];
