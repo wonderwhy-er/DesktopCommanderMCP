@@ -64,8 +64,20 @@ interface DeviceData {
 // capable -> 15 min, unflagged -> 45s.
 const CAPABLE_HEARTBEAT_INTERVAL = 5 * 60 * 1000;
 const LEGACY_HEARTBEAT_INTERVAL = 15 * 1000;
+// Keep Supabase's retry cadence, but jitter every device independently so one
+// Realtime disconnect cannot synchronize the whole fleet onto 1s/2s/5s/10s
+// reconnect waves. ±50% keeps recovery latency close to the SDK default while
+// spreading load across the recovery window.
+const REALTIME_RECONNECT_BASE_MS = [1000, 2000, 5000, 10000] as const;
+const REALTIME_RECONNECT_FALLBACK_MS = 10000;
+// Presence-only failures do not mean broadcast delivery is down: a joined
+// channel can still receive doorbells while Presence's DB-backed work is
+// degraded. Keep a previously-proven capability for one normal heartbeat
+// interval before falling back to the 15s legacy tier, avoiding a 20x heartbeat
+// write-rate jump during short provider incidents.
+const PRESENCE_WITHDRAW_GRACE_MS = 5 * 60 * 1000;
 // Cap on a recreate's rebuild step so a hung await can't disable the watchdog.
-// Must exceed createChannel()'s worst case (~31.5s of presence retries).
+// Must exceed createChannel()'s worst case (~32.25s of jittered presence retries).
 const RECREATE_TIMEOUT_MS = 45000;
 // Max continuous time in 'joining' before forcing a recreate — a half-open
 // socket parks the channel there forever, and a genuine join settles in ~10s.
@@ -97,6 +109,24 @@ const SOCKET_SETTLE_POLL_MS = 20;
 // scan so a pathological backlog cannot turn one reconnect into an unbounded
 // burst of REST claims/tool executions.
 const PENDING_RECOVERY_BATCH_SIZE = 100;
+
+function jitterAround(baseMs: number, random: () => number): number {
+    const sample = Math.max(0, Math.min(1, random()));
+    return Math.max(1, Math.round(baseMs * (0.5 + sample)));
+}
+
+/** Jittered version of realtime-js's default 1s/2s/5s/10s stepped backoff. */
+export function realtimeReconnectDelayMs(tries: number, random: () => number = Math.random): number {
+    const attempt = Math.max(1, Math.floor(tries || 1));
+    const baseMs = REALTIME_RECONNECT_BASE_MS[attempt - 1] ?? REALTIME_RECONNECT_FALLBACK_MS;
+    return jitterAround(baseMs, random);
+}
+
+/** Preserve Presence's existing 500ms-per-attempt retry shape, but desynchronize it. */
+export function presenceRetryDelayMs(failedAttempt: number, random: () => number = Math.random): number {
+    const attempt = Math.max(1, Math.floor(failedAttempt || 1));
+    return jitterAround(500 * attempt, random);
+}
 
 // auth-js compares token expiry against this device's own Date.now(), with no
 // clock-skew tolerance — a fast clock treats every fresh token as expired and
@@ -181,6 +211,8 @@ export class RemoteChannel {
     private presenceTracked = false;
     /** Last capability value written (null = never), to avoid redundant writes. */
     private transportCapableWritten: boolean | null = null;
+    /** Monotonic start of a Presence-only degradation while broadcast remains joined. */
+    private presenceFailureStartedAt: number | null = null;
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
@@ -216,6 +248,7 @@ export class RemoteChannel {
             auth: { autoRefreshToken: false },
             global: { fetch: clockAwareFetch },
             realtime: {
+                reconnectAfterMs: realtimeReconnectDelayMs,
                 // supabase-js's resolver ends in `?? supabaseKey`, so after SIGNED_OUT
                 // the socket silently re-pins to the anon key and every private-channel
                 // join is refused. Overriding under `realtime` (not the top-level
@@ -610,6 +643,7 @@ export class RemoteChannel {
                 }
 
                 this.presenceTracked = true;
+                this.presenceFailureStartedAt = null;
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
                 // Reconnect attempts preceding this join (0 on a first join).
                 captureRemote('remote_channel_presence_tracked', { recoveredAfterAttempts: recovered }).catch(() => { });
@@ -629,15 +663,34 @@ export class RemoteChannel {
             }
 
             console.error(`❌ Presence track not acknowledged (${status}) — attempt ${attempt}/${attempts}`);
-            if (attempt < attempts) await this.sleep(500 * attempt);
+            if (attempt < attempts) await this.sleep(presenceRetryDelayMs(attempt));
         }
 
         this.presenceTracked = false;
-        console.error('❌ Presence track failed after retries — withdrawing broadcast capability');
         captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
-        // Withdraw: the dashboard reads a flagged device with no presence as
-        // offline. The faster heartbeat tier keeps the device's DB status
-        // accurate while it recovers.
+
+        // Presence is an observer signal, not the delivery path. If this device
+        // already proved broadcast capability and the channel is still joined,
+        // keep that capability through a short provider-side Presence incident
+        // instead of immediately switching to the 15s legacy heartbeat tier.
+        // The 10s health check keeps retrying Presence; a success clears the
+        // timer. Genuine channel failure is handled separately by
+        // recreateChannel(), which still withdraws after 3 failed recreates.
+        if (this.transportCapableWritten === true && this.channel?.state === 'joined') {
+            const now = performance.now();
+            if (this.presenceFailureStartedAt === null) this.presenceFailureStartedAt = now;
+            const degradedForMs = now - this.presenceFailureStartedAt;
+            if (degradedForMs < PRESENCE_WITHDRAW_GRACE_MS) {
+                console.warn(
+                    `⚠️ Presence unavailable for ${Math.round(degradedForMs / 1000)}s — ` +
+                    `retaining broadcast capability during ${PRESENCE_WITHDRAW_GRACE_MS / 1000}s grace`
+                );
+                return;
+            }
+        }
+
+        this.presenceFailureStartedAt = null;
+        console.error('❌ Presence track remained unavailable — withdrawing broadcast capability');
         await this.setTransportCapable(false);
     }
 
