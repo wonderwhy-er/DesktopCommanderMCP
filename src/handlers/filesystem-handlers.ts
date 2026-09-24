@@ -92,17 +92,13 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 
         const defaultLimit = config.fileReadLineLimit ?? 1000;
 
-        // Convert sheet parameter: numeric strings become numbers for Excel index access
-        let sheetParam: string | number | undefined = parsed.sheet;
-        if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
-            sheetParam = parseInt(parsed.sheet, 10);
-        }
-
+        // The sheet goes as given: the Excel handler knows the sheet names, so it
+        // decides whether "2024" is an index or a sheet named 2024
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
             length: parsed.length ?? defaultLimit,
-            sheet: sheetParam,
+            sheet: parsed.sheet,
             range: parsed.range
         };
 

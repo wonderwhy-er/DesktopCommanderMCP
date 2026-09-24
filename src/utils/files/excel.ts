@@ -356,6 +356,13 @@ ${JSON.stringify(data)}`;
             return { sheetName: '', data: [], totalRows: 0, returnedRows: 0, firstRow: 1 };
         }
 
+        // `sheet` is a name or a 0-based index as a string ("0"). A number that is
+        // no sheet's index but a sheet's name ("2024") means that sheet.
+        if (typeof sheetRef === 'string' && /^\d+$/.test(sheetRef)
+            && (Number(sheetRef) < workbook.worksheets.length || !workbook.getWorksheet(sheetRef))) {
+            sheetRef = Number(sheetRef);
+        }
+
         // Accept range with embedded sheet prefix (parity with edit_block).
         // E.g. range:"Sheet1!A1:B2" or "'My Sheet'!A1" — strip the sheet
         // prefix and, when the caller did not pass an explicit sheet, use it.
