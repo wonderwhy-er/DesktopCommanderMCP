@@ -27,6 +27,8 @@ async function writeThroughTempFile(filePath: string, data: string | Uint8Array,
     await fs.writeFile(tempPath, data, { encoding: options.encoding ?? 'utf8', mode: options.mode });
     await renameWithRetry(tempPath, filePath);
   } finally {
+    // After a successful rename the temp file is gone (ENOENT); after a failed
+    // write, removing it is best effort and the write's own error is what's reported
     await fs.unlink(tempPath).catch(() => {});
   }
 }
@@ -38,9 +40,11 @@ async function writeThroughTempFile(filePath: string, data: string | Uint8Array,
 export function writeFileAtomic(filePath: string, data: string | Uint8Array, options: AtomicWriteOptions = {}): Promise<void> {
   const key = path.resolve(filePath);
   const previous = pendingWrites.get(key) ?? Promise.resolve();
+  // The previous write's failure was already reported to its own caller; this one runs regardless
   const write = previous.catch(() => {}).then(() => writeThroughTempFile(key, data, options));
 
   pendingWrites.set(key, write);
+  // Bookkeeping only: the caller gets `write` itself, with its rejection
   write.finally(() => {
     if (pendingWrites.get(key) === write) pendingWrites.delete(key);
   }).catch(() => {});
