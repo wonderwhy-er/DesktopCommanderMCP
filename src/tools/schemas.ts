@@ -220,14 +220,6 @@ export const StopSearchArgsSchema = z.object({
 
 export const ListSearchesArgsSchema = z.object({});
 
-// Prompts tool schema - SIMPLIFIED (only get_prompt action)
-export const GetPromptsArgsSchema = z.object({
-  action: z.enum(['get_prompt']),
-  promptId: z.string(),
-  // Disabled to check if it makes sense or should be removed or changed
-  // anonymous_user_use_case: z.string().optional(),
-});
-
 // Tool history schema
 export const GetRecentToolCallsArgsSchema = z.object({
   maxResults: z.number().min(1).max(1000).optional().default(50),
@@ -272,6 +264,5 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   get_usage_stats: GetUsageStatsArgsSchema,
   get_recent_tool_calls: GetRecentToolCallsArgsSchema,
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
-  get_prompts: GetPromptsArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };

@@ -55,7 +55,6 @@ import {
     GetMoreSearchResultsArgsSchema,
     StopSearchArgsSchema,
     ListSearchesArgsSchema,
-    GetPromptsArgsSchema,
     GetRecentToolCallsArgsSchema,
     WritePdfArgsSchema,
     toolArgSchemas,
@@ -68,7 +67,6 @@ import {
 import { getConfig, setConfigValue } from './tools/config.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
-import { getPrompts } from './tools/prompts.js';
 import { trackToolCall } from './utils/trackTools.js';
 import { usageTracker } from './utils/usageTracker.js';
 import { processDockerPrompt } from './utils/dockerPrompt.js';
@@ -294,7 +292,7 @@ deferLog('info', 'Setting up request handlers...');
 function shouldIncludeTool(toolName: string): boolean {
     // Exclude these tools for desktop-commander client (DC-specific meta-tools not useful when DC itself is the client)
     if (currentClient?.name === 'desktop-commander-app') {
-        if (toolName === 'give_feedback_to_desktop_commander' || toolName === 'get_prompts') {
+        if (toolName === 'give_feedback_to_desktop_commander') {
             return false;
         }
     }
@@ -1129,37 +1127,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     openWorldHint: true,
                 },
             },
-            {
-                name: "get_prompts",
-                description: `
-                        Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
-                        
-                        SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
-                        The onboarding system presents 5 options as a simple numbered list:
-                        
-                        1. Organize my Downloads folder (promptId: 'onb2_01')
-                        2. Explain a codebase or repository (promptId: 'onb2_02')
-                        3. Create organized knowledge base (promptId: 'onb2_03')
-                        4. Analyze a data file (promptId: 'onb2_04')
-                        5. Check system health and resources (promptId: 'onb2_05')
-                        
-                        ONBOARDING CHOICE MAPPINGS:
-                        - "1" maps to promptId='onb2_01'
-                        - "2" maps to promptId='onb2_02'
-                        - "3" maps to promptId='onb2_03'
-                        - "4" maps to promptId='onb2_04'
-                        - "5" maps to promptId='onb2_05'
-                        
-                        The prompt content will be injected and execution begins immediately.
-
-                        ${CMD_PREFIX_DESCRIPTION}`,
-                inputSchema: zodToJsonSchema(GetPromptsArgsSchema),
-                annotations: {
-                    title: "Get Prompts",
-                    readOnlyHint: true,
-                    openWorldHint: false,
-                },
-            }
         ];
 
         // Filter tools based on current client
@@ -1237,17 +1204,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
             telemetryData.set_config_value_key_name = (args as any).key;
         }
-        if (name === 'get_prompts' && args && typeof args === 'object') {
-            const promptArgs = args as any;
-            telemetryData.action = promptArgs.action;
-            if (promptArgs.category) {
-                telemetryData.category = promptArgs.category;
-                telemetryData.has_category_filter = true;
-            }
-            if (promptArgs.promptId) {
-                telemetryData.prompt_id = promptArgs.promptId;
-            }
-        }
+
 
         // Track tool call
         trackToolCall(name, args);
@@ -1287,52 +1244,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                     capture('server_request_error', { message: `Error in get_usage_stats handler: ${error}` });
                     result = {
                         content: [{ type: "text", text: `Error: Failed to get usage statistics` }],
-                        isError: true,
-                    };
-                }
-                break;
-
-            case "get_prompts":
-                try {
-                    result = await getPrompts(args || {});
-
-                    // Capture detailed analytics for all successful get_prompts actions
-                    if (args && typeof args === 'object' && !result.isError) {
-                        const action = (args as any).action;
-
-                        try {
-                            if (action === 'get_prompt' && (args as any).promptId) {
-                                // Existing get_prompt analytics
-                                const { loadPromptsData } = await import('./tools/prompts.js');
-                                const promptsData = await loadPromptsData();
-                                const prompt = promptsData.prompts.find(p => p.id === (args as any).promptId);
-                                if (prompt) {
-                                    await capture('server_get_prompt', {
-                                        prompt_id: prompt.id,
-                                        prompt_title: prompt.title,
-                                        category: prompt.categories[0] || 'uncategorized',
-                                        author: prompt.author,
-                                        verified: prompt.verified,
-                                        // Temporarily disabled for privacy review - Dec 2025
-                                        // anonymous_use_case: (args as any).anonymous_user_use_case || null
-                                    });
-                                }
-                            }
-                        } catch (error) {
-                            // Don't fail the request if analytics fail
-                        }
-                    }
-
-                    // Track if user used get_prompts after seeing onboarding invitation (for state management only)
-                    const onboardingState = await usageTracker.getOnboardingState();
-                    if (onboardingState.attemptsShown > 0 && !onboardingState.promptsUsed) {
-                        // Mark that they used prompts after seeing onboarding (stops future onboarding messages)
-                        await usageTracker.markOnboardingPromptsUsed();
-                    }
-                } catch (error) {
-                    capture('server_request_error', { message: `Error in get_prompts handler: ${error}` });
-                    result = {
-                        content: [{ type: "text", text: `Error: Failed to retrieve prompts` }],
                         isError: true,
                     };
                 }
@@ -1490,44 +1401,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         } else {
             await usageTracker.trackSuccess(name);
             console.log(`[FEEDBACK DEBUG] Tool ${name} succeeded, checking feedback...`);
-
-            // Check if should show onboarding (before feedback - first-time users are priority)
-            const shouldShowOnboarding = await usageTracker.shouldShowOnboarding();
-            console.log(`[ONBOARDING DEBUG] Should show onboarding: ${shouldShowOnboarding}`);
-
-            if (shouldShowOnboarding) {
-                console.log(`[ONBOARDING DEBUG] Generating onboarding message...`);
-                const onboardingResult = await usageTracker.getOnboardingMessage();
-                console.log(`[ONBOARDING DEBUG] Generated variant: ${onboardingResult.variant}`);
-
-                // Capture onboarding prompt injection event
-                const stats = await usageTracker.getStats();
-                await capture('server_onboarding_shown', {
-                    trigger_tool: name,
-                    total_calls: stats.totalToolCalls,
-                    successful_calls: stats.successfulCalls,
-                    days_since_first_use: Math.floor((Date.now() - stats.firstUsed) / (1000 * 60 * 60 * 24)),
-                    total_sessions: stats.totalSessions,
-                    message_variant: onboardingResult.variant
-                });
-
-                // Inject onboarding message for the LLM
-                if (result.content && result.content.length > 0 && result.content[0].type === "text") {
-                    const currentContent = result.content[0].text || '';
-                    result.content[0].text = `${currentContent}${onboardingResult.message}`;
-                } else {
-                    result.content = [
-                        ...(result.content || []),
-                        {
-                            type: "text",
-                            text: onboardingResult.message
-                        }
-                    ];
-                }
-
-                // Mark that we've shown onboarding (to prevent spam)
-                await usageTracker.markOnboardingShown(onboardingResult.variant);
-            }
 
             // Check if should prompt for feedback (only on successful operations)
             const shouldPrompt = await usageTracker.shouldPromptForFeedback();
