@@ -2,6 +2,8 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+const TEST_HOME_PREFIX = 'dc-test-home-';
+
 /**
  * Environment for one test process. The runners start every test file with it:
  * - a fresh temporary home, so Desktop Commander's config, flag cache and logs
@@ -13,7 +15,7 @@ import path from 'path';
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-test-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), TEST_HOME_PREFIX));
   const { FORCE_COLOR, ...inherited } = process.env;
   const env = {
     ...inherited,
@@ -28,4 +30,13 @@ export function createTestEnv() {
     // Retries: on Windows a just-exited child can still hold a file in the home for a moment
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
+}
+
+/**
+ * True when this process runs in a home createTestEnv() made. A test that
+ * replaces files in the home (config, logs) checks it, so running it directly
+ * with node can never touch the real ~/.claude-server-commander.
+ */
+export function isTestHome() {
+  return path.basename(os.homedir()).startsWith(TEST_HOME_PREFIX);
 }
