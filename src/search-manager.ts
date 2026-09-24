@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './tools/filesystem.js';
 import { capture } from './utils/capture.js';
+import { logger } from './utils/logger.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
@@ -125,7 +126,8 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
     }
     
     // Start ripgrep process. It matches a glob with a '/' ("src/*.ts") against
-    // the path below its working directory: that must be the root path.
+    // the path below its working directory: that must be the root path. A root
+    // that can't be stat'ed runs without a cwd, and ripgrep reports the path itself.
     const rootIsDirectory = await fs.stat(validPath).then(stats => stats.isDirectory(), () => false);
     const rgProcess = spawn(rgPath, args, {
       windowsHide: true,  // Prevent visible console windows on Windows
@@ -413,7 +415,9 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
     search(sink)
       .catch((err) => {
         // Log Office search errors but don't fail the whole search
-        capture(`${source}_search_error`, { error: err instanceof Error ? err.message : String(err) });
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(`The ${source} part of search ${session.id} failed; its matches are missing: ${message}`);
+        capture(`${source}_search_error`, { error: message });
       })
       .finally(() => this.finishSource(session, source));
   }
@@ -898,17 +902,18 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
   }
 
   /**
-   * Resolves once ripgrep has started; else rejects with why it could not
-   * start (not found, not executable...), which start_search then reports.
-   * 'spawn' or 'error' comes on the next tick, before any I/O, so the caller
-   * still sets up its handlers in time.
+   * Resolves once ripgrep has started; else logs why it could not start (not
+   * found, not executable...) and rejects with the error start_search always
+   * reported. 'spawn' or 'error' comes on the next tick, before any I/O, so
+   * the caller still sets up its handlers in time.
    */
   private async whenStarted(child: ChildProcess): Promise<void> {
     try {
       await once(child, 'spawn');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw Object.assign(new Error(`Failed to start ripgrep: ${reason}`), { cause: error });
+      logger.error(`Failed to start ripgrep: ${reason}`);
+      throw Object.assign(new Error('Failed to start ripgrep process'), { cause: error });
     }
   }
 

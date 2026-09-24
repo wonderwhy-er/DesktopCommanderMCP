@@ -1,8 +1,8 @@
 /**
  * Tests searching when the bundled ripgrep can't be started (a corrupt or
- * wrong-platform download): start_search reports why - the reason ripgrep
- * could not start, for a file search and for a content search - and does not
- * crash the server; and searchFiles() (src/tools/filesystem.ts) falls back to
+ * wrong-platform download): start_search answers with the error it always
+ * gave, for a file search and for a content search, the log gets the reason
+ * ripgrep could not start, and the server does not crash; and searchFiles() (src/tools/filesystem.ts) falls back to
  * its Node.js walk. ripgrep can't be started in a child process
  * (fixtures/unusable-ripgrep-preload.mjs).
  * The fallback is the long-standing Node.js walk, which does not find the same
@@ -27,7 +27,7 @@ const SEARCH_DIR = path.join(TEST_DIR, 'files');
 // Where the child's @vscode/ripgrep says ripgrep is: a directory, which can't be started
 const UNUSABLE_RIPGREP = path.join(TEST_DIR, process.platform === 'win32' ? 'rg.exe' : 'rg');
 // Why: Windows looks for a file to run, and finds none; elsewhere a directory can't be executed
-const START_ERROR = `Failed to start ripgrep: spawn ${UNUSABLE_RIPGREP} ${process.platform === 'win32' ? 'ENOENT' : 'EACCES'}`;
+const START_REASON = `Failed to start ripgrep: spawn ${UNUSABLE_RIPGREP} ${process.platform === 'win32' ? 'ENOENT' : 'EACCES'}`;
 
 const FILES = [
   'notes.txt', 'Notes.MD', 'report-notes.txt', 'other.txt', 'sub/notes-2.txt', 'sub/deep/NOTES.csv',
@@ -76,13 +76,17 @@ async function testWithoutRipgrep() {
     SEARCH_DIR, ...CASES.map(([pattern]) => pattern)
   ], { env: { ...process.env, DC_TEST_UNUSABLE_RIPGREP: UNUSABLE_RIPGREP }, encoding: 'utf8', timeout: 60000 });
   assert.strictEqual(child.status, 0, `The process without ripgrep failed (${child.status}): ${child.stderr}`);
-  const { fileSearch, contentSearch, results } = JSON.parse(child.stdout.trim().split('\n').pop());
+  const lines = child.stdout.trim().split('\n');
+  const { fileSearch, contentSearch, results } = JSON.parse(lines.pop());
 
-  const reported = { isError: true, text: `Error starting search session: ${START_ERROR}` };
-  assert.deepStrictEqual(fileSearch, reported, 'start_search (a file search) should report why ripgrep could not start');
-  assert.deepStrictEqual(contentSearch, reported,
-    'start_search (a content search) should report why ripgrep could not start');
-  console.log(`✓ start_search reports "${START_ERROR}"`);
+  const reported = { isError: true, text: 'Error starting search session: Failed to start ripgrep process' };
+  assert.deepStrictEqual(fileSearch, reported, 'start_search (a file search) should answer as before');
+  assert.deepStrictEqual(contentSearch, reported, 'start_search (a content search) should answer as before');
+  // The rest of stdout is what the server logged (JSON-RPC notifications, the message in params.data):
+  // the reason, once for each search that tried ripgrep - the two start_search calls, then searchFiles() per pattern
+  const logged = lines.map((line) => JSON.parse(line).params?.data);
+  assert.deepStrictEqual(logged, Array(2 + CASES.length).fill(START_REASON), 'The log should give the reason');
+  console.log(`✓ start_search answers as before, and the log says "${START_REASON}"`);
 
   for (const [pattern, , fallbackRels] of CASES) {
     assert.deepStrictEqual([...results[pattern]].sort(), expectedFor(fallbackRels), `searchFiles("${pattern}") through the Node.js fallback`);
