@@ -270,7 +270,8 @@ function characterClassEnd(glob: string, start: number): number {
         options.pattern,
         options.ignoreCase !== false,
         sink,
-        options.filePattern  // Pass filePattern to filter Excel files too
+        options.filePattern,  // Pass filePattern to filter Excel files too
+        options.includeHidden === true
       ));
     }
 
@@ -284,7 +285,8 @@ function characterClassEnd(glob: string, start: number): number {
         options.pattern,
         options.ignoreCase !== false,
         sink,
-        options.filePattern
+        options.filePattern,
+        options.includeHidden === true
       ));
     }
 
@@ -511,14 +513,15 @@ function characterClassEnd(glob: string, start: number): number {
     pattern: string,
     ignoreCase: boolean,
     sink: SourceSink,
-    filePattern?: string
+    filePattern?: string,
+    includeHidden = false
   ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
-    let excelFiles = await this.findExcelFiles(rootPath, sink.isStopped);
+    let excelFiles = await this.findExcelFiles(rootPath, sink.isStopped, includeHidden);
 
     // Filter by filePattern if provided
     if (filePattern) {
@@ -595,11 +598,21 @@ function characterClassEnd(glob: string, start: number): number {
   }
 
   /**
+   * Whether the Excel/DOCX search walks into a folder: never node_modules, and a
+   * hidden one (a name starting with '.') only with includeHidden, as ripgrep
+   * enters hidden folders only with --hidden.
+   */
+  private officeWalkEnters(name: string, includeHidden: boolean): boolean {
+    return name !== 'node_modules' && (includeHidden || !name.startsWith('.'));
+  }
+
+  /**
    * Find all Excel files in a directory recursively. Stops walking once the
    * search is stopped.
    */
-  private async findExcelFiles(rootPath: string, isStopped: () => boolean): Promise<string[]> {
+  private async findExcelFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
     const excelFiles: string[] = [];
+    const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
 
     async function walk(dir: string): Promise<void> {
       if (isStopped()) return;
@@ -610,8 +623,7 @@ function characterClassEnd(glob: string, start: number): number {
           const fullPath = path.join(dir, entry.name);
 
           if (entry.isDirectory()) {
-            // Skip node_modules, .git, etc.
-            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            if (enters(entry.name)) {
               await walk(fullPath);
             }
           } else if (entry.isFile() && isExcelFile(entry.name)) {
@@ -695,13 +707,14 @@ function characterClassEnd(glob: string, start: number): number {
     pattern: string,
     ignoreCase: boolean,
     sink: SourceSink,
-    filePattern?: string
+    filePattern?: string,
+    includeHidden = false
   ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
-    let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped);
+    let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped, includeHidden);
 
     if (filePattern) {
       docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
@@ -761,8 +774,9 @@ function characterClassEnd(glob: string, start: number): number {
    * Find all DOCX files in a directory recursively. Stops walking once the
    * search is stopped.
    */
-  private async findDocxFiles(rootPath: string, isStopped: () => boolean): Promise<string[]> {
+  private async findDocxFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
     const docxFiles: string[] = [];
+    const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
     const isDocx = (name: string) => name.toLowerCase().endsWith('.docx');
 
     async function walk(dir: string): Promise<void> {
@@ -772,7 +786,7 @@ function characterClassEnd(glob: string, start: number): number {
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            if (enters(entry.name)) {
               await walk(fullPath);
             }
           } else if (entry.isFile() && isDocx(entry.name)) {

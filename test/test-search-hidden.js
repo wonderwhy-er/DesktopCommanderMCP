@@ -8,9 +8,9 @@
  *   matches through even with includeHidden false, and a hidden directory whose
  *   name it matches is entered (ripgrep's globs override its hidden-file rule):
  *   "*.txt" finds ".hidden.txt", "*" finds everything.
- * - The Excel and DOCX searches walk the files themselves and ignore
- *   includeHidden: they read hidden files, and never enter a directory whose
- *   name starts with '.' (unless it is the search path itself).
+ * - The Excel and DOCX searches walk the files themselves: they read hidden
+ *   files, and enter a directory whose name starts with '.' only with
+ *   includeHidden (or when it is the search path itself).
  */
 
 import assert from 'assert';
@@ -159,18 +159,18 @@ async function testIncludeHidden() {
       withHidden: lines(['.hidden.txt', 'visible/.dot.txt', '.gitignore', '.hidden-dir/.nested.txt', '.git/.gitkeep'])
     },
     {
-      // The Excel and DOCX searches walk the files themselves, whatever includeHidden says:
-      // they read hidden files, and skip every directory whose name starts with '.'
+      // The Excel and DOCX searches walk the files themselves: they read hidden files,
+      // and enter the directories whose name starts with '.' only with includeHidden
       label: 'content search, filePattern "*.xlsx|*.docx"',
       args: { pattern: 'needle', searchType: 'content', filePattern: '*.xlsx|*.docx', contextLines: 0 },
       withoutHidden: officeMatches([...VISIBLE_OFFICE, '.hidden-report.xlsx', '.hidden-memo.docx', 'visible/.dot-memo.docx']),
-      withHidden: officeMatches([...VISIBLE_OFFICE, '.hidden-report.xlsx', '.hidden-memo.docx', 'visible/.dot-memo.docx'])
+      withHidden: officeMatches([...VISIBLE_OFFICE, ...HIDDEN_OFFICE])
     },
     {
       label: 'content search, filePattern ".*.xlsx|.*.docx"',
       args: { pattern: 'needle', searchType: 'content', filePattern: '.*.xlsx|.*.docx', contextLines: 0 },
       withoutHidden: officeMatches(['.hidden-report.xlsx', '.hidden-memo.docx', 'visible/.dot-memo.docx']),
-      withHidden: officeMatches(['.hidden-report.xlsx', '.hidden-memo.docx', 'visible/.dot-memo.docx'])
+      withHidden: officeMatches(['.hidden-report.xlsx', '.hidden-memo.docx', 'visible/.dot-memo.docx', '.hidden-dir/.nested.xlsx'])
     },
     {
       // A hidden directory given as the path is searched; "*" lets the hidden files inside it through
