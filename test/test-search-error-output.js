@@ -11,7 +11,7 @@ import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
-import { startSearchAndWait } from './helpers/search.js';
+import { handleStartSearch } from '../dist/handlers/search-handlers.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const MAX_KEPT_CHARS = 64 * 1024;
@@ -23,8 +23,11 @@ export default async function runTests() {
   await configManager.setValue('allowedDirectories', [dir]);
   let sessionId;
   try {
-    // An unclosed group: ripgrep writes its regex error to stderr and exits
-    sessionId = await startSearchAndWait({ path: dir, pattern: '(unclosed', searchType: 'content' });
+    // An unclosed group: ripgrep writes its regex error to stderr and exits. The
+    // search could not run, which its answer may say as an error: wait for the
+    // session to end, whatever it answers
+    sessionId = (await handleStartSearch({ path: dir, pattern: '(unclosed', searchType: 'content' })).structuredContent.sessionId;
+    await searchManager.waitForCompletion(sessionId);
     const { error } = searchManager.readSearchResults(sessionId);
     const occurrences = (error ?? '').split('unclosed group').length - 1;
     assert.strictEqual(occurrences, 1, `ripgrep's error should be kept once, got ${occurrences} times:\n${error}`);
