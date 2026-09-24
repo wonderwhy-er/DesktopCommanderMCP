@@ -35,6 +35,7 @@ export interface SearchSession {
   pendingSources: Set<SearchSource>;  // Sources still producing results; the session completes when none is left
   timeoutTimer?: NodeJS.Timeout;  // Stops the search at its time limit
   timedOut?: boolean;  // The time limit stopped the search before it finished; more matches may exist
+  filePatternIncludes?: { root: string; matchers: Array<(relativePath: string) => boolean> };  // A file search's filePattern alternatives but "!" (see filePatternSelects)
   exitCode?: number | null;  // ripgrep's exit code, reported on completion
   completed: Promise<void>;  // Settles when the session completes
   markCompleted: () => void;
@@ -87,6 +88,58 @@ type RipgrepLine =
 /** The alternatives of a filePattern ("*.js|*.ts") */
 const filePatternAlternatives = (filePattern: string | undefined): string[] =>
   (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
+
+/**
+ * A glob as ripgrep matches its -g globs (gitignore style), for the files a
+ * file search lists: without a '/' it is matched against the file's name, with
+ * one against its path below the search path ('/'-separated). '*' and '?' stop
+ * at '/', "**" as a whole path segment spans folders, "[...]" is a character
+ * class ("[!...]" negated) and "{a,b}" a choice.
+ */
+function ripgrepGlobMatcher(glob: string, ignoreCase: boolean): (relativePath: string) => boolean {
+  const byPath = glob.includes('/');  // "/x.ts" too: x.ts in the search path itself
+  const regex = new RegExp(`^${globRegexSource(glob.replace(/^\//, ''))}$`, ignoreCase ? 'i' : '');
+  return relativePath => regex.test(byPath ? relativePath : relativePath.slice(relativePath.lastIndexOf('/') + 1));
+}
+
+/** The regular expression source of a glob (see ripgrepGlobMatcher) */
+function globRegexSource(glob: string): string {
+  let source = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const classEnd = c === '[' ? characterClassEnd(glob, i) : -1;
+    const choiceEnd = c === '{' ? glob.indexOf('}', i) : -1;
+    if (c === '*' && glob[i + 1] === '*' && (i === 0 || glob[i - 1] === '/') && (i + 2 === glob.length || glob[i + 2] === '/')) {
+      // "**" as a whole path segment: any number of folders ("**/": none too)
+      source += i + 2 === glob.length ? '.*' : '(?:.*/)?';
+      i += i + 2 === glob.length ? 1 : 2;
+    } else if (c === '*') {
+      source += '[^/]*';
+    } else if (c === '?') {
+      source += '[^/]';
+    } else if (classEnd > 0) {
+      let body = glob.slice(i + 1, classEnd);
+      const negated = body.startsWith('!') || body.startsWith('^');
+      if (negated) body = body.slice(1);
+      source += `[${negated ? '^/' : ''}${body.replace(/[\\\]^]/g, '\\$&')}]`;
+      i = classEnd;
+    } else if (choiceEnd > 0) {
+      source += `(?:${glob.slice(i + 1, choiceEnd).split(',').map(globRegexSource).join('|')})`;
+      i = choiceEnd;
+    } else {
+      source += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return source;
+}
+
+/** The ']' that closes the character class opening at `start` (one right after "[" or "[!" is part of it), or -1 */
+function characterClassEnd(glob: string, start: number): number {
+  let i = start + 1;
+  if (glob[i] === '!' || glob[i] === '^') i++;
+  if (glob[i] === ']') i++;
+  return glob.indexOf(']', i);
+}
 
 /**
  * Search Session Manager - handles ripgrep processes like terminal sessions
@@ -150,6 +203,7 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
       buffer: '',
       totalMatches: 0,
       totalContextLines: 0,
+      filePatternIncludes: this.filePatternIncludes(options, validPath),
       pendingSources: new Set<SearchSource>(['ripgrep']),
       completed,
       markCompleted
@@ -821,6 +875,30 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
            pattern.includes('}');
   }
 
+  /**
+   * A file search's filePattern alternatives other than "!", which a file it
+   * finds must match one of (see filePatternSelects); undefined when there are none
+   */
+  private filePatternIncludes(options: SearchSessionOptions, root: string): SearchSession['filePatternIncludes'] {
+    if (options.searchType !== 'files') return undefined;
+    const includes = filePatternAlternatives(options.filePattern).filter(pattern => !pattern.startsWith('!'));
+    if (includes.length === 0) return undefined;
+    return { root, matchers: includes.map(glob => ripgrepGlobMatcher(glob, options.ignoreCase !== false)) };
+  }
+
+  /**
+   * Whether a file a file search found is one its filePattern selects: ripgrep
+   * checked the "!" alternatives (see buildRipgrepArgs), one of the others must
+   * match it. ripgrep can't check those itself: with the pattern's glob in the
+   * same list, any glob that matches lets a file in.
+   */
+  private filePatternSelects(session: SearchSession, file: string): boolean {
+    const includes = session.filePatternIncludes;
+    if (!includes) return true;
+    const relativePath = path.relative(includes.root, file).split(path.sep).join('/') || path.basename(file);
+    return includes.matchers.some(matches => matches(relativePath));
+  }
+
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
     // These arguments are the whole search: the user's ripgrep config file
     // (RIPGREP_CONFIG_PATH) must not add flags such as --hidden, --glob,
@@ -858,28 +936,18 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
     // is enforced on the output instead - see collectMatch().
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
-    if (options.filePattern) {
-      const patterns = filePatternAlternatives(options.filePattern);
-      
-      for (const p of patterns) {
-        if (options.searchType === 'content') {
-          args.push('-g', p);
-        } else {
-          // For file search: use --iglob for case-insensitive or --glob for case-sensitive
-          if (options.ignoreCase !== false) {
-            args.push('--iglob', p);
-          } else {
-            args.push('--glob', p);
-          }
-        }
+    if (options.filePattern && options.searchType === 'content') {
+      for (const p of filePatternAlternatives(options.filePattern)) {
+        args.push('-g', p);
       }
     }
-    
+
     // Handle the main search pattern
     if (options.searchType === 'files') {
       // For file search: determine how to treat the pattern
+      // (--iglob for case-insensitive or --glob for case-sensitive)
       const globFlag = options.ignoreCase !== false ? '--iglob' : '--glob';
-      
+
       if (this.isExactFilename(options.pattern)) {
         // Exact filename: use appropriate glob flag with the exact pattern
         args.push(globFlag, options.pattern);
@@ -889,6 +957,12 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
       } else {
         // Substring/fuzzy search: wrap with wildcards
         args.push(globFlag, `*${options.pattern}*`);
+      }
+      // filePattern narrows the files the pattern finds. Its "!" alternatives
+      // come after the pattern's glob, since ripgrep's last matching glob wins;
+      // the others are checked on what ripgrep finds (filePatternSelects)
+      for (const p of filePatternAlternatives(options.filePattern)) {
+        if (p.startsWith('!')) args.push(globFlag, p);
       }
       // Add the root path for file mode
       args.push(options.rootPath);
@@ -1066,6 +1140,9 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
       if (!line.trim()) continue;
       
       const parsed = this.parseLine(line, session.options.searchType);
+      if (parsed?.kind === 'match' && parsed.result.type === 'file' && !this.filePatternSelects(session, parsed.result.file)) {
+        continue;
+      }
       if (parsed) {
         this.collectRipgrepLine(session, parsed);
 
