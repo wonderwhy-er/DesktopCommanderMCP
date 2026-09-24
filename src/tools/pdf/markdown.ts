@@ -423,6 +423,48 @@ interface RenderServer {
     close: () => Promise<void>;
 }
 
+/** A stylesheet md-to-pdf loads as a URL; anything else it reads from disk (md-to-pdf's isHttpUrl) */
+const isHttpUrl = (input: string): boolean => {
+    try {
+        return new URL(input).protocol.startsWith('http');
+    } catch {
+        // Not a URL: a path
+        return false;
+    }
+};
+
+/**
+ * The files md-to-pdf reads from disk into the page it renders, from write_pdf's
+ * options or the front matter: stylesheet paths, script paths, and the
+ * highlight style (a file name in highlight.js's styles folder). Each must be
+ * inside the allowed folders, checked as every file tool checks a path.
+ * md-to-pdf's own stylesheet and highlight styles are not the caller's files
+ * and stay allowed.
+ */
+async function validateRenderFiles(render: Record<string, unknown>, validatePath: (path: string) => Promise<string>): Promise<void> {
+    // md-to-pdf takes one value or a list
+    const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [value];
+    for (const stylesheet of list(render.stylesheet)) {
+        if (typeof stylesheet === 'string' && stylesheet !== '' && !isHttpUrl(stylesheet)) {
+            await validatePath(stylesheet);
+        }
+    }
+    for (const script of list(render.script)) {
+        if (isPlainObject(script) && typeof script.path === 'string') {
+            await validatePath(script.path);
+        }
+    }
+    if (typeof render.highlight_style === 'string') {
+        // Where md-to-pdf looks for it
+        const stylesFolder = resolve(dirname(createRequire(createRequire(import.meta.url).resolve('md-to-pdf')).resolve('highlight.js')), '..', 'styles');
+        const style = resolve(stylesFolder, `${render.highlight_style}.css`);
+        const inStylesFolder = relative(stylesFolder, style);
+        if (inStylesFolder === '..' || inStylesFolder.startsWith(`..${sep}`) || isAbsolute(inStylesFolder)) {
+            await validatePath(style);
+        }
+    }
+}
+
 /**
  * Serve a file of the render's base folder only if it is inside the allowed
  * folders, checked as every file tool checks it (links resolved): markdown must
@@ -634,6 +676,7 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
 
         // Merge options and front matter, and drop the ignored ones, in one place
         const { body, options: render } = resolveRender(markdown, options);
+        await validateRenderFiles(render, validatePath);
         const launchOptions = isPlainObject(render.launch_options) ? render.launch_options as LaunchOptions : {};
 
         // Find Chrome: puppeteer cache -> system Chrome -> install
