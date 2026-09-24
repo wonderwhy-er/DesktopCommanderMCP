@@ -50,6 +50,7 @@ export interface SearchSessionOptions {
  */export class SearchManager {
   private sessions = new Map<string, SearchSession>();
   private sessionCounter = 0;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   /**
    * Start a new search session (like start_process)
@@ -108,7 +109,7 @@ export interface SearchSessionOptions {
     this.setupProcessHandlers(session);
 
     // Start cleanup interval now that we have a session
-    startCleanupIfNeeded();
+    this.startCleanupIfNeeded();
 
     // Set up timeout if specified and auto-terminate
     // For exact filename searches, use a shorter default timeout
@@ -304,6 +305,35 @@ export interface SearchSessionOptions {
     // It will be cleaned up by cleanup process
     
     return true;
+  }
+
+  /**
+   * Stop every running search and drop all sessions and the cleanup timer.
+   * For owners that tear the search manager down (shutdown, tests); a later
+   * startSearch() starts afresh.
+   */
+  dispose(): void {
+    for (const session of this.sessions.values()) {
+      if (!session.process.killed) {
+        session.process.kill('SIGTERM');
+      }
+    }
+    this.sessions.clear();
+
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Start the periodic cleanup of old sessions. It is housekeeping only, so it
+   * is unref'd: it must never keep the process alive on its own.
+   */
+  private startCleanupIfNeeded(): void {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => this.cleanupSessions(), 5 * 60 * 1000);
+    this.cleanupTimer.unref();
   }
 
   /**
@@ -1001,22 +1031,3 @@ export interface SearchSessionOptions {
 
 // Global search manager instance
 export const searchManager = new SearchManager();
-
-// Cleanup management - run on fixed schedule
-let cleanupInterval: NodeJS.Timeout | null = null;
-
-/**
- * Start cleanup interval - now runs on fixed schedule
- */
-function startCleanupIfNeeded(): void {
-  if (!cleanupInterval) {
-    cleanupInterval = setInterval(() => {
-      searchManager.cleanupSessions();
-    }, 5 * 60 * 1000);
-    
-    // Also check immediately after a short delay (let search process finish)
-    setTimeout(() => {
-      searchManager.cleanupSessions();
-    }, 1000);
-  }
-}
