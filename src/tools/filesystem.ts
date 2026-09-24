@@ -12,7 +12,7 @@ import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.j
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
-import { renameWithRetry } from '../utils/rename.js';
+import { movePath } from '../utils/rename.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -893,7 +893,8 @@ export async function moveFile(sourcePath: string, destinationPath: string): Pro
     // changes letter case keeps the new case
     const validSourcePath = await validatePath(sourcePath, { entry: true });
     const validDestPath = await validatePath(destinationPath, { entry: true });
-    await renameWithRetry(validSourcePath, validDestPath);
+    // Across volumes, a copy and then removing the source
+    await movePath(validSourcePath, validDestPath);
 }
 
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
