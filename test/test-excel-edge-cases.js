@@ -7,6 +7,8 @@
  *   taken as index 2024 ("Sheet index 2024 out of range").
  * - write_file append of a 2D array appends to the workbook: on a workbook
  *   without a "Sheet1" it added a new sheet "Sheet1".
+ * - get_file_info on a workbook Excel can't read gave neither its sheets nor
+ *   the error.
  * Calls the tool handlers (the answer text a client gets) and checks the
  * workbooks with ExcelJS.
  */
@@ -15,7 +17,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import ExcelJS from 'exceljs';
-import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
+import { handleReadFile, handleWriteFile, handleGetFileInfo } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -81,6 +83,15 @@ async function testAppendArrayWithoutSheet1(dir) {
   assert.deepStrictEqual(after.Data, [['x'], ['y']], 'the rows should be appended to the workbook\'s sheet');
 }
 
+async function testInfoOnUnreadableWorkbook(dir) {
+  const file = path.join(dir, 'broken.xlsx');
+  fs.writeFileSync(file, 'not a workbook');
+
+  const answer = text(await handleGetFileInfo({ path: file }));
+  assert.ok(/^errorMessage: \S/m.test(answer),
+    `get_file_info on a workbook Excel can't read should say why, got: ${JSON.stringify(answer)}`);
+}
+
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-excel-edges-'));
   const failures = [];
@@ -88,6 +99,7 @@ export default async function runTests() {
     ["edit_block keeps content within the range TO corner", testRangeToCorner],
     ["read_file reads a sheet named like a number", testSheetNamedLikeANumber],
     ["write_file appends a 2D array to the workbook, not to a new Sheet1", testAppendArrayWithoutSheet1],
+    ["get_file_info says why a workbook can't be read", testInfoOnUnreadableWorkbook],
   ];
   try {
     for (const [name, test] of cases) {
