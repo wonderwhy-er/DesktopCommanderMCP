@@ -14,12 +14,12 @@
 import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
-import { spawnSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { searchFiles } from '../dist/tools/filesystem.js';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { runNode } from './helpers/run-node.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-without-ripgrep-test');
@@ -70,11 +70,11 @@ async function testWithoutRipgrep() {
   console.log(`✓ searchFiles(): ${CASES.length} patterns through ripgrep`);
 
   // In a process where ripgrep can't be started
-  const child = spawnSync(process.execPath, [
+  const child = await runNode([
     '--import', pathToFileURL(path.join(__dirname, 'fixtures', 'unusable-ripgrep-preload.mjs')).href,
     path.join(__dirname, 'fixtures', 'search-without-ripgrep.mjs'),
     SEARCH_DIR, ...CASES.map(([pattern]) => pattern)
-  ], { env: { ...process.env, DC_TEST_UNUSABLE_RIPGREP: UNUSABLE_RIPGREP }, encoding: 'utf8', timeout: 60000 });
+  ], { env: { ...process.env, DC_TEST_UNUSABLE_RIPGREP: UNUSABLE_RIPGREP }, timeoutMs: 60000 });
   assert.strictEqual(child.status, 0, `The process without ripgrep failed (${child.status}): ${child.stderr}`);
   const lines = child.stdout.trim().split('\n');
   const { fileSearch, contentSearch, results } = JSON.parse(lines.pop());

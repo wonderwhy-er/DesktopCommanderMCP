@@ -8,7 +8,6 @@
 import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
-import { spawnSync } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
 import { searchManager } from '../dist/search-manager.js';
@@ -16,6 +15,7 @@ import { writeFile } from '../dist/tools/filesystem.js';
 import { configManager } from '../dist/config-manager.js';
 import { startSearchAndWait } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { runNode } from './helpers/run-node.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-office-completion-test');
@@ -211,9 +211,9 @@ async function testFailedOfficeSearchIsLogged() {
     const page = await handleGetMoreSearchResults({ sessionId });
     searchManager.dispose();
     console.log(JSON.stringify({ sessionId, isError: !!page.isError, text: page.content[0].text }));`;
-  const child = spawnSync(process.execPath, [
+  const child = await runNode([
     '--import', `data:text/javascript,${encodeURIComponent(preload)}`, '--input-type=module', '-e', script,
-  ], { encoding: 'utf8', timeout: 60000 });
+  ], { timeoutMs: 60000 });
   assert.strictEqual(child.status, 0, `The search process failed (${child.status}): ${child.stderr}`);
 
   const lines = child.stdout.trim().split('\n');
