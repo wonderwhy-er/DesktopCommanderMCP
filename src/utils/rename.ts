@@ -8,8 +8,8 @@ import os from 'os';
  * process has it open (readers, antivirus and search indexers hold such
  * handles briefly) and reports EPERM, EACCES or EBUSY. Those errors are
  * retried with a short backoff. Any other error, one onto an existing
- * directory (Windows answers that with EPERM too, and it never succeeds), and
- * every error on macOS/Linux, is thrown immediately.
+ * directory or a read-only file (Windows answers those with EPERM too, and
+ * they never succeed), and every error on macOS/Linux, is thrown immediately.
  */
 
 const WINDOWS_TRANSIENT_RENAME_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY']);
@@ -23,16 +23,18 @@ export async function renameWithRetry(from: string, to: string): Promise<void> {
       return;
     } catch (error: any) {
       const transient = os.platform() === 'win32' && WINDOWS_TRANSIENT_RENAME_ERRORS.has(error?.code)
-        && !(await isDirectory(to));
+        && !(await cannotBeReplaced(to));
       if (!transient || Date.now() >= deadline) throw error;
       await new Promise((resolve) => setTimeout(resolve, Math.min(10 * attempt, 100)));
     }
   }
 }
 
-async function isDirectory(filePath: string): Promise<boolean> {
+/** Whether `filePath` is what a rename never replaces on Windows: a directory, or a read-only file */
+async function cannotBeReplaced(filePath: string): Promise<boolean> {
   try {
-    return (await fs.lstat(filePath)).isDirectory();
+    const stats = await fs.lstat(filePath);
+    return stats.isDirectory() || (stats.mode & 0o200) === 0;
   } catch {
     // Missing or unreadable: nothing says the rename can't succeed, so keep treating it as a held file
     return false;
