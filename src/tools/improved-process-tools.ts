@@ -329,9 +329,10 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
           resolve();
         };
 
-        // Poll for new output
+        // Poll for new output, or for the exit (the session is then no
+        // longer active): a process that exited writes nothing more itself
         interval = setInterval(() => {
-          if (terminalManager.hasUnreadOutput(pid)) {
+          if (terminalManager.hasUnreadOutput(pid) || !terminalManager.getSession(pid)) {
             resolveOnce();
           }
         }, 50);
@@ -587,13 +588,16 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
               resolveOnce();
               return;
             }
+          }
 
-            // Also exit if process finished
-            if (processState.isFinished) {
-              exitReason = 'process_finished';
-              resolveOnce();
-              return;
-            }
+          // Also exit once the process has exited, whether or not it wrote
+          // anything since the previous poll: no answer can come any more
+          const state = terminalManager.getProcessState(pid, outputSnapshot);
+          if (state?.isFinished) {
+            processState = state;
+            exitReason = 'process_finished';
+            resolveOnce();
+            return;
           }
 
           if (Date.now() >= deadline) {

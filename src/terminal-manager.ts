@@ -284,6 +284,7 @@ export class TerminalManager {
     return new Promise((resolve) => {
       let resolved = false;
       let periodicCheck: NodeJS.Timeout | null = null;
+      let waitTimer: NodeJS.Timeout | null = null;
 
       // Quick prompt patterns for immediate detection
       const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
@@ -292,6 +293,7 @@ export class TerminalManager {
         if (resolved) return;
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
+        if (waitTimer) clearTimeout(waitTimer);
 
         // The state the wait ended in, from the session: finished if the
         // process exited, else judged from its output. A process error leaves
@@ -424,7 +426,7 @@ export class TerminalManager {
 
       // Timeout fallback, bounded by the wait ceiling so the call returns
       // before the MCP client gives up on it; the process keeps running.
-      setTimeout(() => {
+      waitTimer = setTimeout(() => {
         session.isBlocked = true;
         exitReason = 'timeout';
         resolveOnce({
