@@ -3,11 +3,15 @@
  * These tests cover edge cases and advanced scenarios
  */
 
+import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+import { searchManager } from '../dist/search-manager.js';
+import { searchAndWaitForCompletion, startSearchAndWait } from './helpers/search.js';
 import { configManager } from '../dist/config-manager.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,48 +26,6 @@ const colors = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m'
 };
-
-/**
- * Helper function to wait for search completion and get all results
- */
-async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
-  const result = await handleStartSearch(searchArgs);
-  
-  // Extract session ID from result
-  const sessionIdMatch = result.content[0].text.match(/Started .+ session: (.+)/);
-  if (!sessionIdMatch) {
-    throw new Error('Could not extract session ID from search result');
-  }
-  const sessionId = sessionIdMatch[1];
-  
-  try {
-    // Wait for completion by polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeout) {
-      const moreResults = await handleGetMoreSearchResults({ sessionId });
-      
-      if (moreResults.content[0].text.includes('✅ Search completed')) {
-        return { initialResult: result, finalResult: moreResults, sessionId };
-      }
-      
-      if (moreResults.content[0].text.includes('❌ ERROR')) {
-        throw new Error(`Search failed: ${moreResults.content[0].text}`);
-      }
-      
-      // Wait a bit before polling again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    throw new Error('Search timed out');
-  } finally {
-    // Always stop the search session to prevent hanging
-    try {
-      await handleStopSearch({ sessionId });
-    } catch (e) {
-      // Ignore errors when stopping - session might already be completed
-    }
-  }
-}
 
 /**
  * Setup function for edge case tests
@@ -111,42 +73,8 @@ async function setupEdgeCases() {
  * Teardown function for edge case tests
  */
 async function teardownEdgeCases(originalConfig) {
-  // Clean up any remaining search sessions
-  try {
-    const { handleListSearches, handleStopSearch } = await import('../dist/handlers/search-handlers.js');
-    const sessionsResult = await handleListSearches();
-    if (sessionsResult.content && sessionsResult.content[0] && sessionsResult.content[0].text) {
-      const sessionsText = sessionsResult.content[0].text;
-      if (!sessionsText.includes('No active searches')) {
-        // Extract session IDs and stop them
-        const sessionMatches = sessionsText.match(/Session: (\S+)/g);
-        if (sessionMatches) {
-          for (const match of sessionMatches) {
-            const sessionId = match.replace('Session: ', '');
-            try {
-              await handleStopSearch({ sessionId });
-            } catch (e) {
-              // Ignore errors - session might already be stopped
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // Ignore errors in cleanup
-  }
-  
   await fs.rm(EDGE_CASE_TEST_DIR, { force: true, recursive: true });
   await configManager.updateConfig(originalConfig);
-}
-
-/**
- * Assert function
- */
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
 }
 
 /**
@@ -155,16 +83,16 @@ function assert(condition, message) {
 async function testEmptyFiles() {
   console.log(`${colors.yellow}Testing empty and whitespace files...${colors.reset}`);
   
+  // Search only the empty and whitespace-only files: nothing can match, nothing may break
   const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
-    searchType: 'content'
+    searchType: 'content',
+    filePattern: 'empty.txt|whitespace.txt'
   });
-  
-  const text = finalResult.content[0].text;
-  // Should not find matches in empty files, but should handle gracefully
-  const isValidResponse = !text.includes('empty.txt') && !text.includes('whitespace.txt') || text.includes('No matches');
-  assert(isValidResponse, 'Should not find matches in empty files');
+
+  assert(!finalResult.isError, `Search over empty files should not fail: ${finalResult.content[0].text}`);
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 0, 'Empty and whitespace-only files should not match');
   
   console.log(`${colors.green}✓ Empty files test passed${colors.reset}`);
 }
@@ -183,6 +111,7 @@ async function testLongLines() {
   
   const text = finalResult.content[0].text;
   assert(text.includes('long-lines.txt'), 'Should find pattern in files with very long lines');
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 1, 'The 20,000-character line holds exactly one match');
   
   console.log(`${colors.green}✓ Long lines test passed${colors.reset}`);
 }
@@ -201,6 +130,7 @@ async function testSpecialCharacters() {
   
   const text = finalResult.content[0].text;
   assert(text.includes('special-chars.txt'), 'Should find patterns with special characters');
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 1, 'Only special-chars.txt contains test@pattern');
   
   console.log(`${colors.green}✓ Special characters test passed${colors.reset}`);
 }
@@ -211,16 +141,16 @@ async function testSpecialCharacters() {
 async function testBinaryFiles() {
   console.log(`${colors.yellow}Testing binary files handling...${colors.reset}`);
   
+  // Search only the binary file: it must not break the search or produce garbage matches
   const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
-    searchType: 'content'
+    searchType: 'content',
+    filePattern: '*.bin'
   });
-  
-  const text = finalResult.content[0].text;
-  // Binary files should either be ignored or handled gracefully
-  // Should not crash the search
-  assert(typeof text === 'string', 'Should return string result even with binary files present');
+
+  assert(!finalResult.isError, `Search over a binary file should not fail: ${finalResult.content[0].text}`);
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 0, 'The binary fixture contains no "pattern"');
   
   console.log(`${colors.green}✓ Binary files test passed${colors.reset}`);
 }
@@ -258,20 +188,19 @@ async function testLargeFiles() {
 async function testConcurrentSearches() {
   console.log(`${colors.yellow}Testing concurrent searches...${colors.reset}`);
   
-  // Start multiple searches concurrently
-  const promises = [
-    handleStartSearch({ path: EDGE_CASE_TEST_DIR, pattern: 'pattern', searchType: 'content' }),
-    handleStartSearch({ path: EDGE_CASE_TEST_DIR, pattern: 'test', searchType: 'content' }),
-    handleStartSearch({ path: EDGE_CASE_TEST_DIR, pattern: 'chars', searchType: 'content' })
-  ];
-  
-  const results = await Promise.all(promises);
-  
-  // All searches should complete successfully
-  results.forEach((result, index) => {
-    assert(result.content, `Search ${index + 1} should have content`);
-    assert(result.content.length > 0, `Search ${index + 1} should not be empty`);
-  });
+  const patterns = ['pattern', 'test', 'chars'];
+  const countMatches = async (pattern) => {
+    const { finalResult } = await searchAndWaitForCompletion({ path: EDGE_CASE_TEST_DIR, pattern, searchType: 'content' });
+    return finalResult.structuredContent.totalMatches;
+  };
+
+  // Concurrent sessions must not mix up each other's results
+  const concurrent = await Promise.all(patterns.map(countMatches));
+  const alone = [];
+  for (const pattern of patterns) alone.push(await countMatches(pattern));
+
+  assert(alone.every((count) => count > 0), `Each pattern should match something, got ${alone}`);
+  assert.deepStrictEqual(concurrent, alone, 'Concurrent searches should find the same matches as searches run alone');
   
   console.log(`${colors.green}✓ Concurrent searches test passed${colors.reset}`);
 }
@@ -282,19 +211,14 @@ async function testConcurrentSearches() {
 async function testVeryShortTimeout() {
   console.log(`${colors.yellow}Testing very short timeout...${colors.reset}`);
   
-  const result = await handleStartSearch({
+  // A 1ms timeout must end the session promptly instead of hanging
+  const sessionId = await startSearchAndWait({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
     searchType: 'content',
     timeout_ms: 1 // Extremely short timeout
-  });
-  
-  assert(result.content, 'Should handle timeout gracefully');
-  const text = result.content[0].text;
-  
-  // Should either return results or handle timeout gracefully
-  const hasValidResponse = text.includes('session:') || text.includes('Error') || text.includes('timeout');
-  assert(hasValidResponse, 'Should handle very short timeout appropriately');
+  }, 5000);
+  await handleStopSearch({ sessionId });
   
   console.log(`${colors.green}✓ Very short timeout test passed${colors.reset}`);
 }
@@ -305,16 +229,16 @@ async function testVeryShortTimeout() {
 async function testInvalidFilePatterns() {
   console.log(`${colors.yellow}Testing invalid file patterns...${colors.reset}`);
   
-  // Test with invalid glob pattern
-  const result = await handleStartSearch({
+  // Test with an odd glob pattern that matches no file
+  const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
     searchType: 'content',
     filePattern: '***invalid***'
   });
-  
-  // Should handle gracefully
-  assert(result.content, 'Should handle invalid file patterns gracefully');
+
+  assert(!finalResult.isError, `An unmatched file pattern should not fail: ${finalResult.content[0].text}`);
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 0, 'No file matches ***invalid***');
   
   console.log(`${colors.green}✓ Invalid file patterns test passed${colors.reset}`);
 }
@@ -325,16 +249,16 @@ async function testInvalidFilePatterns() {
 async function testZeroMaxResults() {
   console.log(`${colors.yellow}Testing zero max results...${colors.reset}`);
   
-  const result = await handleStartSearch({
+  // maxResults: 0 currently means "no limit"
+  const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
     searchType: 'content',
     maxResults: 0
   });
-  
-  const text = result.content[0].text;
-  // Should return appropriate response
-  assert(typeof text === 'string', 'Should return string result');
+
+  assert(!finalResult.isError, `maxResults: 0 should not fail: ${finalResult.content[0].text}`);
+  assert(finalResult.structuredContent.totalMatches > 0, 'maxResults: 0 should not suppress all results');
   
   console.log(`${colors.green}✓ Zero max results test passed${colors.reset}`);
 }
@@ -345,16 +269,15 @@ async function testZeroMaxResults() {
 async function testLargeContextLines() {
   console.log(`${colors.yellow}Testing large context lines...${colors.reset}`);
   
-  const result = await handleStartSearch({
+  const { finalResult } = await searchAndWaitForCompletion({
     path: EDGE_CASE_TEST_DIR,
     pattern: 'pattern',
     searchType: 'content',
     contextLines: 1000 // Very large context
   });
-  
-  assert(result.content, 'Should handle large context lines');
-  const text = result.content[0].text;
-  assert(typeof text === 'string', 'Should return string result');
+
+  assert(!finalResult.isError, `Large context should not fail: ${finalResult.content[0].text}`);
+  assert(finalResult.structuredContent.totalMatches > 0, 'Large context should still find the matches');
   
   console.log(`${colors.green}✓ Large context lines test passed${colors.reset}`);
 }
@@ -365,25 +288,17 @@ async function testLargeContextLines() {
 async function testPathTraversalSecurity() {
   console.log(`${colors.yellow}Testing path traversal security...${colors.reset}`);
   
-  // Test with path traversal attempts
-  try {
-    const result = await handleStartSearch({
-      path: EDGE_CASE_TEST_DIR + '/../../../etc',
-      pattern: 'pattern',
-      searchType: 'content'
-    });
-    
-    // If it doesn't throw, it should handle gracefully
-    assert(result.content, 'Should handle path traversal attempts gracefully');
-    const text = result.content[0].text;
-    const isSecure = text.includes('not allowed') || text.includes('Error') || text.includes('permission');
-    assert(isSecure, 'Should handle path traversal securely');
-    
-  } catch (error) {
-    // It's acceptable to throw an error for security violations
-    const isSecurityError = error.message.includes('not allowed') || error.message.includes('permission');
-    assert(isSecurityError, 'Should reject unauthorized path access');
-  }
+  // allowedDirectories is EDGE_CASE_TEST_DIR, so '..' out of it must be refused as not allowed
+  // (a mere "path does not exist" error would not prove the allowlist held)
+  const result = await handleStartSearch({
+    path: EDGE_CASE_TEST_DIR + '/../../../etc',
+    pattern: 'pattern',
+    searchType: 'content'
+  });
+
+  const text = result.content[0].text;
+  assert(result.isError === true, `Path traversal should be refused, got: ${text}`);
+  assert(text.includes('not allowed'), `Path traversal should be refused by the allowlist, got: ${text}`);
   
   console.log(`${colors.green}✓ Path traversal security test passed${colors.reset}`);
 }
@@ -416,8 +331,9 @@ async function testManySmallFiles() {
       maxResults: 50
     });
     
-    const text = finalResult.content[0].text;
-    assert(text.includes('pattern') || text.includes('No matches'), 'Should handle many small files');
+    // 100 files match once each; maxResults caps the total
+    const { totalMatches } = finalResult.structuredContent;
+    assert(totalMatches > 0 && totalMatches <= 50, `maxResults: 50 across 100 matching files should return 1-50 results, got ${totalMatches}`);
     
     console.log(`${colors.green}✓ Many small files test passed${colors.reset}`);
     
@@ -505,28 +421,12 @@ export async function testSearchCodeEdgeCases() {
     console.error(error.stack);
     throw error;
   } finally {
+    // Stop any search still running (before its files are removed) and drop all sessions
+    searchManager.dispose();
+
     // Cleanup
     if (originalConfig) {
       await teardownEdgeCases(originalConfig);
-    }
-    
-    // Force cleanup of search manager to ensure process can exit
-    try {
-      const { searchManager, stopSearchManagerCleanup } = await import('../dist/search-manager.js');
-      
-      // Terminate all active sessions
-      const activeSessions = searchManager.listSearchSessions();
-      for (const session of activeSessions) {
-        searchManager.terminateSearch(session.id);
-      }
-      
-      // Stop the cleanup interval
-      stopSearchManagerCleanup();
-      
-      // Clear the sessions map
-      searchManager.sessions?.clear?.();
-    } catch (e) {
-      // Ignore import errors
     }
   }
 }
@@ -535,12 +435,4 @@ export async function testSearchCodeEdgeCases() {
 export default testSearchCodeEdgeCases;
 
 // Run tests if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  testSearchCodeEdgeCases().then(() => {
-    console.log('Edge case tests completed successfully.');
-    process.exit(0);
-  }).catch(error => {
-    console.error('Edge case test execution failed:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, testSearchCodeEdgeCases);
