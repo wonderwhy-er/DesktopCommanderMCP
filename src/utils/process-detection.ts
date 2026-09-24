@@ -13,18 +13,39 @@ export interface ProcessState {
   lastOutput: string;
 }
 
-// Common REPL prompt patterns
+// Common REPL prompts. Most are generic ("... ", "> ", "+ "): inside or at the
+// end of a longer line they are ordinary text (pytest -v's "collecting ... ",
+// #196), so they count only in a last line made of prompts alone: the prompt
+// itself, or, from a REPL that writes its prompts to stderr and doesn't echo
+// input (python -i, bash -i), the prompts it wrote one after another there
+// (">>> ... ").
 const REPL_PROMPTS = {
   python: ['>>> ', '... '],
   node: ['> ', '... '],
   r: ['> ', '+ '],
   julia: ['julia> ', '       '], // julia continuation is spaces
-  shell: ['$ ', '# ', '% ', 'bash-', 'zsh-'],
+  shell: ['$ ', '# ', '% '],
   mysql: ['mysql> ', '    -> '],
   postgres: ['=# ', '-# '],
   redis: ['redis> '],
   mongo: ['> ', '... ']
 };
+
+const PROMPTS = [...new Set(Object.values(REPL_PROMPTS).flat())];
+const PROMPTS_ONLY = new RegExp(`^(?:${PROMPTS.map(escapeRegExp).join('|')})+$`);
+
+// Prompts that also count at the end of a longer line: named ones, after
+// output that didn't end in a newline ("done>>> "), and a shell or psql
+// prompt's end ("bash-5.2$ ", "user@host dir % ", "postgres=# ")
+const LINE_END_PROMPTS = ['>>> ', 'julia> ', 'mysql> ', 'redis> ', '$ ', '# ', '% '];
+
+/** The prompt the last line of output is, or ends in, if any */
+function findPrompt(lastLine: string): string | undefined {
+  if (PROMPTS_ONLY.test(lastLine)) {
+    return PROMPTS.find(prompt => lastLine.endsWith(prompt));
+  }
+  return LINE_END_PROMPTS.find(prompt => lastLine.endsWith(prompt));
+}
 
 /**
  * How much of the end of the output state detection examines. A prompt is
@@ -67,10 +88,7 @@ function analyzeOutputTail(output: string): ProcessState {
   const lastLine = lines[lines.length - 1] || '';
 
   // Check for REPL prompts (waiting for input)
-  const allPrompts = Object.values(REPL_PROMPTS).flat();
-  const detectedPrompt = allPrompts.find(prompt => 
-    lastLine.endsWith(prompt) || lastLine.includes(prompt)
-  );
+  const detectedPrompt = findPrompt(lastLine);
 
   if (detectedPrompt) {
     return {
