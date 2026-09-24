@@ -64,6 +64,33 @@ export function processGroupOf(pid) {
   return Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim());
 }
 
+/**
+ * macOS/Linux: sends `signal` to every process in process group `pgid`.
+ * A group with nothing left to signal is not an error: one that is gone
+ * (ESRCH), or one whose only processes are zombies, which macOS answers with
+ * EPERM (Linux delivers the signal). A killed process stays a zombie until it
+ * is reaped, and the orphans of a killed tree wait for launchd to reap them.
+ */
+export function signalProcessGroup(pgid, signal) {
+  try {
+    process.kill(-pgid, signal);
+  } catch (error) {
+    if (error.code === 'ESRCH') return;
+    if (error.code === 'EPERM' && liveProcessesInGroup(pgid).length === 0) return;
+    throw error;
+  }
+}
+
+/** PIDs in process group `pgid` that are not zombies */
+function liveProcessesInGroup(pgid) {
+  return execFileSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    .trim()
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([, group, state]) => Number(group) === pgid && !state.startsWith('Z'))
+    .map(([pid]) => Number(pid));
+}
+
 /** Waits until none of `pids` runs. Returns the ones still running at the deadline. */
 export async function waitForExit(pids, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
