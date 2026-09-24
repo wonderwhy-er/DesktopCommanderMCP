@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import { addToolCallPaths, capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
-import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
+import { getFileHandler, TextFileHandler, isImageAnswer } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, FileInfo, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
@@ -443,12 +443,10 @@ type FileResultPayloads = PdfPayload;
 /**
  * Read file content from a URL
  * @param url URL to fetch content from
+ * @param svgAsImage An SVG is answered as an image, for the file preview widget; otherwise as text
  * @returns File content or file result with metadata
  */
-export async function readFileFromUrl(url: string): Promise<FileResult> {
-    // Import the MIME type utilities
-    const { isImageFile } = await import('./mime-types.js');
-
+export async function readFileFromUrl(url: string, svgAsImage = false): Promise<FileResult> {
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
@@ -467,7 +465,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
-        const isImage = isImageFile(contentType);
+        const isImage = isImageAnswer(contentType, svgAsImage);
         const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
 
         // NEW: Add PDF handling before image check
@@ -667,7 +665,7 @@ export async function readFile(
 ): Promise<FileResult> {
     const { isUrl, offset, length, sheet, range, svgAsImage } = options ?? {};
     return isUrl
-        ? readFileFromUrl(filePath)
+        ? readFileFromUrl(filePath, svgAsImage)
         : readFileFromDisk(filePath, { offset, length, sheet, range, svgAsImage });
 }
 
