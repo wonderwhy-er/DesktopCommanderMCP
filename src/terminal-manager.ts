@@ -57,15 +57,11 @@ interface ManagedSession extends TerminalSession {
 }
 
 interface CompletedSession {
-  pid: number;
-  outputLines: string[];       // Line-based buffer (consistent with active sessions)
+  // The session itself, not a copy: a process the command started can keep
+  // writing to the pipes after the exit, and that output lands in its buffers
+  session: ManagedSession;
   exitCode: number | null;
-  startTime: Date;
   endTime: Date;
-  bufferedChars: number;       // Carried over from the active session (see TerminalSession)
-  evictedLines: number;
-  evictedChars: number;
-  streams: StreamTails;
 }
 
 /** The retained-output fields shared by active and completed sessions. */
@@ -441,15 +437,9 @@ export class TerminalManager {
         if (childProcess.pid) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
-            pid: childProcess.pid,
-            outputLines: [...session.outputLines], // Copy line buffer
+            session,
             exitCode: code,
-            startTime: session.startTime,
-            endTime: new Date(),
-            bufferedChars: session.bufferedChars,
-            evictedLines: session.evictedLines,
-            evictedChars: session.evictedChars,
-            streams: { stdout: { ...session.streams.stdout }, stderr: { ...session.streams.stderr } }
+            endTime: new Date()
           });
 
           // Keep only last 100 completed sessions
@@ -590,9 +580,9 @@ export class TerminalManager {
     // Then check completed sessions
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      const runtimeMs = completedSession.endTime.getTime() - completedSession.startTime.getTime();
+      const runtimeMs = completedSession.endTime.getTime() - completedSession.session.startTime.getTime();
       const result = this.readFromLineBuffer(
-        completedSession.outputLines,
+        completedSession.session.outputLines,
         offset,
         length,
         0,  // Completed sessions don't track read position
@@ -601,7 +591,7 @@ export class TerminalManager {
         completedSession.exitCode,
         runtimeMs
       );
-      result.evictedLines = completedSession.evictedLines;
+      result.evictedLines = completedSession.session.evictedLines;
       return result;
     }
 
@@ -672,7 +662,7 @@ export class TerminalManager {
 
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
-      return completedSession.outputLines.length;
+      return completedSession.session.outputLines.length;
     }
 
     return null;
@@ -737,7 +727,7 @@ export class TerminalManager {
    * between snapshot and poll.
    */
   readOutputSince(pid: number, snapshot: OutputSnapshot): { output: string; next: OutputSnapshot } | null {
-    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid);
+    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
     if (!buffer) {
       return null;
     }
@@ -771,7 +761,7 @@ export class TerminalManager {
    * state from.
    */
   getProcessState(pid: number, since?: OutputSnapshot): ProcessState | null {
-    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid);
+    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
     if (!buffer) {
       return null;
     }
