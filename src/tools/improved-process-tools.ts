@@ -22,6 +22,14 @@ const mcpRoot = path.resolve(__dirname, '..', '..');
 const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
 let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
 
+/** The answer when some processes of a session could not be ended */
+function terminationFailedResult(pid: number): ServerResult {
+  return {
+    content: [{ type: "text", text: `Error: Could not terminate every process of session ${pid}; some may still be running` }],
+    isError: true,
+  };
+}
+
 /**
  * Execute Node.js code via temp file (fallback when Python unavailable)
  * Creates temp .mjs file in MCP directory for ES module import access
@@ -32,7 +40,7 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
   try {
     await fs.writeFile(tempFile, code, 'utf8');
 
-    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }>((resolve) => {
+    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; treeSurvived?: boolean }>((resolve) => {
       const proc = spawn(process.execPath, [tempFile], {
         cwd: mcpRoot,
         windowsHide: true  // Prevent visible console windows on Windows
@@ -40,14 +48,18 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
 
       let stdout = '';
       let stderr = '';
-      let timedOut = false;
 
       // Not spawn's own timeout option: that kills only the script, leaving the
       // processes it started running and holding its output pipes open, so
       // 'close' never came and the call never returned.
-      const timer = setTimeout(() => {
-        timedOut = true;
-        void terminateProcessTree(proc);
+      const timer = setTimeout(async () => {
+        if (!(await terminateProcessTree(proc))) {
+          // Some of the tree survived and may keep the output pipes open, so
+          // 'close' may never come: answer now and stop reading from them
+          proc.stdout.destroy();
+          proc.stderr.destroy();
+          resolve({ stdout, stderr, exitCode: 1, treeSurvived: true });
+        }
       }, timeout_ms);
 
       proc.stdout.on('data', (data) => {
@@ -60,26 +72,27 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
 
       proc.on('close', (exitCode) => {
         clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: exitCode ?? 1, timedOut });
+        resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
       });
 
       proc.on('error', (err) => {
         clearTimeout(timer);
-        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1, timedOut });
+        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1 });
       });
     });
 
     // Clean up temp file
     await fs.unlink(tempFile).catch(() => {});
 
-    if (result.timedOut || result.exitCode !== 0) {
-      const reason = result.timedOut
-        ? `Execution timed out after ${timeout_ms}ms`
-        : `Execution failed (exit code ${result.exitCode})`;
+    if (result.treeSurvived) {
+      return terminationFailedResult(sessionPid);
+    }
+
+    if (result.exitCode !== 0) {
       return {
         content: [{
           type: "text",
-          text: `${reason}:\n${result.stderr}\n${result.stdout}`
+          text: `Execution failed (exit code ${result.exitCode}):\n${result.stderr}\n${result.stdout}`
         }],
         isError: true
       };
@@ -764,16 +777,13 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
   // Returns once the session's processes are gone, so a success means they no longer run
   const outcome = await terminalManager.forceTerminate(pid);
   if (outcome === 'failed') {
-    return {
-      content: [{ type: "text", text: `Error: Could not terminate every process of session ${pid}; some may still be running` }],
-      isError: true,
-    };
+    return terminationFailedResult(pid);
   }
   return {
     content: [{
       type: "text",
       text: outcome === 'terminated'
-        ? `Terminated session ${pid} and all processes running under it`
+        ? `Successfully initiated termination of session ${pid}`
         : `No active session found for PID ${pid}`
     }],
   };

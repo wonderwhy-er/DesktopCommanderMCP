@@ -41,7 +41,7 @@ async function assertTerminated(shellPid, treePids) {
   assert.deepStrictEqual(stillRunning, [],
     `force_terminate should end the shell ${shellPid} and the processes it started (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
   assert(!listedAfter.includes(shellPid), `Terminated process ${shellPid} should disappear from list_sessions`);
-  assert.strictEqual(terminated.content[0].text, `Terminated session ${shellPid} and all processes running under it`);
+  assert.strictEqual(terminated.content[0].text, `Successfully initiated termination of session ${shellPid}`);
 }
 
 async function testListAndTerminateSessions() {

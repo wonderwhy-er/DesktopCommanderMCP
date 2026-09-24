@@ -43,7 +43,7 @@ async function assertForceTerminateEndsTree(levels, ...flags) {
     const stillRunning = await waitForExit([shellPid, ...treePids]);
     assert.deepStrictEqual(stillRunning, [],
       `force_terminate should end the shell ${shellPid} and all ${levels} processes under it (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
-    assert.strictEqual(terminated.content[0].text, `Terminated session ${shellPid} and all processes running under it`);
+    assert.strictEqual(terminated.content[0].text, `Successfully initiated termination of session ${shellPid}`);
     return treePids;
   } finally {
     if (shellPid > 0) await forceTerminate({ pid: shellPid });
@@ -104,7 +104,7 @@ async function testForceTerminateEndsChildrenStartedDuringGrace() {
     // Otherwise the case above was not exercised
     assert.strictEqual(late.started.length, 2, `Both levels should have started a child on SIGTERM, found: ${late.started.join(', ')}`);
     const latePids = late.all;
-    assert.strictEqual(terminated.content[0].text, `Terminated session ${shellPid} and all processes running under it`);
+    assert.strictEqual(terminated.content[0].text, `Successfully initiated termination of session ${shellPid}`);
     console.log(`✓ Tree (${treePids.join(' -> ')}) and children started during the grace (${latePids.join(', ')}) are gone`);
   } finally {
     if (shellPid > 0) await forceTerminate({ pid: shellPid });
@@ -151,10 +151,76 @@ async function testNodeLocalTimeoutEndsTree() {
       `The timeout should end the script ${scriptPid()[0]} and the processes it started (${treePids.join(', ')}); still running: ${stillRunning.join(', ')}`);
     assert(result, `interact_with_process should return after its ${TIMEOUT_MS}ms timeout, but had not returned after ${RETURN_LIMIT_MS}ms`);
     assert(result.isError, 'A script ended by the timeout should be reported as an error');
-    assert(result.content[0].text.startsWith(`Execution timed out after ${TIMEOUT_MS}ms`),
-      `The result should say the script timed out: ${result.content[0].text}`);
+    // The answer a script ended by its timeout always got
+    assert(result.content[0].text.startsWith('Execution failed (exit code 1):'),
+      `The result should be the old failure answer: ${result.content[0].text}`);
     console.log(`✓ Script ${scriptPid()[0]} and the processes it started (${treePids.join(' -> ')}) are gone`);
   } finally {
+    await forceTerminate({ pid: virtualPid });
+    cleanUpProcesses([...scriptPid(), ...readWrittenPids(dir)], [dir]);
+  }
+}
+
+/**
+ * When the node:local timeout can't end the script's whole tree, a survivor
+ * keeps the script's output pipes open. The call must still answer, with the
+ * error force_terminate gives, instead of waiting for pipes that never close.
+ */
+async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
+  console.log('\nTest: node:local timeout answers when part of the tree survives');
+  const TIMEOUT_MS = 1500;
+  const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
+  const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
+  const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
+  assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
+  const dir = createPidDir();
+  const scriptPidFile = path.join(dir, 'script.pid.txt');
+  const script = `
+    import { spawn } from 'child_process';
+    import fs from 'fs';
+    fs.writeFileSync(${JSON.stringify(scriptPidFile)}, String(process.pid));
+    spawn(${JSON.stringify(processTreeCommand(dir, 2))}, { shell: true, stdio: 'inherit', windowsHide: true });
+    setInterval(() => {}, 1000);
+  `;
+  const scriptPid = () => (fs.existsSync(scriptPidFile) ? [Number(fs.readFileSync(scriptPidFile, 'utf8'))] : []);
+  const saved = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot };
+  const restoreEnv = () => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  const stdoutWrite = process.stdout.write;
+  try {
+    let limit;
+    const call = interactWithProcess({ pid: virtualPid, input: script, timeout_ms: TIMEOUT_MS });
+    await readTreePids(dir, 2);
+    // Once the tree runs, make the tree-finding tool impossible to start, so the timeout ends only the script
+    if (process.platform === 'win32') {
+      process.env.SystemRoot = path.join(dir, 'no-windows');
+    } else {
+      process.env.PATH = path.join(dir, 'no-bin');
+    }
+    // The failure is logged to stdout (no transport); keep it out of the test output
+    process.stdout.write = () => true;
+    let result;
+    try {
+      result = await Promise.race([
+        call,
+        new Promise((resolve) => { limit = setTimeout(() => resolve(null), RETURN_LIMIT_MS); }),
+      ]);
+    } finally {
+      clearTimeout(limit);
+      process.stdout.write = stdoutWrite;
+      restoreEnv();
+    }
+    assert(result, `interact_with_process should answer after its ${TIMEOUT_MS}ms timeout, but had not after ${RETURN_LIMIT_MS}ms`);
+    assert(result.isError, 'A tree that survived should be reported as an error');
+    assert.strictEqual(result.content[0].text, `Error: Could not terminate every process of session ${virtualPid}; some may still be running`);
+    console.log('✓ Answered with the force_terminate error instead of waiting for the survivors');
+  } finally {
+    process.stdout.write = stdoutWrite;
+    restoreEnv();
     await forceTerminate({ pid: virtualPid });
     cleanUpProcesses([...scriptPid(), ...readWrittenPids(dir)], [dir]);
   }
@@ -256,6 +322,7 @@ export default async function runTests() {
     testForceTerminateEndsProcessesIgnoringSigterm,
     testForceTerminateEndsChildrenStartedDuringGrace,
     testNodeLocalTimeoutEndsTree,
+    testNodeLocalTimeoutAnswersWhenTreeSurvives,
     testTerminationFailureIsReported,
     testSessionsStayInServerProcessGroup,
   ];
