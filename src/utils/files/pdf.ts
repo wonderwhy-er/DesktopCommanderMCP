@@ -101,20 +101,16 @@ export class PdfFileHandler implements FileHandler {
      * Edit PDF by range/operations
      */
     async editRange(path: string, range: string, content: any, options?: Record<string, any>): Promise<EditResult> {
-        try {
-            // For PDF, range editing isn't directly supported
-            // Could interpret range as page numbers in future
-            const resultBuffer = await editPdf(path, content);
-            await fs.writeFile(options?.outputPath || path, resultBuffer);
-            return { success: true, editsApplied: 1 };
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                success: false,
-                editsApplied: 0,
-                errors: [{ location: range, error: errorMessage }]
-            };
-        }
+        // For PDF, range editing isn't directly supported
+        // Could interpret range as page numbers in future
+        // The output path and inserted PDFs are checked as write_pdf checks them.
+        // Errors reach edit_block (as the Excel handler's do), which answers with them.
+        // Imported when used: tools/filesystem.js loads this handler through the file handler factory
+        const { validatePdfOperationPaths } = await import('../../tools/filesystem.js');
+        const targetPath = await validatePdfOperationPaths(path, content, options?.outputPath);
+        const resultBuffer = await editPdf(path, content);
+        await fs.writeFile(targetPath, resultBuffer);
+        return { success: true, editsApplied: 1 };
     }
 
     /**
