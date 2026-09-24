@@ -51,6 +51,10 @@ export class MCPDevice {
      * whatever is still in flight.
      */
     private configWriteChain: Promise<void> = Promise.resolve();
+    /** device.json was written by this run: from then on, a missing file means someone else removed it. */
+    private configSavedThisRun = false;
+    /** device.json was removed after this run saved it (`remote --logout`): nothing is saved again this run. */
+    private loggedOutLocally = false;
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
 
@@ -358,7 +362,20 @@ export class MCPDevice {
         }
     }
 
+    /** Whether device.json exists. Errors other than "not found" go to the caller, which logs them. */
+    private async configExists(): Promise<boolean> {
+        try {
+            await fs.access(this.configPath);
+            return true;
+        } catch (error: any) {
+            if (error.code === 'ENOENT') return false;
+            throw error;
+        }
+    }
+
     async clearPersistedConfig() {
+        // Removed by this run itself, not by a logout
+        this.configSavedThisRun = false;
         try {
             await fs.rm(this.configPath, { force: true });
             console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
@@ -379,6 +396,16 @@ export class MCPDevice {
 
     private async writePersistedConfig(rotated?: AuthSession): Promise<void> {
         try {
+            if (this.loggedOutLocally) return;
+            // `remote --logout` removes device.json from another process, and
+            // the docs say that removes the saved credentials. Writing them back
+            // at the next rotation or at shutdown would undo it: this run keeps
+            // its session in memory (the logout is local only) and saves nothing.
+            if (this.configSavedThisRun && !(await this.configExists())) {
+                this.loggedOutLocally = true;
+                console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again');
+                return;
+            }
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             // Prefer the session TOKEN_REFRESHED handed us over re-reading it. A
             // sign-out landing in that gap answers null, and the write below would
@@ -409,6 +436,7 @@ export class MCPDevice {
             // answers a JSON.parse failure with null, which costs a full
             // browser reauthorization.
             await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+            this.configSavedThisRun = true;
             console.debug('[DEBUG] Config saved to:', this.configPath);
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);

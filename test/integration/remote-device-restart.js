@@ -35,6 +35,10 @@
  *     was handed and keeping nothing
  *   - a refresh refused once: auth-js drops the session, the device restores it
  *
+ * And the other way round: `remote --logout` while the device runs must stick.
+ * The device keeps running on its session, but must not write device.json back
+ * at its next rotation or at shutdown, so the next start asks to log in.
+ *
  * Real processes and real rotations take 40-50 s, so this runs with the
  * integration tests: `npm run test:integration`, or alone:
  *   npm run build && node test/integration/run-all-integration-tests.js remote-device-restart.js
@@ -45,7 +49,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  STARTED, deviceConfigPath, startDevice, stopGracefully, stopHard, tail, waitFor, writeDeviceConfig,
+  STARTED, deviceConfigPath, runLogout, startDevice, stopGracefully, stopHard, tail, waitFor, writeDeviceConfig,
 } from '../helpers/remote-device.js';
 import { startRemoteStandIn } from '../helpers/remote-stand-in.js';
 import { createTestEnv } from '../helpers/test-env.js';
@@ -219,6 +223,42 @@ async function runTests() {
 
     const saved = persistedGeneration(home, standIn);
     await expectReconnected(start(), standIn, `a refused refresh, a restore and a restart (${saved})`);
+  });
+
+  await test('a logout while the device runs sticks: device.json is not written back', async ({ standIn, env, home, start }) => {
+    standIn.accessTtlSec = ROTATING_ACCESS_TTL_SEC;
+    writeLoggedInHome(home, standIn, standIn.login());
+
+    const running = start();
+    await expectStarted(running, standIn, 'the first start, right after login'); // it has saved device.json by then
+    const logout = await runLogout(env);
+    const sinceLogout = running.output.length;
+    assert.ok(!fs.existsSync(deviceConfigPath(home)),
+      `setup: remote --logout did not remove device.json (exit ${logout.code}):
+${tail(logout.output)}`);
+
+    // The device keeps running on its session: it rotates it, then stops
+    // (gracefully where a signal can do that, as systemctl stop does). The
+    // rotation's save runs just after it: wait for its outcome in the output,
+    // a write or the note that the credentials were removed.
+    await rotateWhileRunning(running, standIn, 1);
+    const saveOutcome = /Config saved to|credentials were removed/;
+    await waitFor(running, () => saveOutcome.test(running.output.slice(sinceLogout)), START_DEADLINE_MS);
+    const afterRotation = fs.existsSync(deviceConfigPath(home));
+    await (process.platform === 'win32' ? stopHard : stopGracefully)(running);
+    const afterStop = fs.existsSync(deviceConfigPath(home));
+
+    const restarted = start();
+    await waitFor(restarted, () => STARTED.test(restarted.output) || standIn.deviceFlowRequests > 0, START_DEADLINE_MS);
+    const askedToLogIn = standIn.deviceFlowRequests > 0;
+    assert.ok(!afterRotation && !afterStop && askedToLogIn,
+      'after remote --logout, the running device wrote device.json back '
+      + `(after its next token refresh: ${afterRotation ? 'back' : 'gone'}; after it stopped: ${afterStop ? 'back' : 'gone'}), `
+      + `so the logout did not stick: the next start ${askedToLogIn ? 'asked' : 'did not ask'} to log in.
+`
+      + `    Stand-in: ${standIn.describe()}
+    The running device's output:
+${tail(running.output)}`);
   });
 
   console.log(`\n${failures.length ? '🔴' : '✅'} remote device restart: ${failures.length} failing test(s).`);
