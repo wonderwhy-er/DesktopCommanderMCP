@@ -7,6 +7,10 @@
  *   late-writer <trigger>     starts itself as print-late, sharing its stdout,
  *                             and exits: the output comes after the exit
  *   print-late <trigger>      prints "written after the exit" once <trigger> exists
+ *   two-lines <trigger>       prints "line one", then "line two" once <trigger>
+ *                             exists, and exits
+ *   open-line <trigger>       writes "ready>" with no newline, appends " more"
+ *                             to that line once <trigger> exists, keeps running
  *
  * Every mode ends on its own after LIFETIME_MS, so a failing test leaves
  * nothing running.
@@ -29,6 +33,8 @@ function onTrigger(then) {
   }, 20);
 }
 
+const keepRunning = () => setInterval(() => {}, 1000);
+
 const modes = {
   'late-writer': () => {
     const self = fileURLToPath(import.meta.url);
@@ -36,6 +42,15 @@ const modes = {
     console.log('writer started');
   },
   'print-late': () => onTrigger(() => console.log('written after the exit')),
+  'two-lines': () => {
+    console.log('line one');
+    onTrigger(() => console.log('line two'));
+  },
+  'open-line': () => {
+    process.stdout.write('ready>');
+    onTrigger(() => process.stdout.write(' more'));
+    keepRunning();
+  },
 };
 
 if (!modes[mode]) {

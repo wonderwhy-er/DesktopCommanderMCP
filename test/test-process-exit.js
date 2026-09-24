@@ -1,6 +1,8 @@
 /**
  * How the process tools report a process's output and its end:
  * - output written after the process exits stays readable
+ * - read_process_output keeps its read position after the exit, and returns
+ *   an unfinished last line again only when that line changed
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -10,7 +12,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { startProcess, readProcessOutput } from '../dist/tools/improved-process-tools.js';
+import { startProcess, readProcessOutput, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -67,8 +69,43 @@ async function testOutputAfterExitIsReadable() {
     `output written after the process exited should be readable within 5s, the last read returned: ${JSON.stringify(last)}`);
 }
 
+async function testSecondReadMovesForward() {
+  const trigger = newTrigger();
+  const { pid } = await start(fixture('two-lines', trigger), 1_000);
+  const read1 = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+  check(read1.includes('line one'), `the first read should return "line one", got: ${JSON.stringify(read1)}`);
+  pull(trigger);
+  await waitUntil(() => exited(pid), 10_000, 'the process exits after printing "line two"');
+  const read2 = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+  check(read2.includes('line two'), `the read after the exit should return "line two", got: ${JSON.stringify(read2)}`);
+  check(!read2.includes('line one'),
+    `the read after the exit should not repeat "line one", which the first read returned, got: ${JSON.stringify(read2)}`);
+}
+
+async function testOpenLineReturnedOnlyWhenChanged() {
+  const trigger = newTrigger();
+  const { pid } = await start(fixture('open-line', trigger), 1_000);
+  try {
+    const read1 = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+    check(read1.includes('ready>'), `the first read should return the unfinished line "ready>", got: ${JSON.stringify(read1)}`);
+    const read2StartedAt = Date.now();
+    const read2 = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+    const read2Ms = Date.now() - read2StartedAt;
+    check(!read2.includes('ready>'), `an unfinished line that didn't change should not be returned again, got: ${JSON.stringify(read2)}`);
+    check(read2Ms >= 500, `with nothing new, the read should wait for output (timeout 1000ms), returned after ${read2Ms}ms`);
+    pull(trigger);
+    const read3 = text(await readProcessOutput({ pid, timeout_ms: 5_000 }));
+    check(read3.includes('ready> more'),
+      `text appended to the unfinished line should be returned, got: ${JSON.stringify(read3)}`);
+  } finally {
+    await forceTerminate({ pid });
+  }
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
+  ['a read after the exit moves forward', testSecondReadMovesForward],
+  ['an unfinished line is returned again only when it changed', testOpenLineReturnedOnlyWhenChanged],
 ];
 
 async function runTests() {
