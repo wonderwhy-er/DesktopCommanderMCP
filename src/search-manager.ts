@@ -185,6 +185,9 @@ function characterClassEnd(glob: string, start: number): number {
  */
 export const MAX_OUTPUT_LINE_CHARS = Math.floor(constants.MAX_STRING_LENGTH / 2);
 
+/** The most of ripgrep's error output (stderr) a session keeps, in characters */
+const MAX_KEPT_ERROR_CHARS = 64 * 1024;
+
 /**
  * Search Session Manager - handles ripgrep processes like terminal sessions
  * Supports both file search and content search with progressive results
@@ -417,6 +420,18 @@ export const MAX_OUTPUT_LINE_CHARS = Math.floor(constants.MAX_STRING_LENGTH / 2)
 
   private skippedLinesOf(session: SearchSession): Array<{ file: string; count: number }> {
     return [...session.skippedLines].map(([file, count]) => ({ file, count }));
+  }
+
+  /**
+   * Keeps ripgrep's error output for the answer (shown when a search fails
+   * without results), each piece once and up to MAX_KEPT_ERROR_CHARS: a search
+   * over folders it can't read can print an error per entry, and the session
+   * keeps this until it is cleaned up. What comes first is kept.
+   */
+  private keepErrorOutput(session: SearchSession, text: string): void {
+    const kept = session.error ?? '';
+    if (kept.length >= MAX_KEPT_ERROR_CHARS) return;
+    session.error = kept + text.slice(0, MAX_KEPT_ERROR_CHARS - kept.length);
   }
 
   /**
@@ -1050,11 +1065,10 @@ export const MAX_OUTPUT_LINE_CHARS = Math.floor(constants.MAX_STRING_LENGTH / 2)
     process.stderr?.on('data', (data: Buffer) => {
       const errorText = data.toString();
 
-      // Store error text for potential user display, but don't capture individual errors
-      // We'll capture incomplete search status in the completion event instead
-      session.error = (session.error || '') + errorText;
+      // Store error text for potential user display (bounded: see keepErrorOutput)
+      this.keepErrorOutput(session, errorText);
 
-      // Filter meaningful errors
+      // Filter meaningful errors, for telemetry; they are part of the text kept above
       const filteredErrors = errorText
         .split('\n')
         .filter(line => {
@@ -1069,11 +1083,9 @@ export const MAX_OUTPUT_LINE_CHARS = Math.floor(constants.MAX_STRING_LENGTH / 2)
           return true;
         });
 
-      // Only add to session.error if there are actual meaningful errors after filtering
       if (filteredErrors.length > 0) {
         const meaningfulErrors = filteredErrors.join('\n').trim();
         if (meaningfulErrors) {
-          session.error = (session.error || '') + meaningfulErrors + '\n';
           capture('search_session_error', {
             sessionId: session.id,
             error: meaningfulErrors.substring(0, 200)
