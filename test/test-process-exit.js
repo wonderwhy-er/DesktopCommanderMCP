@@ -7,6 +7,8 @@
  *   reported finished because of its output text
  * - a wait ends when the process exits
  * - a line ending in ">" is a prompt only at the very end of the output
+ * - a process ended by a signal is reported with that signal, not
+ *   "exit code null"
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -174,6 +176,35 @@ async function testLineEndingInGreaterThanIsNotAPrompt() {
   check(!terminalManager.listActiveSessions().some((session) => session.pid === pid), 'the process should have exited');
 }
 
+async function testSignalIsReported() {
+  const { pid } = await start(fixture('stays-alive'), 1_000);
+  await forceTerminate({ pid });
+  await waitUntil(() => exited(pid), 10_000, 'force_terminate ends the process');
+  // How it ended, as Node reported it: a signal (child.kill, or any signal on
+  // POSIX), or an exit code (on Windows, ending the tree with taskkill /F
+  // gives code 1 and no signal). A tail read doesn't move the read position.
+  const { exitCode, signal } = terminalManager.readOutputPaginated(pid, -1, 1);
+  console.log(`force_terminate ended it with ${signal ? `signal ${signal}` : `exit code ${exitCode}`}`);
+  const read = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+  check(!read.includes('exit code null'), `a killed process should not be reported as "exit code null", got: ${JSON.stringify(read)}`);
+  if (signal) {
+    check(new RegExp(`✅ Process completed with signal ${signal} \\(runtime: \\d+\\.\\d\\ds\\)`).test(read),
+      `a process ended by ${signal} should be reported with that signal, got: ${JSON.stringify(read)}`);
+  } else {
+    check(new RegExp(`✅ Process completed with exit code ${exitCode} \\(runtime: \\d+\\.\\d\\ds\\)`).test(read),
+      `a process that ended with exit code ${exitCode} should be reported with that code, got: ${JSON.stringify(read)}`);
+  }
+  if (process.platform !== 'win32') {
+    check(signal, `on ${process.platform}, force_terminate should end the process with a signal, got exit code ${exitCode}`);
+  }
+
+  // (exit code 0: powershell.exe -Command turns a native command's non-zero code into 1)
+  const exited0 = await start(`node -e "console.log('hi')"`, 10_000);
+  const read0 = text(await readProcessOutput({ pid: exited0.pid, timeout_ms: 1_000 }));
+  check(/✅ Process completed with exit code 0 \(runtime: \d+\.\d\ds\)/.test(read0),
+    `an exit code should still read as before, got: ${JSON.stringify(read0)}`);
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
@@ -183,6 +214,7 @@ const CASES = [
   ['interact_with_process returns when the process exits', testInteractEndsWhenTheProcessExits],
   ['read_process_output returns when the process exits', testReadEndsWhenTheProcessExits],
   ['a line ending in ">" is not a prompt', testLineEndingInGreaterThanIsNotAPrompt],
+  ['a killed process is reported with its signal', testSignalIsReported],
 ];
 
 async function runTests() {

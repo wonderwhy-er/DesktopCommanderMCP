@@ -61,6 +61,7 @@ interface CompletedSession {
   // writing to the pipes after the exit, and that output lands in its buffers
   session: ManagedSession;
   exitCode: number | null;
+  signal: NodeJS.Signals | null;  // The signal that ended it; then exitCode is null
   endTime: Date;
 }
 
@@ -129,6 +130,7 @@ export interface PaginatedOutputResult {
   remaining: number;           // Lines remaining after this read
   isComplete: boolean;         // Whether process has finished
   exitCode?: number | null;    // Exit code if completed
+  signal?: NodeJS.Signals | null;  // Signal that ended it, if completed by one (exitCode is then null)
   runtimeMs?: number;          // Runtime in milliseconds (for completed processes)
   evictedLines?: number;       // Lines dropped by the buffer cap; when > 0, line numbers are relative to the retained buffer
 }
@@ -439,12 +441,13 @@ export class TerminalManager {
         });
       }, waitLimit.waitMs);
 
-      childProcess.on('exit', (code: any) => {
+      childProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
         if (childProcess.pid) {
           // Store completed session before removing active session
           this.completedSessions.set(childProcess.pid, {
             session,
             exitCode: code,
+            signal,
             endTime: new Date()
           });
 
@@ -589,6 +592,7 @@ export class TerminalManager {
         runtimeMs
       );
       result.evictedLines = completedSession.session.evictedLines;
+      result.signal = completedSession.signal;
       return result;
     }
 

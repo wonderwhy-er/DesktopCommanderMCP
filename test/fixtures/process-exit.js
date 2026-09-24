@@ -17,6 +17,7 @@
  *   quit-on-input             a REPL with the prompt "> ": echoes each line,
  *                             exits without output on "quit"
  *   markup                    prints "<p>", then "done" 300ms later, and exits
+ *   stays-alive               runs until it is killed
  *
  * Every mode ends on its own after LIFETIME_MS, so a failing test leaves
  * nothing running.
@@ -81,6 +82,7 @@ const modes = {
     console.log('<p>');
     setTimeout(() => console.log('done'), 300);
   },
+  'stays-alive': keepRunning,
 };
 
 if (!modes[mode]) {

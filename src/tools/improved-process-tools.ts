@@ -391,7 +391,9 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
     const runtimeStr = result.runtimeMs !== undefined 
       ? ` (runtime: ${(result.runtimeMs / 1000).toFixed(2)}s)` 
       : '';
-    processStateMessage = `\n✅ Process completed with exit code ${result.exitCode}${runtimeStr}`;
+    // A process ended by a signal has no exit code: name the signal instead of "exit code null"
+    const ending = result.exitCode === null && result.signal ? `signal ${result.signal}` : `exit code ${result.exitCode}`;
+    processStateMessage = `\n✅ Process completed with ${ending}${runtimeStr}`;
   } else if (session) {
     // Analyze state for running processes
     const processState = terminalManager.getProcessState(pid);
