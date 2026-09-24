@@ -8,6 +8,7 @@ export interface DockerMount {
     containerPath: string;
     type: 'bind' | 'volume';
     readOnly: boolean;
+    verifiedMount: boolean;
     description: string;
 }
 
@@ -256,6 +257,7 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                             containerPath: mountPoint,
                             type: 'bind',
                             readOnly: isReadOnly,
+                            verifiedMount: true,
                             description: `Mounted directory: ${path.basename(mountPoint)}`
                         });
                     }
@@ -283,7 +285,8 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                                 containerPath: itemPath,
                                 type: 'bind',
                                 readOnly: false,
-                                description: `Mounted folder: ${item}`
+                                verifiedMount: false,
+                                description: `Candidate folder under /mnt: ${item}`
                             });
                         }
                     }
@@ -320,7 +323,8 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                                 containerPath: itemPath,
                                 type: 'bind',
                                 readOnly: false,
-                                description: `Host folder: ${item}`
+                                verifiedMount: false,
+                                description: `Candidate folder under /home: ${item}`
                             });
                         }
                     }
@@ -680,18 +684,19 @@ This Desktop Commander instance is running inside a ${docker.containerType || 'c
         if (docker.mountPoints.length > 0) {
             guidance += `
 
-AVAILABLE MOUNTED DIRECTORIES:`;
+AVAILABLE MOUNT LOCATIONS:`;
             for (const mount of docker.mountPoints) {
                 const access = mount.readOnly ? '(read-only)' : '(read-write)';
+                const verification = mount.verifiedMount ? '[verified mount]' : '[unverified candidate]';
                 guidance += `
-- ${mount.containerPath} ${access} - ${mount.description}`;
+- ${mount.containerPath} ${access} ${verification} - ${mount.description}`;
             }
             
             guidance += `
 
-Mounted directories above are the durable locations for file work.
-Files outside these paths will be lost when the container stops.
-Mounted directories are therefore preferable for persistent file operations.
+Entries marked [verified mount] are suitable for persistent file work.
+Entries marked [unverified candidate] are inferred from common container paths and may not persist.
+Files outside verified mounts may be lost when the container stops.
 
 PATH TRANSLATION IN DOCKER:
 Host paths may require translation to their corresponding container paths:
@@ -818,11 +823,20 @@ export function getPathGuidance(systemInfo: SystemInfo): string {
                               systemInfo.docker.containerType === 'docker' ? 'DOCKER' :
                               systemInfo.docker.containerType === 'podman' ? 'PODMAN' :
                               'CONTAINER';
+        const verifiedMounts = systemInfo.docker.mountPoints.filter(m => m.verifiedMount).map(m => m.containerPath);
+        const unverifiedCandidates = systemInfo.docker.mountPoints.filter(m => !m.verifiedMount).map(m => m.containerPath);
         
-        guidance += ` 
+        if (verifiedMounts.length > 0) {
+            guidance += `
 
-🐳 ${containerLabel}: Mounted directories are the durable locations for file operations: ${systemInfo.docker.mountPoints.map(m => m.containerPath).join(', ')}.
-Files outside mounted directories may not persist after the container stops.`;
+🐳 ${containerLabel}: Verified mounts for persistent file operations: ${verifiedMounts.join(', ')}.
+Files outside verified mounts may not persist after the container stops.`;
+        }
+        if (unverifiedCandidates.length > 0) {
+            guidance += `
+
+🐳 ${containerLabel}: Unverified mount candidates: ${unverifiedCandidates.join(', ')}. These paths are inferred from common container directories and may not persist.`;
+        }
     }
     
     return guidance;
