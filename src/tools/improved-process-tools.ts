@@ -747,12 +747,19 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
     };
   }
 
-  const success = terminalManager.forceTerminate(pid);
+  // Returns once the session's processes are gone, so a success means they no longer run
+  const outcome = await terminalManager.forceTerminate(pid);
+  if (outcome === 'failed') {
+    return {
+      content: [{ type: "text", text: `Error: Could not terminate every process of session ${pid}; some may still be running` }],
+      isError: true,
+    };
+  }
   return {
     content: [{
       type: "text",
-      text: success
-        ? `Successfully initiated termination of session ${pid}`
+      text: outcome === 'terminated'
+        ? `Terminated session ${pid} and all processes running under it`
         : `No active session found for PID ${pid}`
     }],
   };
