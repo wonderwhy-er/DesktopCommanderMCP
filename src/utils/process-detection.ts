@@ -43,11 +43,23 @@ const LINE_END_PROMPTS = ['>>> ', 'julia> ', 'mysql> ', 'redis> ', '$ ', '# ', '
 // PowerShell's prompt (powershell.exe, pwsh), at the end of a line: "PS ", a
 // location (a drive, provider or path: "C:\Users\me", "/Users/me", "HKLM:\"),
 // then "> " (">> " in a nested or debugger prompt, "[DBG]: PS C:\>> ")
-const POWERSHELL_PROMPT = /PS [^<>|\n]*[\\/:][^<>|\n]*>>? $/;
+const POWERSHELL_PROMPT_TEXT = String.raw`PS [^<>|\n]*[\\/:][^<>|\n]*>>? `;
+const POWERSHELL_PROMPT = new RegExp(`${POWERSHELL_PROMPT_TEXT}$`);
 
 // cmd.exe's prompt: the whole last line is a path and ">", with nothing after
 // it ("C:\Users\me>"); output lines end in a newline, a prompt doesn't
-const CMD_PROMPT = /^[A-Za-z]:\\[^<>|"*?\n]*>$/;
+const CMD_PROMPT_TEXT = String.raw`[A-Za-z]:\\[^<>|"*?\n]*>`;
+const CMD_PROMPT = new RegExp(`^${CMD_PROMPT_TEXT}$`);
+
+// The same shell prompts at the start of a line, where the shell echoes the
+// next input line after them ("PS C:\Users\me> echo b", "C:\Users\me>echo b")
+const SHELL_PROMPTS_AT_START = [new RegExp(`^${POWERSHELL_PROMPT_TEXT}`), new RegExp(`^${CMD_PROMPT_TEXT}`)];
+
+// The REPL prompts output cleaning removes, one or more in a row at the start
+// of a line (">>> ... " from a REPL that reads several lines at once)
+const REPL_PROMPT = String.raw`(?:>>> |\.\.\. |>> |> |\+ )`;
+const REPL_PROMPT_RUN = new RegExp(`^${REPL_PROMPT}+`);
+const REPL_PROMPT_TOKEN = new RegExp(REPL_PROMPT, 'g');
 
 /** The prompt the last line of output is, or ends in, if any */
 function findPrompt(lastLine: string): string | undefined {
@@ -133,19 +145,64 @@ export function cleanProcessOutput(output: string, inputSent?: string): string {
   return cleaned || removePrompts(output);
 }
 
+/**
+ * The output without the process's echo of the input, if it echoed it. A
+ * process that echoes (powershell.exe, cmd.exe, a terminal over ssh -t)
+ * repeats each input line where the output for it starts: the first line at
+ * the start of the output, each later one after the prompt it was read at
+ * ("PS C:\project> echo b", "C:\project>echo b", ">> }"). A line the process
+ * has read (it printed a prompt for it) that isn't repeated there means the
+ * process doesn't echo, and a line equal to an input line is output (node -i
+ * answers `1` with "1"): the output is kept as it is. Lines not read yet (the
+ * call answered at an earlier prompt) have no echo yet.
+ */
 function removeInputEcho(output: string, inputSent?: string): string {
-  let cleaned = output;
-
-  // Remove input echo if provided
-  if (inputSent) {
-    const inputLines = inputSent.split('\n');
-    inputLines.forEach(line => {
-      if (line.trim()) {
-        cleaned = cleaned.replace(new RegExp(`^${escapeRegExp(line.trim())}\\s*\n?`, 'm'), '');
-      }
-    });
+  if (!inputSent) return output;
+  const lines = output.split('\n');
+  const echoes = new Set<number>();
+  let next = 0;
+  for (const [i, inputLine] of inputLinesSent(inputSent).entries()) {
+    const echo = inputLine.trim();
+    if (!echo) continue; // An empty line's echo can't be told from an empty output line
+    const at = i === 0
+      ? (isEchoLine(lines, 0, echo, true) ? 0 : -1)
+      : lines.findIndex((_, index) => index >= next && isEchoLine(lines, index, echo, false));
+    if (at < 0) {
+      // A process prints one prompt for each line it reads
+      const linesRead = lines.reduce((count, line) => count + promptsAtStart(line), 0);
+      if (linesRead > i) return output;
+      break;
+    }
+    echoes.add(at);
+    next = at + 1;
   }
-  return cleaned;
+  return lines.filter((_, index) => !echoes.has(index)).join('\n');
+}
+
+/** How many prompts `line` starts with: REPL prompts, one or more in a row, or a shell's prompt */
+function promptsAtStart(line: string): number {
+  const run = REPL_PROMPT_RUN.exec(line)?.[0];
+  if (run) return run.match(REPL_PROMPT_TOKEN)?.length ?? 0;
+  return SHELL_PROMPTS_AT_START.some(prompt => prompt.test(line)) ? 1 : 0;
+}
+
+/** The lines of an input as the process reads them (sendInputToProcess ends it with a newline) */
+function inputLinesSent(input: string): string[] {
+  return (input.endsWith('\n') ? input.slice(0, -1) : input).split('\n');
+}
+
+/**
+ * Whether lines[index] is the echo of an input line: the line after a prompt
+ * (or alone, where `alone` allows it), ended by the newline that was sent
+ * with it
+ */
+function isEchoLine(lines: string[], index: number, echo: string, alone: boolean): boolean {
+  if (index >= lines.length - 1) return false;
+  const line = lines[index].trimEnd();
+  if (!line.endsWith(echo)) return false;
+  const before = line.slice(0, line.length - echo.length).trimEnd();
+  if (before === '') return alone;
+  return findPrompt(before) !== undefined || findPrompt(`${before} `) !== undefined;
 }
 
 function removePrompts(output: string): string {
