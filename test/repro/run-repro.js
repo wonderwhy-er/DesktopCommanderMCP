@@ -8,6 +8,8 @@
  *   node test/repro/run-repro.js test-dc-tracking-gate.js ... # selected scripts
  * Variables such as UV_THREADPOOL_SIZE, BLOCKERS or DC_REPRO_REALTIME are passed through.
  * A script still running after REPRO_TIMEOUT_MS (default 180000) is stopped and fails.
+ * Exit 0 means the script's documented expectation held (see its header): for most,
+ * that a problem does not show; for the hazard demos, that the hazard shows.
  */
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
