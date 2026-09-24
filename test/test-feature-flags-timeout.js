@@ -144,10 +144,16 @@ async function runFlagManager(url, steps, { hangingFetch = false } = {}) {
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
+    // A regression that removes every timeout must fail here, not stall the suite
+    let timedOut = false;
+    const killTimer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, MAX_FETCH_MS * 3);
     const code = await new Promise((resolve) => child.on('close', resolve));
+    clearTimeout(killTimer);
 
     const line = stdout.split('\n').find((l) => l.startsWith('RESULT '));
-    assert(line, `FeatureFlagManager process failed (exit ${code}): ${stderr || stdout}`);
+    assert(line, timedOut
+      ? `FeatureFlagManager process still running after ${MAX_FETCH_MS * 3}ms, killed: ${stderr || stdout}`
+      : `FeatureFlagManager process failed (exit ${code}): ${stderr || stdout}`);
     return JSON.parse(line.slice('RESULT '.length));
   } finally {
     rmSync(home, { recursive: true, force: true });
