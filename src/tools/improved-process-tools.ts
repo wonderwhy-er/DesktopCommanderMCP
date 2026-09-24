@@ -480,6 +480,8 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     // Capture output snapshot BEFORE sending input
     // This handles REPLs where output is appended to the prompt line
     const outputSnapshot = terminalManager.captureOutputSnapshot(pid);
+    // Only a process that reads its input at a prompt prints prompts in its output
+    const readAtPrompt = terminalManager.getProcessState(pid)?.isWaitingForInput ?? false;
 
     // No snapshot means no active session, which can't take input either
     const success = outputSnapshot !== null && terminalManager.sendInputToProcess(pid, input);
@@ -611,7 +613,7 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     await waitForResponse();
 
     // Clean and format output
-    let cleanOutput = cleanProcessOutput(output, input);
+    let cleanOutput = cleanProcessOutput(output, input, readAtPrompt);
     const timeoutReached = !earlyExit && !processState?.isFinished && !processState?.isWaitingForInput;
     
     // Apply output line limit to prevent context overflow
