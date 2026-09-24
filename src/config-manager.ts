@@ -595,7 +595,12 @@ class ConfigManager {
       realpath: false,
       stale: 30_000,
       update: 10_000,
-      retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 100 }
+      retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 100 },
+      // This process couldn't refresh the lock for 30 s (frozen: machine sleep, a
+      // suspended process, a blocked event loop) and another one took it over or
+      // removed it. The default throws from a timer, which ends the server; the
+      // write in progress still commits atomically, and its release fails (logged).
+      onCompromised: (error) => console.error(`The config lock was lost while held: ${error.message} (${(error as any).code})`),
     });
   }
 
