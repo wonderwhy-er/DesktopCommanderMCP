@@ -3,6 +3,7 @@
  * - output written after the process exits stays readable
  * - read_process_output keeps its read position after the exit, and returns
  *   an unfinished last line again only when that line changed
+ * - every exit is reported as finished
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -102,10 +103,21 @@ async function testOpenLineReturnedOnlyWhenChanged() {
   }
 }
 
+async function testEveryExitIsFinished() {
+  for (const command of [`node -e "process.exit(3)"`, `node -e "console.log('hi')"`]) {
+    const { pid, reply, status } = await start(command, 10_000);
+    check(reply.includes(`Process ${pid} has finished execution`),
+      `start_process should report "${command}" as finished once it exited, got: ${reply}`);
+    check(status === 'finished', `status should be finished for "${command}", got ${status}`);
+    check(!/exit code/i.test(reply), `start_process should not add the exit code (new information), got: ${reply}`);
+  }
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
   ['an unfinished line is returned again only when it changed', testOpenLineReturnedOnlyWhenChanged],
+  ['every exit is reported as finished', testEveryExitIsFinished],
 ];
 
 async function runTests() {

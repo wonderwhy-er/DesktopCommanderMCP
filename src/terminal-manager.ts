@@ -293,8 +293,9 @@ export class TerminalManager {
         resolved = true;
         if (periodicCheck) clearInterval(periodicCheck);
 
-        // The state the wait ended in, from the session's output. A process
-        // error leaves no session behind, so the text it returns is judged.
+        // The state the wait ended in, from the session: finished if the
+        // process exited, else judged from its output. A process error leaves
+        // no session behind, so the text it returns is judged.
         const result: ProcessStartResult = {
           ...waitResult,
           processState: this.getProcessState(childProcess.pid!) ?? analyzeProcessState(waitResult.output)
@@ -784,19 +785,24 @@ export class TerminalManager {
   }
 
   /**
-   * The process's state (waiting for input, finished or running), judged from
-   * the end of the output it wrote since `since` (default: since it started).
-   * Reads only the per-stream tails, so it costs the same however much output
-   * the process has produced. Also checks completed sessions. The one place
-   * start_process, interact_with_process and read_process_output get the
-   * state from.
+   * The process's state: finished once it has exited, whatever its output
+   * says; otherwise waiting for input or running, judged from the end of the
+   * output it wrote since `since` (default: since it started). Reads only the
+   * per-stream tails, so it costs the same however much output the process
+   * has produced. The one place start_process, interact_with_process and
+   * read_process_output get the state from.
    */
   getProcessState(pid: number, since?: OutputSnapshot): ProcessState | null {
-    const buffer: OutputBuffer | undefined = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
-    if (!buffer) {
+    const session = this.sessions.get(pid);
+    if (session) {
+      return analyzeProcessState(TerminalManager.lastWrittenOutput(session.streams, since), pid);
+    }
+    const completedSession = this.completedSessions.get(pid);
+    if (!completedSession) {
       return null;
     }
-    return analyzeProcessState(TerminalManager.lastWrittenOutput(buffer.streams, since), pid);
+    const lastOutput = TerminalManager.lastWrittenOutput(completedSession.session.streams, since).join('\n');
+    return { isWaitingForInput: false, isFinished: true, isRunning: false, lastOutput };
   }
 
   /**
