@@ -39,6 +39,16 @@ const READ_PERFORMANCE_THRESHOLDS = {
     CHUNK_SIZE: 8192,             // 8KB chunks for reverse reading
 } as const;
 
+const LINE_FEED = 0x0a;
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+        const err = new Error('Read aborted') as NodeJS.ErrnoException;
+        err.code = 'ABORT_ERR';
+        throw err;
+    }
+}
+
 /**
  * Text file handler implementation
  * Binary detection is done at the factory level - this handler assumes file is text
@@ -282,7 +292,8 @@ export class TextFileHandler implements FileHandler {
     }
 
     /**
-     * Read last N lines efficiently by reading file backwards
+     * Read last N lines efficiently: find where they start by reading the file
+     * backwards, then read them from there as readline does for smaller files
      */
     private async readLastNLinesReverse(
         filePath: string,
@@ -292,45 +303,39 @@ export class TextFileHandler implements FileHandler {
         fileTotalLines?: number,
         signal?: AbortSignal
     ): Promise<FileResult> {
+        const start = await this.findLastLinesStart(filePath, n, signal);
+        return this.readFromEndWithReadline(filePath, n, mimeType, includeStatusMessage, fileTotalLines, signal, undefined, start);
+    }
+
+    /**
+     * Byte position where the last `n` lines start, found by reading 8 KB chunks
+     * backwards and counting LF bytes (an LF byte is never part of a multi-byte
+     * character, and every LF or CRLF line break ends with one). A line break at
+     * the very end ends the last line instead of starting another. A lone CR,
+     * which readline also treats as a line break, only makes the range longer;
+     * the caller keeps the last `n` lines of it.
+     */
+    private async findLastLinesStart(filePath: string, n: number, signal?: AbortSignal): Promise<number> {
         const fd = await fs.open(filePath, 'r');
         try {
-            const stats = await fd.stat();
-            const fileSize = stats.size;
+            const { size } = await fd.stat();
+            const buffer = Buffer.alloc(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE);
+            let position = size;
+            let breaks = 0;
 
-            let position = fileSize;
-            let lines: string[] = [];
-            let partialLine = '';
-
-            while (position > 0 && lines.length < n) {
-                if (signal?.aborted) {
-                    const err = new Error('Read aborted') as NodeJS.ErrnoException;
-                    err.code = 'ABORT_ERR';
-                    throw err;
-                }
-                const readSize = Math.min(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE, position);
+            while (position > 0) {
+                throwIfAborted(signal);
+                const readSize = Math.min(buffer.length, position);
                 position -= readSize;
-
-                const buffer = Buffer.alloc(readSize);
                 await fd.read(buffer, 0, readSize, position);
 
-                const chunk = buffer.toString('utf-8');
-                const text = chunk + partialLine;
-                const chunkLines = text.split('\n');
-
-                partialLine = chunkLines.shift() || '';
-                lines = chunkLines.concat(lines);
+                for (let i = readSize - 1; i >= 0; i--) {
+                    if (buffer[i] === LINE_FEED && position + i !== size - 1 && ++breaks === n) {
+                        return position + i + 1;
+                    }
+                }
             }
-
-            if (position === 0 && partialLine) {
-                lines.unshift(partialLine);
-            }
-
-            const result = lines.slice(-n);
-            const content = includeStatusMessage
-                ? `${this.generateEnhancedStatusMessage(result.length, -n, fileTotalLines, true)}\n\n${result.join('\n')}`
-                : result.join('\n');
-
-            return { content, mimeType, metadata: {} };
+            return 0;
         } finally {
             await fd.close();
         }
