@@ -9,6 +9,12 @@ import { CONFIG_FILE } from './config.js';
 import { getDefaultShell } from './utils/shell.js';
 import { writeFileAtomic } from './utils/atomic-write.js';
 
+// Desktop Commander 0.2.48 and older write config.json in place, so while such
+// a version runs alongside, the file can be empty or partly written for a
+// moment: up to ~260ms measured on Windows (#697). A file that does not parse
+// is read again until it does, for up to this long; then it counts as damaged.
+const PARTIAL_CONFIG_WAIT_MS = 1_000;
+
 export interface ServerConfig {
   blockedCommands?: string[];
   defaultShell?: string;
@@ -186,18 +192,15 @@ class ConfigManager {
   }
 
   private async readConfigFromDisk(): Promise<ServerConfig> {
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 5; attempt++) {
+    const deadline = Date.now() + PARTIAL_CONFIG_WAIT_MS;
+    for (;;) {
       try {
         return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
       } catch (error: any) {
-        lastError = error;
-        if (error?.code === 'ENOENT') throw error;
-        if (!(error instanceof SyntaxError) || attempt === 4) throw error;
+        if (!(error instanceof SyntaxError) || Date.now() >= deadline) throw error;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     }
-    throw lastError;
   }
 
   private async acquireConfigLock(): Promise<() => Promise<void>> {
