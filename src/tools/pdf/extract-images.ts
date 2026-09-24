@@ -1,5 +1,3 @@
-import { getDocumentProxy, extractImages } from 'unpdf';
-
 export interface ImageInfo {
     /** Object ID within PDF */
     objId: number;
@@ -41,6 +39,9 @@ export async function extractImagesFromPdf(
     pageNumbers?: number[],
     compressionOptions: ImageCompressionOptions = {}
 ): Promise<Record<number, ImageInfo[]>> {
+    // unpdf is loaded here, on first use, not with this module: the server loads
+    // the PDF tools at startup, and most sessions never read a PDF (#715)
+    const { getDocumentProxy, extractImages } = await import('unpdf');
     const pdfDocument = await getDocumentProxy(pdfBuffer);
 
     const pagesToProcess = pageNumbers || Array.from({ length: pdfDocument.numPages }, (_, i) => i + 1);
