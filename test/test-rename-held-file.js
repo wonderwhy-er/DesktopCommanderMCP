@@ -6,8 +6,9 @@
  * can't be renamed until it lets go: the rename fails with EPERM/EBUSY. Both
  * operations must wait that out instead of failing. On macOS/Linux an open
  * file never blocks a rename, so there this only checks the operations work.
- * A rename that can never succeed (onto an existing folder, which Windows also
- * answers with EPERM) must fail at once instead of waiting out the retries.
+ * A rename that can never succeed (onto an existing folder or a read-only file,
+ * which Windows also answers with EPERM) must fail at once instead of waiting
+ * out the retries.
  */
 
 import assert from 'assert';
@@ -82,6 +83,36 @@ async function testMoveOntoFolderFailsAtOnce(dir) {
   console.log(`✓ Test 3 passed: failed after ${elapsed}ms`);
 }
 
+async function testMoveOntoReadOnlyFileFailsAtOnce(dir) {
+  console.log('\nTest 4: move_file onto a read-only file fails at once (Windows) or replaces it (macOS/Linux)');
+
+  const readOnly = path.join(dir, 'read-only.txt');
+  await fs.writeFile(readOnly, 'kept');
+  await fs.chmod(readOnly, 0o444);
+  const source = path.join(dir, 'b.txt');
+  await fs.writeFile(source, 'b');
+
+  try {
+    const started = Date.now();
+    const outcome = await moveFile(source, readOnly).then(() => 'moved', (error) => error.code);
+    const elapsed = Date.now() - started;
+    // The retries last up to 5 s; failing at once takes milliseconds (×10 margin)
+    assert.ok(elapsed < 500, `move_file onto a read-only file answered only after ${elapsed}ms of retries (${outcome})`);
+    if (process.platform === 'win32') {
+      // Windows never replaces a read-only file
+      assert.strictEqual(outcome, 'EPERM', `move_file onto a read-only file should fail with EPERM, got ${outcome}`);
+      assert.strictEqual(await fs.readFile(source, 'utf8'), 'b', 'the source should be left as it was');
+      assert.strictEqual(await fs.readFile(readOnly, 'utf8'), 'kept', 'the read-only file should be left as it was');
+    } else {
+      // A rename replaces a read-only file there (the folder's permissions decide)
+      assert.strictEqual(outcome, 'moved', `move_file onto a read-only file should replace it, got ${outcome}`);
+    }
+    console.log(`✓ Test 4 passed: ${outcome} after ${elapsed}ms`);
+  } finally {
+    await fs.chmod(readOnly, 0o666).catch(() => {}); // Gone when the move replaced it
+  }
+}
+
 export default async function runTests() {
   // Test 2 replaces the tool-call log, so never run this in a real home
   if (!isTestHome()) {
@@ -91,7 +122,8 @@ export default async function runTests() {
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dc-rename-held-'));
   let failed = 0;
-  for (const test of [() => testMoveFileWhileHeldOpen(dir), testLogRotationWhileHeldOpen, () => testMoveOntoFolderFailsAtOnce(dir)]) {
+  for (const test of [() => testMoveFileWhileHeldOpen(dir), testLogRotationWhileHeldOpen, () => testMoveOntoFolderFailsAtOnce(dir),
+    () => testMoveOntoReadOnlyFileFailsAtOnce(dir)]) {
     try {
       await test();
     } catch (error) {
