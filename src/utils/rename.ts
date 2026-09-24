@@ -1,5 +1,7 @@
 import fs from 'fs/promises';
 import os from 'os';
+import path from 'path';
+import { logger } from './logger.js';
 
 /**
  * Single place for renaming files. Use this instead of fs.rename.
@@ -28,6 +30,35 @@ export async function renameWithRetry(from: string, to: string): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, Math.min(10 * attempt, 100)));
     }
   }
+}
+
+/**
+ * Moves `from` to `to`, a file or a folder with everything in it, as mv does.
+ * A rename can't reach another volume (EXDEV): the entry is then copied, next
+ * to `to` under a temporary name, renamed onto `to` once the whole copy is
+ * there, and only then is the source removed. A copy that fails removes what
+ * it wrote, leaves the source as it was and throws its error.
+ */
+export async function movePath(from: string, to: string): Promise<void> {
+  try {
+    await renameWithRetry(from, to);
+    return;
+  } catch (error: any) {
+    if (error?.code !== 'EXDEV') throw error;
+  }
+  const copy = path.join(path.dirname(to), `.${path.basename(to)}.${process.pid}-${Date.now()}.moving`);
+  try {
+    // A link is copied as a link, as a rename moves it
+    await fs.cp(from, copy, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true, verbatimSymlinks: true });
+    await renameWithRetry(copy, to);
+  } catch (error) {
+    await fs.rm(copy, { recursive: true, force: true }).catch((cleanupError) => {
+      // The copy's error says why the move failed; this one is only logged
+      logger.error(`Could not remove the partial copy ${copy}: ${cleanupError}`);
+    });
+    throw error;
+  }
+  await fs.rm(from, { recursive: true });
 }
 
 /** Whether `filePath` is what a rename never replaces on Windows: a directory, or a read-only file */
