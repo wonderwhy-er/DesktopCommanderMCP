@@ -3,6 +3,8 @@
  * get_file_info promise, in the cases where they didn't:
  * - edit_block `range` is FROM:TO: content bigger than the range was written
  *   past its TO corner, over the neighbouring cells.
+ * - read_file `sheet` is a sheet name or an index: a sheet named "2024" was
+ *   taken as index 2024 ("Sheet index 2024 out of range").
  * Calls the tool handlers (the answer text a client gets) and checks the
  * workbooks with ExcelJS.
  */
@@ -11,7 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import ExcelJS from 'exceljs';
-import { handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
+import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -53,11 +55,25 @@ async function testRangeToCorner(dir) {
   assert.deepStrictEqual((await sheets(file)).Sheet1, [['a', 'b'], ['c', '4']], 'content inside A1:B2 should be written');
 }
 
+async function testSheetNamedLikeANumber(dir) {
+  const file = path.join(dir, 'years.xlsx');
+  await write(file, { Summary: [['summary']], 2024: [['year 2024']] });
+
+  const byName = await handleReadFile({ path: file, sheet: '2024' });
+  assert.notStrictEqual(byName.isError, true, `read_file sheet "2024" should read the sheet named 2024, got: ${text(byName)}`);
+  assert.ok(text(byName).includes('year 2024'), `read_file sheet "2024" should return that sheet's cells, got: ${text(byName)}`);
+
+  // A number that is a valid index still means the index (JSON puts the "2024" key first: sheets 2024, Summary)
+  const byIndex = await handleReadFile({ path: file, sheet: '1' });
+  assert.ok(text(byIndex).includes('summary'), `read_file sheet "1" should still read the second sheet, got: ${text(byIndex)}`);
+}
+
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-excel-edges-'));
   const failures = [];
   const cases = [
     ["edit_block keeps content within the range TO corner", testRangeToCorner],
+    ["read_file reads a sheet named like a number", testSheetNamedLikeANumber],
   ];
   try {
     for (const [name, test] of cases) {
