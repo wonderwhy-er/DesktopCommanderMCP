@@ -115,8 +115,13 @@ type RipgrepLine =
       throw new Error(`Failed to locate ripgrep binary: ${err instanceof Error ? err.message : String(err)}`);
     }
     
-    // Start ripgrep process
-    const rgProcess = spawn(rgPath, args, { windowsHide: true });  // Prevent visible console windows on Windows
+    // Start ripgrep process. It matches a glob with a '/' ("src/*.ts") against
+    // the path below its working directory: that must be the root path.
+    const rootIsDirectory = await fs.stat(validPath).then(stats => stats.isDirectory(), () => false);
+    const rgProcess = spawn(rgPath, args, {
+      windowsHide: true,  // Prevent visible console windows on Windows
+      cwd: rootIsDirectory ? validPath : undefined
+    });
     
     if (!rgProcess.pid) {
       throw new Error('Failed to start ripgrep process');
