@@ -196,8 +196,6 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     statusMessage = `\n🔄 ${formatProcessStateMessage(processState, result.pid)}`;
   } else if (processState.isFinished) {
     statusMessage = `\n✅ ${formatProcessStateMessage(processState, result.pid)}`;
-  } else if (result.waitCappedAtMs !== undefined) {
-    statusMessage = `\n${formatWaitCappedMessage(result.pid, result.waitCappedAtMs, parsed.data.timeout_ms)}`;
   } else if (result.isBlocked) {
     statusMessage = '\n⏳ Process is running. Use read_process_output to get more output.';
   }
@@ -243,14 +241,6 @@ function getWaitCapFields(waitCappedAtMs: number | undefined): { waitCapped: boo
   return waitCappedAtMs !== undefined
     ? { waitCapped: true, waitLimitMs: waitCappedAtMs }
     : { waitCapped: false };
-}
-
-/**
- * Status line for a wait that stopped at the wait ceiling before
- * timeout_ms elapsed (see getProcessWaitLimit).
- */
-function formatWaitCappedMessage(pid: number, capMs: number, timeoutMs: number): string {
-  return `⏳ Process ${pid} is still running. Stopped waiting after ${capMs}ms (the per-call wait limit; timeout_ms was ${timeoutMs}ms) so this call returns before the client's request time limit. Use read_process_output to get more output.`;
 }
 
 function formatTimingInfo(timing: any): string {
@@ -645,8 +635,6 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
       statusMessage = `\n🔄 ${formatProcessStateMessage(processState, pid)}`;
     } else if (processState.isFinished) {
       statusMessage = `\n✅ ${formatProcessStateMessage(processState, pid)}`;
-    } else if (timeoutReached && waitCapped) {
-      statusMessage = `\n${formatWaitCappedMessage(pid, waitLimit.capMs, timeout_ms)}`;
     } else if (timeoutReached) {
       statusMessage = '\n⏱️ Response may be incomplete (timeout reached)';
     }
