@@ -80,6 +80,10 @@ export class PdfFileHandler implements FileHandler {
      * Write PDF - creates from markdown or operations
      */
     async write(path: string, content: any, mode?: 'rewrite' | 'append'): Promise<void> {
+        // A PDF can't take text at its end: rendering the content would replace the file
+        if (mode === 'append') {
+            throw new Error('PDF append not supported. Use write_pdf to modify existing PDF files.');
+        }
         // If content is string, treat as markdown to convert
         if (typeof content === 'string') {
             const pdfBuffer = await parseMarkdownToPdf(content);
