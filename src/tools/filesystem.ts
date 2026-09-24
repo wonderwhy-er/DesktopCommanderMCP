@@ -773,11 +773,16 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             const fullPath = path.join(currentPath, entry.name);
             const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
 
+            // A link (a junction on Windows) to a folder is a folder. A link whose
+            // target can't be read stays a [FILE], as every link was before.
+            const isDirectory = entry.isDirectory()
+                || (entry.isSymbolicLink() && await fs.stat(fullPath).then((stats) => stats.isDirectory(), () => false));
+
             // Add this entry to results
-            results.push(`${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${displayPath}`);
+            results.push(`${isDirectory ? "[DIR]" : "[FILE]"} ${displayPath}`);
 
             // If it's a directory and we have depth remaining, recurse
-            if (entry.isDirectory() && currentDepth > 1) {
+            if (isDirectory && currentDepth > 1) {
                 try {
                     // Validate the path before recursing
                     await validatePath(fullPath);
