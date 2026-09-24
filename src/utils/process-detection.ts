@@ -127,6 +127,13 @@ function analyzeOutputTail(output: string): ProcessState {
  * Clean output by removing prompts and input echoes
  */
 export function cleanProcessOutput(output: string, inputSent?: string): string {
+  const cleaned = removePrompts(removeInputEcho(output, inputSent));
+  // A line repeating the input is the answer, not an echo, when nothing else
+  // came back: node -i answers `10` with "10", which was removed as the echo
+  return cleaned || removePrompts(output);
+}
+
+function removeInputEcho(output: string, inputSent?: string): string {
   let cleaned = output;
 
   // Remove input echo if provided
@@ -138,6 +145,11 @@ export function cleanProcessOutput(output: string, inputSent?: string): string {
       }
     });
   }
+  return cleaned;
+}
+
+function removePrompts(output: string): string {
+  let cleaned = output;
 
   // Remove common prompt patterns from output
   cleaned = cleaned.replace(/^>>>\s*/gm, '');  // Python >>>
