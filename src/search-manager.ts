@@ -61,6 +61,10 @@ export interface SearchSessionOptions {
  */
 const EXACT_FILENAME_SEARCH_TIMEOUT_MS = 1500;
 
+/** The extensions of the files the Excel and DOCX searches are for (see targetsOfficeFiles) */
+const EXCEL_EXTENSIONS = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
+const DOCX_EXTENSIONS = ['.docx'];
+
 /** What a session waits for: ripgrep, and the Excel and DOCX searches alongside it */
 type SearchSource = 'ripgrep' | 'excel' | 'docx';
 
@@ -78,6 +82,10 @@ type RipgrepLine =
   | { kind: 'match' | 'context'; result: SearchResult }
   | { kind: 'begin' | 'end'; file: string }
   | { kind: 'summary' };
+
+/** The alternatives of a filePattern ("*.js|*.ts") */
+const filePatternAlternatives = (filePattern: string | undefined): string[] =>
+  (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
 
 /**
  * Search Session Manager - handles ripgrep processes like terminal sessions
@@ -177,7 +185,7 @@ type RipgrepLine =
     // - filePattern explicitly targets Excel files (*.xlsx, *.xls, etc.)
     // - or rootPath is an Excel file itself
     const shouldSearchExcel = options.searchType === 'content' &&
-      this.shouldIncludeExcelSearch(options.filePattern, validPath);
+      this.targetsOfficeFiles(EXCEL_EXTENSIONS, options.filePattern, validPath);
 
     if (shouldSearchExcel) {
       this.startOfficeSource(session, 'excel', sink => this.searchExcelFiles(
@@ -191,7 +199,7 @@ type RipgrepLine =
 
     // For content searches, also search DOCX files
     const shouldSearchDocx = options.searchType === 'content' &&
-      this.shouldIncludeDocxSearch(options.filePattern, validPath);
+      this.targetsOfficeFiles(DOCX_EXTENSIONS, options.filePattern, validPath);
 
     if (shouldSearchDocx) {
       this.startOfficeSource(session, 'docx', sink => this.searchDocxFiles(
@@ -435,25 +443,7 @@ type RipgrepLine =
 
     // Filter by filePattern if provided
     if (filePattern) {
-      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
-      excelFiles = excelFiles.filter(filePath => {
-        const fileName = path.basename(filePath);
-        return patterns.some(pat => {
-          // Support glob-like patterns
-          if (pat.includes('*')) {
-            // Escape all regex metacharacters first (preserving * for glob expansion),
-            // then convert the remaining * wildcards to .* for glob matching.
-            // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
-            // misinterpreted as regex groups/character-classes.
-            const regexPat = pat
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-              .replace(/\*/g, '.*');                  // glob * → regex .*
-            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
-          }
-          // Exact match (case-insensitive)
-          return fileName.toLowerCase() === pat.toLowerCase();
-        });
-      });
+      excelFiles = this.filterOfficeFiles(excelFiles, filePattern, rootPath);
     }
 
     // Dynamically import ExcelJS to search all sheets
@@ -570,28 +560,86 @@ type RipgrepLine =
   }
 
   /**
-   * Determine if DOCX search should be included based on context
+   * The Excel/DOCX files a filePattern selects: one of its alternatives matches
+   * the file's name (case-insensitive; '*' is the only wildcard), and none of
+   * its "!" alternatives leaves the file out (see officeFileExcluded).
    */
-  private shouldIncludeDocxSearch(filePattern?: string, rootPath?: string): boolean {
-    const docxExtensions = ['.docx'];
+  private filterOfficeFiles(files: string[], filePattern: string, rootPath: string): string[] {
+    const patterns = filePatternAlternatives(filePattern);
+    const includes = patterns.filter(pat => !pat.startsWith('!'));
+    const excludes = patterns.filter(pat => pat.startsWith('!')).map(pat => pat.slice(1));
+    return files.filter(filePath => {
+      const fileName = path.basename(filePath);
+      return includes.some(pat => this.officeNameMatches(fileName, pat)) &&
+        !excludes.some(pat => this.officeFileExcluded(filePath, rootPath, pat));
+    });
+  }
 
-    if (rootPath) {
-      const lowerPath = rootPath.toLowerCase();
-      if (docxExtensions.some(ext => lowerPath.endsWith(ext))) {
-        return true;
-      }
+  /** Whether an Excel/DOCX file name matches one filePattern alternative */
+  private officeNameMatches(fileName: string, pat: string): boolean {
+    // Support glob-like patterns
+    if (pat.includes('*')) {
+      // Escape all regex metacharacters first (preserving * for glob expansion),
+      // then convert the remaining * wildcards to .* for glob matching.
+      // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
+      // misinterpreted as regex groups/character-classes.
+      const regexPat = pat
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+        .replace(/\*/g, '.*');                  // glob * → regex .*
+      return new RegExp(`^${regexPat}$`, 'i').test(fileName);
     }
+    // Exact match (case-insensitive)
+    return fileName.toLowerCase() === pat.toLowerCase();
+  }
 
-    if (filePattern) {
-      const lowerPattern = filePattern.toLowerCase();
-      if (docxExtensions.some(ext =>
-        lowerPattern.includes(`*${ext}`) || lowerPattern.endsWith(ext)
-      )) {
-        return true;
-      }
-    }
+  /**
+   * Whether a "!" alternative of a filePattern (given without its "!") leaves an
+   * Excel/DOCX file out - as it leaves text files out of ripgrep's search: when
+   * it matches the file, or a directory between the search path and the file.
+   * Without a '/' it matches their names ("secret*", "archive"); with one, their
+   * paths below the search path ("sub/*", "/secret.xlsx"); ending in '/', only
+   * directories. Case-insensitive, '*' is the only wildcard, as for the other
+   * alternatives; a '*' in a path does not match a '/'.
+   */
+  private officeFileExcluded(filePath: string, rootPath: string, exclusion: string): boolean {
+    const dirOnly = exclusion.endsWith('/');
+    let pat = exclusion.replace(/\/+$/, '');
+    if (pat.startsWith('**/')) pat = pat.slice(3);  // in any directory: the same as the name alone
+    const matchesPath = pat.includes('/');
+    pat = pat.replace(/^\/+/, '');
+    if (!pat) return false;
 
-    return false;
+    // The file's path below the search path, part by part (just its name if it is the search path)
+    const relative = path.relative(rootPath, filePath);
+    const parts = relative ? relative.split(path.sep) : [path.basename(filePath)];
+    // The directories between the search path and the file, then the file itself
+    const candidates = parts.map((_, i) => parts.slice(0, i + 1)).slice(0, dirOnly ? -1 : undefined);
+
+    return candidates.some(candidate => {
+      if (!matchesPath) return this.officeNameMatches(candidate[candidate.length - 1], pat);
+      const candidatePath = candidate.join('/');
+      if (!pat.includes('*')) return candidatePath.toLowerCase() === pat.toLowerCase();
+      const regexPat = pat
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
+        .replace(/\*/g, '[^/]*');               // glob * → any characters but '/'
+      return new RegExp(`^${regexPat}$`, 'i').test(candidatePath);
+    });
+  }
+
+  /**
+   * Whether a content search runs the Excel or DOCX search, the one for files
+   * with these extensions. Only when contextually relevant: the rootPath is
+   * such a file, or a filePattern alternative targets them ("*.xlsx",
+   * "budget.xlsx") - which one that leaves files out ("!*.xlsx") does not.
+   * Each alternative is checked on its own, so "report.xlsx|memo.docx" runs both.
+   */
+  private targetsOfficeFiles(extensions: string[], filePattern: string | undefined, rootPath: string): boolean {
+    const lowerRootPath = rootPath.toLowerCase();
+    const targetingPatterns = filePatternAlternatives(filePattern)
+      .filter(pattern => !pattern.startsWith('!'))
+      .map(pattern => pattern.toLowerCase());
+    return extensions.some(ext => lowerRootPath.endsWith(ext) ||
+      targetingPatterns.some(pattern => pattern.includes(`*${ext}`) || pattern.endsWith(ext)));
   }
 
   /**
@@ -612,19 +660,7 @@ type RipgrepLine =
     let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped);
 
     if (filePattern) {
-      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
-      docxFiles = docxFiles.filter(filePath => {
-        const fileName = path.basename(filePath);
-        return patterns.some(pat => {
-          if (pat.includes('*')) {
-            const regexPat = pat
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-              .replace(/\*/g, '.*');                  // glob * → regex .*
-            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
-          }
-          return fileName.toLowerCase() === pat.toLowerCase();
-        });
-      });
+      docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
     }
 
     for (const filePath of docxFiles) {
@@ -781,38 +817,6 @@ type RipgrepLine =
            pattern.includes('}');
   }
 
-  /**
-   * Determine if Excel search should be included based on context
-   * Only searches Excel files when:
-   * - filePattern explicitly targets Excel files (*.xlsx, *.xls, *.xlsm, *.xlsb)
-   * - or the rootPath itself is an Excel file
-   */
-  private shouldIncludeExcelSearch(filePattern?: string, rootPath?: string): boolean {
-    const excelExtensions = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
-
-    // Check if rootPath is an Excel file
-    if (rootPath) {
-      const lowerPath = rootPath.toLowerCase();
-      if (excelExtensions.some(ext => lowerPath.endsWith(ext))) {
-        return true;
-      }
-    }
-
-    // Check if filePattern targets Excel files
-    if (filePattern) {
-      const lowerPattern = filePattern.toLowerCase();
-      // Check for patterns like *.xlsx, *.xls, or explicit Excel extensions
-      if (excelExtensions.some(ext =>
-        lowerPattern.includes(`*${ext}`) ||
-        lowerPattern.endsWith(ext)
-      )) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
     // These arguments are the whole search: the user's ripgrep config file
     // (RIPGREP_CONFIG_PATH) must not add flags such as --hidden, --glob,
@@ -851,10 +855,7 @@ type RipgrepLine =
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
-      const patterns = options.filePattern
-        .split('|')
-        .map(p => p.trim())
-        .filter(Boolean);
+      const patterns = filePatternAlternatives(options.filePattern);
       
       for (const p of patterns) {
         if (options.searchType === 'content') {
