@@ -24,9 +24,9 @@
  *   - front matter `devtools: true`: returns promptly, nothing left running
  *   - `launch_options.executablePath` (a path that would fail to launch) and
  *     `launch_options.args` (a rival --user-data-dir): render still succeeds on
- *     Desktop Commander's own Chrome and profile; the tool result and its
- *     structuredContent name dest, pdf_options.path,
- *     launch_options.executablePath, launch_options.args and devtools
+ *     Desktop Commander's own Chrome and profile; the answer is the same as
+ *     before, and the result's internal structuredContent names dest,
+ *     pdf_options.path, launch_options.executablePath, launch_options.args and devtools
  *   - an image given by its absolute path (the served folder is a drive root,
  *     as when Desktop Commander runs from "/"): still served to the page
  */
@@ -262,19 +262,17 @@ async function testIgnoredOptionsReportedInResult() {
     // Nothing was written outside the allowed directory
     assert.deepStrictEqual([destCopy, pdfPath].filter((file) => fs.existsSync(file)), [], 'an ignored option still wrote a file outside the allowed directories');
 
-    // The tool result names every ignored option, with a reason, in the text and in structuredContent
+    // The answer is the same as before; which options were ignored, and why, is kept internally
     const text = response.content?.find((block) => block.type === 'text')?.text ?? '';
+    assert.strictEqual(text, `Successfully wrote PDF to ${outFile}`, 'the answer should be the same as before');
     const expected = ['dest', 'pdf_options.path', 'launch_options.executablePath', 'launch_options.args', 'devtools'];
-    for (const option of expected) {
-        assert.ok(text.includes(option), `the tool result text should name the ignored option "${option}": ${text}`);
-    }
     const reported = response.structuredContent?.ignoredOptions ?? [];
     assert.deepStrictEqual(reported.map((o) => o.option).sort(), [...expected].sort(),
         `structuredContent.ignoredOptions should name exactly the ignored options: ${JSON.stringify(reported)}`);
     assert.ok(reported.every((o) => typeof o.reason === 'string' && o.reason.length > 0), 'each ignored option should carry a reason');
 
     await assertNothingLeft(result, 'reported');
-    console.log('✓ ignored options: render still succeeded on our Chrome/profile, all named in the tool result and structuredContent');
+    console.log('✓ ignored options: render still succeeded on our Chrome/profile, the answer is unchanged, all named internally');
 }
 
 async function testImageByAbsolutePath() {
@@ -309,14 +307,15 @@ async function main() {
         testImageByAbsolutePath,
     ];
     const failures = [];
+    let noChrome;
     try {
         for (const test of cases) {
             try {
                 await test();
             } catch (error) {
                 if (/requires Chrome or Chromium/.test(error.message)) {
-                    skip(`PDF render options: no Chrome to launch (${error.message})`);
-                    return;
+                    noChrome = error;
+                    break;
                 }
                 failures.push(error);
                 console.error(`✗ ${error.message}`);
@@ -347,8 +346,12 @@ async function main() {
             }
         }
     }
+    // Failures before Chrome went missing still fail the file; only then is it a skip
     if (failures.length > 0) {
         throw new Error(`${failures.length} of ${cases.length} cases failed`);
+    }
+    if (noChrome) {
+        skip(`PDF render options: no Chrome to launch (${noChrome.message})`);
     }
 }
 

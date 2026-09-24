@@ -300,7 +300,8 @@ function getChromeEnvironment(): Record<string, string | undefined> | undefined 
     let profileDir: string;
     try {
         profileDir = userInfo().homedir;
-    } catch {
+    } catch (error) {
+        console.error("Could not read the account's profile folder for Chrome:", error);
         return undefined;
     }
 
@@ -395,6 +396,7 @@ async function removeChromeProfile(profileDir: string, chrome: ChildProcess | un
         await new Promise<void>((resolve) => {
             setTimeout(resolve, CHROME_PROFILE_REMOVAL_BUDGET_MS).unref();
             chrome.once('exit', () => resolve());
+            // A process error means it's gone too: stop waiting
             chrome.once('error', () => resolve());
         });
     }
@@ -442,7 +444,8 @@ async function startRenderServer(basedir: string): Promise<RenderServer> {
             response.writeHead(403, { 'Content-Type': 'text/plain' }).end('Forbidden');
             return;
         }
-        serveHandler(request, response, { public: basedir, directoryListing: false }).catch(() => {
+        serveHandler(request, response, { public: basedir, directoryListing: false }).catch((error) => {
+            console.error('The PDF render server could not serve a file:', error);
             if (!response.headersSent) response.writeHead(500);
             response.end();
         });

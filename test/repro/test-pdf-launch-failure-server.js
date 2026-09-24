@@ -21,6 +21,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { closeClient } from '../helpers/close-client.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -103,7 +104,7 @@ try {
   if (profiles.size === 0 || left.length > 0) failed = true;
 } finally {
   watcher.close();
-  await client.close().catch(() => {});
+  await closeClient(client);
   try {
     fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5 });
   } catch (error) {
