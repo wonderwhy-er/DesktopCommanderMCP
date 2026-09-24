@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { isTestHome } from './test-env.js';
+import { closeClient } from './close-client.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SERVER = path.join(PROJECT_ROOT, 'dist/index.js');
@@ -101,7 +102,7 @@ export async function startServerRecordingModules() {
   };
 
   const close = async () => {
-    await client.close().catch(() => {});
+    await closeClient(client);
     fs.rmSync(logFile, { force: true });
   };
 
