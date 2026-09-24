@@ -21,6 +21,7 @@ function isExecutableFile(filePath: string): boolean {
     fs.accessSync(filePath, isWindows() ? fs.constants.F_OK : fs.constants.X_OK);
     return fs.statSync(filePath).isFile();
   } catch {
+    // Missing or not executable: this candidate isn't a usable shell, the next one is tried
     return false;
   }
 }
@@ -87,6 +88,7 @@ function readEtcShells(): string[] {
       .map((line) => line.trim())
       .filter((line) => line.length > 0 && !line.startsWith('#'));
   } catch {
+    // Best-effort discovery only: no readable /etc/shells means no extra shells to list
     return [];
   }
 }
