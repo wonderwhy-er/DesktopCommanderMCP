@@ -634,6 +634,40 @@ await test('a hanging capability withdrawal cannot pin the recreate guard', asyn
   assert(rc.isRecreatingChannel === false, 'the guard must be released even if the write hangs');
 });
 
+// The recreate stops waiting for a slow withdrawal, but the write still lands.
+// If realtime-js rejoins in the meantime, re-publishing presence must not be
+// skipped as redundant: the withdrawal would land after it and leave a device
+// that heartbeats 'online' without the flag the server dispatches on.
+await test('a re-publish during a slow capability withdrawal still leaves the flag on the row', async () => {
+  const hasFlag = (w) => w.capabilities?.transport_broadcast_v1 === true;
+  const isWithdrawal = (w) => w.capabilities && !hasFlag(w);
+  const { rc, client } = makeRemoteChannel({ writeLatencies: [200] }); // the withdrawal's PATCH
+  rc.transportCapableWritten = true; // previously proven
+  rc.sleep = () => Promise.resolve();
+  rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
+  rc.channel = makeChannelState('errored');
+  const realWithTimeout = rc.withTimeout.bind(rc);
+  rc.withTimeout = (op, _ms, name) => realWithTimeout(op, 20, name); // gives up long before the write lands
+
+  for (let i = 0; i < 3; i++) await rc.recreateChannel();
+  assert(client.writes.some(isWithdrawal) && !client.completions.some(isWithdrawal),
+    'setup: the withdrawal should be issued and still in flight');
+
+  // realtime-js rejoins on its own, and the subscribed callback re-publishes presence
+  rc.channel = { state: 'joined', track: async () => 'ok' };
+  await rc.trackPresenceInner(0, 1);
+  const deadline = Date.now() + 2000;
+  while (!client.completions.some(isWithdrawal) && Date.now() < deadline) {
+    await new Promise((r) => realSetTimeout(r, 5));
+  }
+
+  const landed = client.completions.filter((w) => w.capabilities);
+  assert(!rc.isReachable() || hasFlag(landed[landed.length - 1] ?? {}),
+    'the device kept claiming it is online (presence tracked, so the heartbeat writes \'online\') while the withdrawal '
+    + 'landed after the re-publish and took transport_broadcast_v1 off its row: the server refuses every call as not '
+    + `broadcast-capable. Capability writes landed: ${landed.map((w) => (hasFlag(w) ? 'flag' : 'withdrawn')).join(', ')}`);
+});
+
 // --- 7. Shutdown ------------------------------------------------------------
 // setOffline()'s durable write is the final word on status, so nothing may race
 // or outlast it — device.ts force-exits 5s after the signal.
