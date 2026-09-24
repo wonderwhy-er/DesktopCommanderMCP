@@ -108,8 +108,8 @@ ${JSON.stringify(data)}`;
                 await workbook.xlsx.readFile(path);
 
                 if (Array.isArray(parsedContent)) {
-                    // Append to Sheet1
-                    let worksheet = workbook.getWorksheet('Sheet1');
+                    // Append to Sheet1, or to the first sheet of a workbook without one
+                    let worksheet = workbook.getWorksheet('Sheet1') ?? workbook.worksheets[0];
                     if (!worksheet) {
                         worksheet = workbook.addWorksheet('Sheet1');
                     }

@@ -5,6 +5,8 @@
  *   past its TO corner, over the neighbouring cells.
  * - read_file `sheet` is a sheet name or an index: a sheet named "2024" was
  *   taken as index 2024 ("Sheet index 2024 out of range").
+ * - write_file append of a 2D array appends to the workbook: on a workbook
+ *   without a "Sheet1" it added a new sheet "Sheet1".
  * Calls the tool handlers (the answer text a client gets) and checks the
  * workbooks with ExcelJS.
  */
@@ -68,12 +70,24 @@ async function testSheetNamedLikeANumber(dir) {
   assert.ok(text(byIndex).includes('summary'), `read_file sheet "1" should still read the second sheet, got: ${text(byIndex)}`);
 }
 
+async function testAppendArrayWithoutSheet1(dir) {
+  const file = path.join(dir, 'data.xlsx');
+  await write(file, { Data: [['x']] });
+  await write(file, [['y']], 'append');
+
+  const after = await sheets(file);
+  assert.deepStrictEqual(Object.keys(after), ['Data'],
+    `appending a 2D array to a "Data"-only workbook added sheets: ${JSON.stringify(Object.keys(after))}`);
+  assert.deepStrictEqual(after.Data, [['x'], ['y']], 'the rows should be appended to the workbook\'s sheet');
+}
+
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-excel-edges-'));
   const failures = [];
   const cases = [
     ["edit_block keeps content within the range TO corner", testRangeToCorner],
     ["read_file reads a sheet named like a number", testSheetNamedLikeANumber],
+    ["write_file appends a 2D array to the workbook, not to a new Sheet1", testAppendArrayWithoutSheet1],
   ];
   try {
     for (const [name, test] of cases) {
