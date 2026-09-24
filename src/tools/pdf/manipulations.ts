@@ -8,7 +8,6 @@ import { z } from 'zod';
 
 // Use createRequire to load pdf-lib as CJS (works around Node 25 ESM resolution issues)
 const require = createRequire(import.meta.url);
-const { PDFDocument } = require('pdf-lib') as { PDFDocument: typeof PDFDocumentType };
 
 // Infer TypeScript types from Zod schemas for consistency
 type PdfInsertOperation = z.infer<typeof PdfInsertOperationSchema>;
@@ -18,6 +17,9 @@ type PdfOperations = z.infer<typeof PdfOperationSchema>;
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
 async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocumentType> {
+    // pdf-lib is loaded here, on first use, not with this module: the server loads
+    // the PDF tools at startup, and most sessions never edit a PDF (#715)
+    const { PDFDocument } = require('pdf-lib') as { PDFDocument: typeof PDFDocumentType };
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);

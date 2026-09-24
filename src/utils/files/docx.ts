@@ -17,7 +17,8 @@
  */
 
 import fs from 'fs/promises';
-import PizZip from 'pizzip';
+import { createRequire } from 'module';
+import type PizZip from 'pizzip';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
 
 // ════════════════════════════════════════════════════════════════
@@ -71,8 +72,20 @@ interface DocxZipContents {
     xmlParts: Map<string, string>;
 }
 
+const require = createRequire(import.meta.url);
+
+/**
+ * Opens a zip from its bytes, or a new, empty one. pizzip is loaded here, on
+ * first use, not with this module: the server loads the file handlers at
+ * startup, and most sessions never open a DOCX file (#715).
+ */
+function openZip(data?: Buffer): PizZip {
+    const PizZipClass: typeof PizZip = require('pizzip');
+    return data === undefined ? new PizZipClass() : new PizZipClass(data);
+}
+
 function loadDocxZip(buf: Buffer): DocxZipContents {
-    const zip = new PizZip(buf);
+    const zip = openZip(buf);
     const docFile = zip.file('word/document.xml');
     if (!docFile) throw new Error('Invalid DOCX: missing word/document.xml');
 
@@ -448,7 +461,7 @@ function escapeXml(text: string): string {
 }
 
 function createMinimalDocxZip(documentXml: string): PizZip {
-    const zip = new PizZip();
+    const zip = openZip();
 
     zip.file('[Content_Types].xml',
         `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
@@ -651,7 +664,7 @@ export class DocxFileHandler implements FileHandler {
 
             // Load and pretty-print
             const buf = await fs.readFile(path);
-            const zip = new PizZip(buf);
+            const zip = openZip(buf);
             const docFile = zip.file('word/document.xml');
             if (!docFile) throw new Error('Invalid DOCX: missing word/document.xml');
 
