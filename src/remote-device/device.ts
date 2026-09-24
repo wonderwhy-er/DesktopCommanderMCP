@@ -320,6 +320,14 @@ export class MCPDevice {
             this.deviceId = config?.deviceId;
             console.debug('[DEBUG] Loaded device ID:', this.deviceId);
 
+            // A session without its device id is not a login: restoring it
+            // skips the revoked-device check below, and registration then fails
+            // with "Device not found: undefined" on every start. Authorize again.
+            if (config.session && this.persistSession && !this.deviceId) {
+                console.debug('[DEBUG] Ignoring persisted session without a device ID');
+                return null;
+            }
+
             if (config.session && this.persistSession) {
                 console.log('💾 Found persisted session for device ' + this.deviceId);
                 console.debug('[DEBUG] Session found in config, returning session');
