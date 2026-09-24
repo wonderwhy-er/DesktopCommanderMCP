@@ -1,5 +1,5 @@
 import type { SearchResult, SearchState, Unsearched, UnsearchedKind } from '../search-manager.js';
-import { SHOWN_TEXT_CHARS } from '../search-manager.js';
+import { SHOWN_TEXT_CHARS, MAX_OUTPUT_LINE_CHARS } from '../search-manager.js';
 import type { ServerResult } from '../types.js';
 
 /**
@@ -53,6 +53,19 @@ export const SEARCH_WORDS = {
 
 const andMore = (u: Unsearched) => (u.count > 1 ? ` and ${u.count - 1} more` : '');
 const counted = (u: Unsearched, one: string, many: string) => (u.count === 1 ? one : `${u.count} ${many}`);
+
+/**
+ * Which lines a search skipped as too long: how many, in which files. Part of a
+ * successful answer, worded so that nobody retries: the same search skips them again.
+ */
+function describeSkippedLines(skipped: Array<{ file: string; count: number }>): string {
+  const lines = skipped.reduce((sum, { count }) => sum + count, 0);
+  const files = skipped.slice(0, 5).map(({ file }) => file || 'a file whose name is not valid UTF-8').join(', ');
+  const more = skipped.length > 5 ? ` and ${skipped.length - 5} more files` : '';
+  const exclude = skipped.length === 1 ? "that file (filePattern) if it isn't" : "those files (filePattern) if they aren't";
+  return `Skipped ${lines === 1 ? 'a line' : `${lines} lines`} over ${Math.round(MAX_OUTPUT_LINE_CHARS / 1024 / 1024)} MB in ${files}${more}: too long to search. ` +
+    `Searching again gives the same result; exclude ${exclude} needed.`;
+}
 
 /** A result as answers list it: a match, a line around one, or a file */
 function resultRow(result: SearchResult): string {
@@ -158,6 +171,10 @@ export function searchResultsAnswer(
     } else if (!page.isComplete) {
       text += `\n${SEARCH_WORDS.moreMayCome}`;
     }
+  }
+
+  if (page.skippedLines.length > 0) {
+    text += `\n${describeSkippedLines(page.skippedLines)}`;
   }
 
   const ended = endedText(page);
