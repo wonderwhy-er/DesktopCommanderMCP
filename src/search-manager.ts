@@ -28,6 +28,14 @@ export interface SearchSession {
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
+  maxResultsReached?: boolean;  // options.maxResults matches collected; later matches are dropped
+  trailingContext?: { file: string; lastLine: number };  // Where the last ripgrep match's trailing context ends
+  pendingSources: Set<SearchSource>;  // Sources still producing results; the session completes when none is left
+  timeoutTimer?: NodeJS.Timeout;  // Stops the search at its time limit
+  timedOut?: boolean;  // The time limit stopped the search before it finished; more matches may exist
+  exitCode?: number | null;  // ripgrep's exit code, reported on completion
+  completed: Promise<void>;  // Settles when the session completes
+  markCompleted: () => void;
 }
 
 export interface SearchSessionOptions {
@@ -43,6 +51,32 @@ export interface SearchSessionOptions {
   earlyTermination?: boolean;  // Stop search early when exact filename match is found
   literalSearch?: boolean;     // Force literal string matching (-F flag) instead of regex
 }
+
+/**
+ * Default time limit of a file search for an exact filename ("package.json"):
+ * a quick lookup of one known file, which gives up rather than walk a huge tree.
+ * A content search for the same text looks for every reference to that file,
+ * so it has no default limit.
+ */
+const EXACT_FILENAME_SEARCH_TIMEOUT_MS = 1500;
+
+/** What a session waits for: ripgrep, and the Excel and DOCX searches alongside it */
+type SearchSource = 'ripgrep' | 'excel' | 'docx';
+
+/** How an Excel/DOCX search hands over each match as it finds it, and learns it should stop */
+interface SourceSink {
+  onMatch(result: SearchResult): void;
+  isStopped(): boolean;
+}
+
+/**
+ * One line of ripgrep's --json output: a match or a context line; the begin or
+ * end of a file's lines; the summary at the end
+ */
+type RipgrepLine =
+  | { kind: 'match' | 'context'; result: SearchResult }
+  | { kind: 'begin' | 'end'; file: string }
+  | { kind: 'summary' };
 
 /**
  * Search Session Manager - handles ripgrep processes like terminal sessions
@@ -89,6 +123,8 @@ export interface SearchSessionOptions {
     }
 
     // Create session
+    let markCompleted!: () => void;
+    const completed = new Promise<void>(resolve => { markCompleted = resolve; });
     const session: SearchSession = {
       id: sessionId,
       process: rgProcess,
@@ -100,7 +136,10 @@ export interface SearchSessionOptions {
       options,
       buffer: '',
       totalMatches: 0,
-      totalContextLines: 0
+      totalContextLines: 0,
+      pendingSources: new Set<SearchSource>(['ripgrep']),
+      completed,
+      markCompleted
     };
 
     this.sessions.set(sessionId, session);
@@ -111,33 +150,16 @@ export interface SearchSessionOptions {
     // Start cleanup interval now that we have a session
     this.startCleanupIfNeeded();
 
-    // Set up timeout if specified and auto-terminate
-    // For exact filename searches, use a shorter default timeout
-    const timeoutMs = options.timeout ?? (this.isExactFilename(options.pattern) ? 1500 : undefined);
-    
-    let killTimer: NodeJS.Timeout | null = null;
+    // Set up the time limit, if any: it stops every source still running.
+    // For exact filename file searches, use a shorter default timeout
+    const timeoutMs = options.timeout ??
+      (this.isExactFilenameSearch(options) ? EXACT_FILENAME_SEARCH_TIMEOUT_MS : undefined);
     if (timeoutMs) {
-      killTimer = setTimeout(() => {
-        if (!session.isComplete && !session.process.killed) {
-          session.process.kill('SIGTERM');
-        }
+      session.timeoutTimer = setTimeout(() => {
+        session.timedOut = true;
+        this.stopSources(session);
       }, timeoutMs);
     }
-
-    // Clear timer on process completion
-    session.process.once('close', () => {
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-    });
-
-    session.process.once('error', () => {
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-    });
 
     capture('search_session_started', {
       sessionId,
@@ -155,23 +177,13 @@ export interface SearchSessionOptions {
       this.shouldIncludeExcelSearch(options.filePattern, validPath);
 
     if (shouldSearchExcel) {
-      this.searchExcelFiles(
+      this.startOfficeSource(session, 'excel', sink => this.searchExcelFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
-        options.filePattern,  // Pass filePattern to filter Excel files too
-        options.literalSearch  // Respect literalSearch flag for Office files
-      ).then(excelResults => {
-        // Add Excel results to session (merged after initial response)
-        for (const result of excelResults) {
-          session.results.push(result);
-          session.totalMatches++;
-        }
-      }).catch((err) => {
-        // Log Excel search errors but don't fail the whole search
-        capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+        sink,
+        options.filePattern  // Pass filePattern to filter Excel files too
+      ));
     }
 
     // For content searches, also search DOCX files
@@ -179,25 +191,17 @@ export interface SearchSessionOptions {
       this.shouldIncludeDocxSearch(options.filePattern, validPath);
 
     if (shouldSearchDocx) {
-      this.searchDocxFiles(
+      this.startOfficeSource(session, 'docx', sink => this.searchDocxFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
-        options.filePattern,
-        options.literalSearch  // Respect literalSearch flag for Office files
-      ).then(docxResults => {
-        for (const result of docxResults) {
-          session.results.push(result);
-          session.totalMatches++;
-        }
-      }).catch((err) => {
-        capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+        sink,
+        options.filePattern
+      ));
     }
 
     // Wait for first chunk of data or early completion instead of fixed delay
-    // Excel search runs in background and results are merged via readSearchResults
+    // Office searches run in background and add their matches to the session as they find them
     const firstChunk = new Promise<void>(resolve => {
       const onData = () => {
         session.process.stdout?.off('data', onData);
@@ -239,6 +243,8 @@ export interface SearchSessionOptions {
     hasMoreResults: boolean;      // New field
     runtime: number;
     wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
+    maxResultsReached: boolean;   // Search stopped at maxResults matches; more may exist
+    timedOut: boolean;            // Search stopped at its time limit before it finished; more may exist
   } {
     const session = this.sessions.get(sessionId);
     
@@ -263,7 +269,9 @@ export interface SearchSessionOptions {
         error: session.error?.trim() || undefined,
         hasMoreResults: false, // Tail always returns what's available
         runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete
+        wasIncomplete: session.wasIncomplete,
+        maxResultsReached: !!session.maxResultsReached,
+        timedOut: !!session.timedOut
       };
     }
 
@@ -283,8 +291,25 @@ export interface SearchSessionOptions {
       error: session.error?.trim() || undefined,
       hasMoreResults,
       runtime: Date.now() - session.startTime,
-      wasIncomplete: session.wasIncomplete
+      wasIncomplete: session.wasIncomplete,
+      maxResultsReached: !!session.maxResultsReached,
+      timedOut: !!session.timedOut
     };
+  }
+
+  /**
+   * Resolves with all of a session's results once it is complete: every source
+   * has finished, or the search was stopped.
+   */
+  async waitForCompletion(sessionId: string): Promise<SearchResult[]> {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Search session ${sessionId} not found`);
+    }
+
+    await session.completed;
+    return [...session.results];
   }
 
   /**
@@ -297,9 +322,7 @@ export interface SearchSessionOptions {
       return false;
     }
 
-    if (!session.process.killed) {
-      session.process.kill('SIGTERM');
-    }
+    this.stopSources(session);
 
     // Don't delete session immediately - let user read final results
     // It will be cleaned up by cleanup process
@@ -314,9 +337,7 @@ export interface SearchSessionOptions {
    */
   dispose(): void {
     for (const session of this.sessions.values()) {
-      if (!session.process.killed) {
-        session.process.kill('SIGTERM');
-      }
+      this.stopSources(session);
     }
     this.sessions.clear();
 
@@ -360,6 +381,33 @@ export interface SearchSessionOptions {
   }
 
   /**
+   * Run an Excel or DOCX search as one of the session's sources: its matches are
+   * collected as it finds them, until it has searched every file or the session
+   * stops it (stop_search, timeout, maxResults).
+   */
+  private startOfficeSource(
+    session: SearchSession,
+    source: SearchSource,
+    search: (sink: SourceSink) => Promise<void>
+  ): void {
+    session.pendingSources.add(source);
+
+    const sink: SourceSink = {
+      onMatch: result => {
+        if (session.pendingSources.has(source)) this.collectMatch(session, result);
+      },
+      isStopped: () => !session.pendingSources.has(source)
+    };
+
+    search(sink)
+      .catch((err) => {
+        // Log Office search errors but don't fail the whole search
+        capture(`${source}_search_error`, { error: err instanceof Error ? err.message : String(err) });
+      })
+      .finally(() => this.finishSource(session, source));
+  }
+
+  /**
    * Search Excel files for content matches
    * Called during content search to include Excel files alongside text files
    * Searches ALL sheets in each Excel file (row-wise for cross-column matching)
@@ -372,18 +420,15 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
-    filePattern?: string,
-    _literalSearch?: boolean
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
-
+    sink: SourceSink,
+    filePattern?: string
+  ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
-    let excelFiles = await this.findExcelFiles(rootPath);
+    let excelFiles = await this.findExcelFiles(rootPath, sink.isStopped);
 
     // Filter by filePattern if provided
     if (filePattern) {
@@ -412,7 +457,7 @@ export interface SearchSessionOptions {
     const ExcelJS = await import('exceljs');
 
     for (const filePath of excelFiles) {
-      if (maxResults && results.length >= maxResults) break;
+      if (sink.isStopped()) break;
 
       try {
         const workbook = new ExcelJS.default.Workbook();
@@ -420,13 +465,13 @@ export interface SearchSessionOptions {
 
         // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
         for (const worksheet of workbook.worksheets) {
-          if (maxResults && results.length >= maxResults) break;
+          if (sink.isStopped()) break;
 
           const sheetName = worksheet.name;
 
           // Iterate through rows (faster than cell-by-cell)
           worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-            if (maxResults && results.length >= maxResults) return;
+            if (sink.isStopped()) return;
 
             // Build a concatenated string of all cell values in the row
             const rowValues: string[] = [];
@@ -461,7 +506,7 @@ export interface SearchSessionOptions {
             if (matchIndex !== -1) {
               const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
 
-              results.push({
+              sink.onMatch({
                 file: `${filePath}:${sheetName}!Row${rowNumber}`,
                 line: rowNumber,
                 match: matchContext,
@@ -475,17 +520,17 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
-   * Find all Excel files in a directory recursively
+   * Find all Excel files in a directory recursively. Stops walking once the
+   * search is stopped.
    */
-  private async findExcelFiles(rootPath: string): Promise<string[]> {
+  private async findExcelFiles(rootPath: string, isStopped: () => boolean): Promise<string[]> {
     const excelFiles: string[] = [];
 
     async function walk(dir: string): Promise<void> {
+      if (isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
 
@@ -554,17 +599,14 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
-    filePattern?: string,
-    _literalSearch?: boolean
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
-
+    sink: SourceSink,
+    filePattern?: string
+  ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
-    let docxFiles = await this.findDocxFiles(rootPath);
+    let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped);
 
     if (filePattern) {
       const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
@@ -583,7 +625,7 @@ export interface SearchSessionOptions {
     }
 
     for (const filePath of docxFiles) {
-      if (maxResults && results.length >= maxResults) break;
+      if (sink.isStopped()) break;
 
       try {
         const buf = await fs.readFile(filePath);
@@ -594,7 +636,7 @@ export interface SearchSessionOptions {
           'word/header3.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
 
         for (const xmlPath of xmlParts) {
-          if (maxResults && results.length >= maxResults) break;
+          if (sink.isStopped()) break;
 
           const file = zip.file(xmlPath);
           if (!file) continue;
@@ -606,7 +648,7 @@ export interface SearchSessionOptions {
           let lineNum = 0;
 
           while ((m = wtRe.exec(xml)) !== null) {
-            if (maxResults && results.length >= maxResults) break;
+            if (sink.isStopped()) break;
             const text = m[1];
             if (!text || !text.trim()) continue;
             lineNum++;
@@ -617,7 +659,7 @@ export interface SearchSessionOptions {
               const matchContext = this.getMatchContext(text, matchIndex, searchTerm.length);
 
               const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
-              results.push({
+              sink.onMatch({
                 file: `${filePath}${partName}`,
                 line: lineNum,
                 match: matchContext,
@@ -630,18 +672,18 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
-   * Find all DOCX files in a directory recursively
+   * Find all DOCX files in a directory recursively. Stops walking once the
+   * search is stopped.
    */
-  private async findDocxFiles(rootPath: string): Promise<string[]> {
+  private async findDocxFiles(rootPath: string, isStopped: () => boolean): Promise<string[]> {
     const docxFiles: string[] = [];
     const isDocx = (name: string) => name.toLowerCase().endsWith('.docx');
 
     async function walk(dir: string): Promise<void> {
+      if (isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
@@ -705,6 +747,14 @@ export interface SearchSessionOptions {
    */
   getActiveSessionCount(): number {
     return Array.from(this.sessions.values()).filter(session => !session.isComplete).length;
+  }
+
+  /**
+   * A file search for one exact filename ("package.json"): a lookup of a known
+   * file, unlike a content search for that same text
+   */
+  private isExactFilenameSearch(options: SearchSessionOptions): boolean {
+    return options.searchType === 'files' && this.isExactFilename(options.pattern);
   }
 
   /**
@@ -789,9 +839,9 @@ export interface SearchSessionOptions {
       args.push('--hidden');
     }
     
-    if (options.maxResults && options.maxResults > 0) {
-      args.push('-m', options.maxResults.toString());
-    }
+    // maxResults is not passed to ripgrep: -m limits matches per file (and lets
+    // matches through in trailing context), and --files ignores it. The total cap
+    // is enforced on the output instead - see collectMatch().
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern) {
@@ -889,8 +939,6 @@ export interface SearchSessionOptions {
         this.processBufferedOutput(session, true);
       }
 
-      session.isComplete = true;
-
       // Track if search was incomplete due to access issues
       // Ripgrep exit code 2 means "some files couldn't be searched"
       if (code === 2) {
@@ -909,30 +957,72 @@ export interface SearchSessionOptions {
         }
       }
 
-      // If we have results, don't mark as error even if there were permission issues
-      if (session.totalMatches > 0) {
-        session.isError = false;
-      }
-
-      capture('search_session_completed', {
-        sessionId: session.id,
-        exitCode: code,
-        totalResults: session.totalMatches + session.totalContextLines,
-        totalMatches: session.totalMatches,
-        runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete || false  // NEW: Track incomplete searches
-      });
-
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
+      session.exitCode = code;
+      this.finishSource(session, 'ripgrep');
     });
 
     process.on('error', (error: Error) => {
-      session.isComplete = true;
       session.isError = true;
       session.error = `Process error: ${error.message}`;
-
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
+      this.finishSource(session, 'ripgrep');
     });
+  }
+
+  /**
+   * A source has ended, or was stopped. This is the one place a session
+   * completes: when its last source is done, whatever the order they end in.
+   */
+  private finishSource(session: SearchSession, source: SearchSource): void {
+    session.pendingSources.delete(source);
+    if (session.pendingSources.size > 0 || session.isComplete) return;
+
+    // If we have results, don't mark as error even if there were permission issues
+    if (session.totalMatches > 0) {
+      session.isError = false;
+    }
+
+    session.isComplete = true;
+    clearTimeout(session.timeoutTimer);
+
+    capture('search_session_completed', {
+      sessionId: session.id,
+      exitCode: session.exitCode,
+      totalResults: session.totalMatches + session.totalContextLines,
+      totalMatches: session.totalMatches,
+      runtime: Date.now() - session.startTime,
+      wasIncomplete: session.wasIncomplete || false,  // NEW: Track incomplete searches
+      maxResultsReached: session.maxResultsReached || false,  // Stopped at the cap (exitCode is then null)
+      timedOut: session.timedOut || false  // Stopped at the time limit (exitCode is then null)
+    });
+
+    session.markCompleted();
+
+    // Rely on cleanupSessions(maxAge) only; no per-session timer
+  }
+
+  /**
+   * Stop every source still running (stop_search, timeout, dispose); the
+   * session completes once ripgrep has exited.
+   */
+  private stopSources(session: SearchSession): void {
+    this.stopOfficeSources(session);
+    this.stopRipgrep(session);
+  }
+
+  /**
+   * The Excel/DOCX searches are done as of now. They can't be interrupted
+   * mid-file: each stops at its next check, and anything it still finds is dropped.
+   */
+  private stopOfficeSources(session: SearchSession): void {
+    for (const source of session.pendingSources) {
+      if (source === 'excel' || source === 'docx') this.finishSource(session, source);
+    }
+  }
+
+  private stopRipgrep(session: SearchSession): void {
+    if (session.pendingSources.has('ripgrep') && !session.process.killed) {
+      session.process.kill('SIGTERM');
+    }
   }
 
   private processBufferedOutput(session: SearchSession, isFinal: boolean = false): void {
@@ -948,22 +1038,16 @@ export interface SearchSessionOptions {
     for (const line of lines) {
       if (!line.trim()) continue;
       
-      const result = this.parseLine(line, session.options.searchType);
-      if (result) {
-        session.results.push(result);
-        // Separate counting of matches vs context lines
-        if (result.type === 'content' && line.includes('"type":"context"')) {
-          session.totalContextLines++;
-        } else {
-          session.totalMatches++;
-        }
+      const parsed = this.parseLine(line, session.options.searchType);
+      if (parsed) {
+        this.collectRipgrepLine(session, parsed);
 
         // Early termination for exact filename matches (if enabled)
-        if (session.options.earlyTermination !== false && // Default to true
-            session.options.searchType === 'files' &&
-            this.isExactFilename(session.options.pattern)) {
+        if (parsed.kind === 'match' &&
+            session.options.earlyTermination !== false && // Default to true
+            this.isExactFilenameSearch(session.options)) {
           const pat = path.normalize(session.options.pattern);
-          const filePath = path.normalize(result.file);
+          const filePath = path.normalize(parsed.result.file);
           const ignoreCase = session.options.ignoreCase !== false;
           const ends = ignoreCase
             ? filePath.toLowerCase().endsWith(pat.toLowerCase())
@@ -982,7 +1066,77 @@ export interface SearchSessionOptions {
     }
   }
 
-  private parseLine(line: string, searchType: 'files' | 'content'): SearchResult | null {
+  /**
+   * Collect one line of ripgrep output. Once maxResults matches are in, only the
+   * last match's trailing context is still collected - a matching line inside it
+   * is kept as context, like grep -m - and ripgrep is stopped when it ends.
+   */
+  private collectRipgrepLine(session: SearchSession, line: RipgrepLine): void {
+    if (line.kind !== 'match' && line.kind !== 'context') {
+      // A file ended (or the next began): no trailing context is pending any more
+      session.trailingContext = undefined;
+    } else if (!session.maxResultsReached) {
+      if (line.kind === 'context') {
+        session.results.push(line.result);
+        session.totalContextLines++;
+      } else {
+        // Note where this match's trailing context ends, in case it is the last match
+        const contextLines = session.options.contextLines ?? 0;
+        session.trailingContext = line.result.type === 'content' && line.result.line !== undefined && contextLines > 0
+          ? { file: line.result.file, lastLine: line.result.line + contextLines }
+          : undefined;
+        this.collectMatch(session, line.result);
+      }
+    } else {
+      const trailing = session.trailingContext;
+      const lineNumber = line.result.line;
+      if (trailing && line.result.file === trailing.file && lineNumber !== undefined && lineNumber <= trailing.lastLine) {
+        session.results.push(line.result);
+        session.totalContextLines++;
+        if (lineNumber === trailing.lastLine) {
+          session.trailingContext = undefined;
+        }
+      } else {
+        // Past the last match's trailing context: everything from here on is dropped
+        session.trailingContext = undefined;
+      }
+    }
+
+    this.stopAtMaxResults(session);
+  }
+
+  /**
+   * The one place a session counts a match - from ripgrep, Excel or DOCX alike -
+   * so maxResults caps the TOTAL number of matches a search returns.
+   */
+  private collectMatch(session: SearchSession, result: SearchResult): void {
+    if (session.maxResultsReached) return;
+
+    session.results.push(result);
+    session.totalMatches++;
+
+    const { maxResults } = session.options;
+    if (maxResults && maxResults > 0 && session.totalMatches >= maxResults) {
+      session.maxResultsReached = true;
+      this.stopAtMaxResults(session);
+    }
+  }
+
+  /**
+   * Once maxResults matches are in, stop the sources that cannot contribute
+   * anything more: the Excel/DOCX searches at once, ripgrep when the last
+   * match's trailing context is complete.
+   */
+  private stopAtMaxResults(session: SearchSession): void {
+    if (!session.maxResultsReached) return;
+
+    this.stopOfficeSources(session);
+    if (!session.trailingContext) {
+      this.stopRipgrep(session);
+    }
+  }
+
+  private parseLine(line: string, searchType: 'files' | 'content'): RipgrepLine | null {
     if (searchType === 'content') {
       // Parse JSON output from content search
       try {
@@ -992,29 +1146,33 @@ export interface SearchSessionOptions {
           // Handle multiple submatches per line - return first submatch
           const submatch = parsed.data?.submatches?.[0];
           return {
-            file: parsed.data.path.text,
-            line: parsed.data.line_number,
-            match: submatch?.match?.text || parsed.data.lines.text,
-            type: 'content'
+            kind: 'match',
+            result: {
+              file: parsed.data.path.text,
+              line: parsed.data.line_number,
+              match: submatch?.match?.text || parsed.data.lines.text,
+              type: 'content'
+            }
           };
         }
         
         if (parsed.type === 'context') {
           return {
-            file: parsed.data.path.text,
-            line: parsed.data.line_number,
-            match: parsed.data.lines.text.trim(),
-            type: 'content'
+            kind: 'context',
+            result: {
+              file: parsed.data.path.text,
+              line: parsed.data.line_number,
+              match: parsed.data.lines.text.trim(),
+              type: 'content'
+            }
           };
         }
         
-        // Handle summary to reconcile totals
-        if (parsed.type === 'summary') {
-          // Optional: could reconcile totalMatches with parsed.data.stats?.matchedLines
-          return null;
+        // begin/end frame each file's lines; summary closes the output
+        if (parsed.type === 'begin' || parsed.type === 'end') {
+          return { kind: parsed.type, file: parsed.data.path.text };
         }
-        
-        return null;
+        return { kind: 'summary' };
       } catch (error) {
         // Skip invalid JSON lines
         return null;
@@ -1022,8 +1180,11 @@ export interface SearchSessionOptions {
     } else {
       // File search - each line is a file path
       return {
-        file: line.trim(),
-        type: 'file'
+        kind: 'match',
+        result: {
+          file: line.trim(),
+          type: 'file'
+        }
       };
     }
   }
