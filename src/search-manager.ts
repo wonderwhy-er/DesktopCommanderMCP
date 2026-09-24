@@ -37,6 +37,7 @@ export interface SearchSession {
   timedOut?: boolean;  // The time limit stopped the search before it finished; more matches may exist
   filePatternIncludes?: { root: string; matchers: Array<(relativePath: string) => boolean> };  // A file search's filePattern alternatives but "!" (see filePatternSelects)
   exitCode?: number | null;  // ripgrep's exit code, reported on completion
+  printedOutput?: boolean;  // ripgrep wrote to stdout (see the 'close' handler)
   completed: Promise<void>;  // Settles when the session completes
   markCompleted: () => void;
 }
@@ -183,8 +184,9 @@ function characterClassEnd(glob: string, start: number): number {
     
     // Start ripgrep process. It matches a glob with a '/' ("src/*.ts") against
     // the path below its working directory: that must be the root path. A root
-    // that can't be stat'ed runs without a cwd, and ripgrep reports the path itself.
-    const rootIsDirectory = await fs.stat(validPath).then(stats => stats.isDirectory(), () => false);
+    // that can't be stat'ed (missing...) can't be searched: start_search answers
+    // with why, as for any search that can't start.
+    const rootIsDirectory = (await fs.stat(validPath)).isDirectory();
     const rgProcess = spawn(rgPath, args, {
       windowsHide: true,  // Prevent visible console windows on Windows
       cwd: rootIsDirectory ? validPath : undefined
@@ -1000,6 +1002,7 @@ function characterClassEnd(glob: string, start: number): number {
     const { process } = session;
 
     process.stdout?.on('data', (data: Buffer) => {
+      session.printedOutput = true;
       session.buffer += data.toString();
       this.processBufferedOutput(session);
     });
@@ -1049,6 +1052,14 @@ function characterClassEnd(glob: string, start: number): number {
       // Ripgrep exit code 2 means "some files couldn't be searched"
       if (code === 2) {
         session.wasIncomplete = true;
+      }
+
+      // A content search's ripgrep prints a JSON line for each file it searches
+      // and a summary at the end: exiting 2 with nothing printed, it could not
+      // search at all (an invalid pattern or glob), rather than meeting files it
+      // couldn't read. Its error is the answer.
+      if (code === 2 && session.options.searchType === 'content' && !session.printedOutput && session.error?.trim()) {
+        session.isError = true;
       }
 
       // Only treat as error if:
