@@ -169,6 +169,21 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 }
 
 /**
+ * The forms an allowed directory matches by: as written and, when it exists,
+ * its real path. validatePath checks real paths, so an allowed directory
+ * reached through a symlink or junction (macOS: /var -> /private/var) must
+ * match by its real path too. When the real path can't be read, only the
+ * written form matches, which can only deny, never widen, access.
+ */
+async function getAllowedDirForms(allowedDir: string): Promise<string[]> {
+    try {
+        return [allowedDir, await fs.realpath(expandHome(allowedDir))];
+    } catch {
+        return [allowedDir];
+    }
+}
+
+/**
  * Checks if a path is within any of the allowed directories
  *
  * @param pathToCheck Path to check
@@ -186,8 +201,9 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
-    // Check if the path is within any allowed directory
-    const isAllowed = allowedDirectories.some(allowedDir => {
+    // Check if the path is within any allowed directory, as written or by its real path
+    const allowedDirForms = (await Promise.all(allowedDirectories.map(getAllowedDirForms))).flat();
+    const isAllowed = allowedDirForms.some(allowedDir => {
         let normalizedAllowedDir = normalizePath(allowedDir);
         if (normalizedAllowedDir.slice(-1) === path.sep) {
             normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
