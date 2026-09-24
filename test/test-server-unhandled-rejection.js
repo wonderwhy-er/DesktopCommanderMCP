@@ -11,6 +11,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { closeClient } from './helpers/close-client.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/unhandled-rejection-preload.mjs')).href;
@@ -61,7 +62,7 @@ async function run() {
     assert.notStrictEqual(result.isError, true, `get_config failed: ${result.content?.[0]?.text}`);
     console.log(`✓ Server still answers ${SURVIVAL_WINDOW_MS}ms after the rejection`);
   } finally {
-    await client.close().catch(() => {});
+    await closeClient(client);
   }
 }
 

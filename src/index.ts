@@ -100,6 +100,12 @@ async function runServer() {
     process.on('unhandledRejection', async (reason) => {
       const errorMessage = reason instanceof Error ? reason.message : String(reason);
 
+      // A JSON parsing error is logged as before, and not sent to telemetry
+      if (errorMessage.includes('JSON') && errorMessage.includes('Unexpected token')) {
+        logger.error(`JSON parsing rejection: ${errorMessage}`);
+        return;
+      }
+
       capture('run_server_unhandled_rejection', {
         error: errorMessage
       });

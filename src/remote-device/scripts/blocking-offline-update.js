@@ -68,6 +68,7 @@ async function markDeviceOffline() {
             const { exp } = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
             return typeof exp === 'number' && exp * 1000 > Date.now() + 5000;
         } catch {
+            // Not a JWT we can read: treat it as expired and refresh the session
             return false;
         }
     }
