@@ -119,11 +119,15 @@ async function runTestModules() {
   let testFiles = [];
   try {
     const files = await fs.readdir(__dirname);
-    
-    // Get all test files, starting with 'test' and ending with '.js'
-    const discoveredTests = files
-      .filter(file => file.startsWith('test') && file.endsWith('.js') && file !== 'run-all-tests.js')
-      .sort(); // Sort for consistent order
+
+    // The files named on the command line (`node test/run-all-tests.js test-x.js`),
+    // so one test can run isolated too; else all files starting with 'test' and ending with '.js'
+    const requested = process.argv.slice(2).map(file => path.basename(file));
+    const discoveredTests = requested.length > 0
+      ? requested
+      : files
+        .filter(file => file.startsWith('test') && file.endsWith('.js') && file !== 'run-all-tests.js')
+        .sort(); // Sort for consistent order
     
     // Ensure main test.js runs first if it exists
     if (discoveredTests.includes('test.js')) {

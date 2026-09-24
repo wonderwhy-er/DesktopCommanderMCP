@@ -53,9 +53,13 @@ function formatDuration(duration) {
 }
 
 async function main() {
-  const files = (await fs.readdir(__dirname))
-    .filter((file) => file.endsWith('.js') && file !== 'run-all-integration-tests.js')
-    .sort();
+  // The files named on the command line, so one test can run isolated too; else all of them
+  const requested = process.argv.slice(2).map((file) => path.basename(file));
+  const files = requested.length > 0
+    ? requested
+    : (await fs.readdir(__dirname))
+      .filter((file) => file.endsWith('.js') && file !== 'run-all-integration-tests.js')
+      .sort();
 
   if (files.length === 0) {
     console.log('No integration tests found.');
