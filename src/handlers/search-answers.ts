@@ -1,4 +1,5 @@
 import type { SearchResult, SearchState, Unsearched, UnsearchedKind } from '../search-manager.js';
+import { SHOWN_TEXT_CHARS } from '../search-manager.js';
 import type { ServerResult } from '../types.js';
 
 /**
@@ -56,7 +57,7 @@ const counted = (u: Unsearched, one: string, many: string) => (u.count === 1 ? o
 /** A result as answers list it: a match, a line around one, or a file */
 function resultRow(result: SearchResult): string {
   if (result.type !== 'content') return SEARCH_WORDS.fileRow(result.file);
-  const text = `${result.match?.substring(0, 100)}${result.match && result.match.length > 100 ? '...' : ''}`;
+  const text = `${result.match?.substring(0, SHOWN_TEXT_CHARS)}${result.match && result.match.length > SHOWN_TEXT_CHARS ? '...' : ''}`;
   return (result.context ? SEARCH_WORDS.contextRow : SEARCH_WORDS.matchRow)(result.file, result.line, text);
 }
 
