@@ -64,6 +64,9 @@ export interface SearchSessionOptions {
  */
 const EXACT_FILENAME_SEARCH_TIMEOUT_MS = 1500;
 
+/** The longest a timer waits (2^31 - 1 ms, ~24.8 days): setTimeout fires a longer delay after 1 ms */
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
 /** The extensions of the files the Excel and DOCX searches are for (see targetsOfficeFiles) */
 const EXCEL_EXTENSIONS = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
 const DOCX_EXTENSIONS = ['.docx'];
@@ -235,7 +238,7 @@ function characterClassEnd(glob: string, start: number): number {
       session.timeoutTimer = setTimeout(() => {
         session.timedOut = true;
         this.stopSources(session);
-      }, timeoutMs);
+      }, Math.min(timeoutMs, LONGEST_TIMER_MS));
     }
 
     capture('search_session_started', {
