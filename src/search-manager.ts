@@ -93,6 +93,19 @@ type RipgrepLine =
 const filePatternAlternatives = (filePattern: string | undefined): string[] =>
   (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
 
+/** Answers show this many characters of a result's text, then '...' if there is more */
+export const SHOWN_TEXT_CHARS = 100;
+
+/**
+ * What a session keeps of a line's text: what answers show, and one character
+ * more so they still know to add '...'. ripgrep sends each line whole (--json
+ * ignores --max-columns), and a line can be megabytes long. Copied, because a
+ * V8 substring keeps the whole string it was cut from alive. No text (ripgrep
+ * sends text that is not valid UTF-8 as "bytes") stays no text, as it always was.
+ */
+const keptText = (text: string | undefined): string | undefined =>
+  text === undefined ? undefined : Buffer.from(text.slice(0, SHOWN_TEXT_CHARS + 1), 'utf16le').toString('utf16le');
+
 /**
  * A glob as ripgrep matches its -g globs (gitignore style), for the files
  * ripgrep doesn't select itself: a file search's files, and the Excel and DOCX
@@ -1278,7 +1291,7 @@ function characterClassEnd(glob: string, start: number): number {
             result: {
               file: parsed.data.path.text,
               line: parsed.data.line_number,
-              match: submatch?.match?.text || parsed.data.lines.text,
+              match: keptText(submatch?.match?.text || parsed.data.lines.text),
               type: 'content'
             }
           };
@@ -1290,7 +1303,7 @@ function characterClassEnd(glob: string, start: number): number {
             result: {
               file: parsed.data.path.text,
               line: parsed.data.line_number,
-              match: parsed.data.lines.text.trim(),
+              match: keptText(parsed.data.lines.text.trim()),
               type: 'content'
             }
           };
