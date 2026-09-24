@@ -492,14 +492,9 @@ export async function handleWritePdf(args: unknown): Promise<ServerResult> {
         const parsed = WritePdfArgsSchema.parse(args);
         const ignoredOptions = await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         const targetPath = parsed.outputPath || parsed.path;
-        let text = `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}`;
-        if (ignoredOptions.length > 0) {
-            // The PDF was still written; tell the model which options it sent (or the markdown set) were ignored and why
-            text += `\n\nIgnored ${ignoredOptions.length === 1 ? 'option' : 'options'}:\n`
-                + ignoredOptions.map(({ option, reason }) => `- ${option}: ${reason}`).join('\n');
-        }
         return {
-            content: [{ type: "text", text }],
+            content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            // Which options were ignored, and why: internal (tests), not sent to the client (see utils/internal-facts.ts)
             ...(ignoredOptions.length > 0 ? { structuredContent: { ignoredOptions } } : {}),
         };
     } catch (error) {
