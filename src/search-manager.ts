@@ -936,9 +936,15 @@ function characterClassEnd(glob: string, start: number): number {
       args.push('--hidden');
     }
     
-    // maxResults is not passed to ripgrep: -m limits matches per file (and lets
-    // matches through in trailing context), and --files ignores it. The total cap
-    // is enforced on the output instead - see collectMatch().
+    // maxResults caps the TOTAL number of matches (see collectMatch()), so no
+    // file can contribute more than that: -m stops ripgrep there in each file.
+    // Without it a folder search keeps a file's whole output in ripgrep's memory
+    // until the file is done, however little of it the search can use. (ripgrep
+    // still prints a match that falls in the trailing context of its last one;
+    // collectRipgrepLine() takes it like any other. --files ignores -m.)
+    if (options.maxResults && options.maxResults > 0) {
+      args.push('-m', options.maxResults.toString());
+    }
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern && options.searchType === 'content') {
