@@ -12,6 +12,7 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 import type { ReadOptions } from '../utils/files/base.js';
+import { TextFileHandler } from '../utils/files/text.js';
 
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -335,9 +336,8 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
 
-        // Strictly enforce line count limit
-        const lines = parsed.content.split('\n');
-        const lineCount = lines.length;
+        // Lines as read_file counts them: a final line break doesn't start another line
+        const lineCount = TextFileHandler.countLines(parsed.content);
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
             errorMessage = `✅ File written successfully! (${lineCount} lines)
