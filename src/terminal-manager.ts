@@ -263,6 +263,7 @@ export class TerminalManager {
       process: childProcess,
       outputLines: [],           // Line-based buffer
       lastReadIndex: 0,          // Track where "new" output starts
+      lastReadOpenLine: '',
       isBlocked: false,
       startTime: new Date(),
       bufferedChars: 0,
@@ -564,29 +565,20 @@ export class TerminalManager {
     // First check active sessions
     const session = this.sessions.get(pid);
     if (session) {
-      const result = this.readFromLineBuffer(
-        session.outputLines,
-        offset,
-        length,
-        session.lastReadIndex,
-        (newIndex) => { session.lastReadIndex = newIndex; },
-        false,
-        undefined
-      );
+      const result = this.readFromLineBuffer(session, offset, length, false, undefined);
       result.evictedLines = session.evictedLines;
       return result;
     }
 
-    // Then check completed sessions
+    // Then check completed sessions: they keep their read position, so
+    // reading on after the exit continues where the last read stopped
     const completedSession = this.completedSessions.get(pid);
     if (completedSession) {
       const runtimeMs = completedSession.endTime.getTime() - completedSession.session.startTime.getTime();
       const result = this.readFromLineBuffer(
-        completedSession.session.outputLines,
+        completedSession.session,
         offset,
         length,
-        0,  // Completed sessions don't track read position
-        () => {},  // No-op for completed sessions
         true,
         completedSession.exitCode,
         runtimeMs
@@ -599,45 +591,84 @@ export class TerminalManager {
   }
 
   /**
-   * Internal helper to read from a line buffer with offset/length
+   * Whether a default read (offset 0) has anything to return: complete lines
+   * past the read position, or an unfinished last line with text a read
+   * hasn't returned (see readFromLineBuffer). Line counts alone can't tell
+   * the second: text appended to that line adds no line.
+   */
+  hasUnreadOutput(pid: number): boolean {
+    const session = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
+    if (!session) {
+      return false;
+    }
+    return session.outputLines.length - 1 > session.lastReadIndex || TerminalManager.openLineHasNewText(session);
+  }
+
+  /**
+   * Whether the unfinished last line has text that a default read hasn't
+   * returned. Empty, it has nothing to return. Its text is compared with what
+   * a read last returned only while it is the line that read stopped at: a
+   * later line is new even when its text is the same (a REPL's next ">>> ").
+   */
+  private static openLineHasNewText(session: TerminalSession): boolean {
+    const lines = session.outputLines;
+    const openLine = lines[lines.length - 1] ?? '';
+    return openLine !== '' && (lines.length - 1 !== session.lastReadIndex || openLine !== session.lastReadOpenLine);
+  }
+
+  /**
+   * Internal helper to read from a session's line buffer with offset/length
    */
   private readFromLineBuffer(
-    lines: string[],
+    session: TerminalSession,
     offset: number,
     length: number,
-    lastReadIndex: number,
-    updateLastRead: (index: number) => void,
     isComplete: boolean,
     exitCode?: number | null,
     runtimeMs?: number
   ): PaginatedOutputResult {
-    const totalLines = lines.length;
+    const lines = session.outputLines;
+    // The empty last line after a trailing newline holds nothing: it isn't
+    // counted (total, remaining, tail offsets) or returned. A last line with
+    // text, unfinished or not, is.
+    const totalLines = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
     let startIndex: number;
     let linesToRead: string[];
+    let readableEnd = totalLines;
 
     if (offset < 0) {
       // Negative offset = start position from end, then read 'length' lines forward
       // e.g., offset=-50, length=10 means: start 50 lines from end, read 10 lines
       const fromEnd = Math.abs(offset);
       startIndex = Math.max(0, totalLines - fromEnd);
-      linesToRead = lines.slice(startIndex, startIndex + length);
+      linesToRead = lines.slice(startIndex, Math.min(startIndex + length, totalLines));
       // Don't update lastReadIndex for tail reads
     } else if (offset === 0) {
-      // offset=0 means "from where I last read" (like getNewOutput)
-      startIndex = lastReadIndex;
-      linesToRead = lines.slice(startIndex, startIndex + length);
-      // Update lastReadIndex for "new output" behavior
-      updateLastRead(Math.min(startIndex + linesToRead.length, totalLines));
+      // offset=0 means "from where I last read" (like getNewOutput).
+      // The last line is unfinished: output is appended to it until a newline
+      // arrives, even after the exit (a process the command started can still
+      // write). So it is returned only when it has text a read hasn't
+      // returned, and the read position never moves past it: counting it as
+      // read would lose whatever is appended to it next.
+      const openLineIndex = Math.max(lines.length - 1, 0);
+      readableEnd = TerminalManager.openLineHasNewText(session) ? lines.length : openLineIndex;
+      startIndex = session.lastReadIndex;
+      linesToRead = lines.slice(startIndex, Math.min(startIndex + length, readableEnd));
+      const readTo = startIndex + linesToRead.length;
+      if (readTo === lines.length) {
+        session.lastReadOpenLine = lines[lines.length - 1];
+      }
+      session.lastReadIndex = Math.min(readTo, openLineIndex);
     } else {
       // Positive offset = absolute position
       startIndex = offset;
-      linesToRead = lines.slice(startIndex, startIndex + length);
+      linesToRead = lines.slice(startIndex, Math.min(startIndex + length, totalLines));
       // Don't update lastReadIndex for absolute position reads
     }
 
     const readCount = linesToRead.length;
     const endIndex = startIndex + readCount;
-    const remaining = Math.max(0, totalLines - endIndex);
+    const remaining = Math.max(0, readableEnd - endIndex);
 
     return {
       lines: linesToRead,

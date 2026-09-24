@@ -1,5 +1,9 @@
 import assert from 'assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { startProcess, readProcessOutput, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
+import { terminalManager } from '../dist/terminal-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 import { pythonCommand } from './helpers/python.js';
@@ -46,6 +50,9 @@ async function testNewOutputBehavior() {
   assert(ticks2.length > 0, `Second read should return the ticks printed since the first read, got: ${read2.content[0].text}`);
   const repeated = ticks2.filter((tick) => ticks1.includes(tick));
   assert.deepStrictEqual(repeated, [], 'Second read should not repeat output already returned by the first read');
+  const tickNumber = (tick) => Number(tick.slice('tick'.length));
+  assert.strictEqual(tickNumber(ticks2[0]), tickNumber(ticks1[ticks1.length - 1]) + 1,
+    `Second read should start with the tick right after the first read's last (none lost), got ${ticks1.join(',')} then ${ticks2.join(',')}`);
   
   console.log('✅ Test 1 passed: New output behavior works correctly');
 }
@@ -94,14 +101,15 @@ async function testTailBehavior() {
   
   await wait(500);
   
-  // Read last 5 lines (output has 21 lines: line0-line19 + empty)
-  // Last 5 lines should include line16, line17, line18, line19
+  // Read last 5 lines (output has 20 lines: line0-line19; the nothing after
+  // the final newline is not a line). Last 5 lines are line15 to line19
   const read = await readProcessOutput({ pid, offset: -5, timeout_ms: 1000 });
   assert(!read.isError, 'Read should succeed');
-  assert(read.content[0].text.includes('line16'), 'Should contain line16');
+  assert(read.content[0].text.includes('line15'), `Should contain line15, got: ${read.content[0].text}`);
   assert(read.content[0].text.includes('line19'), 'Should contain line19');
-  assert(!read.content[0].text.includes('line15'), 'Should NOT contain line15');
-  assert(read.content[0].text.includes('Reading last'), 'Status should indicate tail read');
+  assert(!read.content[0].text.includes('line14'), 'Should NOT contain line14');
+  assert(read.content[0].text.startsWith('[Reading last 5 lines (total: 20 lines)]'),
+    `Status should count the 20 lines printed, got: ${read.content[0].text.split('\n')[0]}`);
   
   console.log('✅ Test 3 passed: Tail behavior works correctly');
 }
@@ -239,28 +247,82 @@ async function testReReadOutput() {
   console.log('✅ Test 7 passed: Re-reading with absolute offset works');
 }
 
-// Run all tests
+/**
+ * Test 8: Counts agree with what can be read. Output ending in a newline has
+ * nothing after that newline: no empty line is counted in total or remaining,
+ * or returned, while the process runs or after it exits.
+ */
+async function testCountsAfterTrailingNewline() {
+  console.log('\n📋 Test 8: Line counts for output ending in a newline...');
+
+  // Prints "done", then exits once the trigger file exists, or after 15s on
+  // its own, so a failing run (no trigger) leaves nothing running
+  const trigger = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-pagination-')), 'exit');
+  const startResult = await startProcess({
+    command: `node -e "console.log('done'); setTimeout(() => process.exit(0), 15000).unref(); const t = setInterval(() => { if (require('fs').existsSync(process.argv[1])) clearInterval(t); }, 20)" "${trigger}"`,
+    timeout_ms: 1000
+  });
+  const pid = startResult.structuredContent.pid;
+  assert(pid, 'Should get PID');
+  const statusLine = (result) => result.content[0].text.split('\n')[0];
+
+  try {
+    const read1 = await readProcessOutput({ pid, timeout_ms: 1000 });
+    assert(read1.content[0].text.includes('done'), `The first read should return "done", got: ${read1.content[0].text}`);
+    assert.strictEqual(statusLine(read1), '[Reading 1 new lines (total: 1 lines)]', 'The one line printed is the only line counted');
+    const read2 = await readProcessOutput({ pid, timeout_ms: 300 });
+    assert.strictEqual(statusLine(read2), '[Reading 0 new lines (total: 1 lines)]', 'A second read has no line to return');
+    const tail = await readProcessOutput({ pid, offset: -5 });
+    assert.strictEqual(statusLine(tail), '[Reading last 1 lines (total: 1 lines)]', 'The last lines are the one line printed');
+
+    fs.writeFileSync(trigger, '');
+    for (let i = 0; i < 100 && terminalManager.getSession(pid); i++) await wait(50);
+    assert.strictEqual(terminalManager.getSession(pid), undefined, 'The process should have exited');
+
+    const read3 = await readProcessOutput({ pid, timeout_ms: 1000 });
+    assert.strictEqual(statusLine(read3), '[Reading 0 new lines (total: 1 lines)]', 'After the exit, still no line left to read');
+    assert(read3.content[0].text.includes('(No output in requested range)'), `No line to return after the exit, got: ${read3.content[0].text}`);
+    const absolute = await readProcessOutput({ pid, offset: 1, length: 5 });
+    assert.strictEqual(statusLine(absolute), '[Reading 0 lines from line 1 (total: 1 lines, 0 remaining)]', 'Nothing after the one line printed');
+  } finally {
+    // Best-effort: a trigger dir left in the temp folder is harmless
+    fs.rmSync(path.dirname(trigger), { recursive: true, force: true });
+  }
+
+  console.log('✅ Test 8 passed: counts leave out the empty line after a trailing newline');
+}
+
+// Run all tests: every test runs and reports, even after an earlier one fails
 async function runAllTests() {
   console.log('🚀 Starting process pagination tests...\n');
-  
-  try {
-    const results = [];
-    results.push(await testNewOutputBehavior());
-    results.push(await testAbsoluteOffset());
-    results.push(await testTailBehavior());
-    results.push(await testLengthLimit());
-    results.push(await testRuntimeInfo());
-    results.push(await testInteractTruncation());
-    results.push(await testReReadOutput());
-    
-    const skipped = results.filter((result) => result === SKIPPED).length;
+
+  const tests = [
+    testNewOutputBehavior,
+    testAbsoluteOffset,
+    testTailBehavior,
+    testLengthLimit,
+    testRuntimeInfo,
+    testInteractTruncation,
+    testReReadOutput,
+    testCountsAfterTrailingNewline,
+  ];
+  const failures = [];
+  let skipped = 0;
+  for (const test of tests) {
+    try {
+      if ((await test()) === SKIPPED) skipped++;
+    } catch (error) {
+      failures.push(test.name);
+      console.error(`\n❌ ${test.name} failed: ${error.message}`);
+    }
+  }
+
+  if (failures.length === 0) {
     console.log(skipped > 0 ? `\n🎉 Pagination tests passed, ${skipped} skipped` : '\n🎉 All pagination tests passed!');
     return true;
-  } catch (error) {
-    console.error('\n❌ Test failed:', error.message);
-    console.error(error.stack);
-    return false;
   }
+  console.error(`\n❌ ${failures.length} of ${tests.length} pagination tests failed: ${failures.join(', ')}`);
+  return false;
 }
 
 runIfMain(import.meta.url, runAllTests);
