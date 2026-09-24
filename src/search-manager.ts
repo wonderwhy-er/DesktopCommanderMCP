@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import { once } from 'events';
 import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './tools/filesystem.js';
@@ -122,10 +123,7 @@ type RipgrepLine =
       windowsHide: true,  // Prevent visible console windows on Windows
       cwd: rootIsDirectory ? validPath : undefined
     });
-    
-    if (!rgProcess.pid) {
-      throw new Error('Failed to start ripgrep process');
-    }
+    await this.whenStarted(rgProcess);
 
     // Create session
     let markCompleted!: () => void;
@@ -896,6 +894,21 @@ type RipgrepLine =
     }
     
     return args;
+  }
+
+  /**
+   * Resolves once ripgrep has started; else rejects with why it could not
+   * start (not found, not executable...), which start_search then reports.
+   * 'spawn' or 'error' comes on the next tick, before any I/O, so the caller
+   * still sets up its handlers in time.
+   */
+  private async whenStarted(child: ChildProcess): Promise<void> {
+    try {
+      await once(child, 'spawn');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw Object.assign(new Error(`Failed to start ripgrep: ${reason}`), { cause: error });
+    }
   }
 
   private setupProcessHandlers(session: SearchSession): void {
