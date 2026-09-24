@@ -24,7 +24,12 @@
  * or standalone: `node test/test-remote-channel-reconnect.js`.
  */
 import assert from 'node:assert';
-import { RemoteChannel, observeServerDate } from '../dist/remote-device/remote-channel.js';
+import {
+  RemoteChannel,
+  observeServerDate,
+  realtimeReconnectDelayMs,
+  presenceRetryDelayMs,
+} from '../dist/remote-device/remote-channel.js';
 
 // Keep telemetry from touching the network during the test.
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -144,7 +149,7 @@ function freshServerToken(n = 0) {
 
 /**
  * Models the subset of supabase-js's `client.auth` that remote-channel.ts
- * actually calls: setSession()/getUser()/getSession()/onAuthStateChange()
+ * actually calls: setSession()/getSession()/onAuthStateChange()
  * from RemoteChannel.setSession(), and refreshSession() for the manual-refresh
  * fix under test (see the clock-skew regression tests below).
  *
@@ -161,9 +166,11 @@ function freshServerToken(n = 0) {
  */
 class FakeAuth {
   static EXPIRY_MARGIN_MS = 90 * 1000; // @supabase/auth-js's real EXPIRY_MARGIN_MS
+  static USER = { id: 'user-1', email: 'tester@example.com' };
 
   session = null;
   refreshCalls = 0;
+  getUserCalls = 0;
   listeners = [];
 
   /** Mirrors GoTrueClient.js's _setSession() (~L1363): decides "expired" from
@@ -176,10 +183,13 @@ class FakeAuth {
       return this._refresh(refresh_token);
     }
     this.session = { access_token, refresh_token, expires_at: exp };
-    return { error: null };
+    return { data: { user: FakeAuth.USER, session: this.session }, error: null };
   }
+  /** Only counted: setSession() already returns the user, so any getUser()
+   * call is a redundant GoTrue /user round trip. */
   async getUser() {
-    return { data: { user: { id: 'user-1', email: 'tester@example.com' } }, error: null };
+    this.getUserCalls++;
+    return { data: { user: FakeAuth.USER }, error: null };
   }
   /** Mirrors GoTrueClient.js's __loadSession() (~L1201), invoked by EVERY
    * getSession() call — and so, via supabase-js's fetchWithAuth ->
@@ -216,7 +226,7 @@ class FakeAuth {
     const { exp } = decodeJwtPayload(token);
     this.session = { access_token: token, refresh_token: refreshToken, expires_at: exp };
     for (const cb of this.listeners) cb('TOKEN_REFRESHED', this.session);
-    return { data: { session: this.session }, error: null };
+    return { data: { user: FakeAuth.USER, session: this.session }, error: null };
   }
 }
 
@@ -671,6 +681,22 @@ async function main() {
     assert.strictEqual(Date.now, trueNow, 'must not patch Date.now on unusable input');
   });
 
+  await test('Supabase realtime reconnect schedule is jittered around the SDK cadence', () => {
+    assert.strictEqual(realtimeReconnectDelayMs(1, () => 0), 500, 'attempt 1 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(1, () => 1), 1500, 'attempt 1 high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(2, () => 0), 1000, 'attempt 2 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(3, () => 1), 7500, 'attempt 3 high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(4, () => 0), 5000, 'attempt 4 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 15000, 'fallback high bound');
+  });
+
+  await test('Presence retries keep their cadence but add jitter', () => {
+    assert.strictEqual(presenceRetryDelayMs(1, () => 0), 250, 'presence retry 1 low bound');
+    assert.strictEqual(presenceRetryDelayMs(1, () => 1), 750, 'presence retry 1 high bound');
+    assert.strictEqual(presenceRetryDelayMs(2, () => 0), 500, 'presence retry 2 low bound');
+    assert.strictEqual(presenceRetryDelayMs(2, () => 1), 1500, 'presence retry 2 high bound');
+  });
+
   // The jittered backoff exists so a fleet-wide event (server deploy, Supabase
   // blip) doesn't stampede every device into reconnecting at the same instant.
   // Assert the shape rather than exact values: it must GROW with consecutive
@@ -715,6 +741,15 @@ async function main() {
       Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
       `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
+  });
+
+  await test('setSession() takes the user from auth.setSession(), with no getUser() round trip', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(() =>
+      rc.setSession({ access_token: freshServerToken(), refresh_token: 'seed-refresh' })
+    );
+    assert.strictEqual(rc.user?.id, FakeAuth.USER.id, 'user must come from setSession()');
+    assert.strictEqual(client.auth.getUserCalls, 0, 'setSession() must not call getUser()');
   });
 
   console.log(
