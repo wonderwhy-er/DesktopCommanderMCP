@@ -120,6 +120,7 @@ function sanitizeEventProperties(properties?: any): Record<string, any> {
     try {
         sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
     } catch {
+        // Properties JSON can't copy (circular, BigInt) are dropped; the event itself is still sent
         sanitizedProperties = {};
     }
 
