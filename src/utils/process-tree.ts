@@ -27,6 +27,8 @@ import { logger } from './logger.js';
  *
  * Every path that ends a command DC runs for the client (force_terminate on a
  * start_process session, the node:local timeout) goes through terminateProcessTree.
+ * kill_process ends just the PID it is given, with the same SIGTERM, grace
+ * period and SIGKILL (terminatePid).
  */
 
 /** How long a process tree gets to exit after SIGTERM before SIGKILL (macOS/Linux) */
@@ -142,21 +144,47 @@ function signalAll(pids: Iterable<number>, signal: NodeJS.Signals): string[] {
   return failures;
 }
 
+/** Resolves true once none of `pids` runs, false if some still run after `timeoutMs` */
+async function waitUntilGone(pids: Iterable<number>, timeoutMs: number): Promise<boolean> {
+  const list = [...pids];
+  const deadline = Date.now() + timeoutMs;
+  while (list.some(isRunning)) {
+    if (Date.now() >= deadline) return false;
+    await sleep(POLL_MS);
+  }
+  return true;
+}
+
 /** macOS/Linux: SIGTERM to `root` and its descendants, then SIGKILL to whatever of the tree still runs */
 async function endPosixTree(root: number): Promise<void> {
   const tree = withDescendants([root], await snapshotChildren());
   const failures = signalAll(tree, 'SIGTERM');
-  const deadline = Date.now() + TERMINATE_GRACE_MS;
-  const anyRunning = () => [...tree].some(isRunning);
-  while (anyRunning() && Date.now() < deadline) {
-    await sleep(POLL_MS);
-  }
-  if (anyRunning()) {
+  if (!(await waitUntilGone(tree, TERMINATE_GRACE_MS))) {
     const current = withDescendants(tree, await snapshotChildren());
     failures.push(...signalAll([...current].filter(isRunning), 'SIGKILL'));
   }
   if (failures.length > 0) {
     throw new Error(failures.join('; '));
+  }
+}
+
+/**
+ * Ends the process `pid` alone, forcefully: SIGTERM, then SIGKILL if it still
+ * runs after the grace period (on Windows either signal ends it outright).
+ * Resolves once it is gone; throws what process.kill threw (ESRCH, EPERM), or
+ * that it still runs.
+ */
+export async function terminatePid(pid: number): Promise<void> {
+  process.kill(pid, 'SIGTERM');
+  if (await waitUntilGone([pid], TERMINATE_GRACE_MS)) return;
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return; // Exited in the meantime
+    throw error;
+  }
+  if (!(await waitUntilGone([pid], EXIT_WAIT_MS))) {
+    throw new Error(`PID ${pid} still runs ${EXIT_WAIT_MS}ms after being killed`);
   }
 }
 
