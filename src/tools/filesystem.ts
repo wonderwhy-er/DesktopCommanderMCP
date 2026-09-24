@@ -8,7 +8,7 @@ import { addToolCallPaths, capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
-import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
+import type { ReadOptions, FileResult, FileInfo, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
@@ -1034,17 +1034,18 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         isDirectory: stats.isDirectory(),
         isFile: stats.isFile(),
         permissions: stats.mode.toString(8).slice(-3),
-        fileType: 'text' as const,
+        fileType: (stats.isDirectory() ? 'directory' : 'text') as FileInfo['fileType'],
         metadata: undefined as Record<string, any> | undefined,
     };
 
-    // Get appropriate handler for this file type (async - includes binary detection)
-    const handler = await getFileHandler(validPath);
+    // Get appropriate handler for this file type (async - includes binary detection).
+    // A folder has none: one chosen by its name or content would call it text, or an image.
+    const handler = stats.isDirectory() ? null : await getFileHandler(validPath);
 
     // Use handler to get file info, with fallback
     let fileInfo;
     try {
-        fileInfo = await handler.getInfo(validPath);
+        fileInfo = handler ? await handler.getInfo(validPath) : fallbackInfo;
     } catch (error) {
         // If handler fails, use fallback stats
         fileInfo = fallbackInfo;
