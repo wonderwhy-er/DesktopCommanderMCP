@@ -811,7 +811,10 @@ type RipgrepLine =
   }
 
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
-    const args: string[] = [];
+    // These arguments are the whole search: the user's ripgrep config file
+    // (RIPGREP_CONFIG_PATH) must not add flags such as --hidden, --glob,
+    // --max-count or --null that change what is found or the output parsed here
+    const args: string[] = ['--no-config'];
     
     if (options.searchType === 'content') {
       // Content search mode
