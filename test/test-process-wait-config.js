@@ -4,15 +4,19 @@
  * ceiling ends answers before the client's request timeout, the ceiling the
  * product computes, that set_config_value refuses the old maxProcessWaitMs key
  * and get_config doesn't list it, and set_config_value's handling of number
- * fields (numeric strings stored as numbers, non-numbers rejected, null resets).
+ * fields (numeric strings stored as numbers, non-numbers rejected, null resets)
+ * and of null on array fields (it clears them too; it was stored as ["null"],
+ * which made "null" the only allowed folder).
  * A wait the ceiling ends answers with the same status line as before.
  */
 import assert from 'assert';
+import os from 'os';
 import { DEFAULT_REQUEST_TIMEOUT_MSEC } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import { configManager } from '../dist/config-manager.js';
 import { MAX_PROCESS_WAIT_MS } from '../dist/config.js';
 import { getProcessWaitLimit } from '../dist/terminal-manager.js';
 import { getConfig, setConfigValue } from '../dist/tools/config.js';
+import { validatePath } from '../dist/tools/filesystem.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -72,6 +76,26 @@ async function testNumberFields() {
   console.log('ok: "250" stored as 250, "many" rejected, null clears it');
 }
 
+async function testNullOnArrayFields() {
+  console.log('\n--- Test 3b: set_config_value null on array fields ---');
+  for (const key of ['allowedDirectories', 'blockedCommands']) {
+    const before = await configManager.getValue(key);
+    try {
+      const response = await setConfigValue({ key, value: null });
+      assert.notStrictEqual(response.isError, true, response.content?.[0]?.text);
+      assert.strictEqual(await configManager.getValue(key), null,
+        `null should clear ${key}, got ${JSON.stringify(await configManager.getValue(key))}: ${response.content[0].text.split('\n')[0]}`);
+      if (key === 'allowedDirectories') {
+        // Cleared, the allowed folders are what they are when never set: the home folder
+        await validatePath(os.homedir()).catch((error) => assert.fail(`the home folder should be allowed again: ${error.message}`));
+      }
+    } finally {
+      await configManager.setValue(key, before);
+    }
+  }
+  console.log('ok: null clears allowedDirectories and blockedCommands');
+}
+
 async function testCappedWaitAnswers() {
   console.log('\n--- Test 4: a wait the ceiling ends answers as before ---');
   // A small ceiling stands in for MAX_PROCESS_WAIT_MS so the test doesn't wait a minute
@@ -107,6 +131,7 @@ async function runAllTests() {
   await testFixedCeiling();
   await testNotConfigurable();
   await testNumberFields();
+  await testNullOnArrayFields();
   await testCappedWaitAnswers();
   console.log('\n✅ process wait ceiling and config number tests passed');
 }
