@@ -1,5 +1,6 @@
 /**
- * kill_process: which PIDs it refuses.
+ * kill_process: which PIDs it refuses, and that it ends the process it says it
+ * terminated.
  *
  * - A PID of 0 or below is refused before anything is signaled. It went
  *   straight to process.kill, and the OS reads such a PID as a group: on
@@ -9,14 +10,23 @@
  *   node:local sessions have negative PIDs too. The test replaces
  *   process.kill while it runs, so nothing is ever signaled, even on a build
  *   that doesn't refuse.
+ * - A process that ignores SIGTERM (macOS/Linux) is still ended: the tool
+ *   says it "will forcefully terminate the specified process", but it sent
+ *   SIGTERM only and answered "Successfully terminated" while the process ran
+ *   on. On Windows process.kill always terminates outright.
  */
 import assert from 'assert';
+import { spawn } from 'child_process';
 import { killProcess } from '../dist/tools/process.js';
 import { handleKillProcess } from '../dist/handlers/process-handlers.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 // The message of the refusal: the argument check's own, as for any invalid argument
 const REFUSAL = 'Number must be greater than 0';
+// How long a terminated process may take to be reported gone
+const EXIT_WITHIN_MS = 1000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function testRefusesPidsBelowOne() {
   console.log('\nTest: kill_process refuses PID 0 and negative PIDs');
@@ -50,8 +60,30 @@ async function testRefusesPidsBelowOne() {
   console.log(`✓ ${pids.join(', ')} refused, nothing signaled`);
 }
 
+async function testEndsProcessIgnoringSigterm() {
+  console.log('\nTest: kill_process ends a process that ignores SIGTERM');
+  // Prints "ready" once its SIGTERM handler is in place
+  const child = spawn(process.execPath,
+    ['-e', "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"],
+    { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
+  const exited = new Promise((resolve) => child.once('exit', () => resolve(true)));
+  try {
+    await new Promise((resolve, reject) => {
+      child.stdout.once('data', resolve);
+      child.once('error', reject);
+    });
+    const result = await killProcess({ pid: child.pid });
+    const gone = await Promise.race([exited, sleep(EXIT_WITHIN_MS).then(() => false)]);
+    assert(gone, `kill_process answered "${result.content[0].text}", but process ${child.pid} still runs ${EXIT_WITHIN_MS}ms later`);
+    assert.strictEqual(result.content[0].text, `Successfully terminated process ${child.pid}`);
+    console.log(`✓ Process ${child.pid} is gone, and the answer is the old one`);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+}
+
 export default async function runTests() {
-  const tests = [testRefusesPidsBelowOne];
+  const tests = [testRefusesPidsBelowOne, testEndsProcessIgnoringSigterm];
   // Every case runs even after one fails
   const failures = [];
   for (const test of tests) {
