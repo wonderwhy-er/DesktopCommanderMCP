@@ -263,10 +263,13 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     // Add the text summary
     contentItems.push({ type: "text", text: textSummary });
 
-    // Add each file content
+    // Add each file content after its path: several images, or a PDF's pages,
+    // can't be told apart by their order alone
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
+            const header = `\n--- ${result.path} contents: ---\n`;
             if (result.isPdf) {
+                contentItems.push({ type: "text", text: header });
                 result.payload?.pages.forEach((page, i) => {
                     page.images.forEach((image, i) => {
                         contentItems.push({
@@ -282,6 +285,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 });
             } else if (result.isImage && result.mimeType) {
                 // For image files, add an image content item
+                contentItems.push({ type: "text", text: header });
                 contentItems.push({
                     type: "image",
                     data: result.content,
@@ -291,7 +295,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 // For text files, add a text summary
                 contentItems.push({
                     type: "text",
-                    text: `\n--- ${result.path} contents: ---\n${result.content}`
+                    text: `${header}${result.content}`
                 });
             }
         }
