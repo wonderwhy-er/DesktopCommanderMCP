@@ -13,11 +13,12 @@ import {
 
 /**
  * Image file handler implementation
- * Supports: PNG, JPEG, GIF, WebP, BMP, SVG
+ * Supports: PNG, JPEG, GIF, WebP, BMP. An SVG is text, read and written by the
+ * text handler; only the file preview widget draws it as an image (svgAsImage).
  */
 export class ImageFileHandler implements FileHandler {
     private static readonly IMAGE_EXTENSIONS = [
-        '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'
+        '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'
     ];
 
     private static readonly IMAGE_MIME_TYPES: { [key: string]: string } = {
@@ -33,6 +34,11 @@ export class ImageFileHandler implements FileHandler {
     canHandle(path: string): boolean {
         const lowerPath = path.toLowerCase();
         return ImageFileHandler.IMAGE_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+    }
+
+    /** An SVG, which this handler reads only for the file preview widget */
+    static isSvg(path: string): boolean {
+        return path.toLowerCase().endsWith('.svg');
     }
 
     async read(path: string, options?: ReadOptions): Promise<FileResult> {

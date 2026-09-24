@@ -523,7 +523,7 @@ export async function readFileFromDisk(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { offset = 0, sheet, range } = options ?? {};
+    const { offset = 0, sheet, range, svgAsImage } = options ?? {};
     let { length } = options ?? {};
 
     // Add validation for required parameters
@@ -597,7 +597,7 @@ export async function readFileFromDisk(
     // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
-        const handler = await getFileHandler(validPath);
+        const handler = await getFileHandler(validPath, { svgAsImage });
 
         // Use handler to read the file
         const result = await handler.read(validPath, {
@@ -665,10 +665,10 @@ export async function readFile(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { isUrl, offset, length, sheet, range } = options ?? {};
+    const { isUrl, offset, length, sheet, range, svgAsImage } = options ?? {};
     return isUrl
         ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath, { offset, length, sheet, range });
+        : readFileFromDisk(filePath, { offset, length, sheet, range, svgAsImage });
 }
 
 /**
