@@ -20,7 +20,6 @@ export interface TerminalSession {
   outputLines: string[];      // Line-based buffer (persistent, capped — oldest lines evicted)
   lastReadIndex: number;      // Track where "new" output starts for default reads
   lastReadOpenLine: string;   // Text of the unfinished last line when a default read last returned it
-  isBlocked: boolean;
   startTime: Date;
   bufferedChars: number;      // Joined length of outputLines (content + separators)
   evictedLines: number;       // Lines dropped from the front to enforce the buffer cap
