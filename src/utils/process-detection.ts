@@ -1,6 +1,8 @@
 /**
  * REPL and Process State Detection Utilities
- * Detects when processes are waiting for input vs finished vs running
+ * Detects from its output whether a running process is waiting for input.
+ * Whether it has finished is known from its exit, never from its output
+ * (see TerminalManager.getProcessState).
  */
 
 export interface ProcessState {
@@ -24,47 +26,24 @@ const REPL_PROMPTS = {
   mongo: ['> ', '... ']
 };
 
-// Error patterns that indicate completion (even with errors)
-const ERROR_COMPLETION_PATTERNS = [
-  /Error:/i,
-  /Exception:/i,
-  /Traceback/i,
-  /SyntaxError/i,
-  /NameError/i,
-  /TypeError/i,
-  /ValueError/i,
-  /ReferenceError/i,
-  /Uncaught/i,
-  /at Object\./i, // Node.js stack traces
-  /^\s*\^/m       // Syntax error indicators
-];
-
-// Process completion indicators
-const COMPLETION_INDICATORS = [
-  /Process finished/i,
-  /Command completed/i,
-  /\[Process completed\]/i,
-  /Program terminated/i,
-  /Exit code:/i
-];
-
 /**
- * How much of the end of the output state detection examines. Prompts and
- * completion or error messages are the last thing a process writes before it
- * waits or exits, so the end of the output decides the state; examining only
- * this much keeps detection's cost the same however much output there is.
+ * How much of the end of the output state detection examines. A prompt is
+ * the last thing a process writes before it waits for input, so the end of
+ * the output decides the state; examining only this much keeps detection's
+ * cost the same however much output there is.
  */
 export const STATE_DETECTION_TAIL_CHARS = 4096;
 
 /**
- * Analyze process output to determine current state.
+ * Analyze a running process's output to determine whether it is waiting for
+ * input. Output text never makes a process finished: a line such as
+ * "Error: retrying" doesn't end it.
  *
  * `output` is what the process wrote most recently. For a process writing to
  * both stdout and stderr it can be the recent output of each stream that may
  * have written last (see TerminalManager.getProcessState): their relative
- * order is unknown, so the process is waiting for input, or finished, if any
- * of them ends that way. Only the last STATE_DETECTION_TAIL_CHARS of each are
- * examined.
+ * order is unknown, so the process is waiting for input if any of them ends
+ * in a prompt. Only the last STATE_DETECTION_TAIL_CHARS of each are examined.
  */
 export function analyzeProcessState(output: string | readonly string[], pid?: number): ProcessState {
   const tails = (typeof output === 'string' ? [output] : output)
@@ -72,7 +51,6 @@ export function analyzeProcessState(output: string | readonly string[], pid?: nu
     .filter(text => text.trim().length > 0);
   const states = tails.map(analyzeOutputTail);
   return states.find(state => state.isWaitingForInput)
-    ?? states.find(state => state.isFinished)
     ?? {
       isWaitingForInput: false,
       isFinished: false,
@@ -87,7 +65,6 @@ export function analyzeProcessState(output: string | readonly string[], pid?: nu
 function analyzeOutputTail(output: string): ProcessState {
   const lines = output.split('\n');
   const lastLine = lines[lines.length - 1] || '';
-  const lastFewLines = lines.slice(-3).join('\n');
 
   // Check for REPL prompts (waiting for input)
   const allPrompts = Object.values(REPL_PROMPTS).flat();
@@ -105,46 +82,7 @@ function analyzeOutputTail(output: string): ProcessState {
     };
   }
 
-  // Check for completion indicators
-  const hasCompletionIndicator = COMPLETION_INDICATORS.some(pattern => 
-    pattern.test(output)
-  );
-
-  if (hasCompletionIndicator) {
-    return {
-      isWaitingForInput: false,
-      isFinished: true,
-      isRunning: false,
-      lastOutput: output
-    };
-  }
-
-  // Check for error completion (errors usually end with prompts, but let's be thorough)
-  const hasErrorCompletion = ERROR_COMPLETION_PATTERNS.some(pattern => 
-    pattern.test(lastFewLines)
-  );
-
-  if (hasErrorCompletion) {
-    // Errors can indicate completion, but check if followed by prompt
-    if (detectedPrompt) {
-      return {
-        isWaitingForInput: true,
-        isFinished: false,
-        isRunning: true,
-        detectedPrompt,
-        lastOutput: output
-      };
-    } else {
-      return {
-        isWaitingForInput: false,
-        isFinished: true,
-        isRunning: false,
-        lastOutput: output
-      };
-    }
-  }
-
-  // Default: process is running, not clearly waiting or finished
+  // Default: process is running, not waiting for input
   return {
     isWaitingForInput: false,
     isFinished: false,

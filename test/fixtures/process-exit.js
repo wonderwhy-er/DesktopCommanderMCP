@@ -11,12 +11,15 @@
  *                             exists, and exits
  *   open-line <trigger>       writes "ready>" with no newline, appends " more"
  *                             to that line once <trigger> exists, keeps running
+ *   error-then-run            prints "Error: still working" and keeps running;
+ *                             answers each input line with "Error: retrying <line>"
  *
  * Every mode ends on its own after LIFETIME_MS, so a failing test leaves
  * nothing running.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
+import readline from 'readline';
 import { fileURLToPath } from 'url';
 
 const LIFETIME_MS = 15_000;
@@ -35,6 +38,10 @@ function onTrigger(then) {
 
 const keepRunning = () => setInterval(() => {}, 1000);
 
+function onInputLine(answer) {
+  readline.createInterface({ input: process.stdin }).on('line', answer);
+}
+
 const modes = {
   'late-writer': () => {
     const self = fileURLToPath(import.meta.url);
@@ -50,6 +57,10 @@ const modes = {
     process.stdout.write('ready>');
     onTrigger(() => process.stdout.write(' more'));
     keepRunning();
+  },
+  'error-then-run': () => {
+    console.log('Error: still working');
+    onInputLine((line) => console.log(`Error: retrying ${line}`));
   },
 };
 
