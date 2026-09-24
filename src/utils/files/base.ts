@@ -89,6 +89,9 @@ export interface ReadOptions {
     /** Whether to include status messages (default: true) */
     includeStatusMessage?: boolean;
 
+    /** Read an SVG as an image (base64), as the file preview widget draws it; otherwise it is text */
+    svgAsImage?: boolean;
+
     /** Optional AbortSignal to cancel an in-flight read (frees fd/thread on timeout). */
     signal?: AbortSignal;
 }

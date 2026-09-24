@@ -104,7 +104,10 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             offset: parsed.offset ?? 0,
             length: lengthGiven ? parsed.length : defaultLimit,
             sheet: parsed.sheet,
-            range: parsed.range
+            range: parsed.range,
+            // The preview widget draws an SVG as an image (ui/file-preview/src/image-preview.ts);
+            // everyone else reads it as the text it is
+            svgAsImage: parsed.origin === 'ui'
         };
 
         // Resolve to absolute path for local files (not URLs) so "Open in folder" works

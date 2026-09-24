@@ -71,9 +71,10 @@ function getDocxHandler(): DocxFileHandler {
  * 6. Text files (default)
  *
  * @param filePath File path to get handler for
+ * @param options svgAsImage: an SVG goes to the image handler, for the file preview widget
  * @returns FileHandler instance that can handle this file
  */
-export async function getFileHandler(filePath: string): Promise<FileHandler> {
+export async function getFileHandler(filePath: string, options?: { svgAsImage?: boolean }): Promise<FileHandler> {
     // Check DOCX first (extension-based, sync)
     if (getDocxHandler().canHandle(filePath)) {
         return getDocxHandler();
@@ -90,7 +91,7 @@ export async function getFileHandler(filePath: string): Promise<FileHandler> {
     }
 
     // Check Image (extension-based, sync - images are binary but handled specially)
-    if (getImageHandler().canHandle(filePath)) {
+    if (getImageHandler().canHandle(filePath) || (options?.svgAsImage && ImageFileHandler.isSvg(filePath))) {
         return getImageHandler();
     }
 
