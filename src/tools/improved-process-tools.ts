@@ -523,9 +523,6 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     let earlyExit = false;
     let waitCapped = false;
 
-    // Quick prompt patterns for immediate detection
-    const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
-    
     const waitForResponse = (): Promise<void> => {
       return new Promise((resolve) => {
         let resolved = false;

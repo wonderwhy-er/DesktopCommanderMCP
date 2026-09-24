@@ -6,6 +6,7 @@
  * - every exit is reported as finished, and a running process is never
  *   reported finished because of its output text
  * - a wait ends when the process exits
+ * - a line ending in ">" is a prompt only at the very end of the output
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -165,6 +166,14 @@ async function testReadEndsWhenTheProcessExits() {
   check(read2.includes('Process completed with exit code 0'), `read_process_output should report the exit, got: ${JSON.stringify(read2)}`);
 }
 
+async function testLineEndingInGreaterThanIsNotAPrompt() {
+  const { pid, reply, status } = await start(fixture('markup'), 10_000);
+  check(reply.includes('done'),
+    `start_process should not stop waiting at the line "<p>" as if it were a prompt, got: ${reply}`);
+  check(status === 'finished', `status should be finished, got ${status}`);
+  check(!terminalManager.listActiveSessions().some((session) => session.pid === pid), 'the process should have exited');
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
@@ -173,6 +182,7 @@ const CASES = [
   ['"Error:" in the output of a running process is not an exit', testErrorTextIsNotAnExit],
   ['interact_with_process returns when the process exits', testInteractEndsWhenTheProcessExits],
   ['read_process_output returns when the process exits', testReadEndsWhenTheProcessExits],
+  ['a line ending in ">" is not a prompt', testLineEndingInGreaterThanIsNotAPrompt],
 ];
 
 async function runTests() {

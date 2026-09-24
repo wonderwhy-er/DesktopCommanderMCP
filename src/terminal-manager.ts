@@ -286,8 +286,10 @@ export class TerminalManager {
       let periodicCheck: NodeJS.Timeout | null = null;
       let waitTimer: NodeJS.Timeout | null = null;
 
-      // Quick prompt patterns for immediate detection
-      const quickPromptPatterns = />>>\s*$|>\s*$|\$\s*$|#\s*$/;
+      // Quick prompt patterns for immediate detection. A prompt is the very
+      // end of the output: spaces may follow it, a newline may not (\s would
+      // take a line ending in ">", such as "</html>", for a prompt).
+      const quickPromptPatterns = />>>[ \t]*$|>[ \t]*$|\$[ \t]*$|#[ \t]*$/;
 
       const resolveOnce = (waitResult: Omit<ProcessStartResult, 'processState'>) => {
         if (resolved) return;
