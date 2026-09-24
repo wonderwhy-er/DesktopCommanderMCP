@@ -90,14 +90,18 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             return createErrorResponse('Configuration not available');
         }
 
+        // The schema fills in `length: 1000` (the default tools/list shows), so
+        // whether the caller sent a length is read from the raw arguments: an
+        // omitted length follows the fileReadLineLimit setting, as documented.
         const defaultLimit = config.fileReadLineLimit ?? 1000;
+        const lengthGiven = (args as { length?: unknown }).length !== undefined;
 
         // The sheet goes as given: the Excel handler knows the sheet names, so it
         // decides whether "2024" is an index or a sheet named 2024
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
-            length: parsed.length ?? defaultLimit,
+            length: lengthGiven ? parsed.length : defaultLimit,
             sheet: parsed.sheet,
             range: parsed.range
         };
