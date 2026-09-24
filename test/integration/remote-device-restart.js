@@ -74,12 +74,6 @@ const readPersistedSession = (home) => JSON.parse(fs.readFileSync(configPath(hom
 function writeLoggedInHome(home, standIn, session) {
   fs.mkdirSync(path.dirname(configPath(home)), { recursive: true });
   fs.writeFileSync(configPath(home), JSON.stringify({ deviceId: standIn.deviceId, session }, null, 2));
-  // The device's local Desktop Commander gets only the default environment
-  // (HOME, PATH, ...), not the telemetry switch: turn it off in its config.
-  // Nor DC_FLAG_URL: it fetches the production feature flags, as any start does.
-  const dcConfigDir = path.join(home, '.claude-server-commander');
-  fs.mkdirSync(dcConfigDir, { recursive: true });
-  fs.writeFileSync(path.join(dcConfigDir, 'config.json'), JSON.stringify({ telemetryEnabled: false }));
 }
 
 /** Starts a device process: `desktop-commander remote` as a service runs it */
