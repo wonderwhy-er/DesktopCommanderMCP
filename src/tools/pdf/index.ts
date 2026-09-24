@@ -1,4 +1,4 @@
-export { editPdf } from './manipulations.js';
+export { editPdf, insertRenderOptions } from './manipulations.js';
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation } from './manipulations.js';
 export { parsePdfToMarkdown, parseMarkdownToPdf, resolveRender } from './markdown.js';
 export type { IgnoredRenderOption } from './markdown.js';

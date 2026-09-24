@@ -10,7 +10,7 @@ import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
+import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 import { movePath } from '../utils/rename.js';
 
@@ -1178,17 +1178,17 @@ export async function writePdf(
             insertCount: operations.filter(op => op.type === 'insert').length
         });
 
-        // Perform the PDF editing
-        const modifiedPdfBuffer = await editPdf(validPath, operations);
+        // Perform the PDF editing (options render the inserted markdown pages)
+        const modifiedPdfBuffer = await editPdf(validPath, operations, options);
 
         // Write the modified PDF to the output path
         await fs.writeFile(targetPath, modifiedPdfBuffer);
 
-        // Report the options ignored in any inserted page's front matter (once per option)
+        // Report the options ignored in any inserted page's render options or front matter (once per option)
         const ignored = new Map<string, IgnoredRenderOption>();
         for (const op of operations) {
             if (op.type === 'insert' && op.markdown !== undefined) {
-                for (const ignoredOption of resolveRender(op.markdown).ignoredOptions) {
+                for (const ignoredOption of resolveRender(op.markdown, insertRenderOptions(op, options)).ignoredOptions) {
                     ignored.set(ignoredOption.option, ignoredOption);
                 }
             }
