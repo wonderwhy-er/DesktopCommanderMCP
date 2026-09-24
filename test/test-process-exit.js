@@ -5,6 +5,7 @@
  *   an unfinished last line again only when that line changed
  * - every exit is reported as finished, and a running process is never
  *   reported finished because of its output text
+ * - a wait ends when the process exits
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -19,6 +20,10 @@ import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'process-exit.js');
+// A wait that should end when the process exits, and the time it may take to
+// notice: the process exits ~0.3s into the wait, so ×15 margin either way.
+const LONG_WAIT_MS = 15_000;
+const EXIT_NOTICED_WITHIN_MS = 5_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const text = (result) => result.content[0].text;
@@ -135,12 +140,39 @@ async function testErrorTextIsNotAnExit() {
   }
 }
 
+async function testInteractEndsWhenTheProcessExits() {
+  const repl = await start(fixture('quit-on-input'), 10_000);
+  check(repl.status === 'waiting_for_input', `the REPL's prompt should be detected, got: ${repl.reply}`);
+  const startedAt = Date.now();
+  const quit = text(await interactWithProcess({ pid: repl.pid, input: 'quit', timeout_ms: LONG_WAIT_MS }));
+  const ms = Date.now() - startedAt;
+  check(ms < EXIT_NOTICED_WITHIN_MS, `interact_with_process should return once the process exits, took ${ms}ms (timeout ${LONG_WAIT_MS}ms)`);
+  check(!quit.includes('Response may be incomplete'),
+    `interact_with_process should not wait out its timeout for a process that exited, got: ${quit}`);
+  check(quit.includes('has finished execution'), `interact_with_process should report the exit, got: ${quit}`);
+}
+
+async function testReadEndsWhenTheProcessExits() {
+  const trigger = newTrigger();
+  const { pid } = await start(fixture('exit-on-trigger', trigger), 1_000);
+  const read1 = text(await readProcessOutput({ pid, timeout_ms: 1_000 }));
+  check(read1.includes('ready'), `the first read should return "ready", got: ${JSON.stringify(read1)}`);
+  setTimeout(() => pull(trigger), 300);
+  const startedAt = Date.now();
+  const read2 = text(await readProcessOutput({ pid, timeout_ms: LONG_WAIT_MS }));
+  const ms = Date.now() - startedAt;
+  check(ms < EXIT_NOTICED_WITHIN_MS, `read_process_output should return once the process exits, took ${ms}ms (timeout ${LONG_WAIT_MS}ms)`);
+  check(read2.includes('Process completed with exit code 0'), `read_process_output should report the exit, got: ${JSON.stringify(read2)}`);
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
   ['an unfinished line is returned again only when it changed', testOpenLineReturnedOnlyWhenChanged],
   ['every exit is reported as finished', testEveryExitIsFinished],
   ['"Error:" in the output of a running process is not an exit', testErrorTextIsNotAnExit],
+  ['interact_with_process returns when the process exits', testInteractEndsWhenTheProcessExits],
+  ['read_process_output returns when the process exits', testReadEndsWhenTheProcessExits],
 ];
 
 async function runTests() {

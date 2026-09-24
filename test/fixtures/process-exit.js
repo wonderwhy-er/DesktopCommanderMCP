@@ -13,6 +13,9 @@
  *                             to that line once <trigger> exists, keeps running
  *   error-then-run            prints "Error: still working" and keeps running;
  *                             answers each input line with "Error: retrying <line>"
+ *   exit-on-trigger <trigger> prints "ready", exits without output once <trigger> exists
+ *   quit-on-input             a REPL with the prompt "> ": echoes each line,
+ *                             exits without output on "quit"
  *
  * Every mode ends on its own after LIFETIME_MS, so a failing test leaves
  * nothing running.
@@ -61,6 +64,17 @@ const modes = {
   'error-then-run': () => {
     console.log('Error: still working');
     onInputLine((line) => console.log(`Error: retrying ${line}`));
+  },
+  'exit-on-trigger': () => {
+    console.log('ready');
+    onTrigger(() => {});
+  },
+  'quit-on-input': () => {
+    process.stdout.write('> ');
+    onInputLine((line) => {
+      if (line.trim() === 'quit') process.exit(0);
+      process.stdout.write(`${line}\n> `);
+    });
   },
 };
 
