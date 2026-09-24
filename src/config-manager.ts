@@ -132,6 +132,15 @@ function extractRecoverableStringArray(text: string, key: string): string[] | nu
 }
 
 /**
+ * Parses config.json's text. Editors saving "UTF-8 with BOM" (Notepad,
+ * PowerShell 5's Set-Content -Encoding UTF8) put U+FEFF first, which
+ * JSON.parse rejects although the config is complete (#692).
+ */
+function parseConfig(text: string): ServerConfig {
+  return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+}
+
+/**
  * Singleton config manager for the server
  */
 class ConfigManager {
@@ -288,7 +297,7 @@ class ConfigManager {
     const deadline = Date.now() + waitMs;
     for (;;) {
       try {
-        return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
+        return parseConfig(await fs.readFile(this.configPath, 'utf8'));
       } catch (error: any) {
         if (!(error instanceof SyntaxError) || Date.now() >= deadline) throw error;
         await new Promise((resolve) => setTimeout(resolve, 10));
