@@ -2,12 +2,14 @@
  * Tests that a content search session reports isComplete only once every
  * source is done - ripgrep AND the Excel/DOCX searches that run alongside it -
  * and that stopping a search (stop_search, timeout, maxResults) stops them all.
+ * An Office search that fails is logged, and the search answers as before.
  */
 
 import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
-import { fileURLToPath } from 'url';
+import { spawnSync } from 'child_process';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
 import { searchManager } from '../dist/search-manager.js';
 import { writeFile } from '../dist/tools/filesystem.js';
@@ -181,6 +183,51 @@ async function testTimeoutStopsOfficeSearches() {
   }
 }
 
+/**
+ * An Office search that fails as a whole (here: ExcelJS can't be loaded) must
+ * not vanish: the search still answers as before, with the other sources'
+ * matches, and the log says which part failed and why. Runs in a child process
+ * whose search-manager can't import exceljs.
+ */
+async function testFailedOfficeSearchIsLogged() {
+  console.log('Testing that a failed Office search is logged...');
+
+  const REASON = 'exceljs is unavailable in this test';
+  const hooks = `
+    export async function resolve(specifier, context, nextResolve) {
+      if (specifier === 'exceljs' && context.parentURL?.endsWith('/search-manager.js')) {
+        throw new Error(${JSON.stringify(REASON)});
+      }
+      return nextResolve(specifier, context);
+    }`;
+  const preload = `import { register } from 'node:module';
+    register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hooks)}`)});`;
+  const dist = (file) => pathToFileURL(path.join(__dirname, '..', 'dist', file)).href;
+  const script = `
+    import { handleGetMoreSearchResults } from ${JSON.stringify(dist('handlers/search-handlers.js'))};
+    import { searchManager } from ${JSON.stringify(dist('search-manager.js'))};
+    import { startSearchAndWait } from ${JSON.stringify(pathToFileURL(path.join(__dirname, 'helpers', 'search.js')).href)};
+    const sessionId = await startSearchAndWait(${JSON.stringify(OFFICE_SEARCH)});
+    const page = await handleGetMoreSearchResults({ sessionId });
+    searchManager.dispose();
+    console.log(JSON.stringify({ sessionId, isError: !!page.isError, text: page.content[0].text }));`;
+  const child = spawnSync(process.execPath, [
+    '--import', `data:text/javascript,${encodeURIComponent(preload)}`, '--input-type=module', '-e', script,
+  ], { encoding: 'utf8', timeout: 60000 });
+  assert.strictEqual(child.status, 0, `The search process failed (${child.status}): ${child.stderr}`);
+
+  const lines = child.stdout.trim().split('\n');
+  const { sessionId, isError, text } = JSON.parse(lines.pop());
+  assert.strictEqual(isError, false, `The search should answer as before, got: ${text}`);
+  assert(text.includes('memo.docx') && text.includes('✅ Search completed.'),
+    `The search should complete with the DOCX match, got: ${text}`);
+  // The rest of stdout is what the server logged: JSON-RPC notifications carrying the message in params.data
+  const logged = lines.map((line) => JSON.parse(line).params?.data);
+  assert.deepStrictEqual(logged, [`The excel part of search ${sessionId} failed; its matches are missing: ${REASON}`],
+    'The log should say the Excel search failed, and why');
+  console.log('✓ The search answered as before, and the log says why its Excel part failed');
+}
+
 export default async function runTests() {
   let originalConfig;
   try {
@@ -189,6 +236,7 @@ export default async function runTests() {
     await testMaxResultsAcrossSources();
     await testStopSearchStopsOfficeSearches();
     await testTimeoutStopsOfficeSearches();
+    await testFailedOfficeSearchIsLogged();
     console.log('✅ Office search completion tests passed');
   } finally {
     // Stop any search still running (before its files are removed) and drop all sessions

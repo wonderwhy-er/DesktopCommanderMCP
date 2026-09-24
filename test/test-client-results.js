@@ -116,6 +116,38 @@ async function searchToolsSendOnlyText(client, dir) {
   console.log('✓ start_search, get_more_search_results: nothing internal is sent');
 }
 
+/** A search that stops at maxResults answers as before: the results, with no note about stopping */
+async function searchStoppedAtMaxResultsAnswersAsBefore(client, dir) {
+  const searchDir = path.join(dir, 'max-results');
+  fs.mkdirSync(searchDir);
+  for (const name of ['a.txt', 'b.txt', 'c.txt']) fs.writeFileSync(path.join(searchDir, name), 'needle\n');
+  const started = await client.callTool({
+    name: 'start_search',
+    arguments: { path: searchDir, pattern: 'needle', searchType: 'content', maxResults: 1 },
+  });
+  const sessionId = textOf(started).match(/session: (\S+)/)?.[1];
+  assert(sessionId, `start_search should start a session, got: ${textOf(started)}`);
+  try {
+    let page;
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      page = await client.callTool({ name: 'get_more_search_results', arguments: { sessionId } });
+      if (textOf(page).includes('✅ Search completed.') || Date.now() > deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert(textOf(page).includes('✅ Search completed.'), `The search should complete, got: ${textOf(page)}`);
+    assert(!/Stopped at maxResults|Timed out before/.test(textOf(page)),
+      `get_more_search_results should add no note about stopping, got: ${textOf(page)}`);
+  } finally {
+    await client.callTool({ name: 'stop_search', arguments: { sessionId } });
+  }
+  const { tools } = await client.listTools();
+  const description = tools.find((tool) => tool.name === 'get_more_search_results')?.description ?? '';
+  assert(!/maxResultsReached|timedOut/.test(description),
+    "get_more_search_results's description should not mention the internal stop reasons");
+  console.log('✓ get_more_search_results: a search stopped at maxResults answers as before');
+}
+
 export default async function runTests() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-client-results-'));
   const transport = new StdioClientTransport({
@@ -129,7 +161,10 @@ export default async function runTests() {
   const failures = [];
   try {
     await client.connect(transport, { timeout: 30_000 });
-    for (const check of [writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore]) {
+    for (const check of [
+      writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore,
+      searchStoppedAtMaxResultsAnswersAsBefore,
+    ]) {
       try {
         await check(client, dir);
       } catch (error) {
