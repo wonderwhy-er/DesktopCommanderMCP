@@ -802,6 +802,13 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
         }
     }
 
+    // A path that is a file lists as that file. Any other path goes on to the
+    // listing, which reports why it can't be read ([NOT_FOUND], [DENIED]).
+    const stats = await fs.stat(validPath).catch(() => undefined);
+    if (stats?.isFile()) {
+        return [`[FILE] ${path.basename(validPath)}`];
+    }
+
     await listRecursive(validPath, depth, '', true);
     return results;
 }
