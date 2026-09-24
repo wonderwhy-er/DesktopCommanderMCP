@@ -15,6 +15,13 @@
  * removed, each line of it: the outputs below are the captured sessions of
  * fixtures/windows-shell-prompts.js, and the two-line ones are built from the
  * same captured prompts the way the shells print them.
+ *
+ * Prompts are removed only where the process printed them: one per input
+ * line it read, where it waits now and where the output for the next line
+ * starts. "> ", "+ ", "... " and ">>> " were removed from the start of every
+ * output line, so a diff's "+ added", a quoted "> b" or "... c" lost their
+ * first characters. The python -i outputs are as captured (python 3.14 on
+ * macOS: prompts on stderr, arriving before or after the results).
  */
 import assert from 'assert';
 import { spawnSync } from 'child_process';
@@ -29,7 +36,7 @@ const afterEchoHi = (what) => captured(what).slice(captured(what).indexOf('echo 
 const PS_PROMPT = captured('powershell.exe -NoLogo, at start');
 const CMD_PROMPT = captured('cmd.exe, at start').split('\n').pop();
 
-// [what, output since the input was sent, input, what the call returns]
+// [what, output since the input was sent, input, what the call returns, whether the input was read at a prompt (default: yes)]
 const CASES = [
   ['node -i answering a literal', '10\n> ', '10', '10'],
   ['node -i answering a string literal', "'abc'\n> ", "'abc'", "'abc'"],
@@ -49,6 +56,17 @@ const CASES = [
   ['powershell.exe at the prompt after the first of two lines', `echo a\na\r\n${PS_PROMPT}`, 'echo a\necho b', `a\r\n${PS_PROMPT.trimEnd()}`],
   ['cmd.exe at the prompt after the first of two lines', `echo a\na\r\n\r\n${CMD_PROMPT}`, 'echo a\necho b', `a\r\n\r\n${CMD_PROMPT}`],
   ['node -i at the prompt after the first of two lines', '1\n> ', '1\nx = 5', '1'],
+  // Output lines that look like prompts are output
+  ['node -i printing lines that start like prompts', '+ a\n> b\n... c\n>>> d\nundefined\n> ', "console.log('+ a\\n> b\\n... c\\n>>> d')", '+ a\n> b\n... c\n>>> d\nundefined'],
+  ['python -i printing lines that start like prompts', '+ a\n> b\n>>> c\n>>> ', "print('+ a\\n> b\\n>>> c')", '+ a\n> b\n>>> c'],
+  ['a diff from a shell reading commands without a prompt', 'diff --git a/f b/f\n+added\n+ added\n-removed\n', 'git diff', 'diff --git a/f b/f\n+added\n+ added\n-removed', false],
+  ['bash -i tracing a command (set -x)', '+ echo hi\nhi\n$ ', 'echo hi', '+ echo hi\nhi\n$'],
+  // Prompts where the REPL printed them
+  ['python -i, both prompts after the results', '1\n2\n>>> >>> ', '1\n2', '1\n2'],
+  ['python -i, the prompts before the result', '>>> >>> 5\n', 'x = 5\nx', '5'],
+  ['python -i, a block, the prompts before the result', '... ... >>> >>> 1\n', 'def f():\n  return 1\n\nf()', '1'],
+  ['powershell.exe at its continuation prompt', captured('powershell.exe, continuation prompt').slice(captured('powershell.exe, continuation prompt').indexOf('if (')), 'if ($true) {', ''],
+  ['pwsh at its continuation prompt', captured('pwsh, continuation prompt').slice(captured('pwsh, continuation prompt').indexOf('if (')), 'if ($true) {', ''],
 ];
 
 const failures = [];
@@ -61,8 +79,8 @@ function check(ok, message) {
 
 function testCleaning() {
   console.log('\n--- the output returned for an input ---');
-  for (const [what, output, input, expected] of CASES) {
-    const cleaned = cleanProcessOutput(output, input);
+  for (const [what, output, input, expected, readAtPrompt = true] of CASES) {
+    const cleaned = cleanProcessOutput(output, input, readAtPrompt);
     check(cleaned === expected, `${what}: ${JSON.stringify(input)} should return ${JSON.stringify(expected)}, got ${JSON.stringify(cleaned)}`);
   }
 }
@@ -74,12 +92,28 @@ async function testNodeRepl() {
   assert(pid > 0, `start_process should start the Node.js REPL, got: ${started.content[0].text}`);
   try {
     // The answer to the first line always; the call may answer at the prompt before the second
-    for (const [input, answer, rest] of [['10', '10', ''], ["'abc'", "'abc'", ''], ['1\n2', '1', '\n2']]) {
+    for (const [input, answer, rest] of [['10', '10', ''], ["'abc'", "'abc'", ''], ['1\n2', '1', '\n2'],
+      ["console.log('+ a\\n> b')", '+ a\n> b\nundefined', '']]) {
       const result = await interactWithProcess({ pid, input, timeout_ms: 5000 });
       const text = result.content[0].text;
       check((text.includes(`📤 Output:\n${answer}\n\n`) || (rest && text.includes(`📤 Output:\n${answer}${rest}\n\n`))) && !text.includes('No output produced'),
         `interact_with_process ${JSON.stringify(input)} should return the REPL's answer ${JSON.stringify(answer + rest)}, got: ${JSON.stringify(text)}`);
     }
+  } finally {
+    await forceTerminate({ pid });
+  }
+}
+
+async function testNoPrompt() {
+  console.log('\n--- interact_with_process in a process that reads its input without a prompt ---');
+  // Prints each line it reads back as a diff's added line
+  const started = await startProcess({ command: `node -e "process.stdin.on('data', (d) => process.stdout.write('+ ' + d))"`, timeout_ms: 1000 });
+  const pid = started.structuredContent?.pid;
+  assert(pid > 0, `start_process should start node, got: ${started.content[0].text}`);
+  try {
+    const result = await interactWithProcess({ pid, input: 'added', timeout_ms: 1500 });
+    const text = result.content[0].text;
+    check(text.includes('📤 Output:\n+ added\n'), `interact_with_process should return the line "+ added" as printed, got: ${JSON.stringify(text)}`);
   } finally {
     await forceTerminate({ pid });
   }
@@ -113,6 +147,7 @@ async function testPowerShell() {
 async function runTests() {
   testCleaning();
   await testNodeRepl();
+  await testNoPrompt();
   await testPowerShell();
   console.log(failures.length === 0
     ? '\n✅ output cleaning tests passed'
