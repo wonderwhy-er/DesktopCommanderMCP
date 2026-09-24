@@ -5,9 +5,7 @@
  * them as its globs: case-sensitively (ignoreCase does not apply to them),
  * "*", "?", "[...]" and "{a,b}" work, a glob with a "/" matches the path below
  * the search root, and "!" leaves files out. The Excel and DOCX searches match
- * each alternative against file names ignoring case, with "*" as the only
- * wildcard; a "!" alternative leaves files out for them too (with a "/", by the
- * path below the search root). The fixture holds each file name as a text, an
+ * the same globs, ignoring case. The fixture holds each file name as a text, an
  * Excel and a DOCX file.
  */
 
@@ -80,11 +78,10 @@ async function testFilePatternSelection() {
       office: ['notes', 'secret', 'Shout', 'sub/deep']
     },
     {
-      // The Excel/DOCX searches match the alternatives against file names only
-      label: 'a glob with "/" matches the path below the search root (ripgrep only)',
+      label: 'a glob with "/" matches the path below the search root',
       filePattern: 'sub/*.txt|sub/*.xlsx|sub/*.docx',
       text: ['sub/deep'],
-      office: []
+      office: ['sub/deep']
     },
     {
       // A "!" glob leaves the files out for every source: with a "/", by their path below the search root
@@ -102,18 +99,17 @@ async function testFilePatternSelection() {
     },
     {
       // [ns] matches the first letter, each ? one more: "notes" and "Shout" have five letters, "secret" six.
-      // The Excel/DOCX searches know no wildcard but '*': the alternatives are exact names to them
-      label: '"[...]" and "?" (ripgrep only)',
+      // The Excel/DOCX searches ignore case: "[ns]" matches Shout's "S", ".xlsx" its ".XLSX"
+      label: '"[...]" and "?"',
       filePattern: '[ns]????.txt|[ns]????.xlsx|[ns]????.docx',
       text: ['notes'],
-      office: []
+      office: ['notes', 'Shout']
     },
     {
-      // The Excel/DOCX searches know no wildcard but '*': the alternatives are exact names to them
-      label: '"{a,b}" (ripgrep only)',
+      label: '"{a,b}"',
       filePattern: '{notes,Shout}.txt|{notes,Shout}.xlsx|{notes,Shout}.docx',
       text: ['notes'],
-      office: []
+      office: ['notes', 'Shout']
     },
     {
       // Exact names, the Excel one not last: the Excel search must run all the same

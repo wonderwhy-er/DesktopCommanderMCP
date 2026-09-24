@@ -91,11 +91,12 @@ const filePatternAlternatives = (filePattern: string | undefined): string[] =>
   (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
 
 /**
- * A glob as ripgrep matches its -g globs (gitignore style), for the files a
- * file search lists: without a '/' it is matched against the file's name, with
- * one against its path below the search path ('/'-separated). '*' and '?' stop
- * at '/', "**" as a whole path segment spans folders, "[...]" is a character
- * class ("[!...]" negated) and "{a,b}" a choice.
+ * A glob as ripgrep matches its -g globs (gitignore style), for the files
+ * ripgrep doesn't select itself: a file search's files, and the Excel and DOCX
+ * files. Without a '/' it is matched against the file's name, with one against
+ * its path below the search path ('/'-separated). '*' and '?' stop at '/', "**"
+ * as a whole path segment spans folders, "[...]" is a character class ("[!...]"
+ * negated) and "{a,b}" a choice.
  */
 function ripgrepGlobMatcher(glob: string, ignoreCase: boolean): (relativePath: string) => boolean {
   const byPath = glob.includes('/');  // "/x.ts" too: x.ts in the search path itself
@@ -133,6 +134,10 @@ function globRegexSource(glob: string): string {
   }
   return source;
 }
+
+/** A file's path below the search path, '/'-separated (just its name when it is the search path) */
+const pathBelow = (root: string, file: string): string =>
+  path.relative(root, file).split(path.sep).join('/') || path.basename(file);
 
 /** A glob that matches `text` itself: each glob character in a class of its own ("[*]", "[[]") */
 const literalGlob = (text: string): string => text.replace(/[*?[\]{}]/g, '[$&]');
@@ -623,70 +628,35 @@ function characterClassEnd(glob: string, start: number): number {
   }
 
   /**
-   * The Excel/DOCX files a filePattern selects: one of its alternatives matches
-   * the file's name (case-insensitive; '*' is the only wildcard), and none of
-   * its "!" alternatives leaves the file out (see officeFileExcluded).
+   * The Excel/DOCX files a filePattern selects, by the globs ripgrep's text
+   * files are selected by (ripgrepGlobMatcher), ignoring case: one of its
+   * alternatives matches the file, and none of its "!" alternatives leaves it
+   * out (see officeFileExcluded).
    */
   private filterOfficeFiles(files: string[], filePattern: string, rootPath: string): string[] {
     const patterns = filePatternAlternatives(filePattern);
-    const includes = patterns.filter(pat => !pat.startsWith('!'));
+    const includes = patterns.filter(pat => !pat.startsWith('!')).map(pat => ripgrepGlobMatcher(pat, true));
     const excludes = patterns.filter(pat => pat.startsWith('!')).map(pat => pat.slice(1));
     return files.filter(filePath => {
-      const fileName = path.basename(filePath);
-      return includes.some(pat => this.officeNameMatches(fileName, pat)) &&
-        !excludes.some(pat => this.officeFileExcluded(filePath, rootPath, pat));
+      const relativePath = pathBelow(rootPath, filePath);
+      return includes.some(matches => matches(relativePath)) &&
+        !excludes.some(pat => this.officeFileExcluded(relativePath, pat));
     });
-  }
-
-  /** Whether an Excel/DOCX file name matches one filePattern alternative */
-  private officeNameMatches(fileName: string, pat: string): boolean {
-    // Support glob-like patterns
-    if (pat.includes('*')) {
-      // Escape all regex metacharacters first (preserving * for glob expansion),
-      // then convert the remaining * wildcards to .* for glob matching.
-      // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
-      // misinterpreted as regex groups/character-classes.
-      const regexPat = pat
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-        .replace(/\*/g, '.*');                  // glob * → regex .*
-      return new RegExp(`^${regexPat}$`, 'i').test(fileName);
-    }
-    // Exact match (case-insensitive)
-    return fileName.toLowerCase() === pat.toLowerCase();
   }
 
   /**
    * Whether a "!" alternative of a filePattern (given without its "!") leaves an
    * Excel/DOCX file out - as it leaves text files out of ripgrep's search: when
-   * it matches the file, or a directory between the search path and the file.
-   * Without a '/' it matches their names ("secret*", "archive"); with one, their
-   * paths below the search path ("sub/*", "/secret.xlsx"); ending in '/', only
-   * directories. Case-insensitive, '*' is the only wildcard, as for the other
-   * alternatives; a '*' in a path does not match a '/'.
+   * it matches the file, or a directory between the search path and the file;
+   * ending in '/', only directories.
    */
-  private officeFileExcluded(filePath: string, rootPath: string, exclusion: string): boolean {
+  private officeFileExcluded(relativePath: string, exclusion: string): boolean {
     const dirOnly = exclusion.endsWith('/');
-    let pat = exclusion.replace(/\/+$/, '');
-    if (pat.startsWith('**/')) pat = pat.slice(3);  // in any directory: the same as the name alone
-    const matchesPath = pat.includes('/');
-    pat = pat.replace(/^\/+/, '');
-    if (!pat) return false;
-
-    // The file's path below the search path, part by part (just its name if it is the search path)
-    const relative = path.relative(rootPath, filePath);
-    const parts = relative ? relative.split(path.sep) : [path.basename(filePath)];
+    const matches = ripgrepGlobMatcher(exclusion.replace(/\/+$/, ''), true);
+    const parts = relativePath.split('/');
     // The directories between the search path and the file, then the file itself
-    const candidates = parts.map((_, i) => parts.slice(0, i + 1)).slice(0, dirOnly ? -1 : undefined);
-
-    return candidates.some(candidate => {
-      if (!matchesPath) return this.officeNameMatches(candidate[candidate.length - 1], pat);
-      const candidatePath = candidate.join('/');
-      if (!pat.includes('*')) return candidatePath.toLowerCase() === pat.toLowerCase();
-      const regexPat = pat
-        .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-        .replace(/\*/g, '[^/]*');               // glob * → any characters but '/'
-      return new RegExp(`^${regexPat}$`, 'i').test(candidatePath);
-    });
+    const candidates = parts.map((_, i) => parts.slice(0, i + 1).join('/')).slice(0, dirOnly ? -1 : undefined);
+    return candidates.some(candidate => matches(candidate));
   }
 
   /**
@@ -900,7 +870,7 @@ function characterClassEnd(glob: string, start: number): number {
   private filePatternSelects(session: SearchSession, file: string): boolean {
     const includes = session.filePatternIncludes;
     if (!includes) return true;
-    const relativePath = path.relative(includes.root, file).split(path.sep).join('/') || path.basename(file);
+    const relativePath = pathBelow(includes.root, file);
     return includes.matchers.some(matches => matches(relativePath));
   }
 
