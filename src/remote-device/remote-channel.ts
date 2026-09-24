@@ -611,7 +611,7 @@ export class RemoteChannel {
                         const arrival = { timestamp_utc: new Date(Date.now()).toISOString(), monotonic_ms: performance.now() };
                         if (!this.shuttingDown) {
                             const receipt = broadcastReceipt(payload, this.deviceId, this.user?.id, arrival);
-                            if (receipt) void capture('broadcast', receipt);
+                            if (receipt) void capture(receipt.stage, receipt);
                         }
                         this.onDoorbell(payload).catch((e: any) => {
                             console.error('[DEBUG] Doorbell handling failed:', e?.message);
@@ -727,7 +727,7 @@ export class RemoteChannel {
             outcome: row ? 'success' : claimError ? 'failed' : 'skipped',
             duration_ms: performance.now() - claimStartedAt,
         });
-        if (claimObservation) void capture('broadcast', claimObservation);
+        if (claimObservation) void capture(claimObservation.stage, claimObservation);
 
         if (row) {
             this.dispatchToolCall({ new: row, claimed: true });
@@ -757,7 +757,7 @@ export class RemoteChannel {
             outcome: error ? 'failed' : 'success',
             duration_ms: performance.now() - readStartedAt,
         });
-        if (readObservation) void capture('broadcast', readObservation);
+        if (readObservation) void capture(readObservation.stage, readObservation);
         if (error) {
             console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after claim errors:`, error.message);
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
@@ -1030,7 +1030,7 @@ export class RemoteChannel {
             outcome: error ? 'unconfirmed' : data?.length ? 'success' : 'skipped',
             duration_ms: performance.now() - startedAt,
         });
-        if (observation) void capture('broadcast', observation);
+        if (observation) void capture(observation.stage, observation);
 
         if (error) {
             console.error('[DEBUG] Failed to mark call executing:', error.message);

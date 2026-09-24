@@ -13,7 +13,7 @@ import { broadcastStage } from './broadcast-analytics.js';
 function observeCall(callId: string, deviceId: string | undefined, toolName: string, stage: string, fields: Record<string, string | number> = {}): void {
     try {
         const observation = broadcastStage(callId, deviceId, stage, { tool_name: toolName, ...fields });
-        if (observation) void capture('broadcast', observation);
+        if (observation) void capture(observation.stage, observation);
     } catch { /* Telemetry must not affect execution. */ }
 }
 
