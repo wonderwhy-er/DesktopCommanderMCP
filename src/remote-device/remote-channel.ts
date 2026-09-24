@@ -211,6 +211,10 @@ export class RemoteChannel {
     private presenceTracked = false;
     /** Last capability value written (null = never), to avoid redundant writes. */
     private transportCapableWritten: boolean | null = null;
+    /** Value of the last capability write still queued or in flight; null once the queue is idle. */
+    private transportCapableQueued: boolean | null = null;
+    // Single-slot queue keeping capability writes in order (see setTransportCapable).
+    private capabilityWriteChain: Promise<unknown> = Promise.resolve();
     /** Monotonic start of a Presence-only degradation while broadcast remains joined. */
     private presenceFailureStartedAt: number | null = null;
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
@@ -709,10 +713,30 @@ export class RemoteChannel {
      * Advertise (or withdraw) the broadcast capability. Only true while genuinely
      * reachable that way — the server fails dispatch fast without it and picks
      * the offline-sweep tier from it, so every change must re-arm the heartbeat.
+     *
+     * Writes are queued, like the status writes. A withdrawal the recreate stops
+     * waiting for still lands: compared with the last landed value, a re-publish
+     * in the meantime looked redundant and was skipped, and the withdrawal then
+     * left a device that claims to be online without the flag. Resolves with
+     * whether the row holds `capable` once this write is done.
      */
-    private async setTransportCapable(capable: boolean): Promise<boolean> {
+    private setTransportCapable(capable: boolean): Promise<boolean> {
+        if (!this.client || !this.deviceId) return Promise.resolve(false);
+        // What the row holds once the queue drains — no redundant writes.
+        if ((this.transportCapableQueued ?? this.transportCapableWritten) === capable) {
+            return this.capabilityWriteChain.then(() => this.transportCapableWritten === capable);
+        }
+        this.transportCapableQueued = capable;
+        const write = this.capabilityWriteChain.then(() => this.writeTransportCapable(capable));
+        this.capabilityWriteChain = write;
+        write.then(() => {
+            if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
+        });
+        return write;
+    }
+
+    private async writeTransportCapable(capable: boolean): Promise<boolean> {
         if (!this.client || !this.deviceId) return false;
-        if (this.transportCapableWritten === capable) return true; // no redundant writes
         try {
             const capabilities = this.capabilitiesPayload(capable);
             const { error } = await this.client
@@ -1194,8 +1218,8 @@ export class RemoteChannel {
                         'withdrawTransportCapability'
                     );
                 } catch (withdrawErr: any) {
-                    // The next failed recreate retries; the flag only advances
-                    // on a confirmed write, so nothing is lost.
+                    // The write stays queued and still lands, in order with any
+                    // re-publish after it; the flag only advances on a confirmed write.
                     console.debug(`[DEBUG] Capability withdrawal did not complete: ${withdrawErr?.message}`);
                 }
             }
