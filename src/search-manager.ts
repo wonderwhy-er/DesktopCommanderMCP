@@ -133,6 +133,9 @@ function globRegexSource(glob: string): string {
   return source;
 }
 
+/** A glob that matches `text` itself: each glob character in a class of its own ("[*]", "[[]") */
+const literalGlob = (text: string): string => text.replace(/[*?[\]{}]/g, '[$&]');
+
 /** The ']' that closes the character class opening at `start` (one right after "[" or "[!" is part of it), or -1 */
 function characterClassEnd(glob: string, start: number): number {
   let i = start + 1;
@@ -851,16 +854,16 @@ function characterClassEnd(glob: string, start: number): number {
    * file, unlike a content search for that same text
    */
   private isExactFilenameSearch(options: SearchSessionOptions): boolean {
-    return options.searchType === 'files' && this.isExactFilename(options.pattern);
+    return options.searchType === 'files' && this.isExactFilename(options.pattern, options.literalSearch);
   }
 
   /**
    * Detect if pattern looks like an exact filename
-   * (has file extension and no glob wildcards)
+   * (has file extension and no glob wildcards; a literal pattern has none)
    */
-  private isExactFilename(pattern: string): boolean {
+  private isExactFilename(pattern: string, literal = false): boolean {
     return /\.[a-zA-Z0-9]+$/.test(pattern) &&
-           !this.isGlobPattern(pattern);
+           (literal || !this.isGlobPattern(pattern));
   }
 
   /**
@@ -948,15 +951,17 @@ function characterClassEnd(glob: string, start: number): number {
       // (--iglob for case-insensitive or --glob for case-sensitive)
       const globFlag = options.ignoreCase !== false ? '--iglob' : '--glob';
 
-      if (this.isExactFilename(options.pattern)) {
+      // literalSearch: the pattern is an exact string, glob characters and all
+      const name = options.literalSearch ? literalGlob(options.pattern) : options.pattern;
+      if (this.isExactFilename(options.pattern, options.literalSearch)) {
         // Exact filename: use appropriate glob flag with the exact pattern
-        args.push(globFlag, options.pattern);
-      } else if (this.isGlobPattern(options.pattern)) {
+        args.push(globFlag, name);
+      } else if (!options.literalSearch && this.isGlobPattern(options.pattern)) {
         // Already a glob pattern: use appropriate glob flag as-is
         args.push(globFlag, options.pattern);
       } else {
         // Substring/fuzzy search: wrap with wildcards
-        args.push(globFlag, `*${options.pattern}*`);
+        args.push(globFlag, `*${name}*`);
       }
       // filePattern narrows the files the pattern finds. Its "!" alternatives
       // come after the pattern's glob, since ripgrep's last matching glob wins;
