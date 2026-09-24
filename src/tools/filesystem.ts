@@ -1107,6 +1107,33 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
 
 
 /**
+ * Validate the paths a PDF's page operations use besides the PDF itself: the
+ * output path and each inserted PDF. write_pdf and edit_block both modify PDFs,
+ * so both check here. An inserted PDF's path is replaced by its validated path.
+ *
+ * @param validPath The PDF the operations apply to, already validated
+ * @returns Where to write the result: outputPath if provided, otherwise the PDF itself
+ */
+export async function validatePdfOperationPaths(
+    validPath: string,
+    operations: PdfOperations[],
+    outputPath?: string
+): Promise<string> {
+    // Use outputPath if provided, otherwise overwrite input file
+    const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
+    // Validate paths in operations
+    for (const o of operations) {
+        if (o.type === 'insert') {
+            if (o.sourcePdfPath) {
+                o.sourcePdfPath = await validatePath(o.sourcePdfPath);
+            }
+        }
+    }
+    return targetPath;
+}
+
+/**
  * Write content to a PDF file.
  * Can create a new PDF from Markdown string, or modify an existing PDF using operations.
  * 
@@ -1140,20 +1167,8 @@ export async function writePdf(
         return resolveRender(content, options).ignoredOptions;
     } else if (Array.isArray(content)) {
 
-        // Use outputPath if provided, otherwise overwrite input file
-        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
-
-        const operations: PdfOperations[] = [];
-
-        // Validate paths in operations
-        for (const o of content) {
-            if (o.type === 'insert') {
-                if (o.sourcePdfPath) {
-                    o.sourcePdfPath = await validatePath(o.sourcePdfPath);
-                }
-            }
-            operations.push(o);
-        }
+        const targetPath = await validatePdfOperationPaths(validPath, content, outputPath);
+        const operations: PdfOperations[] = [...content];
 
         capture('server_write_pdf', {
             fileExtension: fileExtension,
