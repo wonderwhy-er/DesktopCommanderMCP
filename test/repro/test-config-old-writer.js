@@ -24,6 +24,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { isTestHome } from '../helpers/test-env.js';
+import { closeClient } from '../helpers/close-client.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -83,7 +84,7 @@ async function runRepro() {
       error = e?.message ?? String(e);
       failedStarts++;
     } finally {
-      await client.close().catch(() => {});
+      await closeClient(client);
     }
     const reloads = (log.match(/Failed to reload config/g) ?? []).length;
     reloadErrors += reloads;
