@@ -17,7 +17,8 @@ export async function createStalledReadTarget(name = 'dc-stall') {
   const id = `${name}-${process.pid}-${Date.now()}`;
 
   if (process.platform !== 'win32') {
-    const fifo = path.join(os.tmpdir(), id);
+    // In the temporary folder's real path, like the test homes (see test-env.js)
+    const fifo = path.join(fs.realpathSync.native(os.tmpdir()), id);
     execSync(`mkfifo "${fifo}"`); // child process, so it doesn't use the threadpool
     return {
       path: fifo,
