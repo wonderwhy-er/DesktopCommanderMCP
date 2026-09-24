@@ -15,6 +15,12 @@
  * real sessions; only the working directory in them was replaced with a neutral
  * one). Then interact_with_process in a real PowerShell session returns at its
  * prompt.
+ *
+ * Node 24's continuation prompt, "| " (fixtures/node-repl-prompts.js, captured
+ * from node -i on Windows and macOS), is a prompt too, the way #196 counts a
+ * generic one: in a last line made of prompts ("> | "). A session left at it
+ * wasn't detected as waiting, so interact_with_process waited out its timeout.
+ * A markdown table's lines ("| a | b |") are not prompts.
  */
 import path from 'path';
 import { spawnSync } from 'child_process';
@@ -23,7 +29,14 @@ import { analyzeProcessState } from '../dist/utils/process-detection.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { PYTEST_COLLECTING, PYTEST_PROGRESS_LINE } from './fixtures/pytest-196.js';
 import { WINDOWS_SHELL_PROMPTS } from './fixtures/windows-shell-prompts.js';
+import { NODE_24_SESSIONS } from './fixtures/node-repl-prompts.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
+
+// node -i's captured output: its session at the continuation prompt after "function f() {", and the lines of the
+// markdown table it printed (each as the last line, before its newline)
+const NODE_24_CONTINUATION = NODE_24_SESSIONS.map(([os, banner, exchanges]) =>
+  [`node -i (${os}) at its continuation prompt`, banner + exchanges[0][1]]);
+const TABLE_LINES = NODE_24_SESSIONS[0][2][4][1].split('\n').slice(0, 3);
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pytest-196.js');
 // PowerShell answers "echo hi" within a second or two; missing its prompt runs to the timeout
@@ -34,6 +47,7 @@ const PROMPT_WITHIN_MS = 5_000;
 const NOT_PROMPTS = [
   ['pytest -v while it collects (#196)', PYTEST_COLLECTING],
   ['a pytest progress line before its newline (padding, then "[100%]")', PYTEST_PROGRESS_LINE],
+  ...TABLE_LINES.map((line) => [`a markdown table's line before its newline (${line})`, line]),
 ];
 
 // Output that ends in a prompt
@@ -45,6 +59,7 @@ const PROMPTS = [
   ['python -i prompts on stderr', '>>> >>> ... '],
   ['a shell\'s prompts on stderr', '$ $ '],
   ['node', '1\n> '],
+  ...NODE_24_CONTINUATION,
   ['R continuation', '+ '],
   ['shell', '$ '],
   ['bash default', 'bash-5.2$ '],
@@ -125,9 +140,31 @@ async function testInteractWithPowerShell() {
   }
 }
 
+async function testInteractAtNodeContinuation() {
+  console.log('\n--- interact_with_process: node -i at its continuation prompt ---');
+  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const pid = started.structuredContent?.pid;
+  try {
+    // [input, what the answer shows]: a statement typed a line at a time, then its result
+    for (const [input, output] of [['function f() {', null], ['  return 1;', null], ['}', 'undefined'], ['f()', '1']]) {
+      const startedAt = Date.now();
+      const answer = await interactWithProcess({ pid, input, timeout_ms: INTERACT_TIMEOUT_MS });
+      const ms = Date.now() - startedAt;
+      const text = answer.content[0].text;
+      check(ms < PROMPT_WITHIN_MS && answer.structuredContent?.status === 'waiting_for_input',
+        `interact_with_process ${JSON.stringify(input)} should return at node's prompt, took ${ms}ms (timeout ${INTERACT_TIMEOUT_MS}ms), status ${answer.structuredContent?.status}: ${JSON.stringify(text)}`);
+      check(output === null ? text.includes('📭 (No output produced)') : text.includes(`📤 Output:\n${output}\n`),
+        `interact_with_process ${JSON.stringify(input)} should answer ${output === null ? 'with no output' : JSON.stringify(output)}, got: ${JSON.stringify(text)}`);
+    }
+  } finally {
+    if (pid > 0) await forceTerminate({ pid });
+  }
+}
+
 async function runTests() {
   testDetection();
   await testStartProcess();
+  await testInteractAtNodeContinuation();
   await testInteractWithPowerShell();
   console.log(failures.length === 0
     ? '\n✅ prompt detection tests passed'

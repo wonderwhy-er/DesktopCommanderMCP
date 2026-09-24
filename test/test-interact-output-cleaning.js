@@ -22,12 +22,17 @@
  * output line, so a diff's "+ added", a quoted "> b" or "... c" lost their
  * first characters. The python -i outputs are as captured (python 3.14 on
  * macOS: prompts on stderr, arriving before or after the results).
+ *
+ * Node 24's continuation prompt "| " is removed like the others (captured
+ * node -i sessions, fixtures/node-repl-prompts.js); the markdown table node
+ * prints stays as printed.
  */
 import assert from 'assert';
 import { spawnSync } from 'child_process';
 import { cleanProcessOutput } from '../dist/utils/process-detection.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { WINDOWS_SHELL_PROMPTS } from './fixtures/windows-shell-prompts.js';
+import { NODE_24_SESSIONS } from './fixtures/node-repl-prompts.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const captured = (what) => WINDOWS_SHELL_PROMPTS.find(([name]) => name === what)[1];
@@ -67,6 +72,11 @@ const CASES = [
   ['python -i, a block, the prompts before the result', '... ... >>> >>> 1\n', 'def f():\n  return 1\n\nf()', '1'],
   ['powershell.exe at its continuation prompt', captured('powershell.exe, continuation prompt').slice(captured('powershell.exe, continuation prompt').indexOf('if (')), 'if ($true) {', ''],
   ['pwsh at its continuation prompt', captured('pwsh, continuation prompt').slice(captured('pwsh, continuation prompt').indexOf('if (')), 'if ($true) {', ''],
+  // node -i (Node 24) as captured (fixtures/node-repl-prompts.js): its continuation prompt is "| "
+  ...NODE_24_SESSIONS.flatMap(([os, , exchanges]) => exchanges.map(([input, output], i) => [
+    `node -i (${os}), exchange ${i + 1}`, output, input,
+    ['', 'undefined', '1', 'undefined\n2', '| a | b |\n|---|---|\n| 1 | 2 |\nundefined'][i],
+  ])),
 ];
 
 const failures = [];
