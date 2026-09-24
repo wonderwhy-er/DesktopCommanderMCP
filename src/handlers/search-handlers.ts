@@ -1,4 +1,4 @@
-import { searchManager } from '../search-manager.js';
+import { searchManager, SHOWN_TEXT_CHARS } from '../search-manager.js';
 import {
   StartSearchArgsSchema,
   GetMoreSearchResultsArgsSchema,
@@ -48,7 +48,7 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
       
       for (const searchResult of result.results.slice(0, 10)) {
         if (searchResult.type === 'content') {
-          output += `📄 ${searchResult.file}:${searchResult.line} - ${searchResult.match?.substring(0, 100)}${searchResult.match && searchResult.match.length > 100 ? '...' : ''}\n`;
+          output += `📄 ${searchResult.file}:${searchResult.line} - ${searchResult.match?.substring(0, SHOWN_TEXT_CHARS)}${searchResult.match && searchResult.match.length > SHOWN_TEXT_CHARS ? '...' : ''}\n`;
         } else {
           output += `📁 ${searchResult.file}\n`;
         }
@@ -144,7 +144,7 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
       
       for (const result of results.results) {
         if (result.type === 'content') {
-          output += `📄 ${result.file}:${result.line} - ${result.match?.substring(0, 100)}${result.match && result.match.length > 100 ? '...' : ''}\n`;
+          output += `📄 ${result.file}:${result.line} - ${result.match?.substring(0, SHOWN_TEXT_CHARS)}${result.match && result.match.length > SHOWN_TEXT_CHARS ? '...' : ''}\n`;
         } else {
           output += `📁 ${result.file}\n`;
         }
