@@ -8,8 +8,7 @@ import { createRequire } from 'module';
 import { tmpdir, userInfo } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import type { Browser, LaunchOptions, PuppeteerNode } from 'puppeteer';
-import { convertMdToPdf } from 'md-to-pdf/dist/lib/md-to-pdf.js';
-import { defaultConfig, type Config as MdToPdfConfig } from 'md-to-pdf/dist/lib/config.js';
+import type { Config as MdToPdfConfig } from 'md-to-pdf/dist/lib/config.js';
 import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 import { CONFIG_FILE } from '../../config.js';
@@ -34,13 +33,25 @@ const CHROME_EXIT_WAIT_MS = 10_000;
 /** Cookie a render's Chrome sends to its web server; nothing else gets in */
 const RENDER_COOKIE_NAME = 'desktop-commander-pdf-render';
 
-// md-to-pdf's own Puppeteer, file server and front matter parser, loaded the
-// way md-to-pdf loads them (they are its dependencies, not Desktop Commander's)
-const requireFromMdToPdf = createRequire(createRequire(import.meta.url).resolve('md-to-pdf'));
-const puppeteer: PuppeteerNode = requireFromMdToPdf('puppeteer');
-const serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean; cleanUrls: boolean }) => Promise<void> =
-    requireFromMdToPdf('serve-handler');
-const grayMatter: (input: string, options: unknown) => { content: string; data: unknown } = requireFromMdToPdf('gray-matter');
+const require = createRequire(import.meta.url);
+
+/**
+ * md-to-pdf, with its own Puppeteer, file server and front matter parser
+ * loaded the way md-to-pdf loads them (they are its dependencies, not Desktop
+ * Commander's). Loaded here, on first use, not with this module: the server
+ * loads this module at startup for the Chrome warm-up, and most sessions
+ * never write a PDF (#715).
+ */
+function loadMdToPdf() {
+    const requireFromMdToPdf = createRequire(require.resolve('md-to-pdf'));
+    const { convertMdToPdf }: typeof import('md-to-pdf/dist/lib/md-to-pdf.js') = require('md-to-pdf/dist/lib/md-to-pdf.js');
+    const { defaultConfig }: typeof import('md-to-pdf/dist/lib/config.js') = require('md-to-pdf/dist/lib/config.js');
+    const puppeteer: PuppeteerNode = requireFromMdToPdf('puppeteer');
+    const serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean; cleanUrls: boolean }) => Promise<void> =
+        requireFromMdToPdf('serve-handler');
+    const grayMatter: (input: string, options: unknown) => { content: string; data: unknown } = requireFromMdToPdf('gray-matter');
+    return { convertMdToPdf, defaultConfig, puppeteer, serveHandler, grayMatter };
+}
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -109,6 +120,7 @@ interface ResolvedRender {
  * md-to-pdf merging the front matter a second time.
  */
 export function resolveRender(markdown: string, options: unknown = {}): ResolvedRender {
+    const { defaultConfig, grayMatter } = loadMdToPdf();
     const fromOptions = isPlainObject(options) ? options : {};
     // Parse the front matter the way md-to-pdf would: with the caller's
     // gray_matter_options if given, otherwise md-to-pdf's default (its JS engine
@@ -528,7 +540,12 @@ function nameGivenPaths(error: unknown, givenPaths: Map<string, string>): void {
  * the check resolved, not the URL's path looked up again, so a link on the way
  * that is changed after the check doesn't lead elsewhere.
  */
-async function serveAllowedFile(request: IncomingMessage, response: ServerResponse, basedir: string): Promise<void> {
+async function serveAllowedFile(
+    request: IncomingMessage,
+    response: ServerResponse,
+    basedir: string,
+    serveHandler: ReturnType<typeof loadMdToPdf>['serveHandler']
+): Promise<void> {
     // Imported when used: tools/filesystem.js loads this module
     const { validatePath } = await import('../filesystem.js');
     let file: string;
@@ -561,6 +578,7 @@ async function serveAllowedFile(request: IncomingMessage, response: ServerRespon
  * folder listings, only from inside the allowed folders (serveAllowedFile).
  */
 async function startRenderServer(basedir: string): Promise<RenderServer> {
+    const { serveHandler } = loadMdToPdf();
     const cookie = { name: RENDER_COOKIE_NAME, value: randomBytes(32).toString('hex') };
     const expected = `${cookie.name}=${cookie.value}`;
     const server = createServer((request, response) => {
@@ -568,7 +586,7 @@ async function startRenderServer(basedir: string): Promise<RenderServer> {
             response.writeHead(403, { 'Content-Type': 'text/plain' }).end('Forbidden');
             return;
         }
-        serveAllowedFile(request, response, basedir).catch((error) => {
+        serveAllowedFile(request, response, basedir, serveHandler).catch((error) => {
             console.error('The PDF render server could not serve a file:', error);
             if (!response.headersSent) response.writeHead(500);
             response.end();
@@ -733,6 +751,7 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
     // The render files as the caller gave them, by the checked paths the render reads
     let givenPaths = new Map<string, string>();
     try {
+        const { convertMdToPdf, defaultConfig, puppeteer } = loadMdToPdf();
         // The folder the markdown's files are served from must be inside the allowed folders
         const { validatePath } = await import('../filesystem.js');
         const basedir: string = options.basedir ? await validatePath(options.basedir) : process.cwd();
