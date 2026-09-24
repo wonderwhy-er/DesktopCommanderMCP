@@ -38,6 +38,7 @@ export interface SearchSession {
   filePatternIncludes?: { root: string; matchers: Array<(relativePath: string) => boolean> };  // A file search's filePattern alternatives but "!" (see filePatternSelects)
   exitCode?: number | null;  // ripgrep's exit code, reported on completion
   printedOutput?: boolean;  // ripgrep wrote to stdout (see the 'close' handler)
+  stoppedRipgrep?: boolean;  // We stopped ripgrep (stopRipgrep): its end without an exit code is no failure
   completed: Promise<void>;  // Settles when the session completes
   markCompleted: () => void;
 }
@@ -1036,10 +1037,11 @@ function characterClassEnd(glob: string, start: number): number {
       }
 
       // Only treat as error if:
-      // 1. Unexpected exit code (not 0, 1, or 2) AND
+      // 1. Unexpected exit code (not 0, 1, or 2), not from a stop of ours
+      //    (time limit, stop_search, maxResults: no exit code) AND
       // 2. We have meaningful errors after filtering AND
       // 3. We found no results at all
-      if (code !== 0 && code !== 1 && code !== 2) {
+      if (code !== 0 && code !== 1 && code !== 2 && !session.stoppedRipgrep) {
         // Codes 0=success, 1=no matches, 2=some files couldn't be searched
         if (session.error?.trim() && session.totalMatches === 0) {
           session.isError = true;
@@ -1111,6 +1113,7 @@ function characterClassEnd(glob: string, start: number): number {
 
   private stopRipgrep(session: SearchSession): void {
     if (session.pendingSources.has('ripgrep') && !session.process.killed) {
+      session.stoppedRipgrep = true;
       session.process.kill('SIGTERM');
     }
   }
@@ -1147,11 +1150,7 @@ function characterClassEnd(glob: string, start: number): number {
             : filePath.endsWith(pat);
           if (ends) {
             // Found exact match, terminate search early
-            setTimeout(() => {
-              if (!session.process.killed) {
-                session.process.kill('SIGTERM');
-              }
-            }, 100); // Small delay to allow any remaining results
+            setTimeout(() => this.stopRipgrep(session), 100); // Small delay to allow any remaining results
             break;
           }
         }
