@@ -7,7 +7,9 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
 /**
  * Environment for one test process. The runners start every test file with it:
  * - a fresh temporary home, so Desktop Commander's config, flag cache and logs
- *   (~/.claude-server-commander) never touch the real ones
+ *   (~/.claude-server-commander) never touch the real ones. It is given by its
+ *   real path: macOS's temporary folder is under /var, a link to /private/var,
+ *   and a test must not meet that link unless it makes one itself
  * - telemetry off, and feature flags from a dead local address instead of the
  *   production server
  * - no FORCE_COLOR, so processes the tests start print the same plain text
@@ -15,7 +17,7 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), TEST_HOME_PREFIX));
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), TEST_HOME_PREFIX)));
   const { FORCE_COLOR, ...inherited } = process.env;
   const env = {
     ...inherited,
