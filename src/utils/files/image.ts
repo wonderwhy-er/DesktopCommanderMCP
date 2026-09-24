@@ -56,7 +56,11 @@ export class ImageFileHandler implements FileHandler {
         };
     }
 
-    async write(path: string, content: Buffer | string): Promise<void> {
+    async write(path: string, content: Buffer | string, mode?: 'rewrite' | 'append'): Promise<void> {
+        // An image can't take text at its end: writing the content would replace the file
+        if (mode === 'append') {
+            throw new Error('Image append not supported.');
+        }
         // If content is base64 string, convert to buffer
         if (typeof content === 'string') {
             const buffer = Buffer.from(content, 'base64');
