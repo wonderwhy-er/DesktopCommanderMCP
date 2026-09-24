@@ -424,6 +424,27 @@ interface RenderServer {
 }
 
 /**
+ * Serve a file of the render's base folder only if it is inside the allowed
+ * folders, checked as every file tool checks it (links resolved): markdown must
+ * not embed a file from outside them, whether the base folder is the working
+ * folder or reaches outside through a linked folder.
+ */
+async function serveAllowedFile(request: IncomingMessage, response: ServerResponse, basedir: string): Promise<void> {
+    // Imported when used: tools/filesystem.js loads this module
+    const { validatePath } = await import('../filesystem.js');
+    try {
+        // The file serve-handler maps the URL to
+        const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
+        await validatePath(join(basedir, pathname));
+    } catch {
+        // Outside the allowed folders (or not a file path): refused, not served
+        response.writeHead(403, { 'Content-Type': 'text/plain' }).end('Forbidden');
+        return;
+    }
+    await serveHandler(request, response, { public: basedir, directoryListing: false });
+}
+
+/**
  * Local web server for one PDF render.
  *
  * md-to-pdf loads the page it renders from http://localhost:<port>/, served
@@ -434,7 +455,7 @@ interface RenderServer {
  * failed one it kept serving the working folder until Desktop Commander
  * restarted. This one listens on 127.0.0.1 only, answers only requests that
  * carry a random cookie set in the render's own Chrome, and serves files, not
- * folder listings.
+ * folder listings, only from inside the allowed folders (serveAllowedFile).
  */
 async function startRenderServer(basedir: string): Promise<RenderServer> {
     const cookie = { name: RENDER_COOKIE_NAME, value: randomBytes(32).toString('hex') };
@@ -444,7 +465,7 @@ async function startRenderServer(basedir: string): Promise<RenderServer> {
             response.writeHead(403, { 'Content-Type': 'text/plain' }).end('Forbidden');
             return;
         }
-        serveHandler(request, response, { public: basedir, directoryListing: false }).catch((error) => {
+        serveAllowedFile(request, response, basedir).catch((error) => {
             console.error('The PDF render server could not serve a file:', error);
             if (!response.headersSent) response.writeHead(500);
             response.end();
@@ -607,6 +628,10 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
     let server: RenderServer | undefined;
     let browser: Browser | undefined;
     try {
+        // The folder the markdown's files are served from must be inside the allowed folders
+        const { validatePath } = await import('../filesystem.js');
+        const basedir: string = options.basedir ? await validatePath(options.basedir) : process.cwd();
+
         // Merge options and front matter, and drop the ignored ones, in one place
         const { body, options: render } = resolveRender(markdown, options);
         const launchOptions = isPlainObject(render.launch_options) ? render.launch_options as LaunchOptions : {};
@@ -615,7 +640,6 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
         const chromePath = await getChromePath();
         const chromeEnv = getChromeEnvironment();
         profile = await createChromeProfile();
-        const basedir: string = options.basedir || process.cwd();
         server = await startRenderServer(basedir);
 
         browser = await puppeteer.launch({
