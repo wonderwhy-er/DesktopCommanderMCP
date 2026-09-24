@@ -44,6 +44,11 @@ export function insertRenderOptions(
 function deletePages(pdfDoc: PDFDocumentType, pageIndexes: number[]): PDFDocumentType {
     const pageCount = pdfDoc.getPageCount();
 
+    // A page that doesn't exist is an error, as for an insert: nothing is deleted
+    if (pageIndexes.some(idx => !Number.isInteger(idx) || idx >= pageCount || idx < -pageCount)) {
+        throw new Error('Invalid page index');
+    }
+
     // Transform negative indices to absolute and filter valid ones
     const normalizedIndexes = normalizePageIndexes(pageIndexes, pageCount).sort((a, b) => b - a);
 

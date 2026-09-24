@@ -53,6 +53,8 @@ This is the first page of the test PDF.
 2. Item 2
 3. Item 3
 
+<div style="page-break-before: always;"></div>
+
 # Page 2: Code Section
 
 This should be on a new page if the previous content fills the page, 
@@ -96,6 +98,8 @@ console.log('Line 3');
         const originalPages = (await pageTexts(OUTPUT_FILE)).length;
         const mergePages = (await pageTexts(tempMergeFile)).length;
         console.log(`   Created PDF has ${originalPages} page(s); merge file has ${mergePages}`);
+        // Deleting a page that doesn't exist is an error: the two deletes below need two pages
+        assert(originalPages >= 2, `the created PDF should have at least 2 pages, got ${originalPages}`);
 
         // We will:
         // 1. Delete page 0 (the first page)
@@ -134,7 +138,7 @@ console.log('Line 3');
 
         // Two pages deleted, cover + appendix inserted, then the merge file's pages
         const modified = await pageTexts(MODIFIED_FILE);
-        const expectedPages = Math.max(originalPages - 2, 0) + 2 + mergePages;
+        const expectedPages = originalPages - 2 + 2 + mergePages;
         assert.strictEqual(modified.length, expectedPages,
             `Modified PDF should have ${expectedPages} pages, got ${modified.length}`);
         assert(modified[0].includes('New Cover Page'), `Page 1 should be the inserted cover, got: ${modified[0]}`);
