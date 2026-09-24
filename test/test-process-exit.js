@@ -3,7 +3,8 @@
  * - output written after the process exits stays readable
  * - read_process_output keeps its read position after the exit, and returns
  *   an unfinished last line again only when that line changed
- * - every exit is reported as finished
+ * - every exit is reported as finished, and a running process is never
+ *   reported finished because of its output text
  *
  * The tools run in-process, so their structuredContent (kept internal, never
  * sent to a client) is read directly. The processes are the modes of
@@ -13,7 +14,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { startProcess, readProcessOutput, forceTerminate } from '../dist/tools/improved-process-tools.js';
+import { startProcess, readProcessOutput, interactWithProcess, forceTerminate, listSessions } from '../dist/tools/improved-process-tools.js';
 import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -113,11 +114,33 @@ async function testEveryExitIsFinished() {
   }
 }
 
+async function testErrorTextIsNotAnExit() {
+  const { pid, reply, status } = await start(fixture('error-then-run'), 1_500);
+  try {
+    check(reply.includes('Error: still working'), `the process should have printed before the wait ended, got: ${reply}`);
+    check(!reply.includes('has finished execution'),
+      `start_process should not call a running process finished because it printed "Error:", got: ${reply}`);
+    check(reply.includes('Process is running'), `start_process should report the process as running, got: ${reply}`);
+    check(status === 'running', `status should be running, got ${status}`);
+    check(text(await listSessions()).includes(`PID: ${pid},`), 'list_sessions should list the process, which is still running');
+
+    const interaction = await interactWithProcess({ pid, input: 'again', timeout_ms: 1_500 });
+    const answer = text(interaction);
+    check(answer.includes('Error: retrying again'), `the process should have answered, got: ${answer}`);
+    check(!answer.includes('has finished execution'),
+      `interact_with_process should not call a running process finished because it printed "Error:", got: ${answer}`);
+    check(interaction.structuredContent.status !== 'finished', `status should not be finished, got: ${interaction.structuredContent.status}`);
+  } finally {
+    await forceTerminate({ pid });
+  }
+}
+
 const CASES = [
   ['output written after the exit is readable', testOutputAfterExitIsReadable],
   ['a read after the exit moves forward', testSecondReadMovesForward],
   ['an unfinished line is returned again only when it changed', testOpenLineReturnedOnlyWhenChanged],
   ['every exit is reported as finished', testEveryExitIsFinished],
+  ['"Error:" in the output of a running process is not an exit', testErrorTextIsNotAnExit],
 ];
 
 async function runTests() {
