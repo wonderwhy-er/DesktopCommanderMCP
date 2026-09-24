@@ -42,6 +42,16 @@ const READ_PERFORMANCE_THRESHOLDS = {
 const LINE_FEED = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
 
+/**
+ * The line breaks read_file reads by (readline's): LF, CRLF as one break, and
+ * a lone CR. True when a line ends between two adjacent code units: the bytes
+ * of UTF-8 text (an LF or CR byte is never part of another character) or a
+ * string's characters. `after` is -1 at the end of the text.
+ */
+function lineBreakBetween(before: number, after: number): boolean {
+    return before === LINE_FEED || (before === CARRIAGE_RETURN && after !== LINE_FEED);
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
     if (signal?.aborted) {
         const err = new Error('Read aborted') as NodeJS.ErrnoException;
@@ -130,18 +140,17 @@ export class TextFileHandler implements FileHandler {
     // ========================================================================
 
     /**
-     * Count lines in text content
+     * Count lines in text content the way read_file reads them (lineBreakBetween).
+     * A line break at the very end ends the last line; it doesn't start another.
      * Made static and public for use by other modules (e.g., writeFile telemetry in filesystem.ts)
      */
     static countLines(content: string): number {
         if (content === '') return 0;
-        // A file with N lines has N-1 newline characters.
-        // If the file ends with a trailing newline, don't count the empty string after it.
-        const lines = content.split('\n');
-        if (lines[lines.length - 1] === '') {
-            return lines.length - 1;
+        let lines = 1;
+        for (let i = 1; i < content.length; i++) {
+            if (lineBreakBetween(content.charCodeAt(i - 1), content.charCodeAt(i))) lines++;
         }
-        return lines.length;
+        return lines;
     }
 
     /**
@@ -310,11 +319,8 @@ export class TextFileHandler implements FileHandler {
 
     /**
      * Byte position where the last `n` lines start, found by reading 8 KB chunks
-     * backwards and counting LF bytes (an LF byte is never part of a multi-byte
-     * character, and every LF or CRLF line break ends with one). A line break at
-     * the very end ends the last line instead of starting another. A lone CR,
-     * which readline also treats as a line break, only makes the range longer;
-     * the caller keeps the last `n` lines of it.
+     * backwards and finding line breaks by lineBreakBetween. A line break at the
+     * very end ends the last line instead of starting another.
      */
     private async findLastLinesStart(filePath: string, n: number, signal?: AbortSignal): Promise<number> {
         const fd = await fs.open(filePath, 'r');
@@ -323,6 +329,7 @@ export class TextFileHandler implements FileHandler {
             const buffer = Buffer.alloc(READ_PERFORMANCE_THRESHOLDS.CHUNK_SIZE);
             let position = size;
             let breaks = 0;
+            let after = -1; // the byte after buffer[i]; -1 at the end of the file
 
             while (position > 0) {
                 throwIfAborted(signal);
@@ -331,9 +338,11 @@ export class TextFileHandler implements FileHandler {
                 await fd.read(buffer, 0, readSize, position);
 
                 for (let i = readSize - 1; i >= 0; i--) {
-                    if (buffer[i] === LINE_FEED && position + i !== size - 1 && ++breaks === n) {
+                    const byte = buffer[i];
+                    if (after !== -1 && lineBreakBetween(byte, after) && ++breaks === n) {
                         return position + i + 1;
                     }
+                    after = byte;
                 }
             }
             return 0;
@@ -455,8 +464,8 @@ export class TextFileHandler implements FileHandler {
 
     /**
      * Byte position where line `line` (0-based) starts, or the file size when
-     * the file has fewer lines. Counts line breaks the way readline does (LF,
-     * CRLF, a lone CR) in raw bytes, which is much faster than reading lines.
+     * the file has fewer lines. Counts line breaks by lineBreakBetween in raw
+     * bytes, which is much faster than reading lines.
      */
     private async findLineStart(filePath: string, line: number, signal?: AbortSignal): Promise<number> {
         if (line <= 0) return 0;
@@ -474,12 +483,9 @@ export class TextFileHandler implements FileHandler {
 
                 for (let i = 0; i < bytesRead; i++) {
                     const byte = buffer[i];
-                    // A CR not followed by an LF ended a line: the next one starts here
-                    if (previous === CARRIAGE_RETURN && byte !== LINE_FEED && ++breaks === line) {
+                    // A line break before this byte: the next line starts here
+                    if (lineBreakBetween(previous, byte) && ++breaks === line) {
                         return position + i;
-                    }
-                    if (byte === LINE_FEED && ++breaks === line) {
-                        return position + i + 1;
                     }
                     previous = byte;
                 }
