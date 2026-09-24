@@ -13,15 +13,16 @@ export interface ProcessState {
   lastOutput: string;
 }
 
-// Common REPL prompts. Most are generic ("... ", "> ", "+ "): inside or at the
-// end of a longer line they are ordinary text (pytest -v's "collecting ... ",
-// #196), so they count only in a last line made of prompts alone: the prompt
-// itself, or, from a REPL that writes its prompts to stderr and doesn't echo
-// input (python -i, bash -i), the prompts it wrote one after another there
-// (">>> ... ").
+// Common REPL prompts. Most are generic ("... ", "> ", "+ ", "| "): inside or
+// at the end of a longer line they are ordinary text (pytest -v's "collecting
+// ... ", #196; a markdown table's "| a | b |"), so they count only in a last
+// line made of prompts alone: the prompt itself, the prompts a REPL that
+// doesn't echo input printed one after another ("> | " from node -i), or,
+// from a REPL that writes its prompts to stderr (python -i, bash -i), the
+// prompts it wrote there (">>> ... ").
 const REPL_PROMPTS = {
   python: ['>>> ', '... '],
-  node: ['> ', '... '],
+  node: ['> ', '... ', '| '], // "| ": Node 24's continuation, "... " before it
   r: ['> ', '+ '],
   julia: ['julia> ', '       '], // julia continuation is spaces
   shell: ['$ ', '# ', '% '],
@@ -57,12 +58,12 @@ const SHELL_PROMPTS_AT_START = [new RegExp(`^${POWERSHELL_PROMPT_TEXT}`), new Re
 
 // The REPL prompts output cleaning removes, one or more in a row at the start
 // of a line (">>> ... " from a REPL that reads several lines at once)
-const REPL_PROMPT = String.raw`(?:>>> |\.\.\. |>> |> |\+ )`;
+const REPL_PROMPT = String.raw`(?:>>> |\.\.\. |>> |> |\| |\+ )`;
 const REPL_PROMPT_RUN = new RegExp(`^${REPL_PROMPT}+`);
 const REPL_PROMPTS_ALONE = new RegExp(`^${REPL_PROMPT}+$`);
 const REPL_PROMPT_TOKEN = new RegExp(REPL_PROMPT, 'g');
-// The prompts of a REPL waiting for more of a statement (Python, PowerShell, R)
-const CONTINUATION_PROMPTS = ['... ', '>> ', '+ '];
+// The prompts of a REPL waiting for more of a statement (Python, Node, PowerShell, R)
+const CONTINUATION_PROMPTS = ['... ', '| ', '>> ', '+ '];
 
 /** The prompt the last line of output is, or ends in, if any */
 function findPrompt(lastLine: string): string | undefined {
