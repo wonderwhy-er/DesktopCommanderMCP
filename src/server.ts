@@ -735,6 +735,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - offset: -5, length: 10     → Last 5 results (length ignored)
                         
                         Returns only results in the specified range, along with search status.
+                        A search that stopped early says so, and more matches may exist:
+                        - maxResultsReached: it stopped at maxResults matches
+                        - timedOut: it stopped at its time limit (timeout_ms, or the short
+                          default of a file search for an exact filename such as "package.json")
                         Works like read_process_output - call this repeatedly to get progressive
                         results from a search started with start_search.
                         

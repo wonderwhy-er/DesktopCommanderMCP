@@ -157,6 +157,14 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
       output += `\n📖 More results available. Use get_more_search_results with offset: ${nextOffset}`;
     }
 
+    if (results.maxResultsReached) {
+      output += `\n⚠️  Stopped at maxResults (${results.totalMatches} matches). More matches may exist; narrow the search or raise maxResults.`;
+    }
+
+    if (results.timedOut) {
+      output += `\n⚠️  Timed out before the search finished. More matches may exist; narrow the search or raise timeout_ms.`;
+    }
+
     if (results.isComplete) {
       output += `\n✅ Search completed.`;
       
@@ -176,6 +184,8 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
         returnedCount: results.returnedCount,
         hasMoreResults: results.hasMoreResults,
         wasIncomplete: results.wasIncomplete ?? false,
+        maxResultsReached: results.maxResultsReached,
+        timedOut: results.timedOut,
       },
     };
   } catch (error) {
