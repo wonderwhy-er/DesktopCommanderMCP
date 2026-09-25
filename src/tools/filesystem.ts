@@ -7,10 +7,10 @@ import { promisify } from 'util';
 import { addToolCallPaths, capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
-import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
-import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
+import { getFileHandler, TextFileHandler, isImageAnswer } from '../utils/files/index.js';
+import type { ReadOptions, FileResult, FileInfo, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 import { movePath } from '../utils/rename.js';
 
@@ -443,12 +443,10 @@ type FileResultPayloads = PdfPayload;
 /**
  * Read file content from a URL
  * @param url URL to fetch content from
+ * @param svgAsImage An SVG is answered as an image, for the file preview widget; otherwise as text
  * @returns File content or file result with metadata
  */
-export async function readFileFromUrl(url: string): Promise<FileResult> {
-    // Import the MIME type utilities
-    const { isImageFile } = await import('./mime-types.js');
-
+export async function readFileFromUrl(url: string, svgAsImage = false): Promise<FileResult> {
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
@@ -467,7 +465,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
-        const isImage = isImageFile(contentType);
+        const isImage = isImageAnswer(contentType, svgAsImage);
         const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
 
         // NEW: Add PDF handling before image check
@@ -523,7 +521,7 @@ export async function readFileFromDisk(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { offset = 0, sheet, range } = options ?? {};
+    const { offset = 0, sheet, range, svgAsImage } = options ?? {};
     let { length } = options ?? {};
 
     // Add validation for required parameters
@@ -597,7 +595,7 @@ export async function readFileFromDisk(
     // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
-        const handler = await getFileHandler(validPath);
+        const handler = await getFileHandler(validPath, { svgAsImage });
 
         // Use handler to read the file
         const result = await handler.read(validPath, {
@@ -665,10 +663,10 @@ export async function readFile(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { isUrl, offset, length, sheet, range } = options ?? {};
+    const { isUrl, offset, length, sheet, range, svgAsImage } = options ?? {};
     return isUrl
-        ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath, { offset, length, sheet, range });
+        ? readFileFromUrl(filePath, svgAsImage)
+        : readFileFromDisk(filePath, { offset, length, sheet, range, svgAsImage });
 }
 
 /**
@@ -1034,17 +1032,18 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         isDirectory: stats.isDirectory(),
         isFile: stats.isFile(),
         permissions: stats.mode.toString(8).slice(-3),
-        fileType: 'text' as const,
+        fileType: (stats.isDirectory() ? 'directory' : 'text') as FileInfo['fileType'],
         metadata: undefined as Record<string, any> | undefined,
     };
 
-    // Get appropriate handler for this file type (async - includes binary detection)
-    const handler = await getFileHandler(validPath);
+    // Get appropriate handler for this file type (async - includes binary detection).
+    // A folder has none: one chosen by its name or content would call it text, or an image.
+    const handler = stats.isDirectory() ? null : await getFileHandler(validPath);
 
     // Use handler to get file info, with fallback
     let fileInfo;
     try {
-        fileInfo = await handler.getInfo(validPath);
+        fileInfo = handler ? await handler.getInfo(validPath) : fallbackInfo;
     } catch (error) {
         // If handler fails, use fallback stats
         fileInfo = fallbackInfo;
@@ -1107,19 +1106,47 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
 
 
 /**
+ * Validate the paths a PDF's page operations use besides the PDF itself: the
+ * output path and each inserted PDF. write_pdf and edit_block both modify PDFs,
+ * so both check here. An inserted PDF's path is replaced by its validated path.
+ *
+ * @param validPath The PDF the operations apply to, already validated
+ * @returns Where to write the result: outputPath if provided, otherwise the PDF itself
+ */
+export async function validatePdfOperationPaths(
+    validPath: string,
+    operations: PdfOperations[],
+    outputPath?: string
+): Promise<string> {
+    // Use outputPath if provided, otherwise overwrite input file
+    const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
+    // Validate paths in operations
+    for (const o of operations) {
+        if (o.type === 'insert') {
+            if (o.sourcePdfPath) {
+                o.sourcePdfPath = await validatePath(o.sourcePdfPath);
+            }
+        }
+    }
+    return targetPath;
+}
+
+/**
  * Write content to a PDF file.
  * Can create a new PDF from Markdown string, or modify an existing PDF using operations.
  * 
  * @param filePath Path to the output PDF file
  * @param content Markdown string (for creation) or array of operations (for modification)
  * @param options Options for PDF generation or modification. For modification, can include `sourcePdf`.
+ * @returns The render options Desktop Commander ignored (see resolveRender), so the caller can report them.
  */
 export async function writePdf(
     filePath: string,
     content: string | PdfOperations[],
     outputPath?: string,
     options: any = {}
-): Promise<void> {
+): Promise<IgnoredRenderOption[]> {
     const validPath = await validatePath(filePath);
     const fileExtension = getFileExtension(validPath);
 
@@ -1135,22 +1162,12 @@ export async function writePdf(
         // Use outputPath if provided, otherwise overwrite input file
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
         await fs.writeFile(targetPath, pdfBuffer);
+        // The render succeeded; report which of the caller's/front matter's options were ignored
+        return resolveRender(content, options).ignoredOptions;
     } else if (Array.isArray(content)) {
 
-        // Use outputPath if provided, otherwise overwrite input file
-        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
-
-        const operations: PdfOperations[] = [];
-
-        // Validate paths in operations
-        for (const o of content) {
-            if (o.type === 'insert') {
-                if (o.sourcePdfPath) {
-                    o.sourcePdfPath = await validatePath(o.sourcePdfPath);
-                }
-            }
-            operations.push(o);
-        }
+        const targetPath = await validatePdfOperationPaths(validPath, content, outputPath);
+        const operations: PdfOperations[] = [...content];
 
         capture('server_write_pdf', {
             fileExtension: fileExtension,
@@ -1160,11 +1177,22 @@ export async function writePdf(
             insertCount: operations.filter(op => op.type === 'insert').length
         });
 
-        // Perform the PDF editing
-        const modifiedPdfBuffer = await editPdf(validPath, operations);
+        // Perform the PDF editing (options render the inserted markdown pages)
+        const modifiedPdfBuffer = await editPdf(validPath, operations, options);
 
         // Write the modified PDF to the output path
         await fs.writeFile(targetPath, modifiedPdfBuffer);
+
+        // Report the options ignored in any inserted page's render options or front matter (once per option)
+        const ignored = new Map<string, IgnoredRenderOption>();
+        for (const op of operations) {
+            if (op.type === 'insert' && op.markdown !== undefined) {
+                for (const ignoredOption of resolveRender(op.markdown, insertRenderOptions(op, options)).ignoredOptions) {
+                    ignored.set(ignoredOption.option, ignoredOption);
+                }
+            }
+        }
+        return [...ignored.values()];
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }

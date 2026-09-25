@@ -1201,6 +1201,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 import * as handlers from './handlers/index.js';
 import { ServerResult } from './types.js';
+import { withoutInternalFacts } from './utils/internal-facts.js';
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     const args = request.params.arguments;
@@ -1502,6 +1503,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                     isError: true,
                 };
         }
+
+        // What the client receives (and the history records): facts kept internal are dropped
+        result = withoutInternalFacts(name, result);
 
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
