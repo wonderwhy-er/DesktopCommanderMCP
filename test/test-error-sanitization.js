@@ -115,6 +115,63 @@ const runAllTests = async () => {
         assert(!sanitized.message.includes(homeDir), 'Error message should not contain home directory');
     }) && allPassed;
 
+    // The paths an event carries (then drops) are replaced whole wherever they appear
+    // in its text, spaces and all, and the rest of the text is kept. The paths are
+    // outside the home folder, at the root of the drive the temporary folder is on.
+    const root = path.parse(os.tmpdir()).root;
+    const file = path.join(root, 'var', 'log', 'private notes.txt');
+    const source = path.join(root, 'srv', 'team share', 'draft 1.txt');
+    const target = path.join(root, 'srv', 'team share', 'final copy.txt');
+    const folder = path.join(root, 'srv', 'data');
+
+    allPassed = await runTest('Integration - the paths an event knows are replaced whole', async () => {
+        const cases = [
+            [{ error: new Error(`Cannot open ${file} for reading`), path: file }, 'Error: Cannot open [PATH] for reading'],
+            [{ error: `Failed to move ${source} to ${target}: target exists`, sourcePath: source, destinationPath: target }, 'Failed to move [PATH] to [PATH]: target exists'],
+            // A known folder doesn't cut a longer name that starts like it
+            [{ error: `Cannot open ${folder}base${path.sep}x.txt now`, path: folder }, 'Cannot open [PATH] now'],
+        ];
+        const wrong = [];
+        for (const [properties, expected] of cases) {
+            const actual = (await buildEventProperties(properties)).error;
+            if (actual !== expected) wrong.push({ expected, actual });
+        }
+        assert.deepStrictEqual(wrong, []);
+    }) && allPassed;
+
+    // A home folder with a space, followed by clause punctuation: replaced whole
+    allPassed = await runTest('sanitizeError - A home folder with a space is replaced whole', () => {
+        const home = path.join(root, 'Users', 'John Smith');
+        const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+        process.env.HOME = home;
+        process.env.USERPROFILE = home;
+        try {
+            assert.strictEqual(os.homedir(), home, 'os.homedir() should follow HOME/USERPROFILE');
+            const cases = [
+                [`Failed to read ${home}. Try again`, 'Error: Failed to read [PATH]. Try again'],
+                [`Failed to read ${home}, retrying`, 'Error: Failed to read [PATH], retrying'],
+            ];
+            const wrong = cases
+                .map(([message, expected]) => ({ expected, actual: sanitizeError(new Error(message)).message }))
+                .filter(({ expected, actual }) => actual !== expected);
+            assert.deepStrictEqual(wrong, []);
+        } finally {
+            for (const [key, value] of Object.entries(saved)) {
+                if (value === undefined) delete process.env[key]; else process.env[key] = value;
+            }
+        }
+    }) && allPassed;
+
+    allPassed = await runTest('Integration - message properties are redacted like error', async () => {
+        const properties = await buildEventProperties({
+            message: `Error in set_config_value handler: Error: EACCES: permission denied, open '${file}'`,
+            errorMessage: `Could not read ${file}, retrying`,
+            path: file,
+        });
+        assert.strictEqual(properties.message, "Error in set_config_value handler: Error: EACCES: permission denied, open '[PATH]'");
+        assert.strictEqual(properties.errorMessage, 'Could not read [PATH], retrying');
+    }) && allPassed;
+
     // Integration: the properties capture() actually sends for an Error object
     allPassed = await runTest('Integration - capture with error object', async () => {
         const error = new Error(`Failed to read ${process.cwd()}/sensitive/file.txt`);
