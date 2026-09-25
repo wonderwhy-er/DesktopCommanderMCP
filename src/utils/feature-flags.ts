@@ -3,6 +3,7 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { CONFIG_FILE } from '../config.js';
 import { logger } from './logger.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 interface FeatureFlags {
   version?: string;
@@ -228,7 +229,7 @@ class FeatureFlagManager {
         await fs.mkdir(configDir, { recursive: true });
       }
       
-      await fs.writeFile(this.cachePath, JSON.stringify(config, null, 2), 'utf8');
+      await writeFileAtomic(this.cachePath, JSON.stringify(config, null, 2));
       // Don't log here - this runs async and can cause issues with MCP clients
     } catch (error) {
       logger.warning('Failed to save feature flags to cache:', error);

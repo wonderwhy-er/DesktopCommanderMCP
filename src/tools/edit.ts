@@ -166,9 +166,11 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     let count = 0;
     let pos = tempContent.indexOf(normalizedSearch);
     
+    // Count the matches a replacement changes: they can't overlap, so the next
+    // search starts after this match (split/join below replaces the same ones)
     while (pos !== -1) {
         count++;
-        pos = tempContent.indexOf(normalizedSearch, pos + 1);
+        pos = tempContent.indexOf(normalizedSearch, pos + normalizedSearch.length);
     }
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
