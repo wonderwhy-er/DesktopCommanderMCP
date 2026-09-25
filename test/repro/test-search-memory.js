@@ -39,13 +39,16 @@
 // Run: node test/repro/run-repro.js test-search-memory.js
 //      (REPRO_MB scales the fixtures, default 64; REPRO_SCENARIOS=many,line picks some;
 //       REPRO_V8_LIMIT=1 adds the 540 MB line: set REPRO_TIMEOUT_MS=2400000 and
-//       REPRO_SEARCH_LIMIT_MS=2200000 for the base)
+//       REPRO_SEARCH_LIMIT_MS=2200000 for the base; REPRO_SAMPLE_MS sets the
+//       sampling interval, default 100)
 // Exit code: 1 if the problem shows: ripgrep holds more than 128 MB for 200
 // results, the server grows by more than all the context text, a 48 MB line
 // takes more than 5 s or grows the server by more than 8 times its size, or the
 // server exits. 2 (NOT MEASURED) if a scenario judged by memory has no valid
 // measurement: its memory could not be sampled, or (many, context) its search
-// failed or did not complete.
+// failed or did not complete. A many search whose ripgrep exited between two
+// samples (sampling worked but never saw it) is named as not measured, as a
+// skipped check is: it isn't counted as bounded and doesn't fail the run.
 import { constants } from 'buffer';
 import fs from 'fs';
 import os from 'os';
@@ -67,6 +70,8 @@ const MAX_RESULTS = 200;
 const SHOWN_CHARS = 100;
 /** A search still running after this long is stopped and reported */
 const SEARCH_LIMIT_MS = Number(process.env.REPRO_SEARCH_LIMIT_MS || 170_000);
+/** How often the server and its ripgrep are sampled */
+const SAMPLE_MS = Number(process.env.REPRO_SAMPLE_MS || 100);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -158,7 +163,7 @@ async function runScenario(name) {
     await client.connect(transport, { timeout: 30_000 });
 
     const serverPid = transport.pid;
-    const memory = watchPeakMemory(serverPid);
+    const memory = watchPeakMemory(serverPid, SAMPLE_MS);
     let started = Date.now();
     try {
       await sleep(1000);
@@ -216,12 +221,15 @@ const names = (process.env.REPRO_SCENARIOS?.split(',') ?? ['many', 'context', 'l
 const findings = [];
 /** Scenarios that give no valid measurement to judge by */
 const unmeasured = [];
+/** Scenarios sampling worked for but never saw ripgrep in (it exited between samples) */
+const notSampled = [];
 for (const name of names) {
   const o = await runScenario(name);
   const growth = o.serverPeak - o.serverBefore;
   console.log(`${name}: ${o.fixture}; maxResults ${MAX_RESULTS}, answer shows ${SHOWN_CHARS} characters per entry`);
   console.log(`  ${o.complete ? 'completed' : 'NOT completed'} in ${o.seconds?.toFixed(1)} s: ${o.matches} matches, ${o.results} results, answer ${o.answerChars} characters`);
-  console.log(`  ripgrep peak ${formatMB(o.ripgrepPeak)}; server peak ${formatMB(o.serverPeak)} (${formatMB(o.serverBefore)} before the search, + ${formatMB(growth)})`);
+  const ripgrepMemory = o.ripgrepPeak ? formatMB(o.ripgrepPeak) : o.samplingFailure ? 'not measured' : 'not measured: ripgrep exited between samples';
+  console.log(`  ripgrep peak ${ripgrepMemory}; server peak ${formatMB(o.serverPeak)} (${formatMB(o.serverBefore)} before the search, + ${formatMB(growth)})`);
   if (o.samplingFailure) console.log(`  memory not measured: ${o.samplingFailure}`);
   if (o.error) console.log(`  error: ${o.error}`);
   if (o.serverExited) console.log(`  the server exited${o.serverLog ? `: ${o.serverLog}` : ''}`);
@@ -245,13 +253,28 @@ for (const name of names) {
   if ((name === 'many' || name === 'context' || (name === 'line' && !lineFinding)) && !o.serverExited && o.samplingFailure) {
     unmeasured.push(`${name}: memory not measured (${o.samplingFailure})`);
   }
+  // many is judged by ripgrep's peak. A ripgrep that started and exited between
+  // two samples was never seen, so its peak reads 0, which measures nothing
+  if (name === 'many' && sampled && searched && !o.serverExited && !o.ripgrepPeak) notSampled.push(name);
   if (!searched && !o.serverExited) {
     unmeasured.push(`${name}: the search ${o.error ? `failed (${o.error})` : `did not complete within ${SEARCH_LIMIT_MS / 1000} s`}`);
   }
 }
 
-if (unmeasured.length > 0) console.log(`NOT MEASURED: ${unmeasured.join('; ')}`);
-if (findings.length > 0) console.log(`REPRODUCED: ${findings.join('; ')}`);
-else if (unmeasured.length === 0) console.log(`NOT REPRODUCED: a ${MAX_RESULTS}-result search stayed bounded in ripgrep and the server (${names.join(', ')})`);
+// A scenario whose ripgrep exited between samples is named, as a skipped check
+// is, and never counted as bounded
+const skippedNote = notSampled.length > 0
+  ? `not measured: ${notSampled.map((name) => `${name} (ripgrep exited between samples)`).join(', ')}` : '';
+const withSkipped = (line) => (skippedNote ? `${line}; ${skippedNote}` : line);
+const bounded = names.filter((name) => !notSampled.includes(name));
+if (unmeasured.length > 0) console.log(withSkipped(`NOT MEASURED: ${unmeasured.join('; ')}`));
+if (findings.length > 0) {
+  const line = `REPRODUCED: ${findings.join('; ')}`;
+  console.log(unmeasured.length > 0 ? line : withSkipped(line));
+} else if (unmeasured.length === 0) {
+  console.log(bounded.length > 0
+    ? withSkipped(`NOT REPRODUCED: a ${MAX_RESULTS}-result search stayed bounded in ripgrep and the server (${bounded.join(', ')})`)
+    : `SKIPPED: ${skippedNote}`);
+}
 // A request to a server that exited can leave its timeout timer running
 exitProcess(findings.length > 0 ? 1 : unmeasured.length > 0 ? 2 : 0);
