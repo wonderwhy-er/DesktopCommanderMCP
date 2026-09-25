@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
+import { constants } from 'buffer';
 import { once } from 'events';
 import path from 'path';
 import fs from 'fs/promises';
@@ -25,7 +26,9 @@ export interface SearchSession {
   startTime: number;
   lastReadTime: number;
   options: SearchSessionOptions;
-  buffer: string;  // For processing incomplete JSON lines
+  buffer: string;  // The line of ripgrep output being received (see processOutput)
+  skippingLine?: boolean;  // That line is longer than MAX_OUTPUT_LINE_CHARS: it is dropped up to its end
+  skippedLines: Map<string, number>;  // Lines too long to process, counted by file
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
@@ -92,6 +95,19 @@ type RipgrepLine =
 /** The alternatives of a filePattern ("*.js|*.ts") */
 const filePatternAlternatives = (filePattern: string | undefined): string[] =>
   (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
+
+/** Answers show this many characters of a result's text, then '...' if there is more */
+export const SHOWN_TEXT_CHARS = 100;
+
+/**
+ * What a session keeps of a line's text: what answers show, and one character
+ * more so they still know to add '...'. ripgrep sends each line whole (--json
+ * ignores --max-columns), and a line can be megabytes long. Copied, because a
+ * V8 substring keeps the whole string it was cut from alive. No text (ripgrep
+ * sends text that is not valid UTF-8 as "bytes") stays no text, as it always was.
+ */
+const keptText = (text: string | undefined): string | undefined =>
+  text === undefined ? undefined : Buffer.from(text.slice(0, SHOWN_TEXT_CHARS + 1), 'utf16le').toString('utf16le');
 
 /**
  * A glob as ripgrep matches its -g globs (gitignore style), for the files
@@ -161,6 +177,18 @@ function characterClassEnd(glob: string, start: number): number {
 }
 
 /**
+ * The longest line of ripgrep output the server assembles, in characters: a
+ * match or context line in its JSON. Half of V8's longest string (2^29 - 24
+ * characters in Node 24), past which the append throws and the server exits:
+ * only a longer line is skipped, and answers name its file. Any shorter line is
+ * processed whole.
+ */
+export const MAX_OUTPUT_LINE_CHARS = Math.floor(constants.MAX_STRING_LENGTH / 2);
+
+/** The most of ripgrep's error output (stderr) a session keeps, in characters */
+const MAX_KEPT_ERROR_CHARS = 64 * 1024;
+
+/**
  * Search Session Manager - handles ripgrep processes like terminal sessions
  * Supports both file search and content search with progressive results
  */export class SearchManager {
@@ -221,6 +249,7 @@ function characterClassEnd(glob: string, start: number): number {
       lastReadTime: Date.now(),
       options,
       buffer: '',
+      skippedLines: new Map(),
       totalMatches: 0,
       totalContextLines: 0,
       filePatternIncludes: this.filePatternIncludes(options, validPath),
@@ -334,6 +363,7 @@ function characterClassEnd(glob: string, start: number): number {
     wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
     maxResultsReached: boolean;   // Search stopped at maxResults matches; more may exist
     timedOut: boolean;            // Search stopped at its time limit before it finished; more may exist
+    skippedLines: Array<{ file: string; count: number }>;  // Lines too long to process (MAX_OUTPUT_LINE_CHARS), by file
   } {
     const session = this.sessions.get(sessionId);
     
@@ -360,7 +390,8 @@ function characterClassEnd(glob: string, start: number): number {
         runtime: Date.now() - session.startTime,
         wasIncomplete: session.wasIncomplete,
         maxResultsReached: !!session.maxResultsReached,
-        timedOut: !!session.timedOut
+        timedOut: !!session.timedOut,
+        skippedLines: this.skippedLinesOf(session)
       };
     }
 
@@ -382,8 +413,25 @@ function characterClassEnd(glob: string, start: number): number {
       runtime: Date.now() - session.startTime,
       wasIncomplete: session.wasIncomplete,
       maxResultsReached: !!session.maxResultsReached,
-      timedOut: !!session.timedOut
+      timedOut: !!session.timedOut,
+      skippedLines: this.skippedLinesOf(session)
     };
+  }
+
+  private skippedLinesOf(session: SearchSession): Array<{ file: string; count: number }> {
+    return [...session.skippedLines].map(([file, count]) => ({ file, count }));
+  }
+
+  /**
+   * Keeps ripgrep's error output for the answer (shown when a search fails
+   * without results), each piece once and up to MAX_KEPT_ERROR_CHARS: a search
+   * over folders it can't read can print an error per entry, and the session
+   * keeps this until it is cleaned up. What comes first is kept.
+   */
+  private keepErrorOutput(session: SearchSession, text: string): void {
+    const kept = session.error ?? '';
+    if (kept.length >= MAX_KEPT_ERROR_CHARS) return;
+    session.error = kept + text.slice(0, MAX_KEPT_ERROR_CHARS - kept.length);
   }
 
   /**
@@ -936,9 +984,15 @@ function characterClassEnd(glob: string, start: number): number {
       args.push('--hidden');
     }
     
-    // maxResults is not passed to ripgrep: -m limits matches per file (and lets
-    // matches through in trailing context), and --files ignores it. The total cap
-    // is enforced on the output instead - see collectMatch().
+    // maxResults caps the TOTAL number of matches (see collectMatch()), so no
+    // file can contribute more than that: -m stops ripgrep there in each file.
+    // Without it a folder search keeps a file's whole output in ripgrep's memory
+    // until the file is done, however little of it the search can use. (ripgrep
+    // still prints a match that falls in the trailing context of its last one;
+    // collectRipgrepLine() takes it like any other. --files ignores -m.)
+    if (options.maxResults && options.maxResults > 0) {
+      args.push('-m', options.maxResults.toString());
+    }
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
     if (options.filePattern && options.searchType === 'content') {
@@ -1003,20 +1057,23 @@ function characterClassEnd(glob: string, start: number): number {
   private setupProcessHandlers(session: SearchSession): void {
     const { process } = session;
 
-    process.stdout?.on('data', (data: Buffer) => {
+    // Decoded as streams: a character cut between two chunks stays whole
+    // (decoding each chunk on its own made it U+FFFD, in matches and paths)
+    process.stdout?.setEncoding('utf8');
+    process.stderr?.setEncoding('utf8');
+
+    process.stdout?.on('data', (data: string) => {
       session.printedOutput = true;
-      session.buffer += data.toString();
-      this.processBufferedOutput(session);
+      this.processOutput(session, data);
     });
 
-    process.stderr?.on('data', (data: Buffer) => {
+    process.stderr?.on('data', (data: string | Buffer) => {
       const errorText = data.toString();
 
-      // Store error text for potential user display, but don't capture individual errors
-      // We'll capture incomplete search status in the completion event instead
-      session.error = (session.error || '') + errorText;
+      // Store error text for potential user display (bounded: see keepErrorOutput)
+      this.keepErrorOutput(session, errorText);
 
-      // Filter meaningful errors
+      // Filter meaningful errors, for telemetry; they are part of the text kept above
       const filteredErrors = errorText
         .split('\n')
         .filter(line => {
@@ -1031,11 +1088,9 @@ function characterClassEnd(glob: string, start: number): number {
           return true;
         });
 
-      // Only add to session.error if there are actual meaningful errors after filtering
       if (filteredErrors.length > 0) {
         const meaningfulErrors = filteredErrors.join('\n').trim();
         if (meaningfulErrors) {
-          session.error = (session.error || '') + meaningfulErrors + '\n';
           capture('search_session_error', {
             sessionId: session.id,
             error: meaningfulErrors.substring(0, 200)
@@ -1045,10 +1100,8 @@ function characterClassEnd(glob: string, start: number): number {
     });
 
     process.on('close', (code: number) => {
-      // Process any remaining buffer content
-      if (session.buffer.trim()) {
-        this.processBufferedOutput(session, true);
-      }
+      // Process the last line, if the output did not end with a newline
+      this.processOutput(session, '', true);
 
       // Track if search was incomplete due to access issues
       // Ripgrep exit code 2 means "some files couldn't be searched"
@@ -1148,16 +1201,70 @@ function characterClassEnd(glob: string, start: number): number {
     }
   }
 
-  private processBufferedOutput(session: SearchSession, isFinal: boolean = false): void {
-    const lines = session.buffer.split('\n');
-    
-    // Keep the last incomplete line in the buffer unless this is final processing
-    if (!isFinal) {
-      session.buffer = lines.pop() || '';
-    } else {
-      session.buffer = '';
+  /**
+   * Split ripgrep's output into lines as it arrives. Only the new text is split,
+   * its first piece joined to the line pending from earlier chunks, so a line
+   * costs time linear in its length (splitting the whole pending line again for
+   * every chunk made a long line quadratic). With isFinal, the pending line is
+   * complete as it is.
+   */
+  private processOutput(session: SearchSession, text: string, isFinal: boolean = false): void {
+    const pieces = text.split('\n');
+    const lines: string[] = [];
+    pieces.forEach((piece, i) => {
+      this.appendToLine(session, piece);
+      if (i < pieces.length - 1 || isFinal) {
+        const line = this.takeLine(session);
+        if (line !== undefined) lines.push(line);
+      }
+    });
+    this.processLines(session, lines);
+  }
+
+  /**
+   * Add text to the line being received, unless that makes it longer than
+   * MAX_OUTPUT_LINE_CHARS: then the line is skipped, noted by its file, and
+   * the rest of it dropped as it arrives.
+   */
+  private appendToLine(session: SearchSession, text: string): void {
+    if (session.skippingLine || !text) return;
+    if (session.buffer.length + text.length <= MAX_OUTPUT_LINE_CHARS) {
+      session.buffer += text;
+      return;
     }
-    
+    const file = this.fileOfOutputLine((session.buffer + text).slice(0, 4096)) ?? '';
+    session.skippedLines.set(file, (session.skippedLines.get(file) ?? 0) + 1);
+    session.skippingLine = true;
+    session.buffer = '';
+  }
+
+  /** The line being received, now complete; undefined if it was skipped */
+  private takeLine(session: SearchSession): string | undefined {
+    const line = session.buffer;
+    session.buffer = '';
+    if (session.skippingLine) {
+      session.skippingLine = false;
+      return undefined;
+    }
+    return line;
+  }
+
+  /**
+   * The file a line of ripgrep's --json output is about, read from the line's
+   * start: {"type":"match","data":{"path":{"text":"..."},... (a path that is
+   * not valid UTF-8 comes as "bytes" and is not read)
+   */
+  private fileOfOutputLine(start: string): string | undefined {
+    const quoted = /^\{"type":"\w+","data":\{"path":\{"text":("(?:[^"\\]|\\.)*")/.exec(start)?.[1];
+    try {
+      return quoted ? JSON.parse(quoted) : undefined;
+    } catch {
+      // A malformed escape in the path: the skipped line is then counted without a file name
+      return undefined;
+    }
+  }
+
+  private processLines(session: SearchSession, lines: string[]): void {
     for (const line of lines) {
       if (!line.trim()) continue;
       
@@ -1272,7 +1379,7 @@ function characterClassEnd(glob: string, start: number): number {
             result: {
               file: parsed.data.path.text,
               line: parsed.data.line_number,
-              match: submatch?.match?.text || parsed.data.lines.text,
+              match: keptText(submatch?.match?.text || parsed.data.lines.text),
               type: 'content'
             }
           };
@@ -1284,7 +1391,7 @@ function characterClassEnd(glob: string, start: number): number {
             result: {
               file: parsed.data.path.text,
               line: parsed.data.line_number,
-              match: parsed.data.lines.text.trim(),
+              match: keptText(parsed.data.lines.text.trim()),
               type: 'content'
             }
           };
