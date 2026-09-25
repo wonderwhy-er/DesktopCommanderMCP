@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import os from 'os';
 import { logToStderr } from './logger.js';
+import { resolveProgramPath } from './shell.js';
 
 /**
  * Open a URL in the default browser (cross-platform)
@@ -26,7 +27,7 @@ export async function openBrowser(url: string): Promise<void> {
         break;
       case 'win32':
         // Windows 'start' is a shell builtin, use spawn with shell but pass URL as separate arg
-        spawn('cmd', ['/c', 'start', '', url], { shell: false, windowsHide: true }).on('close', (code) => {
+        spawn(resolveProgramPath('cmd'), ['/c', 'start', '', url], { shell: false, windowsHide: true }).on('close', (code) => {
           code === 0 ? resolve() : reject(new Error(`Exit code ${code}`));
         });
         break;

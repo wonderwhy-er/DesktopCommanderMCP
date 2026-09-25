@@ -32,9 +32,9 @@ function windowsExecutableExtensions(): string[] {
 }
 
 /**
- * Resolves a shell name ("pwsh", "bash.exe") or path ("/bin/zsh") to an
- * executable file. Bare names are searched on PATH. Returns null when the
- * shell can't be found.
+ * Resolves a shell or other program name ("pwsh", "bash.exe", "where") or path
+ * ("/bin/zsh") to an executable file. Bare names are searched in PATH's
+ * folders only, never the working folder. Returns null when it can't be found.
  */
 export function resolveShellPath(shell: string): string | null {
   const name = shell.trim();
@@ -60,6 +60,17 @@ export function resolveShellPath(shell: string): string | null {
 
 export function isShellAvailable(shell: string): boolean {
   return resolveShellPath(shell) !== null;
+}
+
+/**
+ * The full path to start a program by: the one found on PATH. Windows looks
+ * for a bare name ("powershell.exe", "cmd", "tasklist") in the working folder
+ * before PATH, so a file of that name there would run instead; every program
+ * Desktop Commander starts by name goes through here. A program not found on
+ * PATH keeps its name, so starting it fails as it did before.
+ */
+export function resolveProgramPath(program: string): string {
+  return resolveShellPath(program) ?? program;
 }
 
 /**
@@ -132,11 +143,12 @@ export interface ShellSpawnConfig {
  */
 export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
   const shellName = path.basename(shellPath).toLowerCase();
+  const executable = resolveProgramPath(shellPath);
 
   // Unix shells with login flag support
   if (shellName.includes('bash') || shellName.includes('zsh')) {
     return {
-      executable: shellPath,
+      executable,
       args: ['-l', '-c', command],
       useShellOption: false
     };
@@ -145,7 +157,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   // PowerShell Core (cross-platform, supports -Login)
   if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
     return {
-      executable: shellPath,
+      executable,
       args: ['-Login', '-Command', command],
       useShellOption: false
     };
@@ -154,7 +166,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   // Windows PowerShell 5.1 (no login flag support)
   if (shellName === 'powershell' || shellName === 'powershell.exe') {
     return {
-      executable: shellPath,
+      executable,
       args: ['-Command', command],
       useShellOption: false
     };
@@ -163,7 +175,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   // CMD
   if (shellName === 'cmd' || shellName === 'cmd.exe') {
     return {
-      executable: shellPath,
+      executable,
       args: ['/c', command],
       windowsVerbatim: true,
       useShellOption: false
@@ -173,7 +185,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   // Fish shell (uses -l for login, -c for command)
   if (shellName.includes('fish')) {
     return {
-      executable: shellPath,
+      executable,
       args: ['-l', '-c', command],
       useShellOption: false
     };
@@ -184,6 +196,6 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   return {
     executable: command,
     args: [],
-    useShellOption: shellPath
+    useShellOption: executable
   };
 }
