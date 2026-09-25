@@ -8,6 +8,7 @@ export interface DockerMount {
     containerPath: string;
     type: 'bind' | 'volume';
     readOnly: boolean;
+    verifiedMount: boolean;
     description: string;
 }
 
@@ -256,6 +257,7 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                             containerPath: mountPoint,
                             type: 'bind',
                             readOnly: isReadOnly,
+                            verifiedMount: true,
                             description: `Mounted directory: ${path.basename(mountPoint)}`
                         });
                     }
@@ -283,7 +285,8 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                                 containerPath: itemPath,
                                 type: 'bind',
                                 readOnly: false,
-                                description: `Mounted folder: ${item}`
+                                verifiedMount: false,
+                                description: `Candidate folder under /mnt: ${item}`
                             });
                         }
                     }
@@ -320,7 +323,8 @@ function discoverContainerMounts(isContainer: boolean): DockerMount[] {
                                 containerPath: itemPath,
                                 type: 'bind',
                                 readOnly: false,
-                                description: `Host folder: ${item}`
+                                verifiedMount: false,
+                                description: `Candidate folder under /home: ${item}`
                             });
                         }
                     }
@@ -680,26 +684,27 @@ This Desktop Commander instance is running inside a ${docker.containerType || 'c
         if (docker.mountPoints.length > 0) {
             guidance += `
 
-AVAILABLE MOUNTED DIRECTORIES:`;
+AVAILABLE MOUNT LOCATIONS:`;
             for (const mount of docker.mountPoints) {
                 const access = mount.readOnly ? '(read-only)' : '(read-write)';
+                const verification = mount.verifiedMount ? '[verified mount]' : '[unverified candidate]';
                 guidance += `
-- ${mount.containerPath} ${access} - ${mount.description}`;
+- ${mount.containerPath} ${access} ${verification} - ${mount.description}`;
             }
             
             guidance += `
 
-IMPORTANT: When users ask about files, FIRST check mounted directories above.
-Files outside these paths will be lost when the container stops.
-Always suggest using mounted directories for file operations.
+Entries marked [verified mount] are suitable for persistent file work.
+Entries marked [unverified candidate] are inferred from common container paths and may not persist.
+Files outside verified mounts may be lost when the container stops.
 
 PATH TRANSLATION IN DOCKER:
-When users provide host paths, translate to container paths:
+Host paths may require translation to their corresponding container paths:
 
 Windows: "C:\\projects\\data\\file.txt" → "/home/projects/data/file.txt"
 Linux/Mac: "/Users/john/projects/data/file.txt" → "/home/projects/data/file.txt"
 
-Rules: Remove drive letter/user prefix, keep full folder structure, mount to /home/
+Typical translation removes the drive letter or user prefix, keeps the full folder structure, and maps it under /home/.
 
 NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-name].`;
         } else {
@@ -707,7 +712,7 @@ NOTE: Desktop Commander Docker installer mounts host folders to /home/[folder-na
 
 ⚠️  WARNING: No mounted directories detected.
 Files created outside mounted volumes will be lost when the container stops.
-Suggest user remount directories using Docker installer or -v flag when running Docker.
+Persistent file work requires a mounted directory, available through the Docker installer or a -v mount.
 Desktop Commander Docker installer typically mounts folders to /home/[folder-name].`;
         }
 
@@ -722,10 +727,10 @@ Container: ${docker.containerEnvironment.containerName}`;
         
 WINDOWS-SPECIFIC TROUBLESHOOTING:
 - If Node.js/Python commands fail with "not recognized" errors:
-  * Try different shells: specify shell parameter as "cmd" or "powershell.exe"
+  * Alternative shells include "cmd" and "powershell.exe"
   * PowerShell may have execution policy restrictions for some tools
   * CMD typically has better compatibility with development tools
-  * Use set_config_value to change defaultShell if needed
+  * defaultShell can be changed with set_config_value if needed
 - Windows services and processes use different commands (Get-Process vs ps)
 - Package managers: choco, winget, scoop instead of apt/brew
 - Environment variables: $env:VAR instead of $VAR
@@ -738,8 +743,8 @@ MACOS-SPECIFIC NOTES:
 - Python 3 might be 'python3' command, not 'python'
 - Some GNU tools have different names (e.g., gsed instead of sed)
 - System Integrity Protection (SIP) may block certain operations
-- Use 'open' command to open files/applications from terminal
-- For file search: Use mdfind (Spotlight) for fastest exact filename searches`;
+- The 'open' command opens files and applications from the terminal
+- mdfind (Spotlight) provides fast exact filename searches`;
     } else {
         guidance += `
         
@@ -811,18 +816,27 @@ ${envInfo}`;
  * Get path guidance (simplified since paths are normalized)
  */
 export function getPathGuidance(systemInfo: SystemInfo): string {
-    let guidance = `Always use absolute paths for reliability. Paths are automatically normalized regardless of slash direction.`;
+    let guidance = `Absolute paths are the most reliable because they do not depend on the current working directory. Paths are automatically normalized regardless of slash direction.`;
     
     if (systemInfo.docker.isContainer && systemInfo.docker.mountPoints.length > 0) {
         const containerLabel = systemInfo.docker.containerType === 'kubernetes' ? 'KUBERNETES' :
                               systemInfo.docker.containerType === 'docker' ? 'DOCKER' :
                               systemInfo.docker.containerType === 'podman' ? 'PODMAN' :
                               'CONTAINER';
+        const verifiedMounts = systemInfo.docker.mountPoints.filter(m => m.verifiedMount).map(m => m.containerPath);
+        const unverifiedCandidates = systemInfo.docker.mountPoints.filter(m => !m.verifiedMount).map(m => m.containerPath);
         
-        guidance += ` 
+        if (verifiedMounts.length > 0) {
+            guidance += `
 
-🐳 ${containerLabel}: Prefer paths within mounted directories: ${systemInfo.docker.mountPoints.map(m => m.containerPath).join(', ')}.
-When users ask about file locations, check these mounted paths first.`;
+🐳 ${containerLabel}: Verified mounts for persistent file operations: ${verifiedMounts.join(', ')}.
+Files outside verified mounts may not persist after the container stops.`;
+        }
+        if (unverifiedCandidates.length > 0) {
+            guidance += `
+
+🐳 ${containerLabel}: Unverified mount candidates: ${unverifiedCandidates.join(', ')}. These paths are inferred from common container directories and may not persist.`;
+        }
     }
     
     return guidance;
