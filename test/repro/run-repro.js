@@ -49,7 +49,9 @@ function runScript(file) {
   });
 }
 
-const requested = process.argv.slice(2);
+// The scripts named on the command line, by file name as the other runners take them
+// (so test/repro/test-x.js from the repository root works too); else every test-*.js here
+const requested = process.argv.slice(2).map((file) => path.basename(file));
 const files = requested.length > 0
   ? requested
   : (await fs.readdir(__dirname)).filter((file) => file.startsWith('test-') && file.endsWith('.js')).sort();
