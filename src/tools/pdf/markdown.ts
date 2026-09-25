@@ -464,18 +464,27 @@ const isHttpUrl = (input: string): boolean => {
  * then reads the file that was checked, even if a link on the way is changed
  * after the check. md-to-pdf's own stylesheet and highlight styles are not the
  * caller's files and stay allowed.
+ *
+ * Returns the paths as the caller gave them, by the checked path read instead,
+ * for the errors (nameGivenPaths).
  */
-async function validateRenderFiles(render: Record<string, unknown>, validatePath: (path: string) => Promise<string>): Promise<void> {
+async function validateRenderFiles(render: Record<string, unknown>, validatePath: (path: string) => Promise<string>): Promise<Map<string, string>> {
+    const givenPaths = new Map<string, string>();
+    const check = async (file: string) => {
+        const checked = await validatePath(file);
+        if (checked !== file && !givenPaths.has(checked)) givenPaths.set(checked, file);
+        return checked;
+    };
     // md-to-pdf takes one value or a list
-    const eachOf = async (value: unknown, check: (item: unknown) => Promise<unknown>) =>
-        Array.isArray(value) ? Promise.all(value.map(check)) : check(value);
+    const eachOf = async (value: unknown, checkItem: (item: unknown) => Promise<unknown>) =>
+        Array.isArray(value) ? Promise.all(value.map(checkItem)) : checkItem(value);
     if ('stylesheet' in render) {
         render.stylesheet = await eachOf(render.stylesheet, async (stylesheet) =>
-            typeof stylesheet === 'string' && stylesheet !== '' && !isHttpUrl(stylesheet) ? validatePath(stylesheet) : stylesheet);
+            typeof stylesheet === 'string' && stylesheet !== '' && !isHttpUrl(stylesheet) ? check(stylesheet) : stylesheet);
     }
     if ('script' in render) {
         render.script = await eachOf(render.script, async (script) =>
-            isPlainObject(script) && typeof script.path === 'string' ? { ...script, path: await validatePath(script.path) } : script);
+            isPlainObject(script) && typeof script.path === 'string' ? { ...script, path: await check(script.path) } : script);
     }
     if (typeof render.highlight_style === 'string') {
         // Where md-to-pdf looks for it
@@ -483,14 +492,32 @@ async function validateRenderFiles(render: Record<string, unknown>, validatePath
         const style = resolve(stylesFolder, `${render.highlight_style}.css`);
         const inStylesFolder = relative(stylesFolder, style);
         if (inStylesFolder === '..' || inStylesFolder.startsWith(`..${sep}`) || isAbsolute(inStylesFolder)) {
-            const checked = await validatePath(style);
+            const checked = await check(style);
             // md-to-pdf reads <styles folder>/<highlight_style>.css: name the checked file that way
             if (!checked.endsWith('.css')) {
-                throw new Error(`highlight_style ${render.highlight_style} leads to ${checked}, which is not a .css file`);
+                throw new Error(`highlight_style ${render.highlight_style} (${style}) is a link to a file that is not a .css file`);
             }
             render.highlight_style = relative(stylesFolder, checked.slice(0, -'.css'.length));
         }
     }
+    return givenPaths;
+}
+
+/**
+ * The render reads the checked paths (links resolved: on macOS a temporary file
+ * given as /var/... is read as /private/var/...). An error from it names each
+ * file as the caller gave it instead, as it did before the render read the
+ * checked paths.
+ */
+function nameGivenPaths(error: unknown, givenPaths: Map<string, string>): void {
+    if (!(error instanceof Error) || givenPaths.size === 0) return;
+    // Longest first, so a checked path that starts a longer one isn't replaced inside it
+    const pairs = [...givenPaths].sort(([a], [b]) => b.length - a.length);
+    const asGiven = (text: string) => pairs.reduce((named, [checked, given]) => named.split(checked).join(given), text);
+    error.message = asGiven(error.message);
+    if (error.stack) error.stack = asGiven(error.stack);
+    const withPath = error as NodeJS.ErrnoException;
+    if (typeof withPath.path === 'string') withPath.path = asGiven(withPath.path);
 }
 
 /**
@@ -703,6 +730,8 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
     let profile: ChromeProfile | undefined;
     let server: RenderServer | undefined;
     let browser: Browser | undefined;
+    // The render files as the caller gave them, by the checked paths the render reads
+    let givenPaths = new Map<string, string>();
     try {
         // The folder the markdown's files are served from must be inside the allowed folders
         const { validatePath } = await import('../filesystem.js');
@@ -710,7 +739,7 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
 
         // Merge options and front matter, and drop the ignored ones, in one place
         const { body, options: render } = resolveRender(markdown, options);
-        await validateRenderFiles(render, validatePath);
+        givenPaths = await validateRenderFiles(render, validatePath);
         const launchOptions = isPlainObject(render.launch_options) ? render.launch_options as LaunchOptions : {};
 
         // Find Chrome: puppeteer cache -> system Chrome -> install
@@ -747,6 +776,7 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
 
         return pdf.content as Buffer;
     } catch (error) {
+        nameGivenPaths(error, givenPaths);
         // Provide helpful error message if Chrome is not found
         const errorMessage = error instanceof Error ? error.message : String(error);
         if (errorMessage.includes('Could not find Chrome')) {

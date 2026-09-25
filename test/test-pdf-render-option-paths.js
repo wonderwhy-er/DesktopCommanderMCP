@@ -12,6 +12,7 @@
  * The render reads the files the check approved: a stylesheet, highlight
  * style, script or file served to the page behind a link that is changed to
  * point outside right after its check is still read where the check found it.
+ * An error from the render still names each file as it was given.
  */
 import assert from 'assert';
 import fs from 'fs';
@@ -169,6 +170,26 @@ async function run() {
       const applied = kinds.filter((kind) => pageText.includes(`CHECKED${kind}7731`));
       assert.deepStrictEqual(applied, kinds, `the files the check approved should apply: ${pageText.slice(0, 400)}`);
     });
+
+    // The render reads each file where the check found it (links resolved; on macOS a temporary
+    // file given as /var/... is read as /private/var/...), but the answer names it as it was given
+    await check('write_pdf: a render error names the stylesheet, script and highlight style as given, not where their link leads', async () => {
+      const real = path.join(ws.allowed, 'real-for-errors');
+      const link = path.join(ws.allowed, 'link-for-errors');
+      fs.mkdirSync(real);
+      linkFolder(real, link);
+      const missing = [
+        ['stylesheet', { stylesheet: [path.join(link, 'missing.css')] }, path.join(link, 'missing.css')],
+        ['script', { script: [{ path: path.join(link, 'missing.js') }] }, path.join(link, 'missing.js')],
+        ['highlight_style', { highlight_style: path.relative(HIGHLIGHT_STYLES, path.join(link, 'missing')) }, path.join(link, 'missing.css')],
+      ];
+      for (const [what, options, given] of missing) {
+        const { result, text } = await render(`error-${what}`, { content: '# Report', options });
+        assert(result.isError, `a missing ${what} should fail the render, answered: ${text}`);
+        assert(text.includes(given) && !text.includes(real),
+          `the error for a missing ${what} should name it as given (${given}), not where its link leads (${real}): ${text}`);
+      }
+    });
   } finally {
     await configManager.setValue('allowedDirectories', originalAllowed ?? []);
     ws.cleanup();
@@ -178,7 +199,7 @@ async function run() {
     return true;
   }
   if (failures.length > 0) {
-    console.log(`${failures.length} of 5 cases failed`);
+    console.log(`${failures.length} of 6 cases failed`);
     return false;
   }
   return true;
