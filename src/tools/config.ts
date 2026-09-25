@@ -143,8 +143,9 @@ export async function setConfigValue(args: unknown) {
           valueToStore = [String(valueToStore)];
         }
         
-        // Ensure the value is an array after all our conversions
-        if (!Array.isArray(valueToStore)) {
+        // Ensure the value is an array after all our conversions; null stays
+        // null and clears the value back to its default, as for number fields
+        if (valueToStore !== null && !Array.isArray(valueToStore)) {
           console.error(`Value for ${parsed.data.key} is still not an array, converting to array`);
           valueToStore = [String(valueToStore)];
         }
@@ -170,6 +171,21 @@ export async function setConfigValue(args: unknown) {
             isError: true
           };
         }
+      }
+
+      // Numbers may arrive as strings ("5000"); null clears the value back to its default.
+      if (fieldDefinition.valueType === 'number' && valueToStore !== null) {
+        const numeric = typeof valueToStore === 'string' && valueToStore.trim() !== '' ? Number(valueToStore) : valueToStore;
+        if (typeof numeric !== 'number' || !Number.isFinite(numeric)) {
+          return {
+            content: [{
+              type: "text",
+              text: `Value for ${parsed.data.key} must be a number.`
+            }],
+            isError: true
+          };
+        }
+        valueToStore = numeric;
       }
 
       await configManager.setValue(parsed.data.key, valueToStore);
