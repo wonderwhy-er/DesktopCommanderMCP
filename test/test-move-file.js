@@ -17,13 +17,13 @@
  * Calls the tool's handler, so each case sees the answer the AI gets.
  */
 import fs from 'fs/promises';
-import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { handleMoveFile } from '../dist/handlers/filesystem-handlers.js';
 import { createLink } from './helpers/links.js';
 import { holdFileOpen } from './helpers/hold-file-open.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 const text = (result) => result.content.map((c) => c.text).join('\n');
 const exists = (p) => fs.lstat(p).then(() => true, () => false);
@@ -111,9 +111,7 @@ async function checkMovedAcross(source, destination, what) {
 }
 
 async function testMoveToAnotherVolume(dir) {
-  // Real paths, as move_file renames them (macOS's temp folder is behind a link)
-  const base = await fs.realpath(dir);
-  const [here, there] = [path.join(base, 'volume-a'), path.join(base, 'volume-b')];
+  const [here, there] = [path.join(dir, 'volume-a'), path.join(dir, 'volume-b')];
   await fs.mkdir(here);
   await fs.mkdir(there);
   await asIfOtherVolumes(here, there, () => checkMovedAcross(path.join(here, 'folder'), path.join(there, 'folder'), 'another volume'));
@@ -138,8 +136,7 @@ async function makeUnreadable(file) {
 }
 
 async function testFailedCopyToAnotherVolume(dir) {
-  const base = await fs.realpath(dir);
-  const [here, there] = [path.join(base, 'volume-c'), path.join(base, 'volume-d')];
+  const [here, there] = [path.join(dir, 'volume-c'), path.join(dir, 'volume-d')];
   await fs.mkdir(here);
   await fs.mkdir(there);
   const source = path.join(here, 'folder');
@@ -189,7 +186,8 @@ const CASES = [
 ];
 
 async function runTests() {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dc-move-file-'));
+  // By its real path, as move_file renames (macOS's temporary folder is behind a link)
+  const dir = createTempDir('dc-move-file-');
   const failures = [];
   try {
     for (const [name, run] of CASES) {
