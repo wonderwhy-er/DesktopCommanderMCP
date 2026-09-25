@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
@@ -19,7 +19,8 @@ export async function createStalledReadTarget(name = 'dc-stall') {
   if (process.platform !== 'win32') {
     // In the temporary folder's real path, like the test homes (see test-env.js)
     const fifo = path.join(fs.realpathSync.native(os.tmpdir()), id);
-    execSync(`mkfifo "${fifo}"`); // child process, so it doesn't use the threadpool
+    // A child process, so it doesn't use the threadpool; no shell, so the path reaches it as written
+    execFileSync('mkfifo', [fifo]);
     return {
       path: fifo,
       close: () => {
