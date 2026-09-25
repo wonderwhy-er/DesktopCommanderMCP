@@ -5,8 +5,10 @@
  * them as its globs: case-sensitively (ignoreCase does not apply to them),
  * "*", "?", "[...]" and "{a,b}" work, a glob with a "/" matches the path below
  * the search root, and "!" leaves files out. The Excel and DOCX searches match
- * the same globs, ignoring case. The fixture holds each file name as a text, an
- * Excel and a DOCX file.
+ * the same globs, ignoring case. A pattern of only "!" globs keeps every file
+ * they don't leave out, and a file given as the search path is searched
+ * whatever the pattern says, as ripgrep searches a file it is given. The
+ * fixture holds each file name as a text, an Excel and a DOCX file.
  */
 
 import assert from 'assert';
@@ -132,6 +134,57 @@ async function testFilePatternSelection() {
   }
 }
 
+async function testSearchPathIsAFile() {
+  console.log('Testing a file given as the search path...');
+
+  const root = await fs.realpath(TEST_DIR);
+  const expectedMatch = {
+    txt: (file) => ({ file, line: 1, match: 'needle', type: 'content' }),
+    xlsx: (file) => ({ file: `${file}:Sheet1!Row1`, line: 1, match: 'needle report', type: 'content' }),
+    docx: (file) => ({ file, line: 1, match: 'needle report', type: 'content' })
+  };
+  // Only "!" alternatives, one that selects other files, and one that matches
+  // the file: ripgrep searches a file it is given whatever its globs say
+  const notSearched = [];
+  for (const filePattern of ['!*.tmp', '*.ts', '!notes*']) {
+    for (const [ext, matchOf] of Object.entries(expectedMatch)) {
+      const file = path.join(root, `notes.${ext}`);
+      const actual = await runSearch({ path: file, pattern: 'needle', searchType: 'content', filePattern, contextLines: 0 });
+      try {
+        assert.deepStrictEqual(actual, { totalMatches: 1, results: [matchOf(file)] });
+      } catch {
+        notSearched.push(`notes.${ext} with "${filePattern}" (${actual.totalMatches} matches)`);
+      }
+    }
+  }
+  assert.deepStrictEqual(notSearched, [],
+    `A file given as the search path should be searched whatever filePattern says, as ripgrep searches a file it is given; not searched: ${notSearched.join(', ')}`);
+  console.log('✓ notes.txt, notes.xlsx and notes.docx, each given as the search path, are searched with "!*.tmp", "*.ts" and "!notes*"');
+}
+
+async function testOnlyExclusions() {
+  console.log('Testing a filePattern of only "!" alternatives...');
+
+  // A folder named like an Excel file: the Excel search runs for it (as for an
+  // Excel file) with a filePattern that doesn't target Excel files
+  const folder = path.join(TEST_DIR, 'book.xlsx');
+  await fs.mkdir(folder);
+  try {
+    for (const stem of ['notes', 'secret']) {
+      await writeFile(path.join(folder, `${stem}.xlsx`), JSON.stringify([['needle report']]));
+    }
+    const book = await fs.realpath(folder);
+    const actual = await runSearch({ path: folder, pattern: 'needle', searchType: 'content', filePattern: '!secret*', contextLines: 0 });
+    assert.deepStrictEqual(actual, {
+      totalMatches: 1,
+      results: [{ file: `${path.join(book, 'notes.xlsx')}:Sheet1!Row1`, line: 1, match: 'needle report', type: 'content' }]
+    }, 'filePattern "!secret*" should leave secret.xlsx out and keep notes.xlsx, as ripgrep keeps every file its "!" globs don\'t leave out');
+    console.log('✓ "!secret*": the Excel search keeps notes.xlsx and leaves secret.xlsx out');
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true });
+  }
+}
+
 export default async function runTests() {
   const originalConfig = await configManager.getConfig();
   await fs.rm(TEST_DIR, { recursive: true, force: true });
@@ -147,6 +200,8 @@ export default async function runTests() {
     }
 
     await testFilePatternSelection();
+    await testSearchPathIsAFile();
+    await testOnlyExclusions();
     console.log('✅ filePattern tests passed');
   } finally {
     // Stop any search still running (before its files are removed) and drop all sessions
