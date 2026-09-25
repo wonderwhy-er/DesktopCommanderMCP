@@ -13,10 +13,10 @@
 import assert from 'assert';
 import fs from 'fs';
 import fsp from 'fs/promises';
-import os from 'os';
 import path from 'path';
 import { writeFileAtomic } from '../dist/utils/atomic-write.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 /** Runs `write` with open/rename recorded: 'sync <path>' and 'rename <from> -> <to>', in order */
 async function recordDiskOrder(write) {
@@ -45,7 +45,7 @@ async function recordDiskOrder(write) {
 }
 
 async function testFlushedBeforeRename() {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-atomic-write-')));
+  const dir = createTempDir('dc-atomic-write-');
   const target = path.join(dir, 'config.json');
   try {
     fs.writeFileSync(target, '{"old":true}');
