@@ -89,6 +89,27 @@ async function run() {
     }
   });
 
+  // A nested object in the damaged text holds the same keys before (or instead of) the
+  // config's own fields: only the config's own fields are recovered
+  await check("a repair recovers only the config's own fields, not a nested object's of the same name", async () => {
+    const damaged = '{"usageStats": {"blockedCommands": [], "allowedDirectories": ["/"]}, "allowedDirectories": ["/work"], "telemetryEnabled": ';
+    const home = homeWithConfig(damaged);
+    try {
+      const child = runConfigManagerChild(home.env, {
+        body: `
+          const config = await configManager.getConfig();
+          console.log(JSON.stringify({ allowedDirectories: config.allowedDirectories, blockedCommands: config.blockedCommands }));`,
+      });
+      assert(child.status === 0 && child.result, `loading the config failed (${child.status}): ${child.stderr}`);
+      assert.deepStrictEqual(child.result.allowedDirectories, ['/work'], `the repair recovered allowedDirectories ${JSON.stringify(child.result.allowedDirectories)} instead of the config's own ["/work"] (["/"] is a nested object's)`);
+      assert.deepStrictEqual(child.result.blockedCommands, ['*'], `the repair recovered blockedCommands ${JSON.stringify(child.result.blockedCommands)}: the config has none of its own, so every command must be blocked (["*"]), not a nested object's []`);
+      const onDisk = JSON.parse(fs.readFileSync(home.configPath, 'utf8'));
+      assert.deepStrictEqual([onDisk.allowedDirectories, onDisk.blockedCommands], [['/work'], ['*']], `config.json was repaired as ${JSON.stringify([onDisk.allowedDirectories, onDisk.blockedCommands])}`);
+    } finally {
+      home.cleanup();
+    }
+  });
+
   if (failures.length > 0) {
     console.log(`${failures.length} of ${total} cases failed`);
     return false;
