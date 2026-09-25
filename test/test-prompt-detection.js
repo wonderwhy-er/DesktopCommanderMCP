@@ -22,6 +22,8 @@
  * wasn't detected as waiting, so interact_with_process waited out its timeout.
  * A markdown table's lines ("| a | b |") are not prompts.
  */
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -39,6 +41,7 @@ const NODE_24_CONTINUATION = NODE_24_SESSIONS.map(([os, banner, exchanges]) =>
 const TABLE_LINES = NODE_24_SESSIONS[0][2][4][1].split('\n').slice(0, 3);
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pytest-196.js');
+const SPLIT_LINE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'split-line.js');
 // PowerShell answers "echo hi" within a second or two; missing its prompt runs to the timeout
 const INTERACT_TIMEOUT_MS = 20_000;
 const PROMPT_WITHIN_MS = 5_000;
@@ -48,6 +51,10 @@ const NOT_PROMPTS = [
   ['pytest -v while it collects (#196)', PYTEST_COLLECTING],
   ['a pytest progress line before its newline (padding, then "[100%]")', PYTEST_PROGRESS_LINE],
   ...TABLE_LINES.map((line) => [`a markdown table's line before its newline (${line})`, line]),
+  // The first piece of a line, before the rest of it arrives (fixtures/split-line.js)
+  ['a piece of a line ending in ">"', '<div>'],
+  ['a piece of a line ending in "$"', 'costs 5$'],
+  ['a piece of a line ending in "#"', 'see issue #'],
 ];
 
 // Output that ends in a prompt
@@ -110,6 +117,35 @@ async function testStartProcess() {
   }
 }
 
+/**
+ * A line that arrives in two pieces, the first ending like a prompt ("<div>",
+ * "costs 5$", "see issue #"), is not a prompt: start_process must not end its
+ * wait on that piece (it did, testing each output chunk on its own).
+ */
+async function testStartProcessOnAPieceOfALine() {
+  console.log('\n--- start_process: a piece of a line that ends like a prompt ---');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-split-line-'));
+  try {
+    await Promise.all(['markup', 'dollar', 'hash'].map(async (piece) => {
+      const trigger = path.join(dir, piece);
+      const started = startProcess({ command: `node "${SPLIT_LINE}" "${trigger}" ${piece}`, timeout_ms: 3000 });
+      // The rest of the line comes 1 s later: a wait that ended on the first piece misses it
+      setTimeout(() => fs.writeFileSync(trigger, ''), 1000);
+      const result = await started;
+      const pid = result.structuredContent?.pid;
+      const text = result.content[0].text;
+      try {
+        check(text.includes('and the rest of the line'),
+          `start_process ended its wait on the piece "${piece}" of a line, before the rest of it: ${JSON.stringify(text.slice(0, 120))}`);
+      } finally {
+        if (pid > 0) await forceTerminate({ pid });
+      }
+    }));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testInteractWithPowerShell() {
   console.log('\n--- interact_with_process: a real PowerShell session ---');
   const hasPwsh = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['pwsh'], { encoding: 'utf8' }).status === 0;
@@ -164,6 +200,7 @@ async function testInteractAtNodeContinuation() {
 async function runTests() {
   testDetection();
   await testStartProcess();
+  await testStartProcessOnAPieceOfALine();
   await testInteractAtNodeContinuation();
   await testInteractWithPowerShell();
   console.log(failures.length === 0

@@ -287,10 +287,10 @@ export class TerminalManager {
       let periodicCheck: NodeJS.Timeout | null = null;
       let waitTimer: NodeJS.Timeout | null = null;
 
-      // Quick prompt patterns for immediate detection. A prompt is the very
-      // end of the output: spaces may follow it, a newline may not (\s would
-      // take a line ending in ">", such as "</html>", for a prompt).
-      const quickPromptPatterns = />>>[ \t]*$|>[ \t]*$|\$[ \t]*$|#[ \t]*$/;
+      // Whether the process waits for input, judged as the periodic check does:
+      // from the end of each output stream, not from the chunk that just came
+      // (a chunk can end in the middle of a line, e.g. right after "<div>").
+      const waitingForInput = () => this.getProcessState(childProcess.pid!)?.isWaitingForInput === true;
 
       const resolveOnce = (waitResult: Omit<ProcessStartResult, 'processState'>) => {
         if (resolved) return;
@@ -374,8 +374,8 @@ export class TerminalManager {
           });
         }
 
-        // Immediate check for obvious prompts
-        if (quickPromptPatterns.test(text)) {
+        // Immediate check for a prompt
+        if (waitingForInput()) {
           exitReason = 'early_exit_quick_pattern';
 
           if (collectTiming && outputEvents.length > 0) {
@@ -419,7 +419,7 @@ export class TerminalManager {
 
       // Periodic comprehensive check every 100ms
       periodicCheck = setInterval(() => {
-        if (this.getProcessState(childProcess.pid!)?.isWaitingForInput) {
+        if (waitingForInput()) {
           exitReason = 'early_exit_periodic_check';
           resolveOnce({
             pid: childProcess.pid!,
