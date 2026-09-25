@@ -93,12 +93,15 @@ const PdfOptionsSchema = z.object({
   width: z.union([z.string(), z.number()]).optional(),
   height: z.union([z.string(), z.number()]).optional(),
   preferCSSPageSize: z.boolean().optional(),
-  margin: z.object({
-    top: z.union([z.string(), z.number()]).optional(),
-    right: z.union([z.string(), z.number()]).optional(),
-    bottom: z.union([z.string(), z.number()]).optional(),
-    left: z.union([z.string(), z.number()]).optional(),
-  }).strict().optional(),
+  margin: z.union([
+    z.string(),
+    z.object({
+      top: z.union([z.string(), z.number()]).optional(),
+      right: z.union([z.string(), z.number()]).optional(),
+      bottom: z.union([z.string(), z.number()]).optional(),
+      left: z.union([z.string(), z.number()]).optional(),
+    }).strict(),
+  ]).optional(),
   omitBackground: z.boolean().optional(),
   tagged: z.boolean().optional(),
   outline: z.boolean().optional(),
@@ -188,12 +191,13 @@ export const EditBlockArgsSchema = z.object({
   old_string: z.string().optional(),
   new_string: z.string().optional(),
   expected_replacements: z.number().optional().default(1),
-  // Structured file range rewrite (Excel). JSON strings are accepted because
+  // Structured file range rewrite (Excel/PDF). JSON strings are accepted because
   // some MCP clients serialize array arguments before sending them.
   range: z.string().optional(),
   content: z.union([
     z.string(),
-    z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])))
+    z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+    z.array(PdfOperationSchema),
   ]).optional(),
   options: z.object({
     outputPath: z.string().optional(),

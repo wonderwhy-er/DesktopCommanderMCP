@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { EditBlockArgsSchema, WritePdfArgsSchema } from '../dist/tools/schemas.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -59,6 +60,7 @@ const client = new Client({ name: 'schema-portability-test', version: '1' });
 try {
   await client.connect(transport);
   const { tools } = await client.listTools();
+  assert.equal(tools.length, 26, 'Expected 26 published MCP tools');
   const issues = [];
 
   for (const tool of tools) {
@@ -70,6 +72,26 @@ try {
     [],
     `Published MCP tool schemas must remain portable:\n${issues.join('\n')}`,
   );
+
+  assert.equal(
+    WritePdfArgsSchema.safeParse({
+      path: 'out.pdf',
+      content: '# PDF',
+      options: { pdf_options: { margin: '20mm' } },
+    }).success,
+    true,
+    'write_pdf must preserve md-to-pdf CSS-style margin strings',
+  );
+  assert.equal(
+    EditBlockArgsSchema.safeParse({
+      file_path: 'document.pdf',
+      range: 'pages',
+      content: [{ type: 'delete', pageIndexes: [0] }],
+    }).success,
+    true,
+    'edit_block must preserve PDF operation arrays',
+  );
+
   console.log(`✓ ${tools.length} published MCP tool schemas are portable`);
 } finally {
   await client.close();
