@@ -15,7 +15,6 @@
 import assert from 'assert';
 import { constants } from 'buffer';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import v8 from 'v8';
 import vm from 'vm';
@@ -25,6 +24,7 @@ import { configManager } from '../dist/config-manager.js';
 import { startSearchAndWait } from './helpers/search.js';
 import { connectToServer, readSearchAnswer, closeClient } from './helpers/mcp-client.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 v8.setFlagsFromString('--expose-gc');
 const gc = vm.runInNewContext('gc');
@@ -150,7 +150,7 @@ export default async function runTests() {
   const failures = [];
   try {
     for (const [name, run] of cases) {
-      const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-long-lines-')));
+      const dir = createTempDir('dc-search-long-lines-');
       try {
         await configManager.setValue('allowedDirectories', [dir]);
         await run(dir);
