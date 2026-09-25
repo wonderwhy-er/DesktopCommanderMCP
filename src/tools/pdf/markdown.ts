@@ -60,9 +60,10 @@ export interface IgnoredRenderOption {
  * the markdown or the caller write the PDF somewhere other than the requested
  * path (dest, pdf_options.path), run a different program as the renderer
  * (launch_options.executablePath), pass their own flags to it
- * (launch_options.args), or hold the browser open forever (devtools). Desktop
- * Commander writes the PDF itself, to the validated path, and runs the
- * renderer on a browser and profile it controls.
+ * (launch_options.args), change the browser process in other ways (every
+ * launch option but ALLOWED_LAUNCH_OPTIONS), or hold the browser open forever
+ * (devtools). Desktop Commander writes the PDF itself, to the validated path,
+ * and runs the renderer on a browser and profile it controls.
  */
 const IGNORED_RENDER_OPTIONS: Record<string, string> = {
     'dest': 'Desktop Commander writes the PDF only to the path you requested',
@@ -71,6 +72,24 @@ const IGNORED_RENDER_OPTIONS: Record<string, string> = {
     'launch_options.executablePath': 'Desktop Commander chooses the browser used to render',
     'launch_options.args': 'Desktop Commander controls the arguments the browser is launched with',
 };
+
+/**
+ * The launch_options (Puppeteer's LaunchOptions) that apply: they only change
+ * how the page renders or how long Desktop Commander waits. Every other launch
+ * option is ignored. Those set what runs and how: the browser's environment
+ * (env, which could preload a library into it or undo the Windows profile
+ * fix), where its output goes (dumpio pipes it to stdout, the MCP
+ * connection), how Desktop Commander connects to it (pipe, debuggingPort,
+ * protocol), its arguments and extensions (ignoreDefaultArgs,
+ * enableExtensions), where it saves downloads (downloadBehavior), which browser
+ * runs (browser, channel), or how this process handles signals (handleSIGINT,
+ * ...). An allowlist, so an option a later Puppeteer adds is ignored too.
+ */
+const ALLOWED_LAUNCH_OPTIONS = new Set([
+    'headless', 'timeout', 'protocolTimeout', 'slowMo', 'defaultViewport',
+    'acceptInsecureCerts', 'networkEnabled', 'waitForInitialPage',
+]);
+const LAUNCH_OPTION_REASON = `Desktop Commander controls how the browser is launched; of launch_options, only ${[...ALLOWED_LAUNCH_OPTIONS].join(', ')} apply`;
 
 interface ResolvedRender {
     /** The markdown body, with the front matter removed */
@@ -110,7 +129,7 @@ export function resolveRender(markdown: string, options: unknown = {}): Resolved
     }
 
     const ignoredOptions: IgnoredRenderOption[] = [];
-    const ignore = (option: string) => ignoredOptions.push({ option, reason: IGNORED_RENDER_OPTIONS[option] });
+    const ignore = (option: string) => ignoredOptions.push({ option, reason: IGNORED_RENDER_OPTIONS[option] ?? LAUNCH_OPTION_REASON });
 
     if ('dest' in merged) { ignore('dest'); delete merged.dest; }
     if ('devtools' in merged) { ignore('devtools'); delete merged.devtools; }
@@ -120,8 +139,11 @@ export function resolveRender(markdown: string, options: unknown = {}): Resolved
     }
     if (isPlainObject(merged.launch_options)) {
         const launchOptions = merged.launch_options;
-        if ('executablePath' in launchOptions) { ignore('launch_options.executablePath'); delete launchOptions.executablePath; }
-        if ('args' in launchOptions) { ignore('launch_options.args'); delete launchOptions.args; }
+        for (const key of Object.keys(launchOptions)) {
+            if (ALLOWED_LAUNCH_OPTIONS.has(key)) continue;
+            ignore(`launch_options.${key}`);
+            delete launchOptions[key];
+        }
     }
 
     return { body: content, options: merged, ignoredOptions };
@@ -686,8 +708,10 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
         server = await startRenderServer(basedir);
 
         browser = await puppeteer.launch({
-            ...(chromeEnv ? { env: chromeEnv } : {}),
+            // Only the launch options resolveRender allows (ALLOWED_LAUNCH_OPTIONS);
+            // Desktop Commander's own settings below come after them
             ...launchOptions,
+            ...(chromeEnv ? { env: chromeEnv } : {}),
             // Desktop Commander chooses the browser (launch_options.executablePath is dropped by resolveRender)
             ...(chromePath ? { executablePath: chromePath } : {}),
             // Chrome runs on the render's own profile whatever the caller asked for
