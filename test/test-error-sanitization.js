@@ -88,7 +88,7 @@ const runAllTests = async () => {
             ['Failed to move file from /path/source.txt to /path/destination.txt', 'Error: Failed to move file from [PATH] to [PATH]'],
             [`Failed to read ${process.cwd()}${path.sep}sensitive${path.sep}file.txt`, 'Error: Failed to read [PATH]'],
             [`Failed to read ${home}`, 'Error: Failed to read [PATH]'],
-            [`Failed to read ${home}${path.sep}notes.txt: permission denied`, 'Error: Failed to read [PATH] permission denied'],
+            [`Failed to read ${home}${path.sep}notes.txt: permission denied`, 'Error: Failed to read [PATH]: permission denied'],
         ];
         for (const [message, expected] of cases) {
             assert.strictEqual(sanitizeError(new Error(message)).message, expected);
@@ -170,6 +170,40 @@ const runAllTests = async () => {
         });
         assert.strictEqual(properties.message, "Error in set_config_value handler: Error: EACCES: permission denied, open '[PATH]'");
         assert.strictEqual(properties.errorMessage, 'Could not read [PATH], retrying');
+    }) && allPassed;
+
+    // start_process sends the command's first word(s), as typed: a path there is replaced
+    // whole, a plain command name is kept. The values come from the real command manager.
+    allPassed = await runTest('Integration - a command that starts with a path is redacted', async () => {
+        const { commandManager } = await import('../dist/command-manager.js');
+        const spaced = path.join(root, 'Users', 'John Smith', 'bin', 'run.sh');
+        const cases = [
+            [`${spaced} --flag`, { command: '[PATH]', commands: '[PATH]' }],
+            [`scripts${path.sep}deploy.sh --prod && git push`, { command: '[PATH]', commands: '[PATH], git' }],
+            ['npm test', { command: 'npm', commands: 'npm' }],
+        ];
+        const wrong = [];
+        for (const [line, expected] of cases) {
+            const sent = await buildEventProperties({
+                command: commandManager.getBaseCommand(line),
+                commands: commandManager.extractCommands(line, true).join(', '),
+            });
+            const actual = { command: sent.command, commands: sent.commands };
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) wrong.push({ line, expected, actual });
+        }
+        assert.deepStrictEqual(wrong, []);
+    }) && allPassed;
+
+    // Error text sent under the other names our capture() calls use: a path the
+    // event knows, and one it doesn't, are replaced; the text around them is kept
+    allPassed = await runTest('Integration - every error text property is redacted', async () => {
+        const log = path.join(root, 'var', 'log', 'app.log');
+        const text = `Could not open ${file}, retrying (see ${log})`;
+        const sent = await buildEventProperties({ errMsg: text, error_message: text, reason: text, path: file });
+        const expected = 'Could not open [PATH], retrying (see [PATH])';
+        assert.deepStrictEqual(
+            { errMsg: sent.errMsg, error_message: sent.error_message, reason: sent.reason },
+            { errMsg: expected, error_message: expected, reason: expected });
     }) && allPassed;
 
     // Integration: the properties capture() actually sends for an Error object

@@ -44,16 +44,22 @@ const ROOT = path.parse(os.tmpdir()).root;
 const ALLOWED = path.join(ROOT, 'dc-telemetry-test', 'allowed folder');
 const REQUESTED = path.join(ROOT, 'var', 'log', 'private notes.txt');
 
-/** The error texts of the events named `name` sent so far, waiting up to 5 s for the first one. */
-async function sentErrors(name) {
+/** The params of the events named `name` sent so far, waiting up to 5 s for the first one. */
+async function sentEvents(name) {
   for (let waited = 0; waited < 5000; waited += 50) {
-    const errors = sent.flatMap((payload) => payload.events)
-      .filter((event) => event.name === name && event.params.error !== undefined)
-      .map((event) => event.params.error);
-    if (errors.length > 0) return errors;
+    const events = sent.flatMap((payload) => payload.events).filter((event) => event.name === name).map((event) => event.params);
+    if (events.length > 0) return events;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return [];
+}
+
+/** Fails if any payload sent so far contains one of the pieces (case-insensitive). */
+function assertNothingSent(pieces) {
+  const everything = JSON.stringify(sent).toLowerCase();
+  for (const piece of pieces) {
+    assert.ok(!everything.includes(piece.toLowerCase()), `Telemetry should not contain "${piece}", sent: ${JSON.stringify(sent)}`);
+  }
 }
 
 async function testDeniedPath() {
@@ -68,20 +74,32 @@ async function testDeniedPath() {
   assert.ok(answer.content[0].text.includes(`Path not allowed: ${REQUESTED}`), `The answer should name the path, got: ${answer.content[0].text}`);
 
   // Telemetry gets the same message with each path replaced whole
-  const errors = await sentErrors('server_request_error');
+  const errors = (await sentEvents('server_request_error')).map((params) => params.error);
   assert.deepStrictEqual(errors, ['Path not allowed: [PATH]. Must be within one of these directories: [PATH]']);
 
   // No event carries any piece of either path
-  const everything = JSON.stringify(sent);
-  for (const piece of ['private notes', 'notes.txt', 'allowed folder', 'dc-telemetry-test']) {
-    assert.ok(!everything.includes(piece), `Telemetry should not contain "${piece}", sent: ${everything}`);
-  }
+  assertNothingSent(['private notes', 'notes.txt', 'allowed folder', 'dc-telemetry-test']);
+}
+
+async function testCommandThatStartsWithAPath() {
+  const callTool = server._requestHandlers.get('tools/call');
+  // A program in a folder with a space in its name (it doesn't exist: the shell fails at once)
+  const program = path.join(ROOT, 'Users', 'John Smith', 'bin', 'run.sh');
+
+  await callTool({ method: 'tools/call', params: { name: 'start_process', arguments: { command: `${program} --flag`, timeout_ms: 2000 } } }, {});
+
+  // start_process reports the command's first word(s): here a path, so replaced whole
+  const events = (await sentEvents('server_start_process')).map(({ command, commands }) => ({ command, commands }));
+  assert.deepStrictEqual(events, [{ command: '[PATH]', commands: '[PATH]' }]);
+  assertNothingSent(['john', 'smith', 'run.sh']);
 }
 
 async function runTests() {
   try {
     await testDeniedPath();
     console.log('✓ a denied path is replaced whole in telemetry, and the answer still names it');
+    await testCommandThatStartsWithAPath();
+    console.log('✓ a command that starts with a path is sent as [PATH]');
     return true;
   } catch (error) {
     console.error('✗', error.message);

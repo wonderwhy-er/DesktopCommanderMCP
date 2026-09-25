@@ -106,12 +106,13 @@ export function sanitizeError(error: any, knownPaths: readonly string[] = []): {
 // Quoted text containing a separator is a path, whatever else it contains
 // (Node quotes paths in fs errors: open 'C:\Users\John Smith\a.txt').
 const QUOTED_PATH_PATTERN = /(['"`])(?:(?!\1)[^\r\n])*[\\/](?:(?!\1)[^\r\n])*\1/g;
-// The last resort, for an unquoted path nothing else knows: it starts at a
-// separator (optionally after a drive letter) and runs to whitespace or a
-// quote. A space is part of it when more path follows (C:\Users\John Smith\a.txt).
-// A last name with a space can't be told from the text after it, which is why
-// known paths are replaced first.
-const PATH_PATTERN = /(?:[A-Za-z]:)?[\\/][^\s'"`]*(?: +[^\s'"`\\/]+[\\/][^\s'"`]*)*/g;
+// The last resort, for an unquoted path nothing else knows: the whole word
+// around its first separator (C:\..., scripts/deploy.sh), running to
+// whitespace or a quote; punctuation that ends it ("a.txt: denied", "a, b",
+// "(see a.txt)") stays outside. A space is part of it when more path follows
+// (C:\Users\John Smith\a.txt). A last name with a space can't be told from the
+// text after it, which is why known paths are replaced first.
+const PATH_PATTERN = /[^\s'"`\\/()[\]{}<>]*[\\/][^\s'"`]*?(?: +[^\s'"`\\/]+[\\/][^\s'"`]*?)*(?=[.,:;!?)\]}>]*(?:[\s'"`]|$))/g;
 
 /**
  * Matches one known path exactly, with either separator between its names,
@@ -142,16 +143,25 @@ function knownPathPattern(knownPath: string): RegExp | null {
  * the last-resort pattern.
  */
 function redactPaths(message: string, knownPaths: readonly string[] = []): string {
+    return redactKnownPaths(message, knownPaths)
+        .replace(QUOTED_PATH_PATTERN, '$1[PATH]$1')
+        .replace(PATH_PATTERN, '[PATH]')
+        .replace(/(?:\[PATH\])+/g, '[PATH]');
+}
+
+/** Only the first step of redactPaths(): the home folder and the given paths, each whole. */
+function redactKnownPaths(message: string, knownPaths: readonly string[] = []): string {
     const known = [...new Set([homedir(), ...knownPaths])].sort((a, b) => b.length - a.length);
     for (const knownPath of known) {
         const pattern = knownPathPattern(knownPath);
         if (pattern) message = message.replace(pattern, '[PATH]');
     }
-    return message
-        .replace(QUOTED_PATH_PATTERN, '$1[PATH]$1')
-        .replace(PATH_PATTERN, '[PATH]')
-        .replace(/(?:\[PATH\])+/g, '[PATH]');
+    return message;
 }
+
+// Properties that carry free text our capture() calls send (error text, a
+// command line): redacted like `error`
+const TEXT_PROPERTY_KEYS = ['message', 'errorMessage', 'errMsg', 'error_message', 'reason', 'command', 'commands'];
 
 // Properties that hold paths: dropped from every event, after their values
 // have been used to redact the event's messages
@@ -197,10 +207,21 @@ function sanitizeEventProperties(properties?: any, knownPaths: readonly string[]
         sanitizedProperties.error = sanitized.message;
         if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
     }
-    // Error text sent under other names is redacted the same way
-    for (const key of ['message', 'errorMessage']) {
-        if (typeof sanitizedProperties[key] === 'string') {
-            sanitizedProperties[key] = redactPaths(sanitizedProperties[key], known);
+    // Every other string property (or string in an array property): free text
+    // is redacted like `error`; anything else gets its known absolute paths
+    // replaced, which touches nothing but those paths. A relative known path
+    // ("content") could equal an ordinary value, so it is only used on free text.
+    const knownAbsolute = known.filter(p => /[\\/]/.test(p));
+    for (const key of Object.keys(sanitizedProperties)) {
+        if (key === 'error' || isPathProperty(key)) continue;
+        const redact = TEXT_PROPERTY_KEYS.includes(key)
+            ? (text: string) => redactPaths(text, known)
+            : (text: string) => redactKnownPaths(text, knownAbsolute);
+        const value = sanitizedProperties[key];
+        if (typeof value === 'string') {
+            sanitizedProperties[key] = redact(value);
+        } else if (Array.isArray(value)) {
+            sanitizedProperties[key] = value.map(item => typeof item === 'string' ? redact(item) : item);
         }
     }
 
