@@ -11,7 +11,7 @@
  *   is being terminated
  * - the node:local timeout, which ends the script and whatever it started
  * - the failure path: when the tree can't be found, the reply says so and
- *   the log says why
+ *   the log says why, and a later force_terminate tries again
  * and pins that making them terminable changed nothing else: on macOS/Linux
  * session processes stay in the server's process group.
  */
@@ -20,6 +20,7 @@ import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
+import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import {
   createPidDir, processTreeCommand, readTreePids, readWrittenPids, waitForExit, cleanUpProcesses, processGroupOf
@@ -286,6 +287,61 @@ async function testTerminationFailureIsReported() {
 }
 
 /**
+ * A force_terminate that couldn't end the session's process leaves the session
+ * listed, and a later force_terminate must try again instead of answering from
+ * the first attempt (it did: the first result was kept for the session).
+ */
+async function testFailedTerminationIsRetried() {
+  console.log('\nTest: a force_terminate that failed is tried again');
+  const dir = createPidDir();
+  let shellPid;
+  const saved = { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot };
+  const restoreEnv = () => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+  const stdoutWrite = process.stdout.write;
+  try {
+    const started = await startProcess({ command: processTreeCommand(dir, 1), timeout_ms: 500 });
+    shellPid = started.structuredContent?.pid;
+    assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
+    await readTreePids(dir, 1);
+
+    // The first attempt fails and leaves the shell running: the tree-finding
+    // tool can't start, and the shell's own fallback kill does nothing
+    const shell = terminalManager.getSession(shellPid).process;
+    const kill = shell.kill;
+    shell.kill = () => true;
+    if (process.platform === 'win32') process.env.SystemRoot = path.join(dir, 'no-windows');
+    else process.env.PATH = path.join(dir, 'no-bin');
+    // The failure is logged to stdout (no transport); keep it out of the test output
+    process.stdout.write = () => true;
+    let first;
+    try {
+      first = await forceTerminate({ pid: shellPid });
+    } finally {
+      process.stdout.write = stdoutWrite;
+      restoreEnv();
+      shell.kill = kill;
+    }
+    assert(first.isError, `The first force_terminate should fail: ${first.content[0].text}`);
+
+    // Everything works again: a second force_terminate must end the tree
+    const second = await forceTerminate({ pid: shellPid });
+    assert(!second.isError, `A second force_terminate should try again and end the tree, got: ${second.content[0].text}`);
+    assert.deepStrictEqual(await waitForExit([shellPid, ...readWrittenPids(dir)]), [], 'The second force_terminate should end the shell and its tree');
+    console.log('✓ The second force_terminate tried again and ended the tree');
+  } finally {
+    process.stdout.write = stdoutWrite;
+    restoreEnv();
+    if (shellPid > 0) await forceTerminate({ pid: shellPid });
+    cleanUpProcesses([shellPid, ...readWrittenPids(dir)], [dir]);
+  }
+}
+
+/**
  * macOS/Linux: session processes run in the server's own process group (and
  * so its session and controlling terminal), as they always have. Ctrl+C in
  * and closing the terminal the server runs in reach them, and sudo/ssh can
@@ -324,6 +380,7 @@ export default async function runTests() {
     testNodeLocalTimeoutEndsTree,
     testNodeLocalTimeoutAnswersWhenTreeSurvives,
     testTerminationFailureIsReported,
+    testFailedTerminationIsRetried,
     testSessionsStayInServerProcessGroup,
   ];
   // Every case runs even after one fails, so a failure shows which kill paths leak

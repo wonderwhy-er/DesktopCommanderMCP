@@ -55,7 +55,7 @@ function newStreamTails(): StreamTails {
 /** An active session plus the per-stream tails that state detection reads. */
 interface ManagedSession extends TerminalSession {
   streams: StreamTails;
-  termination?: Promise<boolean>;  // Set by the first forceTerminate; later calls await the same one
+  termination?: Promise<boolean>;  // The forceTerminate in progress (or done); calls meanwhile await it, a failed one is dropped
 }
 
 /** Outcome of forceTerminate */
@@ -882,7 +882,11 @@ export class TerminalManager {
     }
 
     if (!session.termination) {
-      session.termination = terminateProcessTree(session.process);
+      // Calls made while it runs share it; a failed one is dropped, so the next call tries again
+      session.termination = terminateProcessTree(session.process).then((ended) => {
+        if (!ended) session.termination = undefined;
+        return ended;
+      });
     }
     if (await session.termination) {
       return 'terminated';
