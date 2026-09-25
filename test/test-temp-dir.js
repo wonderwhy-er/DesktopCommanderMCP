@@ -16,6 +16,10 @@ function isRealPathFolder(dir, prefix, what) {
   assert.strictEqual(dir, fs.realpathSync.native(dir), `${what} ${dir} is not given by its real path`);
   assert.strictEqual(path.dirname(dir), fs.realpathSync.native(os.tmpdir()), `${what} ${dir} is not in the temporary folder`);
   assert(path.basename(dir).startsWith(prefix), `${what} ${dir} does not start with ${prefix}`);
+  if (process.platform === 'darwin') {
+    // /var is a link to /private/var: a path the server resolves never starts with it
+    assert(!dir.startsWith('/var/'), `${what} ${dir} is under /var, a link, not its real path /private/var`);
+  }
 }
 
 export default async function runTests() {
