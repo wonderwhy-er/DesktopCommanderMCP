@@ -7,7 +7,6 @@ import { capture } from './utils/capture.js';
 import { logger } from './utils/logger.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
-import PizZip from 'pizzip';
 
 export interface SearchResult {
   file: string;
@@ -722,6 +721,9 @@ function characterClassEnd(glob: string, start: number): number {
     if (filePattern) {
       docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
     }
+
+    // Dynamically import PizZip to open the DOCX files
+    const { default: PizZip } = await import('pizzip');
 
     for (const filePath of docxFiles) {
       if (sink.isStopped()) break;
