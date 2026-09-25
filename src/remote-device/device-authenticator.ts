@@ -163,8 +163,16 @@ export class DeviceAuthenticator {
             // Wait before polling
             await this.sleep(interval);
 
+            // Only transport problems are retried here. The request, and a body
+            // we cannot read, are the transient part; an answer the server
+            // actually gave (access_denied, expired_token, ...) is final. Before,
+            // the terminal throw sat inside this try and its own catch swallowed
+            // it, so a denied or expired code kept the terminal on "Waiting for
+            // authorization" until the whole code lifetime ran out.
+            let response: Response;
+            let data: PollResponse | null;
             try {
-                const response = await fetch(`${this.baseServerUrl}/device/poll`, {
+                response = await this.fetchFn(`${this.baseServerUrl}/device/poll`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -177,47 +185,49 @@ export class DeviceAuthenticator {
                 // time; correct the clock before that session is used.
                 observeServerDate(response.headers.get('date'));
 
-                // Parse response body exactly once
-                const data: PollResponse = await response.json().catch(() => ({ error: 'unknown' }));
-
-                // Successful authentication
-                if (response.ok && data.access_token) {
-                    return {
-                        device_id: data.device_id,
-                        access_token: data.access_token,
-                        refresh_token: data.refresh_token || null,
-                    };
-                }
-
-                // Check error type
-                if (data.error === 'authorization_pending') {
-                    // Still waiting - continue polling
-                    continue;
-                }
-
-                if (data.error === 'slow_down') {
-                    // Server requested slower polling
-                    await this.sleep(interval);
-                    continue;
-                }
-
-                // Terminal error
-                const errorMessage = data.error_description || data.error || 'Authorization failed';
-                await captureRemote('remote_device_auth_failed', { error: errorMessage });
-                throw new Error(errorMessage);
+                // Parse response body exactly once. null = not a JSON answer
+                // (e.g. a proxy's HTML 502), which is not a verdict on the code.
+                data = await response.json().catch(() => null);
             } catch (fetchError) {
-                // Network error - retry unless we're out of attempts
                 if (attempt >= maxAttempts) {
-                    await captureRemote('remote_device_auth_network_error', { error: fetchError });
+                    await this.captureFn('remote_device_auth_network_error', { error: fetchError });
                     throw fetchError;
                 }
-                // Continue polling on network errors
                 continue;
             }
+
+            // Successful authentication
+            if (response.ok && data?.access_token) {
+                return {
+                    device_id: data.device_id,
+                    access_token: data.access_token,
+                    refresh_token: data.refresh_token || null,
+                };
+            }
+
+            // Server-side trouble or an unreadable body: transient, keep polling.
+            if (!data || response.status >= 500) {
+                continue;
+            }
+
+            if (data.error === 'authorization_pending') {
+                continue;
+            }
+
+            if (data.error === 'slow_down') {
+                // Server requested slower polling
+                await this.sleep(interval);
+                continue;
+            }
+
+            // Terminal error: the server answered, and the answer is no.
+            const errorMessage = data.error_description || data.error || 'Authorization failed';
+            await this.captureFn('remote_device_auth_failed', { error: errorMessage, error_code: data.error ?? null });
+            throw new Error(errorMessage);
         }
 
         const timeoutError = 'Authorization timeout - user did not authorize within the time limit';
-        await captureRemote('remote_device_auth_timeout', { error: timeoutError });
+        await this.captureFn('remote_device_auth_timeout', { error: timeoutError });
         throw new Error(timeoutError);
     }
 
