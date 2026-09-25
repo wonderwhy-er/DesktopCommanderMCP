@@ -15,7 +15,9 @@
 //
 // Run: node test/repro/run-repro.js test-config-old-writer.js
 //      (REPRO_RUNS=5 starts by default)
-// Exit code: 1 if any start failed or logged "Failed to reload config".
+// Exit code: 1 if any start failed, started without the config it was given
+// ("Failed to initialize config": the server then runs on its defaults), or
+// logged "Failed to reload config".
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -82,10 +84,13 @@ async function runRepro() {
       await sleep(STAY_UP_MS);
     } catch (e) {
       error = e?.message ?? String(e);
-      failedStarts++;
     } finally {
       await closeClient(client);
     }
+    // A start whose first read of config.json failed goes on with the defaults and
+    // answers normally, so it fails without an error the client sees
+    if (!error && /Failed to initialize config/.test(log)) error = 'started without its config ("Failed to initialize config")';
+    if (error) failedStarts++;
     const reloads = (log.match(/Failed to reload config/g) ?? []).length;
     reloadErrors += reloads;
     console.log(`start ${run}: ${error ? `FAILED ${error}` : 'ok'}${reloads ? `, ${reloads} "Failed to reload config"` : ''}`);

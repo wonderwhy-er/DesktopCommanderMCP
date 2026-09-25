@@ -48,6 +48,21 @@ async function worker() {
   });
 }
 
+// A process starting while another version is writing config.json: it says when
+// its first read is about to happen, then reports what it read
+async function startupWorker() {
+  const initErrors = [];
+  const logError = console.error;
+  console.error = (...args) => {
+    if (String(args[0]).includes('Failed to initialize config')) initErrors.push(String(args[1]?.message ?? args[1]));
+    logError(...args);
+  };
+  const { configManager } = await import('../dist/config-manager.js');
+  process.send?.({ type: 'about-to-read' });
+  await configManager.getConfig();
+  process.send?.({ type: 'started', value: await configManager.getValue('writtenBy'), initErrors });
+}
+
 function waitFor(child, type) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), TIMEOUT_MS + 500);
@@ -70,6 +85,8 @@ async function writeInPlaceLikeOldVersion(configPath, config) {
 
 if (process.env.DC_MID_WRITE_WORKER === '1') {
   await worker();
+} else if (process.env.DC_MID_WRITE_WORKER === 'startup') {
+  await startupWorker();
 } else await runIfMain(import.meta.url, async () => {
   const { env, home, cleanup } = createTestEnv();
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
@@ -111,7 +128,32 @@ if (process.env.DC_MID_WRITE_WORKER === '1') {
       assert.equal(reload.value, 'older-version-again', 'the running process must pick up what the other version wrote');
       assert.deepEqual(reload.reloadErrors, [], `"Failed to reload config" while another version was writing config.json: ${reload.reloadErrors.join('; ')}`);
     });
-    assert.deepEqual(failures, [], `${failures.length} of 2 cases failed`);
+
+    // A process starting while another version writes config.json: its first read
+    // must wait for the content, not fall back to the defaults (which it does
+    // silently: the server still answers). In its own home, away from the child above.
+    await check('a process starting while another version writes config.json reads the finished config', async () => {
+      const started = createTestEnv();
+      const startPath = path.join(started.home, '.claude-server-commander', 'config.json');
+      mkdirSync(path.dirname(startPath), { recursive: true });
+      writeFileSync(startPath, ''); // the other version has opened it with truncate
+      const starter = fork(TEST_FILE, [], { env: { ...started.env, HOME: started.home, USERPROFILE: started.home, DC_MID_WRITE_WORKER: 'startup' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+      try {
+        const result = waitFor(starter, 'started');
+        await waitFor(starter, 'about-to-read');
+        await sleep(EMPTY_MS);
+        writeFileSync(startPath, JSON.stringify({ ...config, writtenBy: 'older-version-at-start' }, null, 2));
+        const { value, initErrors } = await result;
+        assert.deepEqual(initErrors, [], `"Failed to initialize config" while another version was writing config.json: ${initErrors.join('; ')}`);
+        assert.equal(value, 'older-version-at-start', 'the process must start with what the other version wrote, not the defaults');
+      } finally {
+        const exited = starter.exitCode !== null || starter.signalCode !== null ? Promise.resolve() : new Promise((resolve) => starter.once('exit', resolve));
+        starter.kill('SIGTERM');
+        await exited;
+        started.cleanup();
+      }
+    });
+    assert.deepEqual(failures, [], `${failures.length} of 3 cases failed`);
   } finally {
     const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise((resolve) => child.once('exit', resolve));
     child.kill('SIGTERM');
