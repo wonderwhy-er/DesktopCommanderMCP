@@ -6,7 +6,7 @@
  * ripgrep stopped by the time limit has no exit code, and a search ending
  * without one, with anything on stderr and no match, was taken for a failed one.
  * Here ripgrep is a stand-in that reports a folder it may not read and goes on
- * searching (fixtures/ripgrep-still-searching-preload.mjs), in a child process;
+ * searching (fixtures/ripgrep-still-searching-hooks.mjs), in a child process;
  * a 1 s time limit stops it (the session knows: its internal timedOut).
  */
 
@@ -17,6 +17,7 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { configManager } from '../dist/config-manager.js';
 import { runNode } from './helpers/run-node.js';
+import { hookArgs } from './helpers/module-hooks.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -28,7 +29,7 @@ export default async function runTests() {
   await configManager.setValue('allowedDirectories', [dir]);
   try {
     const child = await runNode([
-      '--import', pathToFileURL(path.join(FIXTURES, 'ripgrep-still-searching-preload.mjs')).href,
+      ...hookArgs(pathToFileURL(path.join(FIXTURES, 'ripgrep-still-searching-hooks.mjs')).href),
       path.join(FIXTURES, 'search-stopped-by-time-limit.mjs'), dir,
     ], { timeoutMs: 60_000 });
     assert.strictEqual(child.status, 0, `the search process failed (${child.status}): ${child.stderr}`);

@@ -1,5 +1,5 @@
-// Run by test-search-without-ripgrep.js with unusable-ripgrep-preload.mjs:
-// node --import <preload> search-without-ripgrep.mjs <root> <pattern>...
+// Run by test-search-without-ripgrep.js with unusable-ripgrep-hooks.mjs:
+// node <hookArgs(hooks)> search-without-ripgrep.mjs <root> <pattern>...
 // Prints, as JSON, what start_search answers for a file search and for a
 // content search, and what searchFiles() returns for each pattern - through
 // its Node.js fallback.

@@ -4,7 +4,7 @@
  * gave, for a file search and for a content search, the log gets the reason
  * ripgrep could not start, and the server does not crash; and searchFiles() (src/tools/filesystem.ts) falls back to
  * its Node.js walk. ripgrep can't be started in a child process
- * (fixtures/unusable-ripgrep-preload.mjs).
+ * (fixtures/unusable-ripgrep-hooks.mjs).
  * The fallback is the long-standing Node.js walk, which does not find the same
  * files as the search through ripgrep: it returns every file AND directory
  * whose name contains the pattern, ignoring case - hidden ones (names starting
@@ -20,6 +20,7 @@ import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { runNode } from './helpers/run-node.js';
+import { hookArgs } from './helpers/module-hooks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-without-ripgrep-test');
@@ -71,7 +72,7 @@ async function testWithoutRipgrep() {
 
   // In a process where ripgrep can't be started
   const child = await runNode([
-    '--import', pathToFileURL(path.join(__dirname, 'fixtures', 'unusable-ripgrep-preload.mjs')).href,
+    ...hookArgs(pathToFileURL(path.join(__dirname, 'fixtures', 'unusable-ripgrep-hooks.mjs')).href),
     path.join(__dirname, 'fixtures', 'search-without-ripgrep.mjs'),
     SEARCH_DIR, ...CASES.map(([pattern]) => pattern)
   ], { env: { ...process.env, DC_TEST_UNUSABLE_RIPGREP: UNUSABLE_RIPGREP }, timeoutMs: 60000 });
