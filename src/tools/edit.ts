@@ -28,6 +28,7 @@ import { configManager } from '../config-manager.js';
 import { fuzzySearchLogger, type FuzzySearchLogEntry } from '../utils/fuzzySearchLogger.js';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 import { resolveAbsolutePath } from '../handlers/filesystem-handlers.js';
+import type { EditResult } from '../utils/files/base.js';
 
 interface SearchReplace {
     search: string;
@@ -397,6 +398,11 @@ function highlightDifferences(expected: string, actual: string): string {
     return `${commonPrefix}{-${expectedDiff}-}{+${actualDiff}+}${commonSuffix}`;
 }
 
+/** Why a file handler's edit failed, as edit_block reports it */
+function editFailure(result: EditResult): string {
+    return result.errors?.map(e => e.error).join('; ') || 'Unknown error';
+}
+
 /**
  * Handle edit_block command
  *
@@ -447,7 +453,10 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
         if (hasEditRange) {
             try {
                 // parsed.range is guaranteed non-empty string by hasRange check above
-                await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                const result = await handler.editRange!(validatedPath!, parsed.range!, content, parsed.options);
+                if (!result.success) {
+                    return createErrorResponse(editFailure(result));
+                }
                 const resolvedRangePath = resolveAbsolutePath(parsed.file_path);
                 return {
                     content: [{
@@ -506,8 +515,7 @@ export async function handleEditBlock(args: unknown): Promise<ServerResult> {
                 };
             }
 
-            const errorMsg = result.errors?.map(e => e.error).join('; ') || 'Unknown error';
-            return createErrorResponse(errorMsg);
+            return createErrorResponse(editFailure(result));
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return createErrorResponse(errorMessage);

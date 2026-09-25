@@ -407,6 +407,12 @@ function splitTopLevelElements(xml: string): string[] {
     return elements.filter(e => e.length > 0);
 }
 
+/** A header or footer part (word/header1.xml, word/footer4.xml, …), of any section */
+function isHeaderFooterPart(relativePath: string): boolean {
+    return (relativePath.startsWith('word/header') || relativePath.startsWith('word/footer'))
+        && relativePath.endsWith('.xml');
+}
+
 /**
  * Extract outline info for headers and footers from the DOCX zip.
  */
@@ -415,8 +421,7 @@ function extractHeaderFooterOutline(zip: PizZip): string {
     const zipFiles = zip.files;
 
     for (const relativePath of Object.keys(zipFiles)) {
-        if ((relativePath.startsWith('word/header') || relativePath.startsWith('word/footer'))
-            && relativePath.endsWith('.xml')) {
+        if (isHeaderFooterPart(relativePath)) {
             try {
                 const xml = zipFiles[relativePath].asText();
                 const text = extractAllText(xml);
@@ -658,10 +663,13 @@ export class DocxFileHandler implements FileHandler {
             let targetFile = 'word/document.xml';
             let matchCount = countOccurrences(pretty, oldStr);
 
-            // If not found in document.xml, search through headers/footers
+            // If not found in document.xml, search through headers/footers: every section's
+            // (Word numbers them across sections), headers first, each in number order
             if (matchCount === 0) {
-                const xmlFiles = ['word/header1.xml', 'word/header2.xml', 'word/header3.xml',
-                    'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
+                const partNumber = (name: string) => Number(/(\d+)\.xml$/.exec(name)?.[1] ?? 0);
+                const isFooter = (name: string) => (name.startsWith('word/footer') ? 1 : 0);
+                const xmlFiles = Object.keys(zip.files).filter(isHeaderFooterPart)
+                    .sort((a, b) => isFooter(a) - isFooter(b) || partNumber(a) - partNumber(b));
                 for (const xmlPath of xmlFiles) {
                     const f = zip.file(xmlPath);
                     if (!f) continue;
