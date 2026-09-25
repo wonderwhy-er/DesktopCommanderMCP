@@ -375,6 +375,40 @@ async function run() {
     }
   });
 
+  // config.json damaged while running (a write cut short), in a way that leaves no
+  // "telemetryEnabled": false in it: the repair must keep the settings the process
+  // last read, not bring back the defaults (telemetry on, default line limits, ...)
+  await check('config.json damaged while running: the repair keeps the settings last read, telemetry off included', async () => {
+    const clientId = '0b7f9a52-5a3e-4c6e-9d59-3f1a2b4c5d6e';
+    const settings = {
+      clientId, telemetryEnabled: false, fileReadLineLimit: 123, fileWriteLineLimit: 45, defaultShell: 'test-shell',
+      allowedDirectories: ['/work'], blockedCommands: ['rm'], pendingWelcomeOnboarding: false, welcomeOnboardingEligible: false,
+    };
+    const home = homeWithConfig(JSON.stringify(settings, null, 2));
+    try {
+      const child = runConfigManagerChild(home.env, {
+        body: `
+          const { CONFIG_FILE } = await import(DIST + '/config.js');
+          await configManager.getConfig();
+          // Cut short before telemetryEnabled
+          fsSync.writeFileSync(CONFIG_FILE, '{\\n  "allowedDirectories": ["/work"],\\n  "blockedCommands": ["rm"],\\n  "fileReadLin');
+          await configManager.setValue('sawOnboardingPage', true);
+          const inEffect = await configManager.getConfig();
+          const onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8'));
+          console.log(JSON.stringify({ inEffect, onDisk }));`,
+      });
+      assert(child.status === 0 && child.result, `the child failed (${child.status}): ${child.stderr}`);
+      const kept = ({ clientId, telemetryEnabled, fileReadLineLimit, fileWriteLineLimit, defaultShell, allowedDirectories, blockedCommands }) =>
+        ({ clientId, telemetryEnabled, fileReadLineLimit, fileWriteLineLimit, defaultShell, allowedDirectories, blockedCommands });
+      const expected = kept(settings);
+      assert.deepStrictEqual(kept(child.result.onDisk), expected, `config.json was repaired as ${JSON.stringify(kept(child.result.onDisk))}`);
+      assert.deepStrictEqual(kept(child.result.inEffect), expected, `the settings in effect after the repair are ${JSON.stringify(kept(child.result.inEffect))}`);
+      assert.strictEqual(child.result.onDisk.sawOnboardingPage, true, 'the write must land');
+    } finally {
+      home.cleanup();
+    }
+  });
+
   if (failures.length > 0) {
     console.log(`${failures.length} of ${total} cases failed`);
     return false;
