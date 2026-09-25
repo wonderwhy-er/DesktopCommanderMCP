@@ -12,7 +12,12 @@
  * config.json is left as it was, so the next start repairs it again instead of
  * taking it for a first run (whose allowedDirectories [] opens every folder),
  * and keeps the copy it already made. One warning, as a log notification and
- * on stderr, says the repair failed and why.
+ * on stderr, says the repair failed and why. A config.json that can't be
+ * read gets the same closed settings (recovered from nothing). One that is read
+ * but can't be written keeps its settings in effect; changes, the client id and
+ * a value set_config_value says it "changed in memory" are held (no retry loop)
+ * and saved once it can be written. A config.json removed while running is
+ * recreated with the defaults, not with only the value being set.
  *
  * Each case loads the config manager in a child process of its own, whose file
  * system fails the way the case needs.
@@ -294,6 +299,50 @@ async function run() {
       assert.strictEqual(saved.clientId, ids[0], `the client id saved is ${saved.clientId}, not the one used for the session (${ids[0]})`);
       assert.deepStrictEqual([saved.allowedDirectories, saved.blockedCommands], [['/work'], ['rm']],
         `config.json was repaired with ${JSON.stringify([saved.allowedDirectories, saved.blockedCommands])} instead of the recovered ["/work"] and ["rm"]`);
+    } finally {
+      home.cleanup();
+    }
+  });
+
+  // set_config_value while config.json can't be written answers "Value changed in memory
+  // but couldn't be saved to disk": the value must then really be in effect
+  await check('config.json not writable: the value set_config_value says it changed in memory is in effect, and saved once writable', async () => {
+    const home = homeWithConfig(JSON.stringify({ allowedDirectories: ['/work'], blockedCommands: ['rm'], pendingWelcomeOnboarding: false, welcomeOnboardingEligible: false }, null, 2));
+    const inside = path.join(home.home, 'inside');
+    try {
+      const child = runConfigManagerChild(home.env, {
+        prelude: `
+          globalThis.writesFail = true;
+          const { open } = fs;
+          fs.open = (file, flags, ...rest) => globalThis.writesFail && String(file).endsWith('.tmp') && /[wa+]/.test(String(flags))
+            ? Promise.reject(Object.assign(new Error('EROFS: read-only file system, open ' + JSON.stringify(String(file))), { code: 'EROFS' }))
+            : open(file, flags, ...rest);`,
+        body: `
+          const { CONFIG_FILE } = await import(DIST + '/config.js');
+          const { setConfigValue } = await import(DIST + '/tools/config.js');
+          await configManager.getConfig();
+          const result = await setConfigValue({ key: 'allowedDirectories', value: [${JSON.stringify(inside)}] });
+          const answer = result.content?.[0]?.text ?? '';
+          const inEffect = (await configManager.getConfig()).allowedDirectories;
+          globalThis.writesFail = false;
+          let saved = null;
+          for (let i = 0; i < 150 && !saved; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            try {
+              const onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8'));
+              if (onDisk.allowedDirectories?.[0] === ${JSON.stringify(inside)}) saved = onDisk;
+            } catch {
+              // mid-write: read again
+            }
+          }
+          console.log(JSON.stringify({ answer, inEffect, saved }));`,
+      });
+      assert(child.status === 0 && child.result, `the child failed (${child.status}): ${child.stderr}`);
+      const { answer, inEffect, saved } = child.result;
+      assert(answer.startsWith("Value changed in memory but couldn't be saved to disk"), `set_config_value on a config.json that can't be written answered: ${answer}`);
+      assert.deepStrictEqual(inEffect, [inside], `set_config_value answered "Value changed in memory", but allowedDirectories in effect is ${JSON.stringify(inEffect)}`);
+      assert(saved, 'the value set_config_value changed in memory was not saved within 15 s once config.json was writable');
+      assert.deepStrictEqual(saved.blockedCommands, ['rm'], 'saving the held value must keep the user\'s other settings');
     } finally {
       home.cleanup();
     }
