@@ -176,6 +176,8 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
         returnedCount: results.returnedCount,
         hasMoreResults: results.hasMoreResults,
         wasIncomplete: results.wasIncomplete ?? false,
+        maxResultsReached: results.maxResultsReached,
+        timedOut: results.timedOut,
       },
     };
   } catch (error) {

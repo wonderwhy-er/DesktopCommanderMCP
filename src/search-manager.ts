@@ -1,8 +1,10 @@
 import { spawn, ChildProcess } from 'child_process';
+import { once } from 'events';
 import path from 'path';
 import fs from 'fs/promises';
 import { validatePath } from './tools/filesystem.js';
 import { capture } from './utils/capture.js';
+import { logger } from './utils/logger.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
@@ -28,6 +30,17 @@ export interface SearchSession {
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
   wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
+  maxResultsReached?: boolean;  // options.maxResults matches collected; later matches are dropped
+  trailingContext?: { file: string; lastLine: number };  // Where the last ripgrep match's trailing context ends
+  pendingSources: Set<SearchSource>;  // Sources still producing results; the session completes when none is left
+  timeoutTimer?: NodeJS.Timeout;  // Stops the search at its time limit
+  timedOut?: boolean;  // The time limit stopped the search before it finished; more matches may exist
+  filePatternIncludes?: { root: string; matchers: Array<(relativePath: string) => boolean> };  // A file search's filePattern alternatives but "!" (see filePatternSelects)
+  exitCode?: number | null;  // ripgrep's exit code, reported on completion
+  printedOutput?: boolean;  // ripgrep wrote to stdout (see the 'close' handler)
+  stoppedRipgrep?: boolean;  // We stopped ripgrep (stopRipgrep): its end without an exit code is no failure
+  completed: Promise<void>;  // Settles when the session completes
+  markCompleted: () => void;
 }
 
 export interface SearchSessionOptions {
@@ -45,11 +58,116 @@ export interface SearchSessionOptions {
 }
 
 /**
+ * Default time limit of a file search for an exact filename ("package.json"):
+ * a quick lookup of one known file, which gives up rather than walk a huge tree.
+ * A content search for the same text looks for every reference to that file,
+ * so it has no default limit.
+ */
+const EXACT_FILENAME_SEARCH_TIMEOUT_MS = 1500;
+
+/** The longest a timer waits (2^31 - 1 ms, ~24.8 days): setTimeout fires a longer delay after 1 ms */
+const LONGEST_TIMER_MS = 2 ** 31 - 1;
+
+/** The extensions of the files the Excel and DOCX searches are for (see targetsOfficeFiles) */
+const EXCEL_EXTENSIONS = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
+const DOCX_EXTENSIONS = ['.docx'];
+
+/** What a session waits for: ripgrep, and the Excel and DOCX searches alongside it */
+type SearchSource = 'ripgrep' | 'excel' | 'docx';
+
+/** How an Excel/DOCX search hands over each match as it finds it, and learns it should stop */
+interface SourceSink {
+  onMatch(result: SearchResult): void;
+  isStopped(): boolean;
+}
+
+/**
+ * One line of ripgrep's --json output: a match or a context line; the begin or
+ * end of a file's lines; the summary at the end
+ */
+type RipgrepLine =
+  | { kind: 'match' | 'context'; result: SearchResult }
+  | { kind: 'begin' | 'end'; file: string }
+  | { kind: 'summary' };
+
+/** The alternatives of a filePattern ("*.js|*.ts") */
+const filePatternAlternatives = (filePattern: string | undefined): string[] =>
+  (filePattern ?? '').split('|').map(p => p.trim()).filter(Boolean);
+
+/**
+ * A glob as ripgrep matches its -g globs (gitignore style), for the files
+ * ripgrep doesn't select itself: a file search's files, and the Excel and DOCX
+ * files. Without a '/' it is matched against the file's name, with one against
+ * its path below the search path ('/'-separated). '*' and '?' stop at '/', "**"
+ * as a whole path segment spans folders, "[...]" is a character class ("[!...]"
+ * negated) and "{a,b}" a choice.
+ */
+function ripgrepGlobMatcher(glob: string, ignoreCase: boolean): (relativePath: string) => boolean {
+  const byPath = glob.includes('/');  // "/x.ts" too: x.ts in the search path itself
+  let regex: RegExp;
+  try {
+    regex = new RegExp(`^${globRegexSource(glob.replace(/^\//, ''))}$`, ignoreCase ? 'i' : '');
+  } catch {
+    // A glob ripgrep rejects too ("[z-a]"): every glob a search uses reaches
+    // ripgrep (see buildRipgrepArgs), and the search answers with its error
+    return () => false;
+  }
+  return relativePath => regex.test(byPath ? relativePath : relativePath.slice(relativePath.lastIndexOf('/') + 1));
+}
+
+/** The regular expression source of a glob (see ripgrepGlobMatcher) */
+function globRegexSource(glob: string): string {
+  let source = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const classEnd = c === '[' ? characterClassEnd(glob, i) : -1;
+    const choiceEnd = c === '{' ? glob.indexOf('}', i) : -1;
+    if (c === '*' && glob[i + 1] === '*' && (i === 0 || glob[i - 1] === '/') && (i + 2 === glob.length || glob[i + 2] === '/')) {
+      // "**" as a whole path segment: any number of folders ("**/": none too)
+      source += i + 2 === glob.length ? '.*' : '(?:.*/)?';
+      i += i + 2 === glob.length ? 1 : 2;
+    } else if (c === '*') {
+      source += '[^/]*';
+    } else if (c === '?') {
+      source += '[^/]';
+    } else if (classEnd > 0) {
+      let body = glob.slice(i + 1, classEnd);
+      const negated = body.startsWith('!') || body.startsWith('^');
+      if (negated) body = body.slice(1);
+      source += `[${negated ? '^/' : ''}${body.replace(/[\\\]^]/g, '\\$&')}]`;
+      i = classEnd;
+    } else if (choiceEnd > 0) {
+      source += `(?:${glob.slice(i + 1, choiceEnd).split(',').map(globRegexSource).join('|')})`;
+      i = choiceEnd;
+    } else {
+      source += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+  }
+  return source;
+}
+
+/** A file's path below the search path, '/'-separated (just its name when it is the search path) */
+const pathBelow = (root: string, file: string): string =>
+  path.relative(root, file).split(path.sep).join('/') || path.basename(file);
+
+/** A glob that matches `text` itself: each glob character in a class of its own ("[*]", "[[]") */
+const literalGlob = (text: string): string => text.replace(/[*?[\]{}]/g, '[$&]');
+
+/** The ']' that closes the character class opening at `start` (one right after "[" or "[!" is part of it), or -1 */
+function characterClassEnd(glob: string, start: number): number {
+  let i = start + 1;
+  if (glob[i] === '!' || glob[i] === '^') i++;
+  if (glob[i] === ']') i++;
+  return glob.indexOf(']', i);
+}
+
+/**
  * Search Session Manager - handles ripgrep processes like terminal sessions
  * Supports both file search and content search with progressive results
  */export class SearchManager {
   private sessions = new Map<string, SearchSession>();
   private sessionCounter = 0;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   /**
    * Start a new search session (like start_process)
@@ -80,14 +198,20 @@ export interface SearchSessionOptions {
       throw new Error(`Failed to locate ripgrep binary: ${err instanceof Error ? err.message : String(err)}`);
     }
     
-    // Start ripgrep process
-    const rgProcess = spawn(rgPath, args, { windowsHide: true });  // Prevent visible console windows on Windows
-    
-    if (!rgProcess.pid) {
-      throw new Error('Failed to start ripgrep process');
-    }
+    // Start ripgrep process. It matches a glob with a '/' ("src/*.ts") against
+    // the path below its working directory: that must be the root path. A root
+    // that can't be stat'ed (missing...) can't be searched: start_search answers
+    // with why, as for any search that can't start.
+    const rootIsDirectory = (await fs.stat(validPath)).isDirectory();
+    const rgProcess = spawn(rgPath, args, {
+      windowsHide: true,  // Prevent visible console windows on Windows
+      cwd: rootIsDirectory ? validPath : undefined
+    });
+    await this.whenStarted(rgProcess);
 
     // Create session
+    let markCompleted!: () => void;
+    const completed = new Promise<void>(resolve => { markCompleted = resolve; });
     const session: SearchSession = {
       id: sessionId,
       process: rgProcess,
@@ -99,7 +223,11 @@ export interface SearchSessionOptions {
       options,
       buffer: '',
       totalMatches: 0,
-      totalContextLines: 0
+      totalContextLines: 0,
+      filePatternIncludes: this.filePatternIncludes(options, validPath),
+      pendingSources: new Set<SearchSource>(['ripgrep']),
+      completed,
+      markCompleted
     };
 
     this.sessions.set(sessionId, session);
@@ -108,35 +236,18 @@ export interface SearchSessionOptions {
     this.setupProcessHandlers(session);
 
     // Start cleanup interval now that we have a session
-    startCleanupIfNeeded();
+    this.startCleanupIfNeeded();
 
-    // Set up timeout if specified and auto-terminate
-    // For exact filename searches, use a shorter default timeout
-    const timeoutMs = options.timeout ?? (this.isExactFilename(options.pattern) ? 1500 : undefined);
-    
-    let killTimer: NodeJS.Timeout | null = null;
+    // Set up the time limit, if any: it stops every source still running.
+    // For exact filename file searches, use a shorter default timeout
+    const timeoutMs = options.timeout ??
+      (this.isExactFilenameSearch(options) ? EXACT_FILENAME_SEARCH_TIMEOUT_MS : undefined);
     if (timeoutMs) {
-      killTimer = setTimeout(() => {
-        if (!session.isComplete && !session.process.killed) {
-          session.process.kill('SIGTERM');
-        }
-      }, timeoutMs);
+      session.timeoutTimer = setTimeout(() => {
+        session.timedOut = true;
+        this.stopSources(session);
+      }, Math.min(timeoutMs, LONGEST_TIMER_MS));
     }
-
-    // Clear timer on process completion
-    session.process.once('close', () => {
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-    });
-
-    session.process.once('error', () => {
-      if (killTimer) {
-        clearTimeout(killTimer);
-        killTimer = null;
-      }
-    });
 
     capture('search_session_started', {
       sessionId,
@@ -151,52 +262,36 @@ export interface SearchSessionOptions {
     // - filePattern explicitly targets Excel files (*.xlsx, *.xls, etc.)
     // - or rootPath is an Excel file itself
     const shouldSearchExcel = options.searchType === 'content' &&
-      this.shouldIncludeExcelSearch(options.filePattern, validPath);
+      this.targetsOfficeFiles(EXCEL_EXTENSIONS, options.filePattern, validPath);
 
     if (shouldSearchExcel) {
-      this.searchExcelFiles(
+      this.startOfficeSource(session, 'excel', sink => this.searchExcelFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
+        sink,
         options.filePattern,  // Pass filePattern to filter Excel files too
-        options.literalSearch  // Respect literalSearch flag for Office files
-      ).then(excelResults => {
-        // Add Excel results to session (merged after initial response)
-        for (const result of excelResults) {
-          session.results.push(result);
-          session.totalMatches++;
-        }
-      }).catch((err) => {
-        // Log Excel search errors but don't fail the whole search
-        capture('excel_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+        options.includeHidden === true
+      ));
     }
 
     // For content searches, also search DOCX files
     const shouldSearchDocx = options.searchType === 'content' &&
-      this.shouldIncludeDocxSearch(options.filePattern, validPath);
+      this.targetsOfficeFiles(DOCX_EXTENSIONS, options.filePattern, validPath);
 
     if (shouldSearchDocx) {
-      this.searchDocxFiles(
+      this.startOfficeSource(session, 'docx', sink => this.searchDocxFiles(
         validPath,
         options.pattern,
         options.ignoreCase !== false,
-        options.maxResults,
+        sink,
         options.filePattern,
-        options.literalSearch  // Respect literalSearch flag for Office files
-      ).then(docxResults => {
-        for (const result of docxResults) {
-          session.results.push(result);
-          session.totalMatches++;
-        }
-      }).catch((err) => {
-        capture('docx_search_error', { error: err instanceof Error ? err.message : String(err) });
-      });
+        options.includeHidden === true
+      ));
     }
 
     // Wait for first chunk of data or early completion instead of fixed delay
-    // Excel search runs in background and results are merged via readSearchResults
+    // Office searches run in background and add their matches to the session as they find them
     const firstChunk = new Promise<void>(resolve => {
       const onData = () => {
         session.process.stdout?.off('data', onData);
@@ -238,6 +333,8 @@ export interface SearchSessionOptions {
     hasMoreResults: boolean;      // New field
     runtime: number;
     wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
+    maxResultsReached: boolean;   // Search stopped at maxResults matches; more may exist
+    timedOut: boolean;            // Search stopped at its time limit before it finished; more may exist
   } {
     const session = this.sessions.get(sessionId);
     
@@ -262,7 +359,9 @@ export interface SearchSessionOptions {
         error: session.error?.trim() || undefined,
         hasMoreResults: false, // Tail always returns what's available
         runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete
+        wasIncomplete: session.wasIncomplete,
+        maxResultsReached: !!session.maxResultsReached,
+        timedOut: !!session.timedOut
       };
     }
 
@@ -282,8 +381,25 @@ export interface SearchSessionOptions {
       error: session.error?.trim() || undefined,
       hasMoreResults,
       runtime: Date.now() - session.startTime,
-      wasIncomplete: session.wasIncomplete
+      wasIncomplete: session.wasIncomplete,
+      maxResultsReached: !!session.maxResultsReached,
+      timedOut: !!session.timedOut
     };
+  }
+
+  /**
+   * Resolves with all of a session's results once it is complete: every source
+   * has finished, or the search was stopped.
+   */
+  async waitForCompletion(sessionId: string): Promise<SearchResult[]> {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new Error(`Search session ${sessionId} not found`);
+    }
+
+    await session.completed;
+    return [...session.results];
   }
 
   /**
@@ -296,14 +412,39 @@ export interface SearchSessionOptions {
       return false;
     }
 
-    if (!session.process.killed) {
-      session.process.kill('SIGTERM');
-    }
+    this.stopSources(session);
 
     // Don't delete session immediately - let user read final results
     // It will be cleaned up by cleanup process
     
     return true;
+  }
+
+  /**
+   * Stop every running search and drop all sessions and the cleanup timer.
+   * For owners that tear the search manager down (shutdown, tests); a later
+   * startSearch() starts afresh.
+   */
+  dispose(): void {
+    for (const session of this.sessions.values()) {
+      this.stopSources(session);
+    }
+    this.sessions.clear();
+
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Start the periodic cleanup of old sessions. It is housekeeping only, so it
+   * is unref'd: it must never keep the process alive on its own.
+   */
+  private startCleanupIfNeeded(): void {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => this.cleanupSessions(), 5 * 60 * 1000);
+    this.cleanupTimer.unref();
   }
 
   /**
@@ -330,6 +471,35 @@ export interface SearchSessionOptions {
   }
 
   /**
+   * Run an Excel or DOCX search as one of the session's sources: its matches are
+   * collected as it finds them, until it has searched every file or the session
+   * stops it (stop_search, timeout, maxResults).
+   */
+  private startOfficeSource(
+    session: SearchSession,
+    source: SearchSource,
+    search: (sink: SourceSink) => Promise<void>
+  ): void {
+    session.pendingSources.add(source);
+
+    const sink: SourceSink = {
+      onMatch: result => {
+        if (session.pendingSources.has(source)) this.collectMatch(session, result);
+      },
+      isStopped: () => !session.pendingSources.has(source)
+    };
+
+    search(sink)
+      .catch((err) => {
+        // Log Office search errors but don't fail the whole search
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(`The ${source} part of search ${session.id} failed; its matches are missing: ${message}`);
+        capture(`${source}_search_error`, { error: message });
+      })
+      .finally(() => this.finishSource(session, source));
+  }
+
+  /**
    * Search Excel files for content matches
    * Called during content search to include Excel files alongside text files
    * Searches ALL sheets in each Excel file (row-wise for cross-column matching)
@@ -342,47 +512,27 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
+    sink: SourceSink,
     filePattern?: string,
-    _literalSearch?: boolean
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
-
+    includeHidden = false
+  ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
-    let excelFiles = await this.findExcelFiles(rootPath);
+    let excelFiles = await this.findExcelFiles(rootPath, sink.isStopped, includeHidden);
 
     // Filter by filePattern if provided
     if (filePattern) {
-      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
-      excelFiles = excelFiles.filter(filePath => {
-        const fileName = path.basename(filePath);
-        return patterns.some(pat => {
-          // Support glob-like patterns
-          if (pat.includes('*')) {
-            // Escape all regex metacharacters first (preserving * for glob expansion),
-            // then convert the remaining * wildcards to .* for glob matching.
-            // Without this, patterns like report(2024).xlsx or [draft].xlsx would be
-            // misinterpreted as regex groups/character-classes.
-            const regexPat = pat
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-              .replace(/\*/g, '.*');                  // glob * → regex .*
-            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
-          }
-          // Exact match (case-insensitive)
-          return fileName.toLowerCase() === pat.toLowerCase();
-        });
-      });
+      excelFiles = this.filterOfficeFiles(excelFiles, filePattern, rootPath);
     }
 
     // Dynamically import ExcelJS to search all sheets
     const ExcelJS = await import('exceljs');
 
     for (const filePath of excelFiles) {
-      if (maxResults && results.length >= maxResults) break;
+      if (sink.isStopped()) break;
 
       try {
         const workbook = new ExcelJS.default.Workbook();
@@ -390,13 +540,13 @@ export interface SearchSessionOptions {
 
         // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
         for (const worksheet of workbook.worksheets) {
-          if (maxResults && results.length >= maxResults) break;
+          if (sink.isStopped()) break;
 
           const sheetName = worksheet.name;
 
           // Iterate through rows (faster than cell-by-cell)
           worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-            if (maxResults && results.length >= maxResults) return;
+            if (sink.isStopped()) return;
 
             // Build a concatenated string of all cell values in the row
             const rowValues: string[] = [];
@@ -431,7 +581,7 @@ export interface SearchSessionOptions {
             if (matchIndex !== -1) {
               const matchContext = this.getMatchContext(rowText, matchIndex, searchTerm.length);
 
-              results.push({
+              sink.onMatch({
                 file: `${filePath}:${sheetName}!Row${rowNumber}`,
                 line: rowNumber,
                 match: matchContext,
@@ -445,17 +595,27 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
-   * Find all Excel files in a directory recursively
+   * Whether the Excel/DOCX search walks into a folder: never node_modules, and a
+   * hidden one (a name starting with '.') only with includeHidden, as ripgrep
+   * enters hidden folders only with --hidden.
    */
-  private async findExcelFiles(rootPath: string): Promise<string[]> {
+  private officeWalkEnters(name: string, includeHidden: boolean): boolean {
+    return name !== 'node_modules' && (includeHidden || !name.startsWith('.'));
+  }
+
+  /**
+   * Find all Excel files in a directory recursively. Stops walking once the
+   * search is stopped.
+   */
+  private async findExcelFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
     const excelFiles: string[] = [];
+    const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
 
     async function walk(dir: string): Promise<void> {
+      if (isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
 
@@ -463,8 +623,7 @@ export interface SearchSessionOptions {
           const fullPath = path.join(dir, entry.name);
 
           if (entry.isDirectory()) {
-            // Skip node_modules, .git, etc.
-            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            if (enters(entry.name)) {
               await walk(fullPath);
             }
           } else if (entry.isFile() && isExcelFile(entry.name)) {
@@ -492,28 +651,54 @@ export interface SearchSessionOptions {
   }
 
   /**
-   * Determine if DOCX search should be included based on context
+   * The Excel/DOCX files a filePattern selects, as ripgrep's globs select text
+   * files (ripgrepGlobMatcher), ignoring case: one of its alternatives matches
+   * the file (any file, when all of them are "!" alternatives), and none of its
+   * "!" alternatives leaves it out (see officeFileExcluded). A search path that
+   * is itself a file is searched whatever the pattern says, as ripgrep searches
+   * a file it is given.
    */
-  private shouldIncludeDocxSearch(filePattern?: string, rootPath?: string): boolean {
-    const docxExtensions = ['.docx'];
+  private filterOfficeFiles(files: string[], filePattern: string, rootPath: string): string[] {
+    const patterns = filePatternAlternatives(filePattern);
+    const includes = patterns.filter(pat => !pat.startsWith('!')).map(pat => ripgrepGlobMatcher(pat, true));
+    const excludes = patterns.filter(pat => pat.startsWith('!')).map(pat => pat.slice(1));
+    return files.filter(filePath => {
+      if (filePath === rootPath) return true;
+      const relativePath = pathBelow(rootPath, filePath);
+      return (includes.length === 0 || includes.some(matches => matches(relativePath))) &&
+        !excludes.some(pat => this.officeFileExcluded(relativePath, pat));
+    });
+  }
 
-    if (rootPath) {
-      const lowerPath = rootPath.toLowerCase();
-      if (docxExtensions.some(ext => lowerPath.endsWith(ext))) {
-        return true;
-      }
-    }
+  /**
+   * Whether a "!" alternative of a filePattern (given without its "!") leaves an
+   * Excel/DOCX file out - as it leaves text files out of ripgrep's search: when
+   * it matches the file, or a directory between the search path and the file;
+   * ending in '/', only directories.
+   */
+  private officeFileExcluded(relativePath: string, exclusion: string): boolean {
+    const dirOnly = exclusion.endsWith('/');
+    const matches = ripgrepGlobMatcher(exclusion.replace(/\/+$/, ''), true);
+    const parts = relativePath.split('/');
+    // The directories between the search path and the file, then the file itself
+    const candidates = parts.map((_, i) => parts.slice(0, i + 1).join('/')).slice(0, dirOnly ? -1 : undefined);
+    return candidates.some(candidate => matches(candidate));
+  }
 
-    if (filePattern) {
-      const lowerPattern = filePattern.toLowerCase();
-      if (docxExtensions.some(ext =>
-        lowerPattern.includes(`*${ext}`) || lowerPattern.endsWith(ext)
-      )) {
-        return true;
-      }
-    }
-
-    return false;
+  /**
+   * Whether a content search runs the Excel or DOCX search, the one for files
+   * with these extensions. Only when contextually relevant: the rootPath is
+   * such a file, or a filePattern alternative targets them ("*.xlsx",
+   * "budget.xlsx") - which one that leaves files out ("!*.xlsx") does not.
+   * Each alternative is checked on its own, so "report.xlsx|memo.docx" runs both.
+   */
+  private targetsOfficeFiles(extensions: string[], filePattern: string | undefined, rootPath: string): boolean {
+    const lowerRootPath = rootPath.toLowerCase();
+    const targetingPatterns = filePatternAlternatives(filePattern)
+      .filter(pattern => !pattern.startsWith('!'))
+      .map(pattern => pattern.toLowerCase());
+    return extensions.some(ext => lowerRootPath.endsWith(ext) ||
+      targetingPatterns.some(pattern => pattern.includes(`*${ext}`) || pattern.endsWith(ext)));
   }
 
   /**
@@ -524,36 +709,22 @@ export interface SearchSessionOptions {
     rootPath: string,
     pattern: string,
     ignoreCase: boolean,
-    maxResults?: number,
+    sink: SourceSink,
     filePattern?: string,
-    _literalSearch?: boolean
-  ): Promise<SearchResult[]> {
-    const results: SearchResult[] = [];
-
+    includeHidden = false
+  ): Promise<void> {
     // Office file search always uses literal matching to prevent ReDoS.
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
-    let docxFiles = await this.findDocxFiles(rootPath);
+    let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped, includeHidden);
 
     if (filePattern) {
-      const patterns = filePattern.split('|').map(p => p.trim()).filter(Boolean);
-      docxFiles = docxFiles.filter(filePath => {
-        const fileName = path.basename(filePath);
-        return patterns.some(pat => {
-          if (pat.includes('*')) {
-            const regexPat = pat
-              .replace(/[.+^${}()|[\]\\]/g, '\\$&') // escape metacharacters except *
-              .replace(/\*/g, '.*');                  // glob * → regex .*
-            return new RegExp(`^${regexPat}$`, 'i').test(fileName);
-          }
-          return fileName.toLowerCase() === pat.toLowerCase();
-        });
-      });
+      docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
     }
 
     for (const filePath of docxFiles) {
-      if (maxResults && results.length >= maxResults) break;
+      if (sink.isStopped()) break;
 
       try {
         const buf = await fs.readFile(filePath);
@@ -564,7 +735,7 @@ export interface SearchSessionOptions {
           'word/header3.xml', 'word/footer1.xml', 'word/footer2.xml', 'word/footer3.xml'];
 
         for (const xmlPath of xmlParts) {
-          if (maxResults && results.length >= maxResults) break;
+          if (sink.isStopped()) break;
 
           const file = zip.file(xmlPath);
           if (!file) continue;
@@ -576,7 +747,7 @@ export interface SearchSessionOptions {
           let lineNum = 0;
 
           while ((m = wtRe.exec(xml)) !== null) {
-            if (maxResults && results.length >= maxResults) break;
+            if (sink.isStopped()) break;
             const text = m[1];
             if (!text || !text.trim()) continue;
             lineNum++;
@@ -587,7 +758,7 @@ export interface SearchSessionOptions {
               const matchContext = this.getMatchContext(text, matchIndex, searchTerm.length);
 
               const partName = xmlPath === 'word/document.xml' ? '' : `:${xmlPath.replace('word/', '')}`;
-              results.push({
+              sink.onMatch({
                 file: `${filePath}${partName}`,
                 line: lineNum,
                 match: matchContext,
@@ -600,24 +771,25 @@ export interface SearchSessionOptions {
         continue;
       }
     }
-
-    return results;
   }
 
   /**
-   * Find all DOCX files in a directory recursively
+   * Find all DOCX files in a directory recursively. Stops walking once the
+   * search is stopped.
    */
-  private async findDocxFiles(rootPath: string): Promise<string[]> {
+  private async findDocxFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
     const docxFiles: string[] = [];
+    const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
     const isDocx = (name: string) => name.toLowerCase().endsWith('.docx');
 
     async function walk(dir: string): Promise<void> {
+      if (isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            if (enters(entry.name)) {
               await walk(fullPath);
             }
           } else if (entry.isFile() && isDocx(entry.name)) {
@@ -678,12 +850,20 @@ export interface SearchSessionOptions {
   }
 
   /**
-   * Detect if pattern looks like an exact filename
-   * (has file extension and no glob wildcards)
+   * A file search for one exact filename ("package.json"): a lookup of a known
+   * file, unlike a content search for that same text
    */
-  private isExactFilename(pattern: string): boolean {
+  private isExactFilenameSearch(options: SearchSessionOptions): boolean {
+    return options.searchType === 'files' && this.isExactFilename(options.pattern, options.literalSearch);
+  }
+
+  /**
+   * Detect if pattern looks like an exact filename
+   * (has file extension and no glob wildcards; a literal pattern has none)
+   */
+  private isExactFilename(pattern: string, literal = false): boolean {
     return /\.[a-zA-Z0-9]+$/.test(pattern) &&
-           !this.isGlobPattern(pattern);
+           (literal || !this.isGlobPattern(pattern));
   }
 
   /**
@@ -699,39 +879,34 @@ export interface SearchSessionOptions {
   }
 
   /**
-   * Determine if Excel search should be included based on context
-   * Only searches Excel files when:
-   * - filePattern explicitly targets Excel files (*.xlsx, *.xls, *.xlsm, *.xlsb)
-   * - or the rootPath itself is an Excel file
+   * A file search's filePattern alternatives other than "!", which a file it
+   * finds must match one of (see filePatternSelects); undefined when there are none
    */
-  private shouldIncludeExcelSearch(filePattern?: string, rootPath?: string): boolean {
-    const excelExtensions = ['.xlsx', '.xls', '.xlsm', '.xlsb'];
+  private filePatternIncludes(options: SearchSessionOptions, root: string): SearchSession['filePatternIncludes'] {
+    if (options.searchType !== 'files') return undefined;
+    const includes = filePatternAlternatives(options.filePattern).filter(pattern => !pattern.startsWith('!'));
+    if (includes.length === 0) return undefined;
+    return { root, matchers: includes.map(glob => ripgrepGlobMatcher(glob, options.ignoreCase !== false)) };
+  }
 
-    // Check if rootPath is an Excel file
-    if (rootPath) {
-      const lowerPath = rootPath.toLowerCase();
-      if (excelExtensions.some(ext => lowerPath.endsWith(ext))) {
-        return true;
-      }
-    }
-
-    // Check if filePattern targets Excel files
-    if (filePattern) {
-      const lowerPattern = filePattern.toLowerCase();
-      // Check for patterns like *.xlsx, *.xls, or explicit Excel extensions
-      if (excelExtensions.some(ext =>
-        lowerPattern.includes(`*${ext}`) ||
-        lowerPattern.endsWith(ext)
-      )) {
-        return true;
-      }
-    }
-
-    return false;
+  /**
+   * Whether a file a file search found is one its filePattern selects: ripgrep
+   * checked the "!" alternatives (see buildRipgrepArgs), one of the others must
+   * match it. ripgrep can't check those itself: with the pattern's glob in the
+   * same list, any glob that matches lets a file in.
+   */
+  private filePatternSelects(session: SearchSession, file: string): boolean {
+    const includes = session.filePatternIncludes;
+    if (!includes) return true;
+    const relativePath = pathBelow(includes.root, file);
+    return includes.matchers.some(matches => matches(relativePath));
   }
 
   private buildRipgrepArgs(options: SearchSessionOptions): string[] {
-    const args: string[] = [];
+    // These arguments are the whole search: the user's ripgrep config file
+    // (RIPGREP_CONFIG_PATH) must not add flags such as --hidden, --glob,
+    // --max-count or --null that change what is found or the output parsed here
+    const args: string[] = ['--no-config'];
     
     if (options.searchType === 'content') {
       // Content search mode
@@ -759,45 +934,42 @@ export interface SearchSessionOptions {
       args.push('--hidden');
     }
     
-    if (options.maxResults && options.maxResults > 0) {
-      args.push('-m', options.maxResults.toString());
-    }
+    // maxResults is not passed to ripgrep: -m limits matches per file (and lets
+    // matches through in trailing context), and --files ignores it. The total cap
+    // is enforced on the output instead - see collectMatch().
 
     // File pattern filtering (for file type restrictions like *.js, *.d.ts)
-    if (options.filePattern) {
-      const patterns = options.filePattern
-        .split('|')
-        .map(p => p.trim())
-        .filter(Boolean);
-      
-      for (const p of patterns) {
-        if (options.searchType === 'content') {
-          args.push('-g', p);
-        } else {
-          // For file search: use --iglob for case-insensitive or --glob for case-sensitive
-          if (options.ignoreCase !== false) {
-            args.push('--iglob', p);
-          } else {
-            args.push('--glob', p);
-          }
-        }
+    if (options.filePattern && options.searchType === 'content') {
+      for (const p of filePatternAlternatives(options.filePattern)) {
+        args.push('-g', p);
       }
     }
-    
+
     // Handle the main search pattern
     if (options.searchType === 'files') {
       // For file search: determine how to treat the pattern
+      // (--iglob for case-insensitive or --glob for case-sensitive)
       const globFlag = options.ignoreCase !== false ? '--iglob' : '--glob';
-      
-      if (this.isExactFilename(options.pattern)) {
+
+      // literalSearch: the pattern is an exact string, glob characters and all
+      const name = options.literalSearch ? literalGlob(options.pattern) : options.pattern;
+      if (this.isExactFilename(options.pattern, options.literalSearch)) {
         // Exact filename: use appropriate glob flag with the exact pattern
-        args.push(globFlag, options.pattern);
-      } else if (this.isGlobPattern(options.pattern)) {
+        args.push(globFlag, name);
+      } else if (!options.literalSearch && this.isGlobPattern(options.pattern)) {
         // Already a glob pattern: use appropriate glob flag as-is
         args.push(globFlag, options.pattern);
       } else {
         // Substring/fuzzy search: wrap with wildcards
-        args.push(globFlag, `*${options.pattern}*`);
+        args.push(globFlag, `*${name}*`);
+      }
+      // filePattern narrows the files the pattern finds. Its "!" alternatives
+      // come after the pattern's glob, since ripgrep's last matching glob wins;
+      // the others are checked on what ripgrep finds (filePatternSelects), and
+      // still reach ripgrep as --pre-globs: it parses them (an invalid one is its
+      // error, as for any glob) but without --pre never applies them
+      for (const p of filePatternAlternatives(options.filePattern)) {
+        args.push(...(p.startsWith('!') ? [globFlag, p] : ['--pre-glob', p]));
       }
       // Add the root path for file mode
       args.push(options.rootPath);
@@ -810,10 +982,27 @@ export interface SearchSessionOptions {
     return args;
   }
 
+  /**
+   * Resolves once ripgrep has started; else logs why it could not start (not
+   * found, not executable...) and rejects with the error start_search always
+   * reported. 'spawn' or 'error' comes on the next tick, before any I/O, so
+   * the caller still sets up its handlers in time.
+   */
+  private async whenStarted(child: ChildProcess): Promise<void> {
+    try {
+      await once(child, 'spawn');
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      logger.error(`Failed to start ripgrep: ${reason}`);
+      throw Object.assign(new Error('Failed to start ripgrep process'), { cause: error });
+    }
+  }
+
   private setupProcessHandlers(session: SearchSession): void {
     const { process } = session;
 
     process.stdout?.on('data', (data: Buffer) => {
+      session.printedOutput = true;
       session.buffer += data.toString();
       this.processBufferedOutput(session);
     });
@@ -859,19 +1048,28 @@ export interface SearchSessionOptions {
         this.processBufferedOutput(session, true);
       }
 
-      session.isComplete = true;
-
       // Track if search was incomplete due to access issues
       // Ripgrep exit code 2 means "some files couldn't be searched"
       if (code === 2) {
         session.wasIncomplete = true;
       }
 
+      // A content search's ripgrep prints a JSON line for each file it searches
+      // and a summary at the end: exiting 2 with nothing printed, it could not
+      // search at all (an invalid pattern or glob), rather than meeting files it
+      // couldn't read. A file search prints only the names it finds, so for it
+      // the error must say so: a glob it could not parse. Its error is the answer.
+      const couldNotSearch = session.options.searchType === 'content' || /^rg: error parsing glob /m.test(session.error ?? '');
+      if (code === 2 && !session.printedOutput && session.error?.trim() && couldNotSearch) {
+        session.isError = true;
+      }
+
       // Only treat as error if:
-      // 1. Unexpected exit code (not 0, 1, or 2) AND
+      // 1. Unexpected exit code (not 0, 1, or 2), not from a stop of ours
+      //    (time limit, stop_search, maxResults: no exit code) AND
       // 2. We have meaningful errors after filtering AND
       // 3. We found no results at all
-      if (code !== 0 && code !== 1 && code !== 2) {
+      if (code !== 0 && code !== 1 && code !== 2 && !session.stoppedRipgrep) {
         // Codes 0=success, 1=no matches, 2=some files couldn't be searched
         if (session.error?.trim() && session.totalMatches === 0) {
           session.isError = true;
@@ -879,30 +1077,73 @@ export interface SearchSessionOptions {
         }
       }
 
-      // If we have results, don't mark as error even if there were permission issues
-      if (session.totalMatches > 0) {
-        session.isError = false;
-      }
-
-      capture('search_session_completed', {
-        sessionId: session.id,
-        exitCode: code,
-        totalResults: session.totalMatches + session.totalContextLines,
-        totalMatches: session.totalMatches,
-        runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete || false  // NEW: Track incomplete searches
-      });
-
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
+      session.exitCode = code;
+      this.finishSource(session, 'ripgrep');
     });
 
     process.on('error', (error: Error) => {
-      session.isComplete = true;
       session.isError = true;
       session.error = `Process error: ${error.message}`;
-
-      // Rely on cleanupSessions(maxAge) only; no per-session timer
+      this.finishSource(session, 'ripgrep');
     });
+  }
+
+  /**
+   * A source has ended, or was stopped. This is the one place a session
+   * completes: when its last source is done, whatever the order they end in.
+   */
+  private finishSource(session: SearchSession, source: SearchSource): void {
+    session.pendingSources.delete(source);
+    if (session.pendingSources.size > 0 || session.isComplete) return;
+
+    // If we have results, don't mark as error even if there were permission issues
+    if (session.totalMatches > 0) {
+      session.isError = false;
+    }
+
+    session.isComplete = true;
+    clearTimeout(session.timeoutTimer);
+
+    capture('search_session_completed', {
+      sessionId: session.id,
+      exitCode: session.exitCode,
+      totalResults: session.totalMatches + session.totalContextLines,
+      totalMatches: session.totalMatches,
+      runtime: Date.now() - session.startTime,
+      wasIncomplete: session.wasIncomplete || false,  // NEW: Track incomplete searches
+      maxResultsReached: session.maxResultsReached || false,  // Stopped at the cap (exitCode is then null)
+      timedOut: session.timedOut || false  // Stopped at the time limit (exitCode is then null)
+    });
+
+    session.markCompleted();
+
+    // Rely on cleanupSessions(maxAge) only; no per-session timer
+  }
+
+  /**
+   * Stop every source still running (stop_search, timeout, dispose); the
+   * session completes once ripgrep has exited.
+   */
+  private stopSources(session: SearchSession): void {
+    this.stopOfficeSources(session);
+    this.stopRipgrep(session);
+  }
+
+  /**
+   * The Excel/DOCX searches are done as of now. They can't be interrupted
+   * mid-file: each stops at its next check, and anything it still finds is dropped.
+   */
+  private stopOfficeSources(session: SearchSession): void {
+    for (const source of session.pendingSources) {
+      if (source === 'excel' || source === 'docx') this.finishSource(session, source);
+    }
+  }
+
+  private stopRipgrep(session: SearchSession): void {
+    if (session.pendingSources.has('ripgrep') && !session.process.killed) {
+      session.stoppedRipgrep = true;
+      session.process.kill('SIGTERM');
+    }
   }
 
   private processBufferedOutput(session: SearchSession, isFinal: boolean = false): void {
@@ -918,33 +1159,26 @@ export interface SearchSessionOptions {
     for (const line of lines) {
       if (!line.trim()) continue;
       
-      const result = this.parseLine(line, session.options.searchType);
-      if (result) {
-        session.results.push(result);
-        // Separate counting of matches vs context lines
-        if (result.type === 'content' && line.includes('"type":"context"')) {
-          session.totalContextLines++;
-        } else {
-          session.totalMatches++;
-        }
+      const parsed = this.parseLine(line, session.options.searchType);
+      if (parsed?.kind === 'match' && parsed.result.type === 'file' && !this.filePatternSelects(session, parsed.result.file)) {
+        continue;
+      }
+      if (parsed) {
+        this.collectRipgrepLine(session, parsed);
 
         // Early termination for exact filename matches (if enabled)
-        if (session.options.earlyTermination !== false && // Default to true
-            session.options.searchType === 'files' &&
-            this.isExactFilename(session.options.pattern)) {
+        if (parsed.kind === 'match' &&
+            session.options.earlyTermination !== false && // Default to true
+            this.isExactFilenameSearch(session.options)) {
           const pat = path.normalize(session.options.pattern);
-          const filePath = path.normalize(result.file);
+          const filePath = path.normalize(parsed.result.file);
           const ignoreCase = session.options.ignoreCase !== false;
           const ends = ignoreCase
             ? filePath.toLowerCase().endsWith(pat.toLowerCase())
             : filePath.endsWith(pat);
           if (ends) {
             // Found exact match, terminate search early
-            setTimeout(() => {
-              if (!session.process.killed) {
-                session.process.kill('SIGTERM');
-              }
-            }, 100); // Small delay to allow any remaining results
+            setTimeout(() => this.stopRipgrep(session), 100); // Small delay to allow any remaining results
             break;
           }
         }
@@ -952,7 +1186,77 @@ export interface SearchSessionOptions {
     }
   }
 
-  private parseLine(line: string, searchType: 'files' | 'content'): SearchResult | null {
+  /**
+   * Collect one line of ripgrep output. Once maxResults matches are in, only the
+   * last match's trailing context is still collected - a matching line inside it
+   * is kept as context, like grep -m - and ripgrep is stopped when it ends.
+   */
+  private collectRipgrepLine(session: SearchSession, line: RipgrepLine): void {
+    if (line.kind !== 'match' && line.kind !== 'context') {
+      // A file ended (or the next began): no trailing context is pending any more
+      session.trailingContext = undefined;
+    } else if (!session.maxResultsReached) {
+      if (line.kind === 'context') {
+        session.results.push(line.result);
+        session.totalContextLines++;
+      } else {
+        // Note where this match's trailing context ends, in case it is the last match
+        const contextLines = session.options.contextLines ?? 0;
+        session.trailingContext = line.result.type === 'content' && line.result.line !== undefined && contextLines > 0
+          ? { file: line.result.file, lastLine: line.result.line + contextLines }
+          : undefined;
+        this.collectMatch(session, line.result);
+      }
+    } else {
+      const trailing = session.trailingContext;
+      const lineNumber = line.result.line;
+      if (trailing && line.result.file === trailing.file && lineNumber !== undefined && lineNumber <= trailing.lastLine) {
+        session.results.push(line.result);
+        session.totalContextLines++;
+        if (lineNumber === trailing.lastLine) {
+          session.trailingContext = undefined;
+        }
+      } else {
+        // Past the last match's trailing context: everything from here on is dropped
+        session.trailingContext = undefined;
+      }
+    }
+
+    this.stopAtMaxResults(session);
+  }
+
+  /**
+   * The one place a session counts a match - from ripgrep, Excel or DOCX alike -
+   * so maxResults caps the TOTAL number of matches a search returns.
+   */
+  private collectMatch(session: SearchSession, result: SearchResult): void {
+    if (session.maxResultsReached) return;
+
+    session.results.push(result);
+    session.totalMatches++;
+
+    const { maxResults } = session.options;
+    if (maxResults && maxResults > 0 && session.totalMatches >= maxResults) {
+      session.maxResultsReached = true;
+      this.stopAtMaxResults(session);
+    }
+  }
+
+  /**
+   * Once maxResults matches are in, stop the sources that cannot contribute
+   * anything more: the Excel/DOCX searches at once, ripgrep when the last
+   * match's trailing context is complete.
+   */
+  private stopAtMaxResults(session: SearchSession): void {
+    if (!session.maxResultsReached) return;
+
+    this.stopOfficeSources(session);
+    if (!session.trailingContext) {
+      this.stopRipgrep(session);
+    }
+  }
+
+  private parseLine(line: string, searchType: 'files' | 'content'): RipgrepLine | null {
     if (searchType === 'content') {
       // Parse JSON output from content search
       try {
@@ -962,29 +1266,33 @@ export interface SearchSessionOptions {
           // Handle multiple submatches per line - return first submatch
           const submatch = parsed.data?.submatches?.[0];
           return {
-            file: parsed.data.path.text,
-            line: parsed.data.line_number,
-            match: submatch?.match?.text || parsed.data.lines.text,
-            type: 'content'
+            kind: 'match',
+            result: {
+              file: parsed.data.path.text,
+              line: parsed.data.line_number,
+              match: submatch?.match?.text || parsed.data.lines.text,
+              type: 'content'
+            }
           };
         }
         
         if (parsed.type === 'context') {
           return {
-            file: parsed.data.path.text,
-            line: parsed.data.line_number,
-            match: parsed.data.lines.text.trim(),
-            type: 'content'
+            kind: 'context',
+            result: {
+              file: parsed.data.path.text,
+              line: parsed.data.line_number,
+              match: parsed.data.lines.text.trim(),
+              type: 'content'
+            }
           };
         }
         
-        // Handle summary to reconcile totals
-        if (parsed.type === 'summary') {
-          // Optional: could reconcile totalMatches with parsed.data.stats?.matchedLines
-          return null;
+        // begin/end frame each file's lines; summary closes the output
+        if (parsed.type === 'begin' || parsed.type === 'end') {
+          return { kind: parsed.type, file: parsed.data.path.text };
         }
-        
-        return null;
+        return { kind: 'summary' };
       } catch (error) {
         // Skip invalid JSON lines
         return null;
@@ -992,8 +1300,11 @@ export interface SearchSessionOptions {
     } else {
       // File search - each line is a file path
       return {
-        file: line.trim(),
-        type: 'file'
+        kind: 'match',
+        result: {
+          file: line.trim(),
+          type: 'file'
+        }
       };
     }
   }
@@ -1001,22 +1312,3 @@ export interface SearchSessionOptions {
 
 // Global search manager instance
 export const searchManager = new SearchManager();
-
-// Cleanup management - run on fixed schedule
-let cleanupInterval: NodeJS.Timeout | null = null;
-
-/**
- * Start cleanup interval - now runs on fixed schedule
- */
-function startCleanupIfNeeded(): void {
-  if (!cleanupInterval) {
-    cleanupInterval = setInterval(() => {
-      searchManager.cleanupSessions();
-    }, 5 * 60 * 1000);
-    
-    // Also check immediately after a short delay (let search process finish)
-    setTimeout(() => {
-      searchManager.cleanupSessions();
-    }, 1000);
-  }
-}

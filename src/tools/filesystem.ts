@@ -901,7 +901,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
     const { searchManager } = await import('../search-manager.js');
 
     try {
-        const result = await searchManager.startSearch({
+        const { sessionId } = await searchManager.startSearch({
             rootPath,
             pattern,
             searchType: 'files',
@@ -910,39 +910,15 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             earlyTermination: true, // Use early termination for better performance
         });
 
-        const sessionId = result.sessionId;
+        // Every result of the session once it is complete - each exactly once.
+        // Stop a search still running after 30 seconds; it then completes with what it found
+        const stopTimer = setTimeout(() => searchManager.terminateSearch(sessionId), 30000);
+        const results = await searchManager.waitForCompletion(sessionId)
+            .finally(() => clearTimeout(stopTimer));
 
-        // Poll for results until complete
-        let allResults: string[] = [];
-        let isComplete = result.isComplete;
-        let startTime = Date.now();
-
-        // Add initial results
-        for (const searchResult of result.results) {
-            if (searchResult.type === 'file') {
-                allResults.push(searchResult.file);
-            }
-        }
-
-        while (!isComplete) {
-            await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
-
-            const results = searchManager.readSearchResults(sessionId);
-            isComplete = results.isComplete;
-
-            // Add new file paths to results
-            for (const searchResult of results.results) {
-                if (searchResult.file !== '__LAST_READ_MARKER__' && searchResult.type === 'file') {
-                    allResults.push(searchResult.file);
-                }
-            }
-
-            // Safety check to prevent infinite loops (30 second timeout)
-            if (Date.now() - startTime > 30000) {
-                searchManager.terminateSearch(sessionId);
-                break;
-            }
-        }
+        const allResults = results
+            .filter(searchResult => searchResult.type === 'file')
+            .map(searchResult => searchResult.file);
 
         // Log only the count of found files, not their paths
         capture('server_search_files_complete', {
