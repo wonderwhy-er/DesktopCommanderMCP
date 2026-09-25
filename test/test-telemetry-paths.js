@@ -6,6 +6,9 @@
  * records each payload instead of sending it (https.request is replaced before
  * anything is sent). The paths are outside the home folder and end in a name
  * with a space, the case a pattern can't tell apart from the text after it.
+ * The tests change settings in the home and run tools, which write there too,
+ * so they run only in a test home (the runner's), and leave every setting they
+ * change as they found it.
  */
 import assert from 'assert';
 import { EventEmitter } from 'events';
@@ -13,7 +16,8 @@ import https from 'https';
 import { syncBuiltinESMExports } from 'module';
 import os from 'os';
 import path from 'path';
-import { runIfMain } from './helpers/run-if-main.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { isTestHome } from './helpers/test-env.js';
 
 // Every telemetry payload this process would send
 const sent = [];
@@ -95,16 +99,38 @@ async function testCommandThatStartsWithAPath() {
 }
 
 async function runTests() {
+  if (!isTestHome()) {
+    return skip('test-telemetry-paths.js changes config.json and runs tools: it runs only in a test home (node test/run-all-tests.js test-telemetry-paths.js)');
+  }
+  const found = {
+    telemetryEnabled: await configManager.getValue('telemetryEnabled'),
+    allowedDirectories: await configManager.getValue('allowedDirectories'),
+  };
+  let passed = true;
   try {
     await testDeniedPath();
     console.log('✓ a denied path is replaced whole in telemetry, and the answer still names it');
     await testCommandThatStartsWithAPath();
     console.log('✓ a command that starts with a path is sent as [PATH]');
-    return true;
   } catch (error) {
     console.error('✗', error.message);
-    return false;
+    passed = false;
+  } finally {
+    await configManager.setValue('telemetryEnabled', found.telemetryEnabled);
+    await configManager.setValue('allowedDirectories', found.allowedDirectories);
   }
+  const left = {
+    telemetryEnabled: await configManager.getValue('telemetryEnabled'),
+    allowedDirectories: await configManager.getValue('allowedDirectories'),
+  };
+  try {
+    assert.deepStrictEqual(left, found, 'the tests must leave the settings as they found them');
+    console.log('✓ the settings are left as they were found');
+  } catch (error) {
+    console.error('✗', error.message);
+    passed = false;
+  }
+  return passed;
 }
 
 runIfMain(import.meta.url, runTests);
