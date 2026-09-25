@@ -1,5 +1,4 @@
-import { MCPDevice, getRemoteDeviceConfigPath } from '../remote-device/device.js';
-import fs from 'fs/promises';
+import { MCPDevice, getRemoteDeviceConfigPath, removeRemoteDeviceConfig } from '../remote-device/device.js';
 import os from 'os';
 import { captureRemote } from '../utils/capture.js';
 
@@ -46,7 +45,7 @@ Note:
     if (process.argv.includes('--logout')) {
         const configPath = getRemoteDeviceConfigPath();
         try {
-            await fs.rm(configPath, { force: true });
+            await removeRemoteDeviceConfig(configPath);
             console.log('🔓 Logged out locally. Saved Remote MCP device credentials were removed.');
             console.log(`   ${configPath}`);
         } catch (error: any) {

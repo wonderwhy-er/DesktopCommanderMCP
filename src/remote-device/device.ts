@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
+import lockfile from 'proper-lockfile';
 import { captureRemote } from '../utils/capture.js';
 import { writeFileAtomic } from '../utils/atomic-write.js';
 import { exitProcess } from '../utils/exit-process.js';
@@ -34,6 +35,39 @@ const RECOVERY_MIN_DELAY_MS = 1000;
 
 export function getRemoteDeviceConfigPath() {
     return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+}
+
+/**
+ * Cross-process lock on device.json. A device's save holds it from its check
+ * that the file is still there to its write, and `remote --logout` holds it to
+ * remove the file, so a logout cannot land between the two and be written
+ * over. Settings as for the server's config.json lock (config-manager.ts).
+ */
+function lockRemoteDeviceConfig(configPath: string): Promise<() => Promise<void>> {
+    return lockfile.lock(configPath, {
+        realpath: false,
+        stale: 30_000,
+        update: 10_000,
+        retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 100 },
+        // The default throws from a timer, which ends the process
+        onCompromised: (error) => console.error(`The device.json lock was lost while held: ${error.message}`),
+    });
+}
+
+/** `remote --logout`: removes device.json, under the lock a running device's save takes. */
+export async function removeRemoteDeviceConfig(configPath = getRemoteDeviceConfigPath()): Promise<void> {
+    let release: (() => Promise<void>) | undefined;
+    try {
+        release = await lockRemoteDeviceConfig(configPath);
+    } catch (error: any) {
+        // No config folder: nothing was saved
+        if (error.code !== 'ENOENT') throw error;
+    }
+    try {
+        await fs.rm(configPath, { force: true });
+    } finally {
+        await release?.();
+    }
 }
 
 export class MCPDevice {
@@ -399,15 +433,6 @@ export class MCPDevice {
     private async writePersistedConfig(rotated?: AuthSession): Promise<void> {
         try {
             if (this.loggedOutLocally) return;
-            // `remote --logout` removes device.json from another process, and
-            // the docs say that removes the saved credentials. Writing them back
-            // at the next rotation or at shutdown would undo it: this run keeps
-            // its session in memory (the logout is local only) and saves nothing.
-            if (this.configOnDisk && !(await this.configExists())) {
-                this.loggedOutLocally = true;
-                console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again');
-                return;
-            }
             console.debug('[DEBUG] Saving persisted config, persistSession:', this.persistSession);
             // Prefer the session TOKEN_REFRESHED handed us over re-reading it. A
             // sign-out landing in that gap answers null, and the write below would
@@ -433,13 +458,28 @@ export class MCPDevice {
             // Ensure the config directory exists
             console.debug('[DEBUG] Creating config directory:', path.dirname(this.configPath));
             await fs.mkdir(path.dirname(this.configPath), { recursive: true });
-            // Atomic write: a save cut short leaves the previous complete
-            // session rather than a truncated file. loadPersistedConfig()
-            // answers a JSON.parse failure with null, which costs a full
-            // browser reauthorization.
-            await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-            this.configOnDisk = true;
-            console.debug('[DEBUG] Config saved to:', this.configPath);
+            // From the check to the write, `remote --logout` waits for this lock
+            const release = await lockRemoteDeviceConfig(this.configPath);
+            try {
+                // `remote --logout` removes device.json from another process, and
+                // the docs say that removes the saved credentials. Writing them back
+                // at the next rotation or at shutdown would undo it: this run keeps
+                // its session in memory (the logout is local only) and saves nothing.
+                if (this.configOnDisk && !(await this.configExists())) {
+                    this.loggedOutLocally = true;
+                    console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again');
+                    return;
+                }
+                // Atomic write: a save cut short leaves the previous complete
+                // session rather than a truncated file. loadPersistedConfig()
+                // answers a JSON.parse failure with null, which costs a full
+                // browser reauthorization.
+                await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+                this.configOnDisk = true;
+                console.debug('[DEBUG] Config saved to:', this.configPath);
+            } finally {
+                await release().catch((error) => console.error(' - ❌ Failed to release the device.json lock:', error.message));
+            }
         } catch (error: any) {
             console.error(' - ❌ Failed to save config:', error.message);
             console.debug('[DEBUG] Config save error details:', error);
