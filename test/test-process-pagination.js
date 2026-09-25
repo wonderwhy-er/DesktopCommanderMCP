@@ -1,6 +1,8 @@
 import assert from 'assert';
-import { startProcess, readProcessOutput, interactWithProcess } from '../dist/tools/improved-process-tools.js';
+import { startProcess, readProcessOutput, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
+import { configManager } from '../dist/config-manager.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
+import { pythonCommand } from './helpers/python.js';
 
 /**
  * Test suite for process output pagination features
@@ -172,39 +174,40 @@ async function testRuntimeInfo() {
 async function testInteractTruncation() {
   console.log('\n📋 Test 6: interact_with_process output truncation...');
   
-  // Start a Python REPL
+  // The Python the server itself detected, and the output line limit from the config
+  const python = pythonCommand();
+  if (!python) {
+    return skip('Test 6 (interact_with_process truncation): Python 3 is not installed');
+  }
+  const lineLimit = (await configManager.getConfig()).fileReadLineLimit ?? 1000;
+  const printedLines = lineLimit + 500;
+  
   const startResult = await startProcess({
-    command: 'python3 -i',
+    command: `${python} -i`,
     timeout_ms: 3000
   });
   
   const pid = extractPid(startResult);
-  if (!pid) {
-    return skip('Test 6 (interact_with_process truncation): could not start the Python REPL');
-  }
+  assert(pid, `The Python REPL should start, got: ${startResult.content?.[0]?.text}`);
   
   await wait(500);
   
-  // Generate lots of output (more than default 1000 lines)
-  const result = await interactWithProcess({
-    pid,
-    input: 'for i in range(1500): print(f"line {i}")',
-    timeout_ms: 10000
-  });
-  
-  if (result.isError) {
-    return skip('Test 6 (interact_with_process truncation): the Python interaction failed');
-  }
-  
-  const outputText = result.content[0].text;
-  
-  // Check for truncation warning
-  if (outputText.includes('truncated')) {
-    assert(outputText.includes('use read_process_output'), 'Should suggest using read_process_output');
-    console.log('✅ Test 6 passed: Output truncation warning works');
-  } else {
-    // If fileReadLineLimit is set higher than 1500, no truncation expected
-    console.log('✅ Test 6 passed: Output within limits (no truncation needed)');
+  try {
+    // One statement runs at once; a `for` block would wait at the "..." prompt for a blank line
+    const result = await interactWithProcess({
+      pid,
+      input: `print("\\n".join(f"line {i}" for i in range(${printedLines})))`,
+      timeout_ms: 10000
+    });
+    const outputText = result.content?.[0]?.text ?? '';
+    assert(!result.isError, `The Python interaction should succeed, got: ${outputText}`);
+    assert(outputText.includes(`Output truncated: showing ${lineLimit} of`), `${printedLines} printed lines should be truncated to ${lineLimit}, got: ${outputText.slice(-300)}`);
+    assert(outputText.includes('line 0'), 'Visible output should start with the first printed line');
+    assert(!outputText.includes(`line ${printedLines - 1}`), 'Lines past the limit should be hidden');
+    assert(outputText.includes('Use read_process_output'), 'Should suggest using read_process_output');
+    console.log(`✅ Test 6 passed: ${printedLines} lines truncated to ${lineLimit} with a read_process_output hint`);
+  } finally {
+    await forceTerminate({ pid });
   }
 }
 

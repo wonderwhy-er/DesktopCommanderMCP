@@ -5,7 +5,7 @@ import fs from 'fs/promises';
 import { configManager } from '../dist/config-manager.js';
 import { terminalManager } from '../dist/terminal-manager.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
-import { getSystemInfo } from '../dist/utils/system-info.js';
+import { pythonCommand } from './helpers/python.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -71,11 +71,10 @@ async function testPythonREPL() {
   
   try {
     // Use the Python the server itself detected
-    const { pythonInfo } = getSystemInfo();
-    if (!pythonInfo.available) {
+    const pythonCmd = pythonCommand();
+    if (!pythonCmd) {
       return skip('Python REPL interaction test: Python 3 is not installed');
     }
-    const pythonCmd = pythonInfo.command;
     
     // Start a Python REPL process
     const result = await terminalManager.executeCommand(pythonCmd + ' -i', 5000);
