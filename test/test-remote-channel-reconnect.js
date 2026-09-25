@@ -264,9 +264,10 @@ class FakeClient {
     });
   }
 
-  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
+  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId).abortSignal(...)
   from() {
     const result = Promise.resolve({ error: null });
+    result.abortSignal = () => result;
     const chain = {
       update: () => chain,
       insert: () => chain,

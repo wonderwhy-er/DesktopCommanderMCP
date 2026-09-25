@@ -183,6 +183,8 @@ class FakeClient {
             },
             insert: () => node,
             eq: () => node,
+            // The device bounds its row writes; no case here runs into that bound
+            abortSignal: () => node,
             maybeSingle: () =>
                 Promise.resolve({
                     data: client.deviceExists ? { id: DEVICE_ID, device_name: 'test-device' } : null,
