@@ -409,6 +409,44 @@ async function run() {
     }
   });
 
+  // Two set_config_value of one key close together, the first one's save failing once:
+  // its value, held to be saved later, must not end up over the second (newer) one
+  await check('a set_config_value whose save failed does not overwrite a newer value of the same key', async () => {
+    const home = homeWithConfig(JSON.stringify({ allowedDirectories: ['/work'], blockedCommands: ['rm'], pendingWelcomeOnboarding: false, welcomeOnboardingEligible: false }, null, 2));
+    try {
+      const child = runConfigManagerChild(home.env, {
+        prelude: `
+          // The first write of a new config.json fails, once
+          const { open } = fs;
+          let failed = false;
+          fs.open = (file, flags, ...rest) => !failed && String(file).endsWith('.tmp') && /[wa+]/.test(String(flags))
+            ? (failed = true, Promise.reject(Object.assign(new Error('EBUSY: resource busy or locked, open ' + JSON.stringify(String(file))), { code: 'EBUSY' })))
+            : open(file, flags, ...rest);`,
+        body: `
+          const { CONFIG_FILE } = await import(DIST + '/config.js');
+          const { setConfigValue } = await import(DIST + '/tools/config.js');
+          await configManager.getConfig();
+          const answers = await Promise.all([
+            setConfigValue({ key: 'fileReadLineLimit', value: 111 }),
+            setConfigValue({ key: 'fileReadLineLimit', value: 222 }),
+          ]);
+          // Held changes are saved within 250 ms; wait longer
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const inEffect = (await configManager.getConfig()).fileReadLineLimit;
+          const onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8')).fileReadLineLimit;
+          console.log(JSON.stringify({ answers: answers.map((answer) => answer.content?.[0]?.text?.split('\\n')[0]), inEffect, onDisk }));`,
+      });
+      assert(child.status === 0 && child.result, `the child failed (${child.status}): ${child.stderr}`);
+      const { answers, inEffect, onDisk } = child.result;
+      assert(answers[0].startsWith("Value changed in memory but couldn't be saved to disk"), `the first set_config_value answered: ${answers[0]}`);
+      assert(answers[1].startsWith('Successfully set fileReadLineLimit'), `the second set_config_value answered: ${answers[1]}`);
+      assert.deepStrictEqual({ inEffect, onDisk }, { inEffect: 222, onDisk: 222 },
+        `the older value whose save failed ended up over the newer one: in effect ${inEffect}, on disk ${onDisk}`);
+    } finally {
+      home.cleanup();
+    }
+  });
+
   if (failures.length > 0) {
     console.log(`${failures.length} of ${total} cases failed`);
     return false;

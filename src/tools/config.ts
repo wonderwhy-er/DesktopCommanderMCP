@@ -188,11 +188,8 @@ export async function setConfigValue(args: unknown) {
         valueToStore = numeric;
       }
 
-      await configManager.setValue(parsed.data.key, valueToStore).catch(async (saveError) => {
-        // Not saved: in effect all the same, as the answer below says, and saved with the held changes
-        await configManager.setValueNonBlocking(parsed.data.key, valueToStore);
-        throw saveError;
-      });
+      // Not saved: in effect all the same, as the answer below says, and saved with the held changes
+      await configManager.setValue(parsed.data.key, valueToStore, { holdIfNotSaved: true });
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
       console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);
