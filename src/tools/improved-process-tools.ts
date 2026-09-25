@@ -459,8 +459,9 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     });
 
     // Execute code via temp file approach
-    // Respect per-call timeout if provided, otherwise use session default
-    const effectiveTimeout = timeout_ms ?? session.timeout_ms;
+    // Respect per-call timeout if provided, otherwise use session default, within
+    // the process wait ceiling: the call answers only once the script ends
+    const effectiveTimeout = Math.min(timeout_ms ?? session.timeout_ms, waitLimit.capMs);
     return executeNodeCode(input, effectiveTimeout, pid);
   }
 
