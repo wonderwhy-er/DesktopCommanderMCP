@@ -141,6 +141,15 @@ function parseConfig(text: string): ServerConfig {
 }
 
 /**
+ * A warning the user must see: as a log notification (console.warn inside the
+ * MCP server), and on stderr, which `remote` shows in its terminal.
+ */
+function warnUser(message: string): void {
+  console.warn(message);
+  process.stderr.write(`[WARNING] Desktop Commander: ${message}\n`);
+}
+
+/**
  * Singleton config manager for the server
  */
 class ConfigManager {
@@ -172,6 +181,7 @@ class ConfigManager {
     if (this.initialized) return;
 
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
+    let damaged = false;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
@@ -183,6 +193,7 @@ class ConfigManager {
         this._isFirstRun = false;
       } catch (error: any) {
         if (error instanceof SyntaxError) {
+          damaged = true;
           const recovery = await this.recoverCorruptConfig(error, 'startup');
           this.config = recovery.config;
           corruptConfigTelemetry = recovery.telemetry;
@@ -218,7 +229,21 @@ class ConfigManager {
       if (corruptConfigTelemetry) this.pendingCorruptConfigTelemetry.push(corruptConfigTelemetry);
     } catch (error) {
       console.error('Failed to initialize config:', error);
-      this.config = this.getDefaultConfig();
+      if (damaged) {
+        // The repair itself failed (the corrupt file couldn't be copied, the
+        // repaired config couldn't be written, the lock couldn't be taken): the
+        // defaults' allowedDirectories [] would open the whole filesystem (#419).
+        // Use what the repair would have written, for this session only.
+        this.config = this.recoveredConfig(await this.readDamagedConfigText());
+        const reason = error instanceof Error ? error.message : String(error);
+        warnUser(`config.json could not be read, and repairing it failed (${reason}). ` +
+          `For this session Desktop Commander uses the default settings with what it could recover: ` +
+          `file tools only reach ${JSON.stringify(this.config.allowedDirectories)}` +
+          (this.config.blockedCommands?.includes('*') ? ', every command is blocked' : '') +
+          (this.config.telemetryEnabled === false ? ', telemetry stays off' : '') + '.');
+      } else {
+        this.config = this.getDefaultConfig();
+      }
       this.initialized = true;
       this.startConfigWatcher();
     } finally {
@@ -380,23 +405,8 @@ class ConfigManager {
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
     const forensics = await this.inspectCorruptConfig(error, phase);
 
-    // Prefer the last parsed in-memory policy during runtime recovery. On startup,
-    // salvage only complete string-array policy fields from the damaged JSON.
-    // This keeps recovery narrow without introducing a persistent shadow config.
     const corruptText = await fs.readFile(this.configPath, 'utf8').catch(() => '');
-    const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
-    const preservedClientId = clientIdMatch?.[1];
-    const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
-    const inMemoryBlockedCommands = Array.isArray(this.config.blockedCommands)
-      && this.config.blockedCommands.every((item) => typeof item === 'string')
-      ? this.config.blockedCommands : null;
-    const inMemoryAllowedDirectories = Array.isArray(this.config.allowedDirectories)
-      && this.config.allowedDirectories.every((item) => typeof item === 'string')
-      ? this.config.allowedDirectories : null;
-    const preservedBlockedCommands = inMemoryBlockedCommands
-      ?? extractRecoverableStringArray(corruptText, 'blockedCommands');
-    const preservedAllowedDirectories = inMemoryAllowedDirectories
-      ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
+    const recovered = this.recoveredConfig(corruptText);
 
     let backupCreated = false;
     if (existsSync(this.configPath)) {
@@ -413,6 +423,50 @@ class ConfigManager {
         throw backupError;
       }
     }
+
+    await this.writeConfigAtomically(recovered);
+    this.config = { ...recovered, version: VERSION };
+
+    console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
+    return {
+      config: recovered,
+      telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
+    };
+  }
+
+  /**
+   * The damaged config's text after a failed repair (which leaves config.json as
+   * it was); '' when it can't be read (recoveredConfig then gives the closed policy).
+   */
+  private async readDamagedConfigText(): Promise<string> {
+    return fs.readFile(this.configPath, 'utf8').catch((error) => {
+      console.error('Failed to read the damaged config.json again:', error);
+      return '';
+    });
+  }
+
+  /**
+   * What recovery writes in place of a corrupt config.json: the defaults, with
+   * the blocked commands and allowed folders the damaged text (or, while
+   * running, the last parsed config) still gives, else a closed policy.
+   */
+  private recoveredConfig(corruptText: string): ServerConfig {
+    // Prefer the last parsed in-memory policy during runtime recovery. On startup,
+    // salvage only complete string-array policy fields from the damaged JSON.
+    // This keeps recovery narrow without introducing a persistent shadow config.
+    const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
+    const preservedClientId = clientIdMatch?.[1];
+    const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
+    const inMemoryBlockedCommands = Array.isArray(this.config.blockedCommands)
+      && this.config.blockedCommands.every((item) => typeof item === 'string')
+      ? this.config.blockedCommands : null;
+    const inMemoryAllowedDirectories = Array.isArray(this.config.allowedDirectories)
+      && this.config.allowedDirectories.every((item) => typeof item === 'string')
+      ? this.config.allowedDirectories : null;
+    const preservedBlockedCommands = inMemoryBlockedCommands
+      ?? extractRecoverableStringArray(corruptText, 'blockedCommands');
+    const preservedAllowedDirectories = inMemoryAllowedDirectories
+      ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
 
     const defaults = this.getDefaultConfig();
     if (preservedClientId) defaults['clientId'] = preservedClientId;
@@ -433,14 +487,7 @@ class ConfigManager {
     // This is an existing install, not a first run. Do not replay onboarding.
     defaults['welcomeOnboardingEligible'] = false;
     defaults['pendingWelcomeOnboarding'] = false;
-    await this.writeConfigAtomically(defaults);
-    this.config = { ...defaults, version: VERSION };
-
-    console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
-    return {
-      config: defaults,
-      telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
-    };
+    return defaults;
   }
 
   /** Whether the newest config.json.corrupt.<ms>.<pid> copy holds config.json's bytes */
