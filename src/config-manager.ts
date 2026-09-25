@@ -660,6 +660,9 @@ class ConfigManager {
     const release = await this.acquireConfigLock(() => { lockLost = true; });
     let result: ServerConfig | null = null;
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
+    // Changes held from earlier writes that didn't save: older than this one, so
+    // applied first, and kept for later if this write doesn't commit either
+    let held: Array<(config: ServerConfig) => void> = [];
     try {
       let latest: ServerConfig;
       let existed = true;
@@ -682,17 +685,22 @@ class ConfigManager {
       // What config.json holds as read (or as repaired above): if it holds anything
       // else when the write is about to commit, another process saved meanwhile
       const readText = await this.readConfigText();
+      held = this.pendingMutations.splice(0);
+      for (const apply of held) apply(latest);
       mutate(latest, existed);
       await this.writeConfigAtomically(latest, async () => {
         if (lockLost || await this.readConfigText() !== readText) throw new ConfigChangedBeforeCommitError();
       });
       this.config = { ...latest, version: VERSION };
       result = latest;
+      held = [];
       // Written: whatever held saves before is solved
       this.failedSaves = 0;
       this.holdReported = false;
       this.resumeSaves();
     } finally {
+      // Not written: the held changes go back, ahead of any queued meanwhile
+      if (held.length > 0) this.pendingMutations.unshift(...held);
       try {
         await release();
       } catch (error) {
@@ -744,15 +752,13 @@ class ConfigManager {
     this.saveScheduled = true;
     const write = this.writeChain.then(async () => {
       this.saveScheduled = false;
-      const mutations = this.pendingMutations.splice(0);
-      if (mutations.length === 0) return;
+      // A write in between may have saved them already
+      if (this.pendingMutations.length === 0) return;
       try {
-        await this.performConfigMutation((latest) => {
-          for (const mutate of mutations) mutate(latest);
-        });
+        // Saves the queued changes: every config write applies them first
+        await this.performConfigMutation(() => {});
       } catch (error) {
-        // Persistence failed before commit, so keep these mutations for a later retry.
-        this.pendingMutations.unshift(...mutations);
+        // Persistence failed before commit: performConfigMutation kept the changes for a later retry.
         // A failure can be brief (a lock, a file scanner): retried once after 250 ms. A second
         // one in a row (a read-only file system, a full disk) holds the changes for the
         // HELD_SAVES_CHECK_MS check instead of retrying every 250 ms
@@ -826,8 +832,10 @@ class ConfigManager {
   /**
    * Set a specific configuration value and wait until it is saved: the data is
    * flushed to disk before the rename; the folder flush after it is best effort.
+   * holdIfNotSaved: if the save fails, the value is in effect all the same and
+   * held, to be saved in its place among later writes (the call still rejects).
    */
-  async setValue(key: string, value: any): Promise<void> {
+  async setValue(key: string, value: any, options: { holdIfNotSaved?: boolean } = {}): Promise<void> {
     await this.init();
     if (key === 'telemetryEnabled') value = normalizeTelemetryEnabledValue(value);
 
@@ -842,6 +850,14 @@ class ConfigManager {
     const nextValue = value;
     const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
       latest[key] = nextValue;
+    }).catch((error) => {
+      // Held here, before the next write in the chain starts: a later value of the
+      // same key is applied after it and wins
+      if (options.holdIfNotSaved) {
+        this.config[key] = nextValue;
+        this.queueMutation((latest) => { latest[key] = nextValue; });
+      }
+      throw error;
     }));
     this.writeChain = write.then(() => {}, () => {});
     await write;
