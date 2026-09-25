@@ -8,6 +8,8 @@
  * and of null on array fields (it clears them too; it was stored as ["null"],
  * which made "null" the only allowed folder).
  * A wait the ceiling ends answers with the same status line as before.
+ * The tests change settings in the home, so they run only in a test home (the
+ * runner's), and leave every setting they change as they found it.
  */
 import assert from 'assert';
 import os from 'os';
@@ -18,7 +20,8 @@ import { getProcessWaitLimit } from '../dist/terminal-manager.js';
 import { getConfig, setConfigValue } from '../dist/tools/config.js';
 import { validatePath } from '../dist/tools/filesystem.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { isTestHome } from './helpers/test-env.js';
 
 // A capped wait answers after MAX_PROCESS_WAIT_MS, and that answer still has to
 // be built and delivered (through the remote device's relay, too) before the
@@ -61,18 +64,23 @@ async function testNotConfigurable() {
 async function testNumberFields() {
   console.log('\n--- Test 3: set_config_value number fields ---');
   const key = 'fileReadLineLimit';
-  let response = await setConfigValue({ key, value: '250' });
-  assert.notStrictEqual(response.isError, true, response.content?.[0]?.text);
-  assert.strictEqual(await configManager.getValue(key), 250);
+  const before = await configManager.getValue(key);
+  try {
+    let response = await setConfigValue({ key, value: '250' });
+    assert.notStrictEqual(response.isError, true, response.content?.[0]?.text);
+    assert.strictEqual(await configManager.getValue(key), 250);
 
-  response = await setConfigValue({ key, value: 'many' });
-  assert.strictEqual(response.isError, true);
-  assert.match(response.content[0].text, /must be a number/);
-  assert.strictEqual(await configManager.getValue(key), 250, 'a rejected value must not change the stored one');
+    response = await setConfigValue({ key, value: 'many' });
+    assert.strictEqual(response.isError, true);
+    assert.match(response.content[0].text, /must be a number/);
+    assert.strictEqual(await configManager.getValue(key), 250, 'a rejected value must not change the stored one');
 
-  response = await setConfigValue({ key, value: null });
-  assert.notStrictEqual(response.isError, true, response.content?.[0]?.text);
-  assert.strictEqual(await configManager.getValue(key), null);
+    response = await setConfigValue({ key, value: null });
+    assert.notStrictEqual(response.isError, true, response.content?.[0]?.text);
+    assert.strictEqual(await configManager.getValue(key), null);
+  } finally {
+    await configManager.setValue(key, before);
+  }
   console.log('ok: "250" stored as 250, "many" rejected, null clears it');
 }
 
@@ -145,7 +153,15 @@ async function testNodeLocalWaitsWithinTheCeiling() {
   console.log('ok: a node:local script ends at the wait ceiling');
 }
 
+// The settings these tests change: they must be left as they were found
+const CHANGED_SETTINGS = ['fileReadLineLimit', 'allowedDirectories', 'blockedCommands'];
+
 async function runAllTests() {
+  if (!isTestHome()) {
+    skip('process wait and config tests: they change settings in the home, so they run only through the test runner');
+    return;
+  }
+  const before = await configManager.getConfig();
   await testCeilingUnderClientTimeout();
   await testFixedCeiling();
   await testNotConfigurable();
@@ -153,6 +169,11 @@ async function runAllTests() {
   await testNullOnArrayFields();
   await testCappedWaitAnswers();
   await testNodeLocalWaitsWithinTheCeiling();
+  const after = await configManager.getConfig();
+  for (const key of CHANGED_SETTINGS) {
+    assert.deepStrictEqual(after[key], before[key],
+      `the tests left ${key} as ${JSON.stringify(after[key])}, not as they found it (${JSON.stringify(before[key])})`);
+  }
   console.log('\n✅ process wait ceiling and config number tests passed');
 }
 
