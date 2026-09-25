@@ -166,6 +166,33 @@ async function run() {
     }
   });
 
+  // config.json removed while Desktop Commander runs (e.g. a damaged one moved aside by
+  // hand): the next write must not recreate it with nothing but the value it sets
+  await check('config.json removed while running: the next write creates it with the defaults, blocked commands included', async () => {
+    const home = homeWithConfig(JSON.stringify({ pendingWelcomeOnboarding: false, welcomeOnboardingEligible: false }, null, 2));
+    try {
+      const child = runConfigManagerChild(home.env, {
+        body: `
+          const { CONFIG_FILE } = await import(DIST + '/config.js');
+          const { commandManager } = await import(DIST + '/command-manager.js');
+          await configManager.getConfig();
+          fsSync.rmSync(CONFIG_FILE);
+          await configManager.setValue('fileReadLineLimit', 500);
+          const onDisk = JSON.parse(fsSync.readFileSync(CONFIG_FILE, 'utf8'));
+          const sudoAllowed = await commandManager.validateCommand('sudo ls');
+          console.log(JSON.stringify({ onDisk, sudoAllowed }));`,
+      });
+      assert(child.status === 0 && child.result, `the child failed (${child.status}): ${child.stderr}`);
+      const { onDisk, sudoAllowed } = child.result;
+      assert.strictEqual(onDisk.fileReadLineLimit, 500, 'the write must land');
+      assert(Array.isArray(onDisk.blockedCommands) && onDisk.blockedCommands.includes('sudo'),
+        `config.json removed while running was recreated as ${JSON.stringify(onDisk)}: without the default blocked commands, nothing is blocked`);
+      assert.strictEqual(sudoAllowed, false, '`sudo ls` was allowed after config.json was recreated');
+    } finally {
+      home.cleanup();
+    }
+  });
+
   if (failures.length > 0) {
     console.log(`${failures.length} of ${total} cases failed`);
     return false;

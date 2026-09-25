@@ -581,7 +581,9 @@ class ConfigManager {
           latest = recovery.config;
           corruptConfigTelemetry = recovery.telemetry;
         } else if (error?.code === 'ENOENT') {
-          latest = {};
+          // Missing (a first start, or removed while running): start from the
+          // defaults; `{}` would leave blockedCommands empty, blocking nothing
+          latest = this.getDefaultConfig();
           existed = false;
         } else {
           throw error;
