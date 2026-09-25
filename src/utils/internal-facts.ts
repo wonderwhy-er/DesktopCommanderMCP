@@ -10,6 +10,11 @@ import type { ServerResult } from '../types.js';
  */
 const INTERNAL_STRUCTURED_CONTENT_TOOLS = new Set<string>([
   'write_pdf',
+  'start_process',
+  'interact_with_process',
+  'list_sessions',
+  'start_search',
+  'get_more_search_results',
 ]);
 
 /** The result as the client receives it: without structuredContent kept internal */

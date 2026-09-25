@@ -9,12 +9,6 @@ import { pythonCommand } from './helpers/python.js';
  * Tests offset/length parameters and context overflow protection
  */
 
-// Helper to extract PID from start result
-function extractPid(result) {
-  const match = result.content[0].text.match(/PID (\d+)/);
-  return match ? parseInt(match[1]) : null;
-}
-
 // Helper to wait
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -24,36 +18,34 @@ const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 async function testNewOutputBehavior() {
   console.log('\n📋 Test 1: Basic new output behavior (offset=0) for running process...');
   
-  // Start a long-running process that outputs incrementally
+  // Start a process that prints a tick every 200ms for ~4s, so it is still running for both reads
   const startResult = await startProcess({
-    command: 'node -e "let i=0; setInterval(() => { console.log(\'tick\' + i++); if(i>5) process.exit(0); }, 200)"',
+    command: 'node -e "let i=0; setInterval(() => { console.log(\'tick\' + i++); if(i>20) process.exit(0); }, 200)"',
     timeout_ms: 500  // Return before completion
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   // First read - get initial output
   const read1 = await readProcessOutput({ pid, timeout_ms: 300 });
   assert(!read1.isError, 'First read should succeed');
-  const lines1 = (read1.content[0].text.match(/tick\d/g) || []).length;
-  console.log(`  First read got ${lines1} tick lines`);
-  
+  const ticks = (text) => text.match(/tick\d+/g) || [];
+  const ticks1 = ticks(read1.content[0].text);
+  console.log(`  First read got ${ticks1.length} tick lines`);
+
   // Wait for more output
   await wait(400);
-  
+
   // Second read should get NEW output only
   const read2 = await readProcessOutput({ pid, timeout_ms: 300 });
   assert(!read2.isError, 'Second read should succeed');
-  const text2 = read2.content[0].text;
-  
-  // Should NOT re-read tick0 if we already read it
-  // (unless process completed, in which case all output is available)
-  if (text2.includes('Process completed')) {
-    console.log('  Process completed - all output available');
-  } else {
-    console.log(`  Second read status: ${text2.split('\n')[0]}`);
-  }
+  const ticks2 = ticks(read2.content[0].text);
+  console.log(`  Second read got ${ticks2.length} tick lines`);
+
+  assert(ticks2.length > 0, `Second read should return the ticks printed since the first read, got: ${read2.content[0].text}`);
+  const repeated = ticks2.filter((tick) => ticks1.includes(tick));
+  assert.deepStrictEqual(repeated, [], 'Second read should not repeat output already returned by the first read');
   
   console.log('✅ Test 1 passed: New output behavior works correctly');
 }
@@ -69,7 +61,7 @@ async function testAbsoluteOffset() {
     timeout_ms: 3000
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   await wait(500);
@@ -97,7 +89,7 @@ async function testTailBehavior() {
     timeout_ms: 3000
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   await wait(500);
@@ -125,7 +117,7 @@ async function testLengthLimit() {
     timeout_ms: 3000
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   await wait(500);
@@ -154,7 +146,7 @@ async function testRuntimeInfo() {
     timeout_ms: 200  // Return before completion
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   // Wait for process to complete
@@ -181,17 +173,18 @@ async function testInteractTruncation() {
   }
   const lineLimit = (await configManager.getConfig()).fileReadLineLimit ?? 1000;
   const printedLines = lineLimit + 500;
-  
+
+  // Start a Python REPL
   const startResult = await startProcess({
     command: `${python} -i`,
     timeout_ms: 3000
   });
-  
-  const pid = extractPid(startResult);
+
+  const pid = startResult.structuredContent?.pid;
   assert(pid, `The Python REPL should start, got: ${startResult.content?.[0]?.text}`);
-  
+
   await wait(500);
-  
+
   try {
     // One statement runs at once; a `for` block would wait at the "..." prompt for a blank line
     const result = await interactWithProcess({
@@ -199,13 +192,19 @@ async function testInteractTruncation() {
       input: `print("\\n".join(f"line {i}" for i in range(${printedLines})))`,
       timeout_ms: 10000
     });
-    const outputText = result.content?.[0]?.text ?? '';
-    assert(!result.isError, `The Python interaction should succeed, got: ${outputText}`);
-    assert(outputText.includes(`Output truncated: showing ${lineLimit} of`), `${printedLines} printed lines should be truncated to ${lineLimit}, got: ${outputText.slice(-300)}`);
+
+    assert(!result.isError, `Python interaction should succeed, got: ${result.content?.[0]?.text}`);
+
+    const { truncated, shownLines, totalLines } = result.structuredContent;
+    assert.strictEqual(truncated, true, `${printedLines} lines should exceed the ${lineLimit}-line limit`);
+    assert.strictEqual(shownLines, lineLimit, 'Should show exactly the configured number of lines');
+    assert(totalLines >= printedLines, `Should count all ${printedLines} printed lines, got ${totalLines}`);
+
+    const outputText = result.content[0].text;
     assert(outputText.includes('line 0'), 'Visible output should start with the first printed line');
     assert(!outputText.includes(`line ${printedLines - 1}`), 'Lines past the limit should be hidden');
     assert(outputText.includes('Use read_process_output'), 'Should suggest using read_process_output');
-    console.log(`✅ Test 6 passed: ${printedLines} lines truncated to ${lineLimit} with a read_process_output hint`);
+    console.log(`✅ Test 6 passed: ${totalLines} lines truncated to ${shownLines} with a read_process_output hint`);
   } finally {
     await forceTerminate({ pid });
   }
@@ -222,7 +221,7 @@ async function testReReadOutput() {
     timeout_ms: 3000
   });
   
-  const pid = extractPid(startResult);
+  const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
   await wait(500);

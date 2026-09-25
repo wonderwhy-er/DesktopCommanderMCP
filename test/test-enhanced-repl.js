@@ -1,27 +1,8 @@
 import assert from 'assert';
-import { execSync } from 'child_process';
 import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } from '../dist/tools/improved-process-tools.js';
+import { getSystemInfo } from '../dist/utils/system-info.js';
+import { skip } from './helpers/run-if-main.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
-
-/**
- * Determines the correct python command to use
- * @returns {string} 'python3' or 'python'
- */
-function getPythonCommand() {
-  try {
-    // Prefer python3 if available
-    execSync('command -v python3', { stdio: 'ignore' });
-    return 'python3';
-  } catch (e) {
-    // Fallback to python
-    try {
-      execSync('command -v python', { stdio: 'ignore' });
-      return 'python';
-    } catch (error) {
-      throw new Error('Neither python3 nor python command is available in the PATH');
-    }
-  }
-}
 
 
 /**
@@ -29,23 +10,26 @@ function getPythonCommand() {
  */
 async function testEnhancedREPL() {
   console.log('Testing enhanced REPL functionality...');
-  
-  const pythonCommand = getPythonCommand();
+
+  // Use the Python the server itself detected
+  const { pythonInfo } = getSystemInfo();
+  if (!pythonInfo.available) {
+    skip('Enhanced REPL test: Python 3 is not installed');
+    return true;
+  }
+  const pythonCommand = pythonInfo.command;
   console.log(`Using python command: ${pythonCommand}`);
 
-  // Start Python in interactive mode
+  // Start Python in interactive mode (shell left to start_process's platform default)
   console.log('Starting Python REPL...');
   const result = await startProcess({
     command: `${pythonCommand} -i`,
-    timeout_ms: 10000,
-    shell: '/bin/bash'
+    timeout_ms: 10000
   });
   
   console.log('Result from start_process:', result);
   
-  // Extract PID from the result text
-  const pidMatch = result.content[0].text.match(/Process started with PID (\d+)/);
-  const pid = pidMatch ? parseInt(pidMatch[1]) : null;
+  const pid = result.structuredContent?.pid;
   
   if (!pid) {
     console.error("Failed to get PID from Python process");
