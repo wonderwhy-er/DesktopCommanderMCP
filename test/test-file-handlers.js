@@ -22,7 +22,8 @@ import { getFileHandler } from '../dist/utils/files/factory.js';
 import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { isNoChrome } from './helpers/pdf.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -492,7 +493,12 @@ async function testPdfWriteFromMarkdown() {
   const handler = await getFileHandler(PDF_FILE);
   assert.strictEqual(handler.constructor.name, 'PdfFileHandler', '.pdf should use PdfFileHandler');
 
-  await writeFile(PDF_FILE, markdown);
+  try {
+    await writeFile(PDF_FILE, markdown);
+  } catch (error) {
+    if (isNoChrome(error)) return skip(`PDF handler writes markdown: no Chrome to render with (${error.message})`);
+    throw error;
+  }
 
   const stats = await fs.stat(PDF_FILE).catch(() => null);
   assert.ok(stats && stats.size > 0, 'Writing markdown to a .pdf path should create the PDF file');
@@ -524,9 +530,10 @@ async function runAllTests() {
   await testReadFilePreviewMetadata();
   await testMarkdownExactMatchSave();
   await testWriteModeGuard();
-  await testPdfWriteFromMarkdown();
+  const pdfWrite = await testPdfWriteFromMarkdown();
 
-  console.log('\n✅ All file handler tests passed!');
+  // A skipped test neither passes nor fails
+  console.log(pdfWrite === SKIPPED ? '\n✅ File handler tests passed, 1 skipped' : '\n✅ All file handler tests passed!');
 }
 
 // Export the main test function
