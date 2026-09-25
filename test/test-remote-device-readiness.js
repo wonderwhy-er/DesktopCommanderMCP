@@ -78,7 +78,7 @@ function makeFakeClient({ latencyByStatus = {} } = {}) {
         eq: () => {
             const settled = pending;
             pending = null;
-            return new Promise((resolve) => {
+            const write = new Promise((resolve) => {
                 const land = () => {
                     if (settled) completions.push(settled.payload);
                     resolve({ data: null, error: null });
@@ -86,6 +86,9 @@ function makeFakeClient({ latencyByStatus = {} } = {}) {
                 if (settled?.delay) setTimeout(land, settled.delay);
                 else land();
             });
+            // The device bounds its row writes; no case here runs into that bound
+            write.abortSignal = () => write;
+            return write;
         },
     };
     return { writes, completions, from: () => chain };

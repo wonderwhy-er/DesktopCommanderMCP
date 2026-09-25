@@ -97,6 +97,11 @@ const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
 // Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
 // does not cover.
 const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
+// Cap on one write to this device's row (capability, status), after which it
+// is aborted. A PATCH sent down a half-open connection is otherwise answered
+// only by fetch's own 300 s headers timeout, and the write queue behind it,
+// with the presence publish waiting on that queue, waits as long.
+const DEVICE_ROW_WRITE_TIMEOUT_MS = 10_000;
 // Cap on the shutdown session fetch, which races device.ts's 5s force-exit.
 const OFFLINE_SESSION_TIMEOUT_MS = 500;
 // realtime-js parks in 'disconnecting' for ~100ms after a disconnect and
@@ -742,9 +747,13 @@ export class RemoteChannel {
             const { error } = await this.client
                 .from('mcp_devices')
                 .update({ capabilities })
-                .eq('id', this.deviceId);
+                .eq('id', this.deviceId)
+                .abortSignal(this.deviceRowWriteSignal());
             if (error) {
                 console.error('[DEBUG] Failed to update transport capability:', error.message);
+                // An aborted write may still land: what the row holds is
+                // unknown, so the next write of either value is not skipped.
+                this.transportCapableWritten = null;
                 return false;
             }
             this.transportCapableWritten = capable;
@@ -759,9 +768,15 @@ export class RemoteChannel {
             }
         } catch (error: any) {
             console.error('[DEBUG] Transport capability update threw:', error?.message);
+            this.transportCapableWritten = null;
             return false;
         }
         return true;
+    }
+
+    /** Aborts one write to this device's row after DEVICE_ROW_WRITE_TIMEOUT_MS (a method, so tests can shorten it). */
+    private deviceRowWriteSignal(): AbortSignal {
+        return AbortSignal.timeout(DEVICE_ROW_WRITE_TIMEOUT_MS);
     }
 
     /** Create and subscribe the private channel (initial join and recreation). */
@@ -1218,8 +1233,9 @@ export class RemoteChannel {
                         'withdrawTransportCapability'
                     );
                 } catch (withdrawErr: any) {
-                    // The write stays queued and still lands, in order with any
-                    // re-publish after it; the flag only advances on a confirmed write.
+                    // The write stays queued, in order with any re-publish after
+                    // it, and ends within DEVICE_ROW_WRITE_TIMEOUT_MS; the flag
+                    // only advances on a confirmed write.
                     console.debug(`[DEBUG] Capability withdrawal did not complete: ${withdrawErr?.message}`);
                 }
             }
@@ -1508,7 +1524,8 @@ export class RemoteChannel {
         const { error } = await this.client
             .from('mcp_devices')
             .update({ status: status, last_seen: new Date().toISOString() })
-            .eq('id', deviceId);
+            .eq('id', deviceId)
+            .abortSignal(this.deviceRowWriteSignal());
 
         if (error) {
             console.error(`[DEBUG] Failed to set status ${status}:`, error.message);
