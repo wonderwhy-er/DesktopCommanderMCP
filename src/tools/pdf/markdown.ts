@@ -6,7 +6,7 @@ import { existsSync, readdirSync } from 'fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { createRequire } from 'module';
 import { tmpdir, userInfo } from 'os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import type { Browser, LaunchOptions, PuppeteerNode } from 'puppeteer';
 import { convertMdToPdf } from 'md-to-pdf/dist/lib/md-to-pdf.js';
 import { defaultConfig, type Config as MdToPdfConfig } from 'md-to-pdf/dist/lib/config.js';
@@ -38,7 +38,7 @@ const RENDER_COOKIE_NAME = 'desktop-commander-pdf-render';
 // way md-to-pdf loads them (they are its dependencies, not Desktop Commander's)
 const requireFromMdToPdf = createRequire(createRequire(import.meta.url).resolve('md-to-pdf'));
 const puppeteer: PuppeteerNode = requireFromMdToPdf('puppeteer');
-const serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean }) => Promise<void> =
+const serveHandler: (request: IncomingMessage, response: ServerResponse, config: { public: string; directoryListing: boolean; cleanUrls: boolean }) => Promise<void> =
     requireFromMdToPdf('serve-handler');
 const grayMatter: (input: string, options: unknown) => { content: string; data: unknown } = requireFromMdToPdf('gray-matter');
 
@@ -459,22 +459,23 @@ const isHttpUrl = (input: string): boolean => {
  * The files md-to-pdf reads from disk into the page it renders, from write_pdf's
  * options or the front matter: stylesheet paths, script paths, and the
  * highlight style (a file name in highlight.js's styles folder). Each must be
- * inside the allowed folders, checked as every file tool checks a path.
- * md-to-pdf's own stylesheet and highlight styles are not the caller's files
- * and stay allowed.
+ * inside the allowed folders, checked as every file tool checks a path, and is
+ * replaced in `render` by the path the check resolved (links followed): md-to-pdf
+ * then reads the file that was checked, even if a link on the way is changed
+ * after the check. md-to-pdf's own stylesheet and highlight styles are not the
+ * caller's files and stay allowed.
  */
 async function validateRenderFiles(render: Record<string, unknown>, validatePath: (path: string) => Promise<string>): Promise<void> {
     // md-to-pdf takes one value or a list
-    const list = (value: unknown): unknown[] => Array.isArray(value) ? value : [value];
-    for (const stylesheet of list(render.stylesheet)) {
-        if (typeof stylesheet === 'string' && stylesheet !== '' && !isHttpUrl(stylesheet)) {
-            await validatePath(stylesheet);
-        }
+    const eachOf = async (value: unknown, check: (item: unknown) => Promise<unknown>) =>
+        Array.isArray(value) ? Promise.all(value.map(check)) : check(value);
+    if ('stylesheet' in render) {
+        render.stylesheet = await eachOf(render.stylesheet, async (stylesheet) =>
+            typeof stylesheet === 'string' && stylesheet !== '' && !isHttpUrl(stylesheet) ? validatePath(stylesheet) : stylesheet);
     }
-    for (const script of list(render.script)) {
-        if (isPlainObject(script) && typeof script.path === 'string') {
-            await validatePath(script.path);
-        }
+    if ('script' in render) {
+        render.script = await eachOf(render.script, async (script) =>
+            isPlainObject(script) && typeof script.path === 'string' ? { ...script, path: await validatePath(script.path) } : script);
     }
     if (typeof render.highlight_style === 'string') {
         // Where md-to-pdf looks for it
@@ -482,7 +483,12 @@ async function validateRenderFiles(render: Record<string, unknown>, validatePath
         const style = resolve(stylesFolder, `${render.highlight_style}.css`);
         const inStylesFolder = relative(stylesFolder, style);
         if (inStylesFolder === '..' || inStylesFolder.startsWith(`..${sep}`) || isAbsolute(inStylesFolder)) {
-            await validatePath(style);
+            const checked = await validatePath(style);
+            // md-to-pdf reads <styles folder>/<highlight_style>.css: name the checked file that way
+            if (!checked.endsWith('.css')) {
+                throw new Error(`highlight_style ${render.highlight_style} leads to ${checked}, which is not a .css file`);
+            }
+            render.highlight_style = relative(stylesFolder, checked.slice(0, -'.css'.length));
         }
     }
 }
@@ -491,21 +497,27 @@ async function validateRenderFiles(render: Record<string, unknown>, validatePath
  * Serve a file of the render's base folder only if it is inside the allowed
  * folders, checked as every file tool checks it (links resolved): markdown must
  * not embed a file from outside them, whether the base folder is the working
- * folder or reaches outside through a linked folder.
+ * folder or reaches outside through a linked folder. The file served is the one
+ * the check resolved, not the URL's path looked up again, so a link on the way
+ * that is changed after the check doesn't lead elsewhere.
  */
 async function serveAllowedFile(request: IncomingMessage, response: ServerResponse, basedir: string): Promise<void> {
     // Imported when used: tools/filesystem.js loads this module
     const { validatePath } = await import('../filesystem.js');
+    let file: string;
     try {
-        // The file serve-handler maps the URL to
+        // The file the URL names in the base folder
         const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
-        await validatePath(join(basedir, pathname));
+        file = await validatePath(join(basedir, pathname));
     } catch {
         // Outside the allowed folders (or not a file path): refused, not served
         response.writeHead(403, { 'Content-Type': 'text/plain' }).end('Forbidden');
         return;
     }
-    await serveHandler(request, response, { public: basedir, directoryListing: false });
+    // serve-handler serves exactly that file (no .html redirects, which would name it from another folder).
+    // It reads only the request's url and headers; the request itself keeps its URL.
+    const forFile = { url: `/${encodeURIComponent(basename(file))}`, headers: request.headers } as IncomingMessage;
+    await serveHandler(forFile, response, { public: dirname(file), directoryListing: false, cleanUrls: false });
 }
 
 /**

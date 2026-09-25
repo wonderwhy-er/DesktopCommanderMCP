@@ -8,9 +8,14 @@
  * into the PDF. Expected: a file outside the allowed folders is refused with
  * the allowed-folder message; a stylesheet inside them and the default
  * highlight style still apply.
+ *
+ * The render reads the files the check approved: a stylesheet, highlight
+ * style, script or file served to the page behind a link that is changed to
+ * point outside right after its check is still read where the check found it.
  */
 import assert from 'assert';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import path from 'path';
 import { createRequire } from 'module';
 import { configManager } from '../dist/config-manager.js';
@@ -32,6 +37,36 @@ const HIGHLIGHT_STYLES = path.resolve(path.dirname(mdToPdfRequire.resolve('highl
 async function pdfText(file) {
   const parsed = await parsePdfToMarkdown(file);
   return parsed.pages.map((page) => page.text).join('\n');
+}
+
+/** A link to a folder: a junction on Windows (no admin rights or Developer Mode needed) */
+const linkFolder = (target, link) => fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+const removeLink = (link) => (process.platform === 'win32' ? fs.rmdirSync(link) : fs.unlinkSync(link));
+const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+/**
+ * Makes fs.realpath (which validatePath resolves links with) change each of
+ * `links` to point at `target` right after it first resolves a path through
+ * it: the allowed-folder check sees the old target, anything reading the path
+ * later the new one. restore() puts fs.realpath back; `pending` lists the
+ * links never checked.
+ */
+function retargetAfterCheck(links, target) {
+  const realpath = fsp.realpath;
+  const pending = new Set(links);
+  fsp.realpath = async function (file, ...rest) {
+    const resolved = await realpath.call(this, file, ...rest);
+    const requested = path.resolve(String(file));
+    for (const link of pending) {
+      if (samePath(requested, link) || samePath(requested.slice(0, link.length + 1), link + path.sep)) {
+        pending.delete(link);
+        removeLink(link);
+        linkFolder(target, link);
+      }
+    }
+    return resolved;
+  };
+  return { pending, restore: () => { fsp.realpath = realpath; } };
 }
 
 async function run() {
@@ -94,6 +129,46 @@ async function run() {
       assert(pageText.includes(INSIDE), 'a stylesheet inside the allowed folders was not applied');
       assert(/\.hljs/.test(pageText), 'the default highlight style was not applied');
     });
+
+    await check('write_pdf: files behind a link changed right after their check are read where the check found them', async () => {
+      // Each file exists twice: where the links point when checked, and outside the allowed folders
+      const kinds = ['STYLE', 'HIGHLIGHT', 'SCRIPT', 'SERVED'];
+      const checked = path.join(ws.allowed, 'checked');
+      const elsewhere = path.join(ws.outside, 'elsewhere');
+      for (const [folder, mark] of [[checked, 'CHECKED'], [elsewhere, 'RETARGETED']]) {
+        fs.mkdirSync(folder, { recursive: true });
+        fs.writeFileSync(path.join(folder, 'style.css'), `/* ${mark}STYLE7731 */`);
+        fs.writeFileSync(path.join(folder, 'hl.css'), `/* ${mark}HIGHLIGHT7731 */`);
+        fs.writeFileSync(path.join(folder, 'leak.js'), `window.leak = '${mark}SCRIPT7731';`);
+        fs.writeFileSync(path.join(folder, 'note.txt'), `${mark}SERVED7731`);
+      }
+      const links = ['css-link', 'hl-link', 'js-link', 'served-link'].map((name) => path.join(ws.allowed, name));
+      for (const link of links) linkFolder(checked, link);
+      const [cssLink, hlLink, jsLink] = links;
+      const retarget = retargetAfterCheck(links, elsewhere);
+      let rendered;
+      try {
+        rendered = await render('retargeted', {
+          content: '# Report\n\n<iframe src="served-link/note.txt"></iframe>',
+          options: {
+            basedir: ws.allowed,
+            stylesheet: [path.join(cssLink, 'style.css')],
+            highlight_style: path.relative(HIGHLIGHT_STYLES, path.join(hlLink, 'hl')),
+            script: [{ path: path.join(jsLink, 'leak.js') }, { content: COPY_INTO_PAGE }],
+          },
+        });
+      } finally {
+        retarget.restore();
+      }
+      const { pdf, result, text } = rendered;
+      assert(!result.isError && fs.existsSync(pdf), `the render failed: ${text}`);
+      assert.deepStrictEqual([...retarget.pending].map((link) => path.basename(link)), [], 'the render never checked these links');
+      const pageText = await pdfText(pdf);
+      const leaked = kinds.filter((kind) => pageText.includes(`RETARGETED${kind}7731`));
+      assert.deepStrictEqual(leaked, [], `the render read these from outside the allowed folders, through a link changed after its check: ${leaked.join(', ')}`);
+      const applied = kinds.filter((kind) => pageText.includes(`CHECKED${kind}7731`));
+      assert.deepStrictEqual(applied, kinds, `the files the check approved should apply: ${pageText.slice(0, 400)}`);
+    });
   } finally {
     await configManager.setValue('allowedDirectories', originalAllowed ?? []);
     ws.cleanup();
@@ -103,7 +178,7 @@ async function run() {
     return true;
   }
   if (failures.length > 0) {
-    console.log(`${failures.length} of 4 cases failed`);
+    console.log(`${failures.length} of 5 cases failed`);
     return false;
   }
   return true;
