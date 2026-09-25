@@ -1,8 +1,8 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
+import { createTempDir } from './test-env.js';
 
 const require = createRequire(import.meta.url);
 const { PDFDocument } = require('pdf-lib');
@@ -37,7 +37,7 @@ export function isNoChrome(errorOrText) {
  * (macOS temp folders sit behind a /var -> /private/var link), removed by cleanup().
  */
 export function pdfWorkspace(name) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `dc-test-${name}-`)));
+  const root = createTempDir(`dc-test-${name}-`);
   const allowed = path.join(root, 'allowed');
   const outside = path.join(root, 'outside');
   fs.mkdirSync(allowed);
