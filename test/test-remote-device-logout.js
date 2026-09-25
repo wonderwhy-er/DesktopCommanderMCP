@@ -14,6 +14,10 @@
  *   still there, then read its session and write, and a logout in between was
  *   undone. The save's check and write and the logout's removal now take a
  *   lock on device.json (proper-lockfile), so they happen one after the other.
+ * - a login after the logout, while the logged-out device still runs: its
+ *   device.json passed the check that the file was still there, and the old
+ *   device's next save wrote the old credentials over it. The save now checks
+ *   that the file still holds what this run last loaded or saved.
  *
  * Real `remote --logout` processes, a real device process against the local
  * stand-in (helpers/remote-stand-in.js), and an MCPDevice in this process.
@@ -142,6 +146,32 @@ async function runTests() {
     assert.ok(!fs.existsSync(configPath),
       'remote --logout ran while the device was reading its session for a save (after it had checked that device.json '
       + `was still there, exit ${logout?.code}), and the save wrote device.json back: the logout did not stick`);
+  });
+
+  await test('a login after the logout is not written over by the device that was logged out', async ({ env, home }) => {
+    const configPath = deviceConfigPath(home);
+    writeDeviceConfig(home, { deviceId: 'device-1', session: { access_token: 'a0', refresh_token: 'r0' } });
+    const device = new MCPDevice();
+    device.configPath = configPath;
+    await device.loadPersistedConfig();
+    const rc = device.remoteChannel;
+    rc.getSession = async () => ({ data: { session: { access_token: 'a1', refresh_token: 'r1' } } });
+    await device.savePersistedConfig(); // the device has saved device.json this run
+
+    const logout = await runLogout(env);
+    assert.ok(!fs.existsSync(configPath), `setup: remote --logout did not remove device.json (exit ${logout.code}):\n${tail(logout.output)}`);
+    // A new `remote` logs in and saves its own device (the old device still runs)
+    const newLogin = { deviceId: 'device-2', session: { access_token: 'b0', refresh_token: 'rb0' } };
+    writeDeviceConfig(home, newLogin);
+
+    // The old device's next save: a token rotation, or its shutdown
+    rc.getSession = async () => ({ data: { session: { access_token: 'a2', refresh_token: 'r2' } } });
+    await device.savePersistedConfig();
+
+    const onDisk = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    assert.deepStrictEqual(onDisk, newLogin,
+      'the device logged out by remote --logout wrote its credentials over the device.json a new login saved after '
+      + 'the logout, so the next start restores the old device instead of the new one');
   });
 
   console.log(`\n${failures.length ? '🔴' : '✅'} remote device logout: ${failures.length} failing test(s).`);
