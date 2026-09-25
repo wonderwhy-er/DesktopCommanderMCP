@@ -1,23 +1,21 @@
 // DC-level repro: the real per-tool-call gate.
 // server.ts CallTool handler awaits usageTracker.trackSuccess(name) before
-// returning ANY tool's result. trackSuccess -> saveStats -> configManager
-// .setValue -> saveConfig -> fs.writeFile (libuv threadpool).
-// If stalled cloud-path reads hold all threadpool threads, this awaited write
-// never resolves -> even list_processes (pure memory) never returns.
+// returning ANY tool's result. trackSuccess used to await a config save
+// (fs.writeFile on the libuv threadpool). If stalled cloud-path reads hold all
+// threadpool threads, that awaited write never resolves -> even list_processes
+// (pure memory) never returns.
 //
-// Run: UV_THREADPOOL_SIZE=4 BLOCKERS=4 node test/test-dc-tracking-gate.js
-import { execSync } from 'child_process';
+// Run: UV_THREADPOOL_SIZE=4 BLOCKERS=4 node test/repro/run-repro.js test-dc-tracking-gate.js
+// Exit code: 1 if trackSuccess is still gated behind the starved threadpool.
 import fs from 'fs/promises';
-import os from 'os';
-import path from 'path';
 import { configManager } from '../../dist/config-manager.js';
 import { usageTracker } from '../../dist/utils/usageTracker.js';
+import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
 const BLOCKERS = Number(process.env.BLOCKERS || process.env.UV_THREADPOOL_SIZE || 4);
-const fifo = path.join(os.tmpdir(), `dc-gate-fifo-${Date.now()}`);
-execSync(`mkfifo ${fifo}`);
+const stalled = await createStalledReadTarget('dc-gate');
 
 // Warm the config so init()'s own disk read is already done and cached.
 await configManager.getConfig();
@@ -26,7 +24,7 @@ log(`config warmed; pool=${process.env.UV_THREADPOOL_SIZE || 4}, blockers=${BLOC
 // Simulate DC read_file/edit_block calls stuck on a stalled cloud mount:
 // each holds a threadpool thread until the (never-arriving) read returns.
 for (let i = 0; i < BLOCKERS; i++) {
-  fs.readFile(fifo).catch((e) => log(`fifo read ${i} errored: ${e.code}`));
+  fs.readFile(stalled.path).catch((e) => log(`stalled read ${i} errored: ${e.code}`));
 }
 
 // Now the exact thing the dispatcher awaits for EVERY successful tool call,
@@ -36,12 +34,12 @@ setTimeout(async () => {
   const t = Date.now();
   const guard = setTimeout(() => {
     log(`trackSuccess STILL BLOCKED after 5000ms -> list_processes would hang here. GATE REPRODUCED.`);
-    execSync(`rm -f ${fifo}`);
-    process.exit(0);
+    stalled.close();
+    process.exit(1);
   }, 5000);
   await usageTracker.trackSuccess('list_processes');
   clearTimeout(guard);
   log(`trackSuccess completed in ${Date.now() - t}ms (NOT gated)`);
-  execSync(`rm -f ${fifo}`);
+  stalled.close();
   process.exit(0);
 }, 200);

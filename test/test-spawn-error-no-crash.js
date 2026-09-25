@@ -29,8 +29,14 @@ const BOGUS_SHELL = process.platform === 'win32'
   ? '/usr/bin/definitely-not-a-shell'
   : '/definitely/not/a/shell';
 
+// Record crashes so each case can report them, and fail the file even if one
+// lands after the last check (a late crash is exactly what this test guards).
 let uncaught = null;
-process.on('uncaughtException', (err) => { uncaught = err; });
+process.on('uncaughtException', (err) => {
+  uncaught = err;
+  process.exitCode = 1;
+  console.error('✗ uncaught exception:', err.message);
+});
 
 /** Let the spawn 'error' event (next tick) and anything it triggers land. */
 async function settle() {
@@ -52,16 +58,17 @@ async function testBogusShellDoesNotCrash() {
 }
 
 async function testBogusExecutableDoesNotCrash() {
-  // No shell option: the command itself is the executable that fails to resolve.
-  const result = await terminalManager.executeCommand(
-    'this-command-does-not-exist-4f2a', 3000, false
-  );
+  // Runs through the default shell, which reports the unknown command itself.
+  const BOGUS_COMMAND = 'this-command-does-not-exist-4f2a';
+  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 3000);
   await settle();
 
   assert.strictEqual(uncaught, null,
     `spawn failure escaped as an uncaught exception: ${uncaught && uncaught.message}`);
-  assert.ok(result, 'executeCommand must return a result, not hang');
-  console.log('✓ bogus executable returns an error without crashing the process');
+  // Every shell's "not found" message names the command (bash, zsh, cmd, PowerShell)
+  assert.ok(result.output.includes(BOGUS_COMMAND),
+    `expected the shell's not-found error for ${BOGUS_COMMAND}, got ${JSON.stringify(result)}`);
+  console.log('✓ bogus executable returns the shell error without crashing the process');
 }
 
 async function testHealthyCommandStillWorks() {

@@ -1,5 +1,4 @@
 import assert from 'assert';
-import { pathToFileURL } from 'url';
 
 import { renderMarkdown } from '../dist/ui/file-preview/src/components/markdown-renderer.js';
 import { resolveMarkdownLink, rewriteWikiLinks } from '../dist/ui/file-preview/src/markdown/linking.js';
@@ -11,6 +10,7 @@ import { createSlugTracker, slugifyMarkdownHeading } from '../dist/ui/file-previ
 import { getDocumentFullscreenAvailability, shouldAutoLoadDocumentOnEnterFullscreen } from '../dist/ui/file-preview/src/document-workspace.js';
 import { renderPayloadBody, getFileTypeCapabilities } from '../dist/ui/file-preview/src/file-type-handlers.js';
 import { extractRenderPayload } from '../dist/ui/file-preview/src/payload-utils.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 async function testSlugGeneration() {
   console.log('\n--- Test 1: heading slug generation ---');
@@ -608,11 +608,4 @@ export default async function runTests() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runTests().then((success) => {
-    process.exit(success ? 0 : 1);
-  }).catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

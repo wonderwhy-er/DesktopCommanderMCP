@@ -5,6 +5,7 @@ import assert from 'assert';
 
 import { server } from '../dist/server.js';
 import { buildTrackUiEventCapturePayload } from '../dist/handlers/history-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 function getRequestHandler(method) {
   const handlers = server._requestHandlers;
@@ -70,11 +71,4 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then((success) => {
-    process.exit(success ? 0 : 1);
-  }).catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

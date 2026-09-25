@@ -1,7 +1,7 @@
 import assert from 'assert';
-import { pathToFileURL } from 'url';
 
 import { renderDirectoryBody } from '../dist/ui/file-preview/src/directory-controller.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 async function testDirectoryBodyRendering() {
   console.log('\n--- Test: directory preview rendering ---');
@@ -40,11 +40,4 @@ export default async function runTests() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runTests().then((success) => {
-    process.exit(success ? 0 : 1);
-  }).catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

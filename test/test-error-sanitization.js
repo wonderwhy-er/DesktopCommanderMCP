@@ -1,47 +1,12 @@
 import assert from 'assert';
 import path from 'path';
-
-// Local implementation of sanitizeError for testing
-// This mirrors the implementation in src/utils/capture.ts but avoids import issues
-// when running tests. The actual sanitization logic is identical.
-// 
-// NOTE: If you update the sanitizeError function in src/utils/capture.ts,
-// be sure to update this implementation as well to keep tests accurate.
-function sanitizeError(error) {
-  let errorMessage = '';
-  let errorCode = undefined;
-  
-  if (error instanceof Error) {
-    // Extract just the error name and message without stack trace
-    errorMessage = error.name + ': ' + error.message;
-    
-    // Extract error code if available (common in Node.js errors)
-    if ('code' in error) {
-      errorCode = error.code;
-    }
-  } else if (typeof error === 'string') {
-    errorMessage = error;
-  } else if (error && error.message) {
-    errorMessage = error.message;
-  } else {
-    errorMessage = 'Unknown error';
-  }
-  
-  // Remove any file paths using regex
-  // This pattern matches common path formats including Windows and Unix-style paths
-  errorMessage = errorMessage.replace(/(?:\/|\\)[\w\d_.-\/\\]+/g, '[PATH]');
-  errorMessage = errorMessage.replace(/[A-Za-z]:\\[\w\d_.-\/\\]+/g, '[PATH]');
-  
-  return { 
-    message: errorMessage, 
-    code: errorCode 
-  };
-}
+import { sanitizeError } from '../dist/utils/capture.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Helper function to run a test and report results
-const runTest = (name, testFn) => {
+const runTest = async (name, testFn) => {
     try {
-        testFn();
+        await testFn();
         console.log(`✅ Test passed: ${name}`);
         return true;
     } catch (error) {
@@ -56,7 +21,7 @@ const runAllTests = async () => {
     let allPassed = true;
     
     // Test sanitization of error objects with file paths
-    allPassed = runTest('sanitizeError - Error object with path', () => {
+    allPassed = await runTest('sanitizeError - Error object with path', () => {
         const mockError = new Error('Failed to read file at /Users/username/sensitive/path/file.txt');
         const sanitized = sanitizeError(mockError);
         
@@ -65,7 +30,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test sanitization of Windows-style paths
-    allPassed = runTest('sanitizeError - Windows path', () => {
+    allPassed = await runTest('sanitizeError - Windows path', () => {
         const mockError = new Error('Failed to read file at C:\\Users\\username\\Documents\\file.txt');
         const sanitized = sanitizeError(mockError);
         
@@ -74,7 +39,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test sanitization of error with multiple paths
-    allPassed = runTest('sanitizeError - Multiple paths', () => {
+    allPassed = await runTest('sanitizeError - Multiple paths', () => {
         const mockError = new Error('Failed to move file from /path/source.txt to /path/destination.txt');
         const sanitized = sanitizeError(mockError);
         
@@ -84,7 +49,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test sanitization of string errors
-    allPassed = runTest('sanitizeError - String error', () => {
+    allPassed = await runTest('sanitizeError - String error', () => {
         const errorString = 'Cannot access /var/log/sensitive/data.log due to permissions';
         const sanitized = sanitizeError(errorString);
         
@@ -93,7 +58,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test error code preservation
-    allPassed = runTest('sanitizeError - Error code preservation', () => {
+    allPassed = await runTest('sanitizeError - Error code preservation', () => {
         const mockError = new Error('ENOENT: no such file or directory, open \'/path/to/file.txt\'');
         mockError.code = 'ENOENT';
         
@@ -104,7 +69,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test path with special characters
-    allPassed = runTest('sanitizeError - Path with special characters', () => {
+    allPassed = await runTest('sanitizeError - Path with special characters', () => {
         const mockError = new Error('Failed to process /path/with-special_chars/file!@#$%.txt');
         const sanitized = sanitizeError(mockError);
         
@@ -112,7 +77,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test non-error input
-    allPassed = runTest('sanitizeError - Non-error input', () => {
+    allPassed = await runTest('sanitizeError - Non-error input', () => {
         const nonError = { custom: 'object' };
         const sanitized = sanitizeError(nonError);
         
@@ -120,7 +85,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Test actual paths from the current environment
-    allPassed = runTest('sanitizeError - Actual system paths', () => {
+    allPassed = await runTest('sanitizeError - Actual system paths', () => {
         const currentDir = process.cwd();
         const homeDir = process.env.HOME || process.env.USERPROFILE;
         
@@ -132,7 +97,7 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // Integration test with capture function mock
-    allPassed = runTest('Integration - capture with error object', () => {
+    allPassed = await runTest('Integration - capture with error object', () => {
         // Create a mock capture function to test integration
         const mockCapture = (event, properties) => {
             // Check that no file paths are in the properties
@@ -166,11 +131,7 @@ const runAllTests = async () => {
 };
 
 // Run tests if this file is executed directly
-if (process.argv[1] === import.meta.url) {
-    runAllTests().then(success => {
-        process.exit(success ? 0 : 1);
-    });
-}
+runIfMain(import.meta.url, runAllTests);
 
 // Export the test function for the test runner
 export default runAllTests;
