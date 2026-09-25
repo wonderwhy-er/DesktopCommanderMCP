@@ -22,6 +22,9 @@ const mcpRoot = path.resolve(__dirname, '..', '..');
 const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
 let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
 
+/** How long a node:local script's output pipes may stay open after its timeout ended its tree */
+const PIPES_CLOSE_WAIT_MS = 1000;
+
 /** The answer when some processes of a session could not be ended */
 function terminationFailedResult(pid: number): ServerResult {
   return {
@@ -53,13 +56,17 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
       // processes it started running and holding its output pipes open, so
       // 'close' never came and the call never returned.
       const timer = setTimeout(async () => {
-        if (!(await terminateProcessTree(proc))) {
-          // Some of the tree survived and may keep the output pipes open, so
-          // 'close' may never come: answer now and stop reading from them
-          proc.stdout.destroy();
-          proc.stderr.destroy();
-          resolve({ stdout, stderr, exitCode: 1, treeSurvived: true });
+        if (await terminateProcessTree(proc)) {
+          // The tree ended, but a process that left it before the walk (one
+          // started by a child that has exited) may still hold the output
+          // pipes: 'close' answers if it comes within PIPES_CLOSE_WAIT_MS
+          await new Promise((wait) => setTimeout(wait, PIPES_CLOSE_WAIT_MS).unref());
         }
+        // Some of the tree survived, or a process outside it holds the output
+        // pipes, so 'close' may never come: answer now and stop reading them
+        proc.stdout.destroy();
+        proc.stderr.destroy();
+        resolve({ stdout, stderr, exitCode: 1, treeSurvived: true });
       }, timeout_ms);
 
       proc.stdout.on('data', (data) => {

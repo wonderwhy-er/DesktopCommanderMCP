@@ -12,6 +12,8 @@
  * - the node:local timeout, which ends the script and whatever it started
  * - the failure path: when the tree can't be found, the reply says so and
  *   the log says why, and a later force_terminate tries again
+ * - a node:local timeout whose script started a process that left its tree
+ *   and holds its output pipes: the call still answers
  * and pins that making them terminable changed nothing else: on macOS/Linux
  * session processes stay in the server's process group.
  */
@@ -228,6 +230,49 @@ async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
 }
 
 /**
+ * A node:local script can start a process that leaves its tree before the
+ * timeout (a child that starts a detached grandchild and exits): the tree walk
+ * doesn't find it, it keeps the script's output pipes open, and 'close' never
+ * comes. The call must still answer, and say that processes may still run.
+ */
+async function testNodeLocalTimeoutAnswersWhenAProcessLeftTheTree() {
+  console.log('\nTest: node:local timeout answers when a process that left the tree holds the pipes');
+  const TIMEOUT_MS = 1500;
+  const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
+  const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
+  const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
+  assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
+  const dir = createPidDir();
+  const scriptPidFile = path.join(dir, 'script.pid.txt');
+  const grandchildPidFile = path.join(dir, 'grandchild.pid.txt');
+  const grandchildCode = `require('fs').writeFileSync(${JSON.stringify(grandchildPidFile)}, String(process.pid)); setTimeout(() => {}, 60000);`;
+  const childCode = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grandchildCode)}], { stdio: 'inherit', detached: true, windowsHide: true }).unref();`;
+  const script = `
+    import { spawn } from 'child_process';
+    import fs from 'fs';
+    fs.writeFileSync(${JSON.stringify(scriptPidFile)}, String(process.pid));
+    spawn(process.execPath, ['-e', ${JSON.stringify(childCode)}], { stdio: 'inherit', windowsHide: true });
+    setInterval(() => {}, 1000);
+  `;
+  const pidIn = (file) => (fs.existsSync(file) ? [Number(fs.readFileSync(file, 'utf8'))] : []);
+  try {
+    let limit;
+    const result = await Promise.race([
+      interactWithProcess({ pid: virtualPid, input: script, timeout_ms: TIMEOUT_MS }),
+      new Promise((resolve) => { limit = setTimeout(() => resolve(null), RETURN_LIMIT_MS); }),
+    ]);
+    clearTimeout(limit);
+    assert.strictEqual(pidIn(grandchildPidFile).length, 1, 'The script should have started the grandchild');
+    assert(result, `interact_with_process should answer after its ${TIMEOUT_MS}ms timeout, but had not after ${RETURN_LIMIT_MS}ms: a process outside the tree held the output pipes`);
+    assert.strictEqual(result.content[0].text, `Error: Could not terminate every process of session ${virtualPid}; some may still be running`);
+    console.log('✓ Answered, saying processes may still run, while a process outside the tree held the pipes');
+  } finally {
+    await forceTerminate({ pid: virtualPid });
+    cleanUpProcesses([...pidIn(scriptPidFile), ...pidIn(grandchildPidFile)], [dir]);
+  }
+}
+
+/**
  * When the tool that finds the tree can't run (ps on macOS/Linux, taskkill on
  * Windows), force_terminate must not claim success: the reply says processes
  * may still run, the log gets the real reason, and the shell is still killed.
@@ -379,6 +424,7 @@ export default async function runTests() {
     testForceTerminateEndsChildrenStartedDuringGrace,
     testNodeLocalTimeoutEndsTree,
     testNodeLocalTimeoutAnswersWhenTreeSurvives,
+    testNodeLocalTimeoutAnswersWhenAProcessLeftTheTree,
     testTerminationFailureIsReported,
     testFailedTerminationIsRetried,
     testSessionsStayInServerProcessGroup,
