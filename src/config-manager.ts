@@ -360,7 +360,11 @@ class ConfigManager {
     if (existsSync(this.configPath)) {
       const backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
       try {
-        await fs.rename(this.configPath, backupPath);
+        // A copy, not a move: if writing the repaired config below fails, config.json
+        // stays as it was and the next start repairs it, instead of finding it missing
+        // and taking it for a first run (allowedDirectories [] opens every folder).
+        // A repair done again after such a failure keeps the copy it already made.
+        if (!(await this.newestCorruptCopyMatches())) await fs.copyFile(this.configPath, backupPath);
         backupCreated = true;
       } catch (backupError) {
         console.error('Failed to preserve corrupt config before recovery:', backupError);
@@ -395,6 +399,23 @@ class ConfigManager {
       config: defaults,
       telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
     };
+  }
+
+  /** Whether the newest config.json.corrupt.<ms>.<pid> copy holds config.json's bytes */
+  private async newestCorruptCopyMatches(): Promise<boolean> {
+    const folder = path.dirname(this.configPath);
+    const prefix = `${path.basename(this.configPath)}.corrupt.`;
+    const names = await fs.readdir(folder).catch(() => [] as string[]);
+    // The newest has the largest <ms>
+    const newest = names.filter((name) => name.startsWith(prefix))
+      .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10))
+      .pop();
+    if (!newest) return false;
+    const [copy, current] = await Promise.all([
+      fs.readFile(path.join(folder, newest)).catch(() => null),
+      fs.readFile(this.configPath),
+    ]);
+    return copy !== null && copy.equals(current);
   }
 
   private async recoverCorruptConfig(
