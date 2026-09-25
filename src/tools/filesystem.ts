@@ -169,6 +169,51 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 }
 
 /**
+ * An allowed directory's real path, or null when it can't be read. validatePath
+ * checks real paths, so an allowed directory reached through a symlink or
+ * junction (macOS: /var -> /private/var) must match by its real path too.
+ * When the real path can't be read, only the written form matches, which can
+ * only deny, never widen, access.
+ */
+async function getAllowedDirRealPath(allowedDir: string): Promise<string | null> {
+    try {
+        return await fs.realpath(expandHome(allowedDir));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a normalized path is an allowed directory or inside it
+ */
+function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string): boolean {
+    let normalizedAllowedDir = normalizePath(allowedDir);
+    if (normalizedAllowedDir.slice(-1) === path.sep) {
+        normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
+    }
+
+    // Check if path is exactly the allowed directory
+    if (normalizedPathToCheck === normalizedAllowedDir) {
+        return true;
+    }
+
+    // Check if path is a subdirectory of the allowed directory
+    // Make sure to add a separator to prevent partial directory name matches
+    // e.g. /home/user vs /home/username
+    const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
+    if (subdirCheck) {
+        return true;
+    }
+
+    // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
+    if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
+        return normalizedPathToCheck.startsWith('c:');
+    }
+
+    return false;
+}
+
+/**
  * Checks if a path is within any of the allowed directories
  *
  * @param pathToCheck Path to check
@@ -186,35 +231,27 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
-    // Check if the path is within any allowed directory
-    const isAllowed = allowedDirectories.some(allowedDir => {
-        let normalizedAllowedDir = normalizePath(allowedDir);
-        if (normalizedAllowedDir.slice(-1) === path.sep) {
-            normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
-        }
+    // As written first: no filesystem call, so an allowed directory on an
+    // unresponsive mount can't hold up a path inside another one
+    if (allowedDirectories.some((allowedDir) => isWithinAllowedDir(normalizedPathToCheck, allowedDir))) {
+        return true;
+    }
 
-        // Check if path is exactly the allowed directory
-        if (normalizedPathToCheck === normalizedAllowedDir) {
-            return true;
+    // Then by real path: the first match answers, so a real path that never
+    // resolves only holds up a path that no other allowed directory contains
+    return new Promise<boolean>((resolve) => {
+        let pending = allowedDirectories.length;
+        for (const allowedDir of allowedDirectories) {
+            void getAllowedDirRealPath(allowedDir).then((realPath) => {
+                if (realPath !== null && isWithinAllowedDir(normalizedPathToCheck, realPath)) {
+                    resolve(true);
+                }
+                if (--pending === 0) {
+                    resolve(false);
+                }
+            });
         }
-
-        // Check if path is a subdirectory of the allowed directory
-        // Make sure to add a separator to prevent partial directory name matches
-        // e.g. /home/user vs /home/username
-        const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
-        if (subdirCheck) {
-            return true;
-        }
-
-        // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
-        if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
-            return normalizedPathToCheck.startsWith('c:');
-        }
-
-        return false;
     });
-
-    return isAllowed;
 }
 
 /**
@@ -757,15 +794,21 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             const fullPath = path.join(currentPath, entry.name);
             const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
 
+            // A link (a junction on Windows) to a folder is a folder. A link whose
+            // target can't be read stays a [FILE], as every link was before.
+            const isDirectory = entry.isDirectory()
+                || (entry.isSymbolicLink() && await fs.stat(fullPath).then((stats) => stats.isDirectory(), () => false));
+
             // Add this entry to results
-            results.push(`${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${displayPath}`);
+            results.push(`${isDirectory ? "[DIR]" : "[FILE]"} ${displayPath}`);
 
             // If it's a directory and we have depth remaining, recurse
-            if (entry.isDirectory() && currentDepth > 1) {
+            if (isDirectory && currentDepth > 1) {
                 try {
-                    // Validate the path before recursing
-                    await validatePath(fullPath);
-                    await listRecursive(fullPath, currentDepth - 1, displayPath, false);
+                    // Validate the path before recursing, and list the folder that was
+                    // checked: a link can be retargeted between the check and the read
+                    const validatedPath = await validatePath(fullPath);
+                    await listRecursive(validatedPath, currentDepth - 1, displayPath, false);
                 } catch (error) {
                     // If validation fails or we can't access it, it will be marked as denied
                     // when we try to read it in the recursive call
@@ -779,6 +822,13 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             const displayPath = relativePath || path.basename(currentPath);
             results.push(`[WARNING] ${displayPath}: ${filteredCount} items hidden (showing first ${MAX_NESTED_ITEMS} of ${totalEntries} total)`);
         }
+    }
+
+    // A path that is a file lists as that file. Any other path goes on to the
+    // listing, which reports why it can't be read ([NOT_FOUND], [DENIED]).
+    const stats = await fs.stat(validPath).catch(() => undefined);
+    if (stats?.isFile()) {
+        return [`[FILE] ${path.basename(validPath)}`];
     }
 
     await listRecursive(validPath, depth, '', true);
