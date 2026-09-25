@@ -225,7 +225,7 @@ async function runTests() {
     assert.strictEqual(second.config.abTest_OnboardingPreTool, persisted, 'Same clientId should get the same variant');
   });
 
-  // Test 10: Malformed experiment data doesn't crash
+  // Test 10: Malformed experiment data doesn't crash, and the valid experiment next to it still answers
   await test('malformed experiment data does not throw', async () => {
     const { features, error } = await runAbTest({
       experiments: {
@@ -234,10 +234,11 @@ async function runTests() {
         BadExp3: { variants: 'not an array' },
         GoodExp: { variants: [{ name: 'a', weight: 50 }, { name: 'b', weight: 50 }] },
       },
+      config: { abTest_GoodExp: 'a' },
       features: ['a'],
     });
     assert.strictEqual(error, undefined, 'hasFeature should not throw on malformed experiments');
-    assert.ok(typeof features.a === 'boolean');
+    assert.strictEqual(features.a, true, 'The valid experiment next to the malformed ones should still answer');
   });
 
   // Test 11: An experiment name is a plain key, even one an object treats specially.
