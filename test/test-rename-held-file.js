@@ -8,7 +8,9 @@
  * file never blocks a rename, so there this only checks the operations work.
  * A rename that can never succeed (onto an existing folder or a read-only file,
  * which Windows also answers with EPERM) must fail at once instead of waiting
- * out the retries.
+ * out the retries. The helper that holds a file open must hold it for a path
+ * with a single quote in it (a user folder such as C:\Users\O'Brien), and
+ * must reject when it can't open the file instead of reporting it held.
  */
 
 import assert from 'assert';
@@ -23,6 +25,8 @@ import { runIfMain, skip } from './helpers/run-if-main.js';
 import { isTestHome } from './helpers/test-env.js';
 
 const LOCK_MS = 1000;
+// Holding a file takes PowerShell's start on Windows, a second or two
+const SETTLE_MS = 15_000;
 
 async function testMoveFileWhileHeldOpen(dir) {
   console.log('\nTest 1: move_file on a file another process holds open');
@@ -113,6 +117,33 @@ async function testMoveOntoReadOnlyFileFailsAtOnce(dir) {
   }
 }
 
+/** What holding `file` open answers: 'held', 'rejected: …', or 'still pending' after SETTLE_MS */
+function holdOutcome(file) {
+  const outcome = holdFileOpen(file, LOCK_MS).then((child) => { child.kill(); return 'held'; }, (error) => `rejected: ${error.message}`);
+  return Promise.race([outcome, new Promise((resolve) => setTimeout(() => resolve('still pending'), SETTLE_MS))]);
+}
+
+async function testHoldPathWithQuote(dir) {
+  console.log('\nTest 5: holding open a file in a folder named O\'Brien');
+
+  const folder = path.join(dir, "O'Brien");
+  await fs.mkdir(folder);
+  const file = path.join(folder, 'held.txt');
+  await fs.writeFile(file, 'held');
+
+  const outcome = await holdOutcome(file);
+  assert.strictEqual(outcome, 'held', `holding a file in a folder named O'Brien should work, got: ${outcome}`);
+  console.log('✓ Test 5 passed: the file was held');
+}
+
+async function testHoldMissingFileRejects(dir) {
+  console.log('\nTest 6: holding open a file that doesn\'t exist rejects');
+
+  const outcome = await holdOutcome(path.join(dir, 'missing.txt'));
+  assert.ok(outcome.startsWith('rejected'), `holding a file that doesn't exist should reject, got: ${outcome}`);
+  console.log('✓ Test 6 passed: it rejected');
+}
+
 export default async function runTests() {
   // Test 2 replaces the tool-call log, so never run this in a real home
   if (!isTestHome()) {
@@ -123,7 +154,7 @@ export default async function runTests() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'dc-rename-held-'));
   let failed = 0;
   for (const test of [() => testMoveFileWhileHeldOpen(dir), testLogRotationWhileHeldOpen, () => testMoveOntoFolderFailsAtOnce(dir),
-    () => testMoveOntoReadOnlyFileFailsAtOnce(dir)]) {
+    () => testMoveOntoReadOnlyFileFailsAtOnce(dir), () => testHoldPathWithQuote(dir), () => testHoldMissingFileRejects(dir)]) {
     try {
       await test();
     } catch (error) {

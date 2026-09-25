@@ -19,9 +19,10 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { spawn, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { handleMoveFile } from '../dist/handlers/filesystem-handlers.js';
 import { createLink } from './helpers/links.js';
+import { holdFileOpen } from './helpers/hold-file-open.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const text = (result) => result.content.map((c) => c.text).join('\n');
@@ -132,12 +133,7 @@ async function makeUnreadable(file) {
     return () => fs.chmod(file, 0o644);
   }
   // Windows: another process holds it open without sharing it
-  const holder = spawn('powershell.exe', ['-NoProfile', '-Command',
-    `$f = [IO.File]::Open('${file}', 'Open', 'ReadWrite', 'None'); Write-Output locked; Start-Sleep -Seconds 60; $f.Close()`]);
-  await new Promise((resolve, reject) => {
-    holder.on('error', reject);
-    holder.stdout.on('data', (chunk) => { if (chunk.toString().includes('locked')) resolve(); });
-  });
+  const holder = await holdFileOpen(file, 60_000, 'None');
   return () => new Promise((resolve) => { holder.once('exit', resolve); holder.kill(); });
 }
 
