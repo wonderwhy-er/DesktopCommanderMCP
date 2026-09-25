@@ -226,25 +226,42 @@ class CommandManager {
         }
     }
 
-    async validateCommand(command: string): Promise<boolean> {
+    async validateCommand(command: string, workingDirectory?: string): Promise<boolean> {
         try {
-            // Get blocked commands from config
+            // Get blocked commands and scoped permissions from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
+            const commandScopes = config.commandScopes || {};
             
             // Extract all commands from the command string
             const allCommands = this.extractCommands(command);
             
+            const isAllowedInScope = (cmd: string): boolean => {
+                if (!workingDirectory || !commandScopes[cmd]) return false;
+                const allowedDirs = commandScopes[cmd];
+                const resolvedWorkingDir = path.resolve(workingDirectory);
+                return allowedDirs.some(dir => {
+                    const resolvedAllowed = path.resolve(dir);
+                    return resolvedWorkingDir === resolvedAllowed || resolvedWorkingDir.startsWith(resolvedAllowed + path.sep);
+                });
+            };
+
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
                 const baseCommand = this.getBaseCommand(command);
-                return !blockedCommands.includes(baseCommand);
+                if (!baseCommand) return true;
+                if (blockedCommands.includes(baseCommand)) {
+                    return isAllowedInScope(baseCommand);
+                }
+                return true;
             }
             
             // Check if any of the extracted commands are in the blocked list
             for (const cmd of allCommands) {
                 if (blockedCommands.includes(cmd)) {
-                    return false; // Command is blocked
+                    if (!isAllowedInScope(cmd)) {
+                        return false; // Command is blocked and not permitted in current scope
+                    }
                 }
             }
             
