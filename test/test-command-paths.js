@@ -17,7 +17,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { psQuote } from './helpers/powershell.js';
 import { createStalledReadTarget } from './helpers/stalled-read.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 
 const TEXTS = [
   'C:\\Users\\me\\notes.txt',
@@ -49,20 +49,14 @@ async function psQuoteGivesTheExactText() {
   assert.strictEqual(psQuote("O'Brien"), "'O''Brien'", 'a single quote must be doubled');
   assert.strictEqual(psQuote('a\u2019b'), "'a\u2019\u2019b'", 'PowerShell reads \u2019 as a single quote: it must be doubled too');
   const powershell = findPowerShell();
-  if (!powershell) {
-    skip('psQuote round trip: no PowerShell on this machine');
-    return 'skipped';
-  }
+  if (!powershell) return skip('psQuote round trip: no PowerShell on this machine');
   for (const text of TEXTS) {
     assert.strictEqual(readBackInPowerShell(powershell, psQuote(text)), codeUnits(text), `PowerShell read ${psQuote(text)} as other text than ${JSON.stringify(text)}`);
   }
 }
 
 async function fifoInAFolderWithQuotes() {
-  if (process.platform === 'win32') {
-    skip('stalled-read FIFO path: Windows uses a named pipe, no folder');
-    return 'skipped';
-  }
+  if (process.platform === 'win32') return skip('stalled-read FIFO path: Windows uses a named pipe, no folder');
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-command-paths-'));
   const folder = path.join(base, 'a "quote" and $HOME');
   fs.mkdirSync(folder);
@@ -86,7 +80,7 @@ export default async function runTests() {
   const failures = [];
   for (const check of [psQuoteGivesTheExactText, fifoInAFolderWithQuotes]) {
     try {
-      console.log(`${await check() === 'skipped' ? '- skipped:' : '✓'} ${check.name}`);
+      console.log(`${await check() === SKIPPED ? '- skipped:' : '✓'} ${check.name}`);
     } catch (error) {
       failures.push(check.name);
       console.log(`✗ ${check.name}: ${error.message}`);

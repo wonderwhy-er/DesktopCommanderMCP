@@ -1,6 +1,6 @@
 import assert from 'assert';
 import { startProcess, readProcessOutput, interactWithProcess } from '../dist/tools/improved-process-tools.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 
 /**
  * Test suite for process output pagination features
@@ -180,8 +180,7 @@ async function testInteractTruncation() {
   
   const pid = extractPid(startResult);
   if (!pid) {
-    console.log('⚠️ Test 6 skipped: Could not start Python REPL');
-    return;
+    return skip('Test 6 (interact_with_process truncation): could not start the Python REPL');
   }
   
   await wait(500);
@@ -194,8 +193,7 @@ async function testInteractTruncation() {
   });
   
   if (result.isError) {
-    console.log('⚠️ Test 6 skipped: Python interaction failed');
-    return;
+    return skip('Test 6 (interact_with_process truncation): the Python interaction failed');
   }
   
   const outputText = result.content[0].text;
@@ -244,15 +242,17 @@ async function runAllTests() {
   console.log('🚀 Starting process pagination tests...\n');
   
   try {
-    await testNewOutputBehavior();
-    await testAbsoluteOffset();
-    await testTailBehavior();
-    await testLengthLimit();
-    await testRuntimeInfo();
-    await testInteractTruncation();
-    await testReReadOutput();
+    const results = [];
+    results.push(await testNewOutputBehavior());
+    results.push(await testAbsoluteOffset());
+    results.push(await testTailBehavior());
+    results.push(await testLengthLimit());
+    results.push(await testRuntimeInfo());
+    results.push(await testInteractTruncation());
+    results.push(await testReReadOutput());
     
-    console.log('\n🎉 All pagination tests passed!');
+    const skipped = results.filter((result) => result === SKIPPED).length;
+    console.log(skipped > 0 ? `\n🎉 Pagination tests passed, ${skipped} skipped` : '\n🎉 All pagination tests passed!');
     return true;
   } catch (error) {
     console.error('\n❌ Test failed:', error.message);

@@ -15,7 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import os from 'os';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 import { createLink } from './helpers/links.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -144,8 +144,7 @@ async function testSymlinkFileBypass() {
     console.log('  Attack scenario: symlink inside allowed dir points to restricted file');
 
     if (!canLinkFiles) {
-        skip('Test 4 (file symlink bypass): this user cannot create file symlinks (Windows needs Developer Mode or admin)');
-        return;
+        return skip('Test 4 (file symlink bypass): this user cannot create file symlinks (Windows needs Developer Mode or admin)');
     }
 
     await configManager.setValue('allowedDirectories', [ALLOWED_DIR]);
@@ -236,6 +235,7 @@ async function runAllTests() {
     let originalConfig;
     let passed = 0;
     let failed = 0;
+    let skipped = 0;
     
     try {
         originalConfig = await setup();
@@ -253,8 +253,8 @@ async function runAllTests() {
         
         for (const test of tests) {
             try {
-                await test();
-                passed++;
+                if (await test() === SKIPPED) skipped++;
+                else passed++;
             } catch (error) {
                 console.error(`\n❌ ${test.name} FAILED:`, error.message);
                 failed++;
@@ -270,13 +270,13 @@ async function runAllTests() {
     }
     
     console.log('\n' + '='.repeat(50));
-    console.log(`Results: ${passed} passed, ${failed} failed`);
+    console.log(`Results: ${passed} passed, ${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ''}`);
     
     if (failed > 0) {
         console.log('\n⚠️  SECURITY TESTS FAILED - symlink bypass may be possible!');
         return false;
     } else {
-        console.log('\n✅ All symlink security tests passed!');
+        console.log(skipped > 0 ? `\n✅ Symlink security tests passed, ${skipped} skipped` : '\n✅ All symlink security tests passed!');
     }
 }
 

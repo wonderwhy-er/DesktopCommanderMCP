@@ -23,17 +23,22 @@ export function isMainModule(importMetaUrl) {
   }
 }
 
+/** What skip() returns: a check that ends with `return skip(…)` is counted as skipped, not passed. */
+export const SKIPPED = Symbol('skipped');
+
 /**
  * Records a check that couldn't run because a precondition is missing on this
  * machine (e.g. no Python). The file still passes, but run-all-tests.js reads
  * these records from DC_TEST_SKIP_FILE and lists them in its summary, so a
- * skip is never reported as a plain pass.
+ * skip is never reported as a plain pass. Returns SKIPPED: a check ends with
+ * `return skip('…')`, and a file's own summary counts it as skipped.
  */
 export function skip(reason) {
   console.log(`⚠️  SKIPPED: ${reason}`);
   if (process.env.DC_TEST_SKIP_FILE) {
     fs.appendFileSync(process.env.DC_TEST_SKIP_FILE, `${reason.replace(/\r?\n/g, ' ')}\n`);
   }
+  return SKIPPED;
 }
 
 /**
