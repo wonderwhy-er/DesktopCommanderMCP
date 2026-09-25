@@ -6,10 +6,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { isTestHome } from './test-env.js';
 import { closeClient } from './close-client.js';
+import { hookArgs } from './module-hooks.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SERVER = path.join(PROJECT_ROOT, 'dist/index.js');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modules-preload.mjs')).href;
+/** Records the server's imports; the preload records its requires */
+const HOOKS = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modules-hooks.mjs')).href;
 
 /** Packages only reading, writing or rendering Excel, PDF and DOCX files need */
 export const HEAVY_PACKAGES = ['exceljs', 'pdf-lib', 'md-to-pdf', 'puppeteer', 'unpdf', '@opendocsg/pdf2md', 'pizzip'];
@@ -73,7 +76,7 @@ export async function startServerRecordingModules() {
 
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ['--import', PRELOAD, SERVER, '--no-onboarding'],
+    args: [...hookArgs(HOOKS), '--import', PRELOAD, SERVER, '--no-onboarding'],
     cwd: PROJECT_ROOT,
     env: { ...process.env, DC_TEST_MODULE_LOG: logFile },
     stderr: 'pipe',
