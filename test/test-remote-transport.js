@@ -169,17 +169,29 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
           resolve({ data: null, error: null });
         };
         // Only defer when a test actually asked for latency, so every other
-        // test keeps the original resolve-immediately semantics.
+        // test keeps the original resolve-immediately semantics. 'never': a
+        // PATCH sent down a half-open connection, which nothing answers.
+        if (delay === 'never') return;
         if (delay > 0) realSetTimeout(settle, delay);
         else settle();
       });
       // markCallExecuting chains .eq().eq().select() off a single update(), so
       // this must stay chainable exactly like result() does — returning a bare
       // promise leaves that chain hanging forever.
-      p.eq = () => p;
-      p.select = () => p;
-      p.maybeSingle = async () => ({ data: null, error: null });
-      return p;
+      const chainable = (promise) => {
+        promise.eq = () => promise;
+        promise.select = () => promise;
+        promise.maybeSingle = async () => ({ data: null, error: null });
+        // As postgrest-js: the fetch is aborted and the result carries the
+        // error. A write the server already has may still complete above.
+        promise.abortSignal = (signal) => chainable(Promise.race([promise, new Promise((resolve) => {
+          const abort = () => resolve({ data: null, error: { message: `${signal.reason?.name ?? 'AbortError'}: aborted` } });
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+        })]));
+        return promise;
+      };
+      return chainable(p);
     },
   };
 
@@ -666,6 +678,55 @@ await test('a re-publish during a slow capability withdrawal still leaves the fl
     'the device kept claiming it is online (presence tracked, so the heartbeat writes \'online\') while the withdrawal '
     + 'landed after the re-publish and took transport_broadcast_v1 off its row: the server refuses every call as not '
     + `broadcast-capable. Capability writes landed: ${landed.map((w) => (hasFlag(w) ? 'flag' : 'withdrawn')).join(', ')}`);
+});
+
+/** Resolves true once `promise` settles, false if it hasn't within `ms` */
+const settlesWithin = (promise, ms) => Promise.race([
+  promise.then(() => true, () => true),
+  new Promise((resolve) => realSetTimeout(() => resolve(false), ms)),
+]);
+
+// A withdrawal sent down a half-open connection is never answered. The
+// capability queue must not wait for it: the re-publish after it has to land,
+// or presence never counts as tracked, and the health check, which skips while
+// a publish is in progress, never retries it.
+await test('a capability withdrawal nothing answers cannot hold back the re-publish', async () => {
+  const hasFlag = (w) => w.capabilities?.transport_broadcast_v1 === true;
+  const { rc, client } = makeRemoteChannel({ writeLatencies: ['never'] }); // the withdrawal's PATCH
+  rc.transportCapableWritten = true; // previously proven
+  rc.sleep = () => Promise.resolve();
+  rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
+  rc.channel = makeChannelState('errored');
+  const realWithTimeout = rc.withTimeout.bind(rc);
+  rc.withTimeout = (op, _ms, name) => realWithTimeout(op, 20, name);
+  rc.deviceRowWriteSignal = () => AbortSignal.timeout(50); // the product's bound on a row write, shortened
+
+  for (let i = 0; i < 3; i++) await rc.recreateChannel();
+  rc.channel = { state: 'joined', track: async () => 'ok' };
+  const published = await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
+
+  const landed = client.completions.filter((w) => w.capabilities);
+  assert(published && rc.isReachable() && hasFlag(landed[landed.length - 1] ?? {}),
+    'after a capability withdrawal that was never answered, re-publishing presence '
+    + `${published ? 'finished' : 'was still waiting behind it after 2 s'}: presence tracked ${rc.presenceTracked}, `
+    + `capability writes landed: ${landed.map((w) => (hasFlag(w) ? 'flag' : 'withdrawn')).join(', ') || 'none'}. `
+    + 'The device stays unreachable, and the health check never retries presence while that publish is in progress.');
+});
+
+// The same for the status write that follows the capability write: a status
+// PATCH nothing answers must not keep presence from being published again.
+await test('a status write nothing answers cannot keep presence from being published again', async () => {
+  const { rc } = makeRemoteChannel({ writeLatencies: ['never'] }); // the first status write
+  rc.transportCapableWritten = true; // the capability write is skipped: the status write comes first
+  rc.deviceRowWriteSignal = () => AbortSignal.timeout(50);
+  rc.channel = { state: 'joined', track: async () => 'ok' };
+
+  const firstReturned = await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
+  const retried = firstReturned && await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
+  assert(firstReturned && retried && rc.presenceTracked,
+    `a status write that was never answered ${firstReturned ? 'failed in time' : 'kept presence publishing waiting for 2 s'}`
+    + `${firstReturned ? `, and the retry after it ${retried ? 'finished' : 'waited behind it for 2 s'}` : ''}: `
+    + `presence tracked ${rc.presenceTracked}. The health check retries presence only once that publish returns.`);
 });
 
 // --- 7. Shutdown ------------------------------------------------------------
