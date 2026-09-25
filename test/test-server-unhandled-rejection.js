@@ -15,7 +15,10 @@ import { closeClient } from './helpers/close-client.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/unhandled-rejection-preload.mjs')).href;
-const REJECT_AFTER_MS = 1500;
+// Counted from when the server's handler is in place (see the fixture). Shorter
+// than the server takes to start, so a fixture that counted from the start of
+// the process would reject before the handler exists, and this test would fail.
+const REJECT_AFTER_MS = 100;
 // The old handler exited within ~1 s of the rejection (exitProcess fallback)
 const SURVIVAL_WINDOW_MS = 3000;
 
