@@ -166,6 +166,33 @@ async function run() {
     }
   });
 
+  // #419: config.json is there but can't be read (e.g. chmod 000): there is nothing to
+  // repair, and the defaults' allowedDirectories [] would open the whole filesystem
+  await check('config.json can\'t be read: file tools only reach the config folder, every command is blocked, the file is left as it is, a warning says why', async () => {
+    const home = homeWithConfig(JSON.stringify({ allowedDirectories: ['/work'] }, null, 2));
+    const before = fs.readFileSync(home.configPath);
+    try {
+      const child = runConfigManagerChild(home.env, {
+        prelude: `
+          const { CONFIG_FILE } = await import(DIST + '/config.js');
+          const readFile = fs.readFile;
+          fs.readFile = (file, ...rest) => String(file) === CONFIG_FILE
+            ? Promise.reject(Object.assign(new Error("EACCES: permission denied, open '" + CONFIG_FILE + "'"), { code: 'EACCES' }))
+            : readFile(file, ...rest);`,
+        body: settingsInEffect,
+      });
+      assert(child.status === 0 && child.result, `loading the config failed (${child.status}): ${child.stderr}`);
+      assert.deepStrictEqual(child.result.allowedDirectories, [home.configDir], `with a config.json that can't be read, allowedDirectories is ${JSON.stringify(child.result.allowedDirectories)}: file tools must only reach the config folder, not the whole filesystem`);
+      assert.deepStrictEqual(child.result.blockedCommands, ['*'], `with a config.json that can't be read, blockedCommands is ${JSON.stringify(child.result.blockedCommands)} instead of ["*"] (every command blocked)`);
+      assert(fs.readFileSync(home.configPath).equals(before), 'a config.json that could not be read was changed');
+      assert.deepStrictEqual(corruptCopiesIn(home.configDir), [], 'a config.json that could not be read is not damaged: no corrupt copy');
+      assert(child.stderr.includes('config.json could not be read (EACCES: permission denied') && child.stderr.includes('every command is blocked'),
+        `the warning should say config.json could not be read, why, and what the session uses: ${child.stderr}`);
+    } finally {
+      home.cleanup();
+    }
+  });
+
   // config.json removed while Desktop Commander runs (e.g. a damaged one moved aside by
   // hand): the next write must not recreate it with nothing but the value it sets
   await check('config.json removed while running: the next write creates it with the defaults, blocked commands included', async () => {
