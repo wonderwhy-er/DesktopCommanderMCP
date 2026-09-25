@@ -16,12 +16,17 @@ import { createClient } from '@supabase/supabase-js';
 
 // The build copies this script to dist/remote-device/scripts/, next to the
 // compiled dist/utils/exit-process.js. Run from a source checkout (npm run
-// device:start) it sits next to src/utils/exit-process.ts, which Node loads
-// by stripping its types (Node 22.18+).
-const { exitProcess, EXIT_GRACE_MS } = await import('../../utils/exit-process.js').catch((error) => {
+// device:start starts it with plain node, without tsx) it loads the checkout's
+// build, dist/utils/exit-process.js (npm install builds it), which works on
+// every Node version. Without a build it falls back to
+// src/utils/exit-process.ts, which only Node 22.18+ loads (by stripping types).
+const ifNotFound = (importNext) => (error) => {
     if (error.code !== 'ERR_MODULE_NOT_FOUND') throw error;
-    return import('../../utils/exit-process.ts');
-});
+    return importNext();
+};
+const { exitProcess, EXIT_GRACE_MS } = await import('../../utils/exit-process.js')
+    .catch(ifNotFound(() => import('../../../dist/utils/exit-process.js')))
+    .catch(ifNotFound(() => import('../../utils/exit-process.ts')));
 
 // Parse command line arguments
 const [deviceId, supabaseUrl, supabaseKey, accessToken, refreshToken] = process.argv.slice(2);
