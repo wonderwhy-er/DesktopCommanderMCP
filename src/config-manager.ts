@@ -66,12 +66,45 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
-function extractRecoverableStringArray(text: string, key: string): string[] | null {
-  const marker = new RegExp(`(?:^|[,{])\\s*"${key}"\\s*:\\s*\\[`);
-  const match = marker.exec(text);
-  if (!match) return null;
+/**
+ * Where the array value of the config object's own `key` field starts (its '['),
+ * or null. Only a top-level field counts: the scan tracks the open objects and
+ * arrays, with strings skipped, so a nested object holding the same key (e.g.
+ * {"usageStats":{"allowedDirectories":["/"]},"allowedDirectories":["/work"],…)
+ * is never taken for it. The first top-level `key` decides.
+ */
+function topLevelArrayStart(text: string, key: string): number | null {
+  const open: string[] = [];
+  const colon = /\s*:\s*/y;
+  let i = 0;
+  while (i < text.length) {
+    const char = text[i];
+    if (char === '"') {
+      let end = i + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      if (end >= text.length) return null; // cut inside a string
+      if (open.length === 1 && open[0] === '{') {
+        colon.lastIndex = end + 1;
+        const after = colon.exec(text);
+        if (after && text.slice(i + 1, end) === key) {
+          const value = end + 1 + after[0].length;
+          return text[value] === '[' ? value : null;
+        }
+      }
+      i = end + 1;
+      continue;
+    }
+    if (char === '{' || char === '[') open.push(char);
+    else if (char === '}' || char === ']') open.pop();
+    i++;
+  }
+  return null;
+}
 
-  const start = match.index + match[0].lastIndexOf('[');
+function extractRecoverableStringArray(text: string, key: string): string[] | null {
+  const start = topLevelArrayStart(text, key);
+  if (start === null) return null;
+
   let inString = false;
   let escaped = false;
   let depth = 0;
