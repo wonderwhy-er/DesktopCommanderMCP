@@ -27,6 +27,12 @@
  *     Desktop Commander's own Chrome and profile; the answer is the same as
  *     before, and the result's internal structuredContent names dest,
  *     pdf_options.path, launch_options.executablePath, launch_options.args and devtools
+ *   - front matter launch options that change the browser process (env, dumpio,
+ *     pipe, debuggingPort, ignoreDefaultArgs, enableExtensions,
+ *     downloadBehavior, handleSIGINT): Chrome starts with Desktop Commander's
+ *     environment (on Windows, with its profile-folder fix), its output is not
+ *     piped to stdout (the MCP connection), and with Puppeteer's usual
+ *     arguments; each is named as ignored, while launch_options.timeout applies
  *   - an image given by its absolute path (the served folder is a drive root,
  *     as when Desktop Commander runs from "/"): still served to the page
  */
@@ -35,6 +41,8 @@ import assert from 'assert';
 import { channel } from 'diagnostics_channel';
 import fs from 'fs';
 import http from 'http';
+import { createRequire } from 'module';
+import net from 'net';
 import os from 'os';
 import path from 'path';
 
@@ -275,6 +283,108 @@ async function testIgnoredOptionsReportedInResult() {
     console.log('✓ ignored options: render still succeeded on our Chrome/profile, the answer is unchanged, all named internally');
 }
 
+/** A TCP port nothing listens on right now */
+function freePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.on('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+            const { port } = server.address();
+            server.close(() => resolve(port));
+        });
+    });
+}
+
+/**
+ * Runs `render`, recording each Chrome launch as Puppeteer hands it to
+ * child_process.spawn, and every stream piped into this process's stdout (the
+ * MCP connection in the server) or stderr
+ */
+async function launchesDuring(render) {
+    const childProcess = createRequire(import.meta.url)('child_process');
+    const spawn = childProcess.spawn;
+    const launches = [];
+    const pipedInto = [];
+    childProcess.spawn = function (command, args, options) {
+        if (Array.isArray(args) && args.some((arg) => String(arg).startsWith('--remote-debugging-'))) {
+            launches.push({ args: args.map(String), env: options?.env ?? process.env });
+        }
+        return spawn.apply(this, arguments);
+    };
+    const intoStdout = () => pipedInto.push('stdout');
+    const intoStderr = () => pipedInto.push('stderr');
+    process.stdout.on('pipe', intoStdout);
+    process.stderr.on('pipe', intoStderr);
+    try {
+        return { ...(await render()), launches, pipedInto };
+    } finally {
+        childProcess.spawn = spawn;
+        process.stdout.off('pipe', intoStdout);
+        process.stderr.off('pipe', intoStderr);
+    }
+}
+
+/** write_pdf with `launchOptions` (YAML lines) in the markdown's own front matter, recording Chrome's launches */
+async function renderWithLaunchOptions(label, launchOptions) {
+    const outFile = path.join(allowedDir, `${label.replace(/\W+/g, '-')}.pdf`);
+    const markdown = ['---', 'launch_options:', ...launchOptions.map((line) => `  ${line}`), '---', `# ${label}`].join('\n');
+    const result = await launchesDuring(() => watched(label, () => handleWritePdf({ path: outFile, content: markdown })));
+    // What Chrome was started with is checked by the caller first, whether or not the render then succeeded
+    assert.ok(result.launches.length > 0, `${label}: Desktop Commander should have launched Chrome${result.error ? ` (${result.error.message})` : ''}`);
+    return { ...result, outFile };
+}
+
+/** The render succeeded, wrote the requested PDF, and named exactly `expected` as ignored, each with a reason */
+async function assertRenderedIgnoring(result, label, expected) {
+    if (result.error) throw result.error;
+    const response = result.value;
+    assert.ok(!response.isError, `${label}: write_pdf should succeed with those options ignored: ${JSON.stringify(response.content)}`);
+    assert.ok(fs.statSync(result.outFile).size > 0, `${label}: the PDF should be written to the requested path`);
+    const reported = response.structuredContent?.ignoredOptions ?? [];
+    assert.deepStrictEqual(reported.map((o) => o.option).sort(), expected.map((option) => `launch_options.${option}`).sort(),
+        `${label}: structuredContent.ignoredOptions should name exactly these (launch_options.timeout applies): ${JSON.stringify(reported)}`);
+    assert.ok(reported.every((o) => typeof o.reason === 'string' && o.reason.length > 0), `${label}: each ignored option should carry a reason`);
+    await assertNothingLeft(result, label);
+}
+
+async function testProcessLaunchOptionsIgnored() {
+    const downloads = path.join(outsideDir, 'downloads');
+    const port = await freePort();
+    // The markdown's own front matter tries the launch options that change the browser process
+    // (Puppeteer refuses pipe with debuggingPort, so pipe gets a render of its own)
+    const result = await renderWithLaunchOptions('launch options', [
+        'env: { DC_LAUNCH_PROBE: "from the front matter" }',
+        'dumpio: true',
+        `debuggingPort: ${port}`,
+        'ignoreDefaultArgs: ["--hide-scrollbars"]',
+        'enableExtensions: true',
+        `downloadBehavior: { policy: allow, downloadPath: ${JSON.stringify(downloads)} }`,
+        'handleSIGINT: false',
+        'timeout: 60000',
+    ]);
+    assert.deepStrictEqual(result.pipedInto, [], "Chrome's output was piped into Desktop Commander's stdout (the MCP connection) and stderr (launch_options.dumpio)");
+    for (const { args, env } of result.launches) {
+        assert.strictEqual(env.DC_LAUNCH_PROBE, undefined,
+            `Chrome was started with the front matter's environment (launch_options.env): ${JSON.stringify(Object.keys(env))}`);
+        if (process.platform === 'win32') {
+            assert.strictEqual(env.USERPROFILE, os.userInfo().homedir, "Chrome should start with the account's profile folder (Desktop Commander's Windows fix)");
+        }
+        assert.ok(!args.includes(`--remote-debugging-port=${port}`), "launch_options.debuggingPort put Chrome's DevTools on a port of the markdown's choosing");
+        assert.ok(args.includes('--hide-scrollbars'), "launch_options.ignoreDefaultArgs removed one of Puppeteer's Chrome arguments");
+        assert.ok(args.includes('--disable-extensions'), 'launch_options.enableExtensions let Chrome load extensions');
+    }
+    assert.strictEqual(fs.existsSync(downloads), false, 'launch_options.downloadBehavior created a download folder outside the allowed directories');
+    await assertRenderedIgnoring(result, 'launch options',
+        ['env', 'dumpio', 'debuggingPort', 'ignoreDefaultArgs', 'enableExtensions', 'downloadBehavior', 'handleSIGINT']);
+
+    const piped = await renderWithLaunchOptions('launch pipe', ['pipe: true']);
+    for (const { args } of piped.launches) {
+        assert.ok(!args.includes('--remote-debugging-pipe'), 'launch_options.pipe changed how Desktop Commander connects to Chrome');
+    }
+    await assertRenderedIgnoring(piped, 'launch pipe', ['pipe']);
+    console.log("✓ process launch options ignored: Chrome started with Desktop Commander's environment, arguments and output, all named internally");
+}
+
 async function testImageByAbsolutePath() {
     const outFile = path.join(allowedDir, 'absolute-image.pdf');
     const root = path.parse(servedDir).root;
@@ -304,6 +414,7 @@ async function main() {
         testPdfOptionsPath,
         testDevtoolsReturnsPromptly,
         testIgnoredOptionsReportedInResult,
+        testProcessLaunchOptionsIgnored,
         testImageByAbsolutePath,
     ];
     const failures = [];
