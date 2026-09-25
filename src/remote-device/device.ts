@@ -85,9 +85,13 @@ export class MCPDevice {
      * whatever is still in flight.
      */
     private configWriteChain: Promise<void> = Promise.resolve();
-    /** device.json was on disk when this run loaded or saved it: from then on, a missing file means someone else removed it. */
-    private configOnDisk = false;
-    /** device.json was removed after this run loaded or saved it (`remote --logout`): nothing is saved again this run. */
+    /**
+     * device.json's text when this run last loaded or saved it. From then on, a
+     * file that is gone or holds other text was removed (`remote --logout`) or
+     * replaced (a login after it) by someone else.
+     */
+    private configTextOnDisk?: string;
+    /** device.json was removed or replaced after this run loaded or saved it: nothing is saved again this run. */
     private loggedOutLocally = false;
     /** Call ids already handled by THIS process (insertion-ordered, bounded). */
     private seenCallIds: Set<string> = new Set();
@@ -354,7 +358,7 @@ export class MCPDevice {
             console.debug('[DEBUG] Loading persisted config from:', this.configPath);
             const data = await fs.readFile(this.configPath, 'utf8');
             // A logout from here on, before this run's first save, removes it
-            this.configOnDisk = true;
+            this.configTextOnDisk = data;
             const config = JSON.parse(data);
 
             this.deviceId = config?.deviceId;
@@ -398,20 +402,19 @@ export class MCPDevice {
         }
     }
 
-    /** Whether device.json exists. Errors other than "not found" go to the caller, which logs them. */
-    private async configExists(): Promise<boolean> {
+    /** device.json's text, or undefined when there is none. Errors other than "not found" go to the caller, which logs them. */
+    private async readConfigText(): Promise<string | undefined> {
         try {
-            await fs.access(this.configPath);
-            return true;
+            return await fs.readFile(this.configPath, 'utf8');
         } catch (error: any) {
-            if (error.code === 'ENOENT') return false;
+            if (error.code === 'ENOENT') return undefined;
             throw error;
         }
     }
 
     async clearPersistedConfig() {
         // Removed by this run itself, not by a logout
-        this.configOnDisk = false;
+        this.configTextOnDisk = undefined;
         try {
             await fs.rm(this.configPath, { force: true });
             console.debug('[DEBUG] Cleared stale persisted config:', this.configPath);
@@ -465,17 +468,25 @@ export class MCPDevice {
                 // the docs say that removes the saved credentials. Writing them back
                 // at the next rotation or at shutdown would undo it: this run keeps
                 // its session in memory (the logout is local only) and saves nothing.
-                if (this.configOnDisk && !(await this.configExists())) {
-                    this.loggedOutLocally = true;
-                    console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again');
-                    return;
+                // A login after the logout saves its own device.json, which this
+                // run's credentials must not replace either.
+                if (this.configTextOnDisk !== undefined) {
+                    const onDisk = await this.readConfigText();
+                    if (onDisk !== this.configTextOnDisk) {
+                        this.loggedOutLocally = true;
+                        console.log(onDisk === undefined
+                            ? '🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again'
+                            : '🔓 Saved Remote MCP device credentials were replaced (a login after remote --logout): this run keeps its session in memory and won\'t save it again');
+                        return;
+                    }
                 }
                 // Atomic write: a save cut short leaves the previous complete
                 // session rather than a truncated file. loadPersistedConfig()
                 // answers a JSON.parse failure with null, which costs a full
                 // browser reauthorization.
-                await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
-                this.configOnDisk = true;
+                const text = JSON.stringify(config, null, 2);
+                await writeFileAtomic(this.configPath, text, { mode: 0o600 });
+                this.configTextOnDisk = text;
                 console.debug('[DEBUG] Config saved to:', this.configPath);
             } finally {
                 await release().catch((error) => console.error(' - ❌ Failed to release the device.json lock:', error.message));
