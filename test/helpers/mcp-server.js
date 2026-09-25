@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { closeClient } from './close-client.js';
 
 const SERVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist', 'index.js');
 
@@ -29,7 +30,7 @@ export async function startServerLikeRemote(env, { timeout = 30_000 } = {}) {
     client,
     logs: [],
     stderr: '',
-    close: () => client.close().catch(() => {}),
+    close: () => closeClient(client),
   };
   transport.stderr?.on('data', (chunk) => { server.stderr += chunk; });
   client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => { server.logs.push(notification.params); });
