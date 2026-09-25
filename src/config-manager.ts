@@ -319,7 +319,10 @@ class ConfigManager {
     return this.config[key];
   }
 
-  /** Set a specific configuration value and wait for durable persistence. */
+  /**
+   * Set a specific configuration value and wait until it is saved: the data is
+   * flushed to disk before the rename; the folder flush after it is best effort.
+   */
   async setValue(key: string, value: any): Promise<void> {
     await this.init();
     if (key === 'telemetryEnabled') value = normalizeTelemetryEnabledValue(value);
@@ -340,7 +343,10 @@ class ConfigManager {
     await write;
   }
 
-  /** Update one value under the cross-process lock and return the durable value. */
+  /**
+   * Update one value under the cross-process lock and return it once saved: the
+   * data is flushed to disk before the rename; the folder flush after it is best effort.
+   */
   async updateValue(key: string, updater: (current: any) => any): Promise<any> {
     await this.init();
     let updatedValue: any;
