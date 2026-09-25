@@ -17,7 +17,7 @@ const TEST_HOME_PREFIX = 'dc-test-home-';
  * Values already set by the caller win; tests that need others set them themselves.
  */
 export function createTestEnv() {
-  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), TEST_HOME_PREFIX)));
+  const home = createTempDir(TEST_HOME_PREFIX);
   const { FORCE_COLOR, ...inherited } = process.env;
   const env = {
     ...inherited,
@@ -32,6 +32,16 @@ export function createTestEnv() {
     // Retries: on Windows a just-exited child can still hold a file in the home for a moment
     cleanup: () => fs.rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   };
+}
+
+/**
+ * A new temporary folder (`prefix` plus random characters), by its real path.
+ * macOS's temporary folder is under /var, a link to /private/var, and the
+ * server works with real paths, so a test that compares or matches the paths it
+ * gets back makes its folders with this, as createTestEnv() makes the home.
+ */
+export function createTempDir(prefix) {
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 /**
