@@ -24,6 +24,11 @@ const pendingWrites = new Map<string, Promise<void>>();
 export interface AtomicWriteOptions {
   encoding?: BufferEncoding;
   mode?: number;
+  /**
+   * A last check once the new content is on disk, before it replaces the file:
+   * if it throws, nothing is replaced and the write rejects with its error
+   */
+  beforeCommit?: () => void | Promise<void>;
 }
 
 async function writeThroughTempFile(filePath: string, data: string | Uint8Array, options: AtomicWriteOptions): Promise<void> {
@@ -36,6 +41,7 @@ async function writeThroughTempFile(filePath: string, data: string | Uint8Array,
     } finally {
       await handle.close();
     }
+    await options.beforeCommit?.();
     await renameWithRetry(tempPath, filePath);
   } finally {
     // After a successful rename the temp file is gone (ENOENT); after a failed
