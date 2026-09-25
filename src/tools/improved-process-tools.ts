@@ -106,7 +106,9 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
   }
 
   try {
-    const commands = commandManager.extractCommands(parsed.data.command).join(', ');
+    // Each command's first word as typed, so telemetry replaces a path whole
+    // (the base name alone would send the last part of it)
+    const commands = commandManager.extractCommands(parsed.data.command, true).join(', ');
     capture('server_start_process', {
       command: commandManager.getBaseCommand(parsed.data.command),
       commands: commands
