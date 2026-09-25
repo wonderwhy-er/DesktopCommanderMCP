@@ -2,7 +2,7 @@
  * Unit tests for A/B test feature flag system
  * Tests that missing/empty experiments config doesn't break anything
  *
- * Tests 1-10 run the real ab-test module (dist/utils/ab-test.js) in a fresh
+ * Tests 1-11 run the real ab-test module (dist/utils/ab-test.js) in a fresh
  * process per scenario: the experiments go into the feature-flag cache and
  * assignments into config.json under a temporary HOME, exactly where the
  * product reads them. The MCP UI tests call resolveMcpUiPreviewDecision with
@@ -238,6 +238,18 @@ async function runTests() {
     });
     assert.strictEqual(error, undefined, 'hasFeature should not throw on malformed experiments');
     assert.ok(typeof features.a === 'boolean');
+  });
+
+  // Test 11: An experiment name is a plain key, even one an object treats specially.
+  // JSON.parse makes "__proto__" an own key, as it is in the flags the product reads.
+  await test('an experiment named __proto__ answers like any other', async () => {
+    const { features, error } = await runAbTest({
+      experiments: JSON.parse('{"__proto__": {"variants": [{"name": "protoA", "weight": 50}, {"name": "protoB", "weight": 50}]}}'),
+      config: { abTest___proto__: 'protoA' },
+      features: ['protoA', 'protoB'],
+    });
+    assert.strictEqual(error, undefined);
+    assert.deepStrictEqual(features, { protoA: true, protoB: false }, 'The assigned variant of an experiment named __proto__ should be on');
   });
 
 
