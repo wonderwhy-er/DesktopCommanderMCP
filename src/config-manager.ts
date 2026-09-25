@@ -182,6 +182,7 @@ class ConfigManager {
 
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
     let damaged = false;
+    let unreadable = false;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
@@ -208,6 +209,8 @@ class ConfigManager {
           });
           this._isFirstRun = created;
         } else {
+          // There, but reading it failed (e.g. no permission, #419): nothing to repair or create
+          unreadable = true;
           throw error;
         }
       }
@@ -229,14 +232,15 @@ class ConfigManager {
       if (corruptConfigTelemetry) this.pendingCorruptConfigTelemetry.push(corruptConfigTelemetry);
     } catch (error) {
       console.error('Failed to initialize config:', error);
-      if (damaged) {
+      if (damaged || unreadable) {
         // The repair itself failed (the corrupt file couldn't be copied, the
-        // repaired config couldn't be written, the lock couldn't be taken): the
-        // defaults' allowedDirectories [] would open the whole filesystem (#419).
-        // Use what the repair would have written, for this session only.
-        this.config = this.recoveredConfig(await this.readDamagedConfigText());
+        // repaired config couldn't be written, the lock couldn't be taken), or the
+        // file can't be read: the defaults' allowedDirectories [] would open the
+        // whole filesystem (#419). Use what a repair would have written, for this
+        // session only (from nothing, for a file that can't be read).
+        this.config = this.recoveredConfig(damaged ? await this.readDamagedConfigText() : '');
         const reason = error instanceof Error ? error.message : String(error);
-        warnUser(`config.json could not be read, and repairing it failed (${reason}). ` +
+        warnUser((damaged ? `config.json could not be read, and repairing it failed (${reason}). ` : `config.json could not be read (${reason}). `) +
           `For this session Desktop Commander uses the default settings with what it could recover: ` +
           `file tools only reach ${JSON.stringify(this.config.allowedDirectories)}` +
           (this.config.blockedCommands?.includes('*') ? ', every command is blocked' : '') +
