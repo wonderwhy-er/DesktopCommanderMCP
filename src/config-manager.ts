@@ -481,9 +481,10 @@ class ConfigManager {
   }
 
   /**
-   * What recovery writes in place of a corrupt config.json: the defaults, with
-   * the blocked commands and allowed folders the damaged text (or, while
-   * running, the last parsed config) still gives, else a closed policy.
+   * What recovery writes in place of a corrupt config.json. While running: the
+   * config last parsed from disk, every setting kept. At startup, when nothing
+   * was parsed yet: the defaults, with the blocked commands and allowed folders
+   * the damaged text still gives, else a closed policy.
    */
   private recoveredConfig(corruptText: string): ServerConfig {
     // Prefer the last parsed in-memory policy during runtime recovery. On startup,
@@ -504,6 +505,12 @@ class ConfigManager {
       ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
 
     const defaults = this.getDefaultConfig();
+    // While running, the last parsed config is known: keep all of it (telemetry
+    // off, line limits, shell, client id, ...), not only its policy lists
+    if (this.initialized) {
+      const { version: _version, ...lastParsed } = this.config;
+      Object.assign(defaults, lastParsed);
+    }
     if (preservedClientId) defaults['clientId'] = preservedClientId;
     if (telemetryWasDisabled) defaults['telemetryEnabled'] = false;
     if (preservedBlockedCommands !== null) {
