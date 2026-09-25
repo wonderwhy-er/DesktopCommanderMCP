@@ -92,12 +92,18 @@ export function getDefaultShell(): string {
   return os.platform() === 'darwin' ? '/bin/zsh' : '/bin/sh';
 }
 
+// Login programs /etc/shells can list that don't run a command given with -c,
+// the way every command here starts: terminal multiplexers (screen, tmux),
+// git-shell (git commands only), and programs that refuse a login
+const NOT_COMMAND_SHELLS = new Set(['nologin', 'false', 'true', 'sync', 'git-shell', 'screen', 'tmux']);
+
 function readEtcShells(): string[] {
   try {
     return fs.readFileSync('/etc/shells', 'utf8')
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith('#'));
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+      .filter((line) => !NOT_COMMAND_SHELLS.has(path.basename(line)));
   } catch {
     // Best-effort discovery only: no readable /etc/shells means no extra shells to list
     return [];
