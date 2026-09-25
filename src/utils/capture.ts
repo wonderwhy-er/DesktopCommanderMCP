@@ -20,6 +20,26 @@ export function isInsideUiOriginCall(): boolean {
     return uiOriginCallContext.getStore() === true;
 }
 
+// The paths the current tool call works on: its path arguments and what they
+// resolve to. Telemetry replaces these exact values in an event's text before
+// any pattern, so such a path goes whole, spaces and all, and the text around
+// it stays (a pattern can't tell where an unquoted path with spaces ends).
+const toolCallPaths = new AsyncLocalStorage<Set<string>>();
+
+/** Runs a tool call with its own set of known paths. */
+export function runWithToolCallPaths<T>(fn: () => T): T {
+    return toolCallPaths.run(new Set(), fn);
+}
+
+/** Adds paths (strings, or arrays of them) to the current tool call's known paths. */
+export function addToolCallPaths(...paths: unknown[]): void {
+    const known = toolCallPaths.getStore();
+    if (!known) return;
+    for (const value of paths.flat()) {
+        if (typeof value === 'string' && value.trim()) known.add(value);
+    }
+}
+
 let VERSION = 'unknown';
 try {
     const versionModule = await import('../version.js');
@@ -59,7 +79,7 @@ export function isTelemetryDisabledByEnv(): boolean {
  * @param error Error object or string to sanitize
  * @returns An object with sanitized message and optional error code
  */
-export function sanitizeError(error: any): { message: string, code?: string } {
+export function sanitizeError(error: any, knownPaths: readonly string[] = []): { message: string, code?: string } {
     let errorMessage = '';
     let errorCode = undefined;
 
@@ -78,7 +98,7 @@ export function sanitizeError(error: any): { message: string, code?: string } {
     }
 
     return {
-        message: redactPaths(errorMessage),
+        message: redactPaths(errorMessage, knownPaths),
         code: errorCode
     };
 }
@@ -86,26 +106,69 @@ export function sanitizeError(error: any): { message: string, code?: string } {
 // Quoted text containing a separator is a path, whatever else it contains
 // (Node quotes paths in fs errors: open 'C:\Users\John Smith\a.txt').
 const QUOTED_PATH_PATTERN = /(['"`])(?:(?!\1)[^\r\n])*[\\/](?:(?!\1)[^\r\n])*\1/g;
-// An unquoted path starts at a separator (optionally after a drive letter) and
-// runs to whitespace or a quote. A space is part of it when more path follows
-// (C:\Users\John Smith\a.txt), so no name fragment survives between two [PATH]s.
+// The last resort, for an unquoted path nothing else knows: it starts at a
+// separator (optionally after a drive letter) and runs to whitespace or a
+// quote. A space is part of it when more path follows (C:\Users\John Smith\a.txt).
+// A last name with a space can't be told from the text after it, which is why
+// known paths are replaced first.
 const PATH_PATTERN = /(?:[A-Za-z]:)?[\\/][^\s'"`]*(?: +[^\s'"`\\/]+[\\/][^\s'"`]*)*/g;
 
 /**
- * Replaces every file path in a message with [PATH]. The home directory is
- * replaced first because it is the part that identifies the user, and it may
- * contain spaces that the generic pattern cannot attribute to a path.
+ * Matches one known path exactly, with either separator between its names,
+ * and only where it stands on its own: not inside a longer name before or
+ * after it. Null for a value too short to tell from ordinary text ("/", "~", "C:\").
  */
-function redactPaths(message: string): string {
-    const home = homedir();
-    if (home && home.replace(/[\\/]/g, '').length > 0) {
-        const homeSource = home.split(/[\\/]+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+') + '(?=[\\\\/\'"`\\s]|$)';
-        message = message.replace(new RegExp(homeSource, platform() === 'win32' ? 'gi' : 'g'), '[PATH]');
+function knownPathPattern(knownPath: string): RegExp | null {
+    const names = knownPath.trim().split(/[\\/]+/).filter(Boolean);
+    const letters = names.join('');
+    if (/^[A-Za-z]:$/.test(letters) || letters.replace(/[.~]/g, '').length < 2) return null;
+    const source = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+');
+    const leadingSeparator = /^[\\/]/.test(knownPath.trim()) ? '[\\\\/]+' : '';
+    // Before it: the start, a separator, whitespace, a quote or an opening mark.
+    // After it: a separator, whitespace, a quote, a closing mark, clause
+    // punctuation followed by whitespace, or the end.
+    return new RegExp(
+        `(?<![^\\s\\\\/'"\`(\\[=:,])${leadingSeparator}${source}(?=[\\\\/\\s'"\`)\\]]|[.,:;!?](?:\\s|$)|$)`,
+        platform() === 'win32' ? 'gi' : 'g'
+    );
+}
+
+/**
+ * Replaces every file path in a message with [PATH], keeping the text around
+ * it. Known paths go first, each as a whole: the home folder (the part that
+ * identifies the user) and any the caller knows (the event's own path
+ * properties, the tool call's paths, the allowed folders), longest first so a
+ * known folder doesn't cut a known file inside it. Then quoted paths, then
+ * the last-resort pattern.
+ */
+function redactPaths(message: string, knownPaths: readonly string[] = []): string {
+    const known = [...new Set([homedir(), ...knownPaths])].sort((a, b) => b.length - a.length);
+    for (const knownPath of known) {
+        const pattern = knownPathPattern(knownPath);
+        if (pattern) message = message.replace(pattern, '[PATH]');
     }
     return message
         .replace(QUOTED_PATH_PATTERN, '$1[PATH]$1')
         .replace(PATH_PATTERN, '[PATH]')
         .replace(/(?:\[PATH\])+/g, '[PATH]');
+}
+
+// Properties that hold paths: dropped from every event, after their values
+// have been used to redact the event's messages
+const PATH_PROPERTY_KEYS = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
+
+function isPathProperty(key: string): boolean {
+    const lowerKey = key.toLowerCase();
+    return PATH_PROPERTY_KEYS.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension'; // keep fileExtension as it's safe
+}
+
+/** The string values (or strings in array values) of an event's path properties. */
+function pathPropertyValues(properties: any): string[] {
+    if (!properties || typeof properties !== 'object') return [];
+    return Object.keys(properties)
+        .filter(isPathProperty)
+        .flatMap(key => [properties[key]].flat())
+        .filter((value): value is string => typeof value === 'string');
 }
 
 /**
@@ -115,7 +178,7 @@ function redactPaths(message: string): string {
  * ORIGINAL value: an Error's name, message and code are not enumerable, so the
  * JSON copy reduces it to {} and would report "Unknown error".
  */
-function sanitizeEventProperties(properties?: any): Record<string, any> {
+function sanitizeEventProperties(properties?: any, knownPaths: readonly string[] = []): Record<string, any> {
     let sanitizedProperties: any;
     try {
         sanitizedProperties = properties ? JSON.parse(JSON.stringify(properties)) : {};
@@ -124,18 +187,26 @@ function sanitizeEventProperties(properties?: any): Record<string, any> {
         sanitizedProperties = {};
     }
 
+    // The exact paths this event knows: the ones passed in, and its own path
+    // properties (dropped below)
+    const known = [...knownPaths, ...pathPropertyValues(properties)];
+
     const error = properties?.error;
     if (error && (typeof error === 'object' || typeof error === 'string')) {
-        const sanitized = sanitizeError(error);
+        const sanitized = sanitizeError(error, known);
         sanitizedProperties.error = sanitized.message;
         if (sanitized.code) sanitizedProperties.errorCode = sanitized.code;
     }
+    // Error text sent under other names is redacted the same way
+    for (const key of ['message', 'errorMessage']) {
+        if (typeof sanitizedProperties[key] === 'string') {
+            sanitizedProperties[key] = redactPaths(sanitizedProperties[key], known);
+        }
+    }
 
     // Remove any properties that might contain paths
-    const sensitiveKeys = ['path', 'filePath', 'directory', 'file_path', 'sourcePath', 'destinationPath', 'fullPath', 'rootPath'];
     for (const key of Object.keys(sanitizedProperties)) {
-        const lowerKey = key.toLowerCase();
-        if (sensitiveKeys.some(sk => lowerKey.includes(sk)) && lowerKey !== 'fileextension') { // keep fileExtension as it's safe
+        if (isPathProperty(key)) {
             delete sanitizedProperties[key];
         }
     }
@@ -357,7 +428,13 @@ export const buildEventProperties = async (properties?: any) => {
         clientContext.saw_onboarding_page = sawOnboardingPage;
     }
 
-    const sanitizedProperties = sanitizeEventProperties(properties);
+    // Exact paths to redact first: the current tool call's and the allowed folders
+    const allowedDirectories = await configManager.getValue('allowedDirectories');
+    const knownPaths = [
+        ...(toolCallPaths.getStore() ?? []),
+        ...(Array.isArray(allowedDirectories) ? allowedDirectories.filter((dir): dir is string => typeof dir === 'string') : []),
+    ];
+    const sanitizedProperties = sanitizeEventProperties(properties, knownPaths);
 
     let isDXT = 'false';
     if (process.env.MCP_DXT) isDXT = 'true';

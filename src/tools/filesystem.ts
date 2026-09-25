@@ -4,7 +4,7 @@ import os from 'os';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { capture } from '../utils/capture.js';
+import { addToolCallPaths, capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
 import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
@@ -335,6 +335,8 @@ export async function validatePath(requestedPath: string): Promise<string> {
         const absoluteOriginal = path.isAbsolute(expandedPath)
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
+        // Every form of this path an error text may name, so telemetry replaces it whole
+        addToolCallPaths(requestedPath, expandedPath, absoluteOriginal);
 
         // SECURITY: Resolve symlinks (and Windows junctions) to where file operations
         // on this path actually land, and check that location. This covers paths that
@@ -353,6 +355,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
             });
             throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
         }
+        addToolCallPaths(pathForNextCheck);
 
         // Check if path is allowed
         if (!(await isPathAllowed(pathForNextCheck))) {
