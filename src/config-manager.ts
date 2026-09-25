@@ -14,6 +14,9 @@ import { writeFileAtomic } from './utils/atomic-write.js';
 // moment: up to ~260ms measured on Windows (#697). A file that does not parse
 // is read again until it does, for up to this long; then it counts as damaged.
 const PARTIAL_CONFIG_WAIT_MS = 1_000;
+// While background saves are held because config.json can't be written, how
+// often they are tried again
+const HELD_SAVES_CHECK_MS = 5_000;
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -141,6 +144,17 @@ function parseConfig(text: string): ServerConfig {
 }
 
 /**
+ * The one-time migration of a config written before the welcome page existed:
+ * an existing install, so it never gets the welcome page.
+ */
+function migrateLegacyConfig(config: ServerConfig): void {
+  if (config['welcomeOnboardingEligible'] === undefined) {
+    config['welcomeOnboardingEligible'] = false;
+    config['pendingWelcomeOnboarding'] = false;
+  }
+}
+
+/**
  * A warning the user must see: as a log notification (console.warn inside the
  * MCP server), and on stderr, which `remote` shows in its terminal.
  */
@@ -165,6 +179,13 @@ class ConfigManager {
   private watcher: FSWatcher | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
   private pendingCorruptConfigTelemetry: CorruptConfigRecoveryTelemetry[] = [];
+  // True while background saves are held because config.json can't be written (see holdSaves)
+  private savesHeld = false;
+  // The hold is already logged or told to the user, until a write succeeds
+  private holdReported = false;
+  // Background saves that failed in a row (see scheduleSave)
+  private failedSaves = 0;
+  private heldSavesCheck: NodeJS.Timeout | null = null;
 
   constructor() {
     // Get user's home directory
@@ -183,6 +204,7 @@ class ConfigManager {
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
     let damaged = false;
     let unreadable = false;
+    let read = false;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
@@ -191,6 +213,7 @@ class ConfigManager {
 
       try {
         this.config = await this.readConfigFromDisk();
+        read = true;
         this._isFirstRun = false;
       } catch (error: any) {
         if (error instanceof SyntaxError) {
@@ -218,12 +241,7 @@ class ConfigManager {
       // Existing installs must not become welcome-page eligible merely because
       // their config had to be recovered.
       if (!this._isFirstRun && this.config['welcomeOnboardingEligible'] === undefined) {
-        await this.performConfigMutation((latest) => {
-          if (latest['welcomeOnboardingEligible'] === undefined) {
-            latest['welcomeOnboardingEligible'] = false;
-            latest['pendingWelcomeOnboarding'] = false;
-          }
-        });
+        await this.performConfigMutation(migrateLegacyConfig);
       }
 
       this.config['version'] = VERSION;
@@ -239,12 +257,25 @@ class ConfigManager {
         // whole filesystem (#419). Use what a repair would have written, for this
         // session only (from nothing, for a file that can't be read).
         this.config = this.recoveredConfig(damaged ? await this.readDamagedConfigText() : '');
+        // Saves would fail the same way: held, and tried again every HELD_SAVES_CHECK_MS
+        this.failedSaves = 1;
+        this.holdSaves(); // the warning below says why
         const reason = error instanceof Error ? error.message : String(error);
         warnUser((damaged ? `config.json could not be read, and repairing it failed (${reason}). ` : `config.json could not be read (${reason}). `) +
           `For this session Desktop Commander uses the default settings with what it could recover: ` +
           `file tools only reach ${JSON.stringify(this.config.allowedDirectories)}` +
           (this.config.blockedCommands?.includes('*') ? ', every command is blocked' : '') +
           (this.config.telemetryEnabled === false ? ', telemetry stays off' : '') + '.');
+      } else if (read && this.config && typeof this.config === 'object') {
+        // Read, but a later step failed: the one-time migration's write (a read-only file
+        // system, a full disk, a lock that can't be taken). The settings read stay in effect,
+        // never the defaults' allowedDirectories [] (#419); changes wait until it is writable.
+        migrateLegacyConfig(this.config);
+        this.failedSaves = 1;
+        this.holdSaves(); // the warning below says why
+        this.queueMutation(migrateLegacyConfig);
+        warnUser(`config.json was read, but saving to it failed (${error instanceof Error ? error.message : String(error)}). ` +
+          `Desktop Commander uses the settings it read; changes to them can't be saved until config.json is writable.`);
       } else {
         this.config = this.getDefaultConfig();
       }
@@ -597,6 +628,10 @@ class ConfigManager {
       await this.writeConfigAtomically(latest);
       this.config = { ...latest, version: VERSION };
       result = latest;
+      // Written: whatever held saves before is solved
+      this.failedSaves = 0;
+      this.holdReported = false;
+      this.resumeSaves();
     } finally {
       try {
         await release();
@@ -611,6 +646,33 @@ class ConfigManager {
     return result;
   }
 
+  /**
+   * Keep the queued changes instead of retrying them every 250 ms against a
+   * config.json that can't be written (a read-only file system, a full disk, a
+   * lock that can't be taken, a file that can't be read): every
+   * HELD_SAVES_CHECK_MS they are tried again; a save that still fails holds them
+   * again. `error` is logged once per problem (without it, the caller told the user).
+   */
+  private holdSaves(error?: unknown): void {
+    if (this.savesHeld) return;
+    this.savesHeld = true;
+    if (error && !this.holdReported) {
+      console.error("config.json can't be written, so changes are kept and saved once it can:", error);
+    }
+    this.holdReported = true;
+    this.heldSavesCheck = setInterval(() => this.resumeSaves(), HELD_SAVES_CHECK_MS);
+    this.heldSavesCheck.unref?.();
+  }
+
+  /** Save the changes held meanwhile. */
+  private resumeSaves(): void {
+    if (!this.savesHeld) return;
+    this.savesHeld = false;
+    if (this.heldSavesCheck) clearInterval(this.heldSavesCheck);
+    this.heldSavesCheck = null;
+    if (this.pendingMutations.length > 0) this.scheduleSave();
+  }
+
   private queueMutation(mutate: (config: ServerConfig) => void): void {
     this.pendingMutations.push(mutate);
     this.scheduleSave();
@@ -618,7 +680,7 @@ class ConfigManager {
 
   /** Non-blocking, coalesced persistence for high-frequency state updates. */
   scheduleSave(): void {
-    if (this.saveScheduled) return;
+    if (this.saveScheduled || this.savesHeld) return;
     this.saveScheduled = true;
     const write = this.writeChain.then(async () => {
       this.saveScheduled = false;
@@ -631,6 +693,13 @@ class ConfigManager {
       } catch (error) {
         // Persistence failed before commit, so keep these mutations for a later retry.
         this.pendingMutations.unshift(...mutations);
+        // A failure can be brief (a lock, a file scanner): retried once after 250 ms. A second
+        // one in a row (a read-only file system, a full disk) holds the changes for the
+        // HELD_SAVES_CHECK_MS check instead of retrying every 250 ms
+        if (++this.failedSaves > 1) {
+          this.holdSaves(error);
+          return;
+        }
         console.error('Failed to save config (background), will retry:', error);
         const retry = setTimeout(() => this.scheduleSave(), 250);
         retry.unref?.();
@@ -791,6 +860,11 @@ class ConfigManager {
    */
   async getOrCreateClientId(): Promise<string> {
     const { randomUUID } = await import('crypto');
+    if (this.savesHeld) {
+      // Can't be written now: keep one for the session, saved with the held changes
+      const clientId = this.config.clientId || randomUUID();
+      return await this.updateValueNonBlocking('clientId', (current) => current || clientId);
+    }
     return await this.updateValue('clientId', (current) => current || randomUUID());
   }
 }
