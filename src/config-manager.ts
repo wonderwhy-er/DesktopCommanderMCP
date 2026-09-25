@@ -17,6 +17,16 @@ const PARTIAL_CONFIG_WAIT_MS = 1_000;
 // While background saves are held because config.json can't be written, how
 // often they are tried again
 const HELD_SAVES_CHECK_MS = 5_000;
+// How many times one config write is done over when its lock was lost, or
+// config.json changed, before it committed
+const MAX_CONFIG_MUTATION_ATTEMPTS = 3;
+
+/** A config write that didn't commit: its lock was lost, or config.json changed after it was read */
+class ConfigChangedBeforeCommitError extends Error {
+  constructor() {
+    super('config.json changed, or its lock was lost, before this write committed');
+  }
+}
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -593,11 +603,21 @@ class ConfigManager {
     }
   }
 
-  private async writeConfigAtomically(config: ServerConfig): Promise<void> {
-    await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2));
+  private async writeConfigAtomically(config: ServerConfig, beforeCommit?: () => Promise<void>): Promise<void> {
+    await writeFileAtomic(this.configPath, JSON.stringify(config, null, 2), { beforeCommit });
   }
 
-  private async acquireConfigLock(): Promise<() => Promise<void>> {
+  /** config.json's text, or null when there is none */
+  private async readConfigText(): Promise<string | null> {
+    try {
+      return await fs.readFile(this.configPath, 'utf8');
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  private async acquireConfigLock(onLost?: () => void): Promise<() => Promise<void>> {
     return lockfile.lock(this.configPath, {
       realpath: false,
       stale: 30_000,
@@ -605,16 +625,39 @@ class ConfigManager {
       retries: { retries: 100, factor: 1.2, minTimeout: 10, maxTimeout: 100 },
       // This process couldn't refresh the lock for 30 s (frozen: machine sleep, a
       // suspended process, a blocked event loop) and another one took it over or
-      // removed it. The default throws from a timer, which ends the server; the
-      // write in progress still commits atomically, and its release fails (logged).
-      onCompromised: (error) => console.error(`The config lock was lost while held: ${error.message} (${(error as any).code})`),
+      // removed it. The default throws from a timer, which ends the server; here it
+      // is logged, and a write not yet committed is done again under a new lock
+      // (performConfigMutation). Its release then fails (logged).
+      onCompromised: (error) => {
+        console.error(`The config lock was lost while held: ${error.message} (${(error as any).code})`);
+        onLost?.();
+      },
     });
   }
 
+  /**
+   * Read config.json, apply `mutate`, write it back, all under the cross-process
+   * lock. If the lock was lost, or config.json changed, before the write
+   * committed, nothing was written: the whole read, change and write runs again
+   * under a new lock, so the change lands on what the other process saved.
+   */
   private async performConfigMutation(
     mutate: (config: ServerConfig, existed: boolean) => void
   ): Promise<ServerConfig> {
-    const release = await this.acquireConfigLock();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.performConfigMutationOnce(mutate);
+      } catch (error) {
+        if (!(error instanceof ConfigChangedBeforeCommitError) || attempt >= MAX_CONFIG_MUTATION_ATTEMPTS) throw error;
+      }
+    }
+  }
+
+  private async performConfigMutationOnce(
+    mutate: (config: ServerConfig, existed: boolean) => void
+  ): Promise<ServerConfig> {
+    let lockLost = false;
+    const release = await this.acquireConfigLock(() => { lockLost = true; });
     let result: ServerConfig | null = null;
     let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
     try {
@@ -636,8 +679,13 @@ class ConfigManager {
           throw error;
         }
       }
+      // What config.json holds as read (or as repaired above): if it holds anything
+      // else when the write is about to commit, another process saved meanwhile
+      const readText = await this.readConfigText();
       mutate(latest, existed);
-      await this.writeConfigAtomically(latest);
+      await this.writeConfigAtomically(latest, async () => {
+        if (lockLost || await this.readConfigText() !== readText) throw new ConfigChangedBeforeCommitError();
+      });
       this.config = { ...latest, version: VERSION };
       result = latest;
       // Written: whatever held saves before is solved
