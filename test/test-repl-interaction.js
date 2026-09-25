@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { configManager } from '../dist/config-manager.js';
 import { terminalManager } from '../dist/terminal-manager.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 import { getSystemInfo } from '../dist/utils/system-info.js';
 
 // Get directory name
@@ -73,8 +73,7 @@ async function testPythonREPL() {
     // Use the Python the server itself detected
     const { pythonInfo } = getSystemInfo();
     if (!pythonInfo.available) {
-      skip('Python REPL interaction test: Python 3 is not installed');
-      return true;
+      return skip('Python REPL interaction test: Python 3 is not installed');
     }
     const pythonCmd = pythonInfo.command;
     
@@ -226,13 +225,16 @@ export default async function runTests() {
     const pythonTestResult = await testPythonREPL();
     const nodeTestResult = await testNodeREPL();
     
-    // Overall test result
-    const allPassed = pythonTestResult && nodeTestResult;
+    // Overall test result: a skipped test neither passes nor fails
+    const results = [pythonTestResult, nodeTestResult];
+    const allPassed = results.every((result) => result === true || result === SKIPPED);
+    const skippedCount = results.filter((result) => result === SKIPPED).length;
+    const status = (result) => result === SKIPPED ? colors.yellow + 'SKIPPED' : result ? colors.green + 'PASSED' : colors.red + 'FAILED';
     
     console.log(`\n${colors.cyan}===== REPL Interaction Test Summary =====\n${colors.reset}`);
-    console.log(`Python REPL test: ${pythonTestResult ? colors.green + 'PASSED' : colors.red + 'FAILED'}${colors.reset}`);
-    console.log(`Node.js REPL test: ${nodeTestResult ? colors.green + 'PASSED' : colors.red + 'FAILED'}${colors.reset}`);
-    console.log(`\nOverall result: ${allPassed ? colors.green + 'ALL TESTS PASSED! 🎉' : colors.red + 'SOME TESTS FAILED!'}${colors.reset}`);
+    console.log(`Python REPL test: ${status(pythonTestResult)}${colors.reset}`);
+    console.log(`Node.js REPL test: ${status(nodeTestResult)}${colors.reset}`);
+    console.log(`\nOverall result: ${!allPassed ? colors.red + 'SOME TESTS FAILED!' : skippedCount > 0 ? colors.yellow + `NO TEST FAILED, ${skippedCount} SKIPPED` : colors.green + 'ALL TESTS PASSED! 🎉'}${colors.reset}`);
     
     return allPassed;
   } catch (error) {
