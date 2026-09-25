@@ -5,6 +5,7 @@ import fsp from 'fs/promises';
 import { runWithAbortableTimeout } from '../dist/utils/withTimeout.js';
 import { READ_OPERATION_TIMEOUT_MS, readFile } from '../dist/tools/filesystem.js';
 import { configManager } from '../dist/config-manager.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 /**
  * Regression tests for the abortable, 3-minute read timeout.
@@ -88,5 +89,5 @@ async function run() {
 }
 
 run()
-  .then(() => { console.log(`\nPASS (${passed}/4)`); process.exit(0); })
-  .catch((e) => { console.error(`\nFAIL: ${e.message}`); process.exit(1); });
+  .then(() => { console.log(`\nPASS (${passed}/4)`); exitProcess(0); })
+  .catch((e) => { console.error(`\nFAIL: ${e.message}`); exitProcess(1); });

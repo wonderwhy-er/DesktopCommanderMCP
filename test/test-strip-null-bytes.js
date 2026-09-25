@@ -18,6 +18,7 @@
  */
 
 import { stripNullBytes } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 const NUL = String.fromCharCode(0);
 const BACKSLASH = String.fromCharCode(92);
@@ -74,4 +75,4 @@ if (out.includes(NUL)) {
 }
 
 console.log(`\n${failures === 0 ? '✅' : '❌'} strip-null-bytes: ${failures} failing test(s).`);
-process.exitCode = failures === 0 ? 0 : 1;
+exitProcess(failures === 0 ? 0 : 1);

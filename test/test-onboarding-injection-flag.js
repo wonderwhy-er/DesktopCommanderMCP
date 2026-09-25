@@ -27,6 +27,7 @@ import { createServer } from 'http';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_INDEX = path.join(__dirname, '..', 'dist', 'index.js');
@@ -251,13 +252,14 @@ async function main() {
   const failed = results.filter((r) => !r).length;
   if (failed > 0) {
     console.error(`\n${failed}/${results.length} scenarios failed — onboarding_injection flag is not authoritative (issue #538).`);
-    process.exit(1);
+    exitProcess(1);
+    return;
   }
   console.log(`\nAll ${results.length} scenarios passed.`);
-  process.exit(0);
+  exitProcess(0);
 }
 
 main().catch((err) => {
   console.error('Test error:', err);
-  process.exit(1);
+  exitProcess(1);
 });

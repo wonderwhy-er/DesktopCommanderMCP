@@ -1,6 +1,7 @@
 import assert from 'assert';
 import { execSync } from 'child_process';
 import { startProcess, readProcessOutput, forceTerminate, interactWithProcess } from '../dist/tools/improved-process-tools.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 /**
  * Determines the correct python command to use
@@ -139,9 +140,9 @@ for i in range(3):
 testEnhancedREPL()
   .then(success => {
     console.log(`Enhanced REPL test ${success ? 'PASSED' : 'FAILED'}`);
-    process.exit(success ? 0 : 1);
+    exitProcess(success ? 0 : 1);
   })
   .catch(error => {
     console.error('Test error:', error);
-    process.exit(1);
+    exitProcess(1);
   });

@@ -5,6 +5,7 @@ import fs from 'fs/promises';
 import assert from 'assert';
 import { handleReadFile } from '../dist/handlers/filesystem-handlers.js';
 import { configManager } from '../dist/config-manager.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -138,4 +139,4 @@ try {
 } finally {
     await teardown();
 }
-process.exit(exitCode);
+exitProcess(exitCode);

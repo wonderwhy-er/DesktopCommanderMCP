@@ -10,6 +10,7 @@
 import fs from 'fs/promises';
 import { configManager } from '../../dist/config-manager.js';
 import { usageTracker } from '../../dist/utils/usageTracker.js';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 import { createStalledReadTarget } from '../helpers/stalled-read.js';
 
 const T0 = Date.now();
@@ -32,14 +33,17 @@ for (let i = 0; i < BLOCKERS; i++) {
 setTimeout(async () => {
   log(`calling usageTracker.trackSuccess('list_processes') ...`);
   const t = Date.now();
+  let blocked = false;
   const guard = setTimeout(() => {
+    blocked = true;
     log(`trackSuccess STILL BLOCKED after 5000ms -> list_processes would hang here. GATE REPRODUCED.`);
     stalled.close();
-    process.exit(1);
+    exitProcess(1);
   }, 5000);
   await usageTracker.trackSuccess('list_processes');
+  if (blocked) return; // the guard closed the pipe, which is what let the call finish
   clearTimeout(guard);
   log(`trackSuccess completed in ${Date.now() - t}ms (NOT gated)`);
   stalled.close();
-  process.exit(0);
+  exitProcess(0);
 }, 200);

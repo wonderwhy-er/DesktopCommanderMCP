@@ -7,6 +7,7 @@
 import assert from 'assert';
 import os from 'os';
 import { parseWindowsTasklistCsv, parsePsAux, listProcesses } from '../dist/tools/process.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 let failures = 0;
 async function test(name, fn) {
@@ -84,4 +85,4 @@ await test(`live smoke on ${os.platform()}: real output parses with no NaN/empty
 });
 
 console.log(failures > 0 ? `🔴 list-processes: ${failures} failing test(s).` : '✅ list-processes: 0 failing test(s).');
-process.exit(failures > 0 ? 1 : 0);
+exitProcess(failures > 0 ? 1 : 0);
