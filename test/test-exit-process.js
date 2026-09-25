@@ -29,6 +29,12 @@ import { runIfMain } from './helpers/run-if-main.js';
 const HELPER_URL = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'utils', 'exit-process.js')).href;
 /** Slack for a loaded machine on top of the grace period */
 const TIMING_SLACK_MS = 2000;
+/**
+ * libuv counts timer time in whole milliseconds, so the grace timer can fire
+ * before EXIT_GRACE_MS have fully passed (measured down to 999.35 ms), and
+ * Date.now() can then read EXIT_GRACE_MS - 1
+ */
+const CLOCK_SLACK_MS = 50;
 const FETCH_RUNS = 10;
 
 /**
@@ -80,7 +86,7 @@ async function testHandleKeepsItAliveUntilGraceEnds() {
     const run = await runChild('setInterval(() => {}, 60_000); exitProcess(4);');
     assert.strictEqual(run.code, 4, `exit code, stderr: ${run.stderr}`);
     assert.strictEqual(run.exitListener?.code, 4, "the 'exit' listener should see the code");
-    assert.ok(run.exitListener.ms >= EXIT_GRACE_MS && run.exitListener.ms < EXIT_GRACE_MS + TIMING_SLACK_MS,
+    assert.ok(run.exitListener.ms >= EXIT_GRACE_MS - CLOCK_SLACK_MS && run.exitListener.ms < EXIT_GRACE_MS + TIMING_SLACK_MS,
         `a handle should keep the process alive for the ${EXIT_GRACE_MS}ms grace period and no longer, took ${run.exitListener.ms}ms`);
     console.log(`✓ an open handle: exit 4 after ${run.exitListener.ms}ms`);
 }
