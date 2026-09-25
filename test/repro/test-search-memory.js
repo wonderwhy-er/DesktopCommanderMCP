@@ -43,7 +43,8 @@
 // Exit code: 1 if the problem shows: ripgrep holds more than 128 MB for 200
 // results, the server grows by more than all the context text, a 48 MB line
 // takes more than 5 s or grows the server by more than 8 times its size, or the
-// server exits.
+// server exits. 2 (NOT MEASURED) if a scenario judged by memory has no valid
+// measurement: its memory could not be sampled.
 import { constants } from 'buffer';
 import fs from 'fs';
 import os from 'os';
@@ -160,6 +161,9 @@ async function runScenario(name) {
     let started = Date.now();
     try {
       await sleep(1000);
+      // Growth is measured from the server's first sample (PowerShell can take seconds to start)
+      const sampledBy = Date.now() + 20_000;
+      while (!memory.peakOf(serverPid) && !memory.failure() && Date.now() < sampledBy) await sleep(100);
       outcome.serverBefore = memory.peakOf(serverPid);
 
       started = Date.now();
@@ -195,6 +199,7 @@ async function runScenario(name) {
       memory.stop();
       outcome.serverPeak = memory.peakOf(serverPid);
       outcome.ripgrepPeak = memory.peakOfName('rg');
+      outcome.samplingFailure = memory.failure() ?? (outcome.serverBefore ? undefined : 'the server was not sampled before the search');
       outcome.serverExited = serverExited;
       if (serverExited) outcome.serverLog = [...new Set(serverLog.split('\n').filter((l) => /exception|error/i.test(l)))].slice(-3).join(' | ');
       await closeClient(client);
@@ -208,29 +213,39 @@ async function runScenario(name) {
 const names = (process.env.REPRO_SCENARIOS?.split(',') ?? ['many', 'context', 'line'])
   .concat(process.env.REPRO_V8_LIMIT === '1' ? ['v8-limit'] : []);
 const findings = [];
+/** Scenarios that give no valid measurement to judge by */
+const unmeasured = [];
 for (const name of names) {
   const o = await runScenario(name);
   const growth = o.serverPeak - o.serverBefore;
   console.log(`${name}: ${o.fixture}; maxResults ${MAX_RESULTS}, answer shows ${SHOWN_CHARS} characters per entry`);
   console.log(`  ${o.complete ? 'completed' : 'NOT completed'} in ${o.seconds?.toFixed(1)} s: ${o.matches} matches, ${o.results} results, answer ${o.answerChars} characters`);
   console.log(`  ripgrep peak ${formatMB(o.ripgrepPeak)}; server peak ${formatMB(o.serverPeak)} (${formatMB(o.serverBefore)} before the search, + ${formatMB(growth)})`);
+  if (o.samplingFailure) console.log(`  memory not measured: ${o.samplingFailure}`);
   if (o.error) console.log(`  error: ${o.error}`);
   if (o.serverExited) console.log(`  the server exited${o.serverLog ? `: ${o.serverLog}` : ''}`);
 
   if (o.serverExited) findings.push(`${name}: the server exited during the search`);
-  if (name === 'many' && o.ripgrepPeak > 128 * MB) {
+  // Memory is judged only from valid samples
+  const sampled = !o.samplingFailure;
+  if (name === 'many' && sampled && o.ripgrepPeak > 128 * MB) {
     findings.push(`many: ripgrep held ${formatMB(o.ripgrepPeak)} for a ${MAX_RESULTS}-result search`);
   }
-  if (name === 'context' && growth > SCENARIOS.context.contextBytes()) {
+  if (name === 'context' && sampled && growth > SCENARIOS.context.contextBytes()) {
     findings.push(`context: the server grew ${formatMB(growth)}, more than all the context text (${formatMB(SCENARIOS.context.contextBytes())}), for ${o.matches} matches whose answer shows ${SHOWN_CHARS} characters per entry`);
   }
-  if (name === 'line' && (!o.complete || o.seconds > 5 || growth > 8 * SCENARIOS.line.size)) {
+  const lineFinding = name === 'line' && (!o.complete || o.seconds > 5 || (sampled && growth > 8 * SCENARIOS.line.size));
+  if (lineFinding) {
     findings.push(`line: a search through one ${formatMB(SCENARIOS.line.size)} line took ${o.seconds.toFixed(1)} s and grew the server ${formatMB(growth)}`);
+  }
+  // many, context and line are judged by memory too (v8-limit and near-cap only by the server exiting)
+  if ((name === 'many' || name === 'context' || (name === 'line' && !lineFinding)) && !o.serverExited && o.samplingFailure) {
+    unmeasured.push(`${name}: memory not measured (${o.samplingFailure})`);
   }
 }
 
-console.log(findings.length > 0
-  ? `REPRODUCED: ${findings.join('; ')}`
-  : `NOT REPRODUCED: a ${MAX_RESULTS}-result search stayed bounded in ripgrep and the server (${names.join(', ')})`);
+if (unmeasured.length > 0) console.log(`NOT MEASURED: ${unmeasured.join('; ')}`);
+if (findings.length > 0) console.log(`REPRODUCED: ${findings.join('; ')}`);
+else if (unmeasured.length === 0) console.log(`NOT REPRODUCED: a ${MAX_RESULTS}-result search stayed bounded in ripgrep and the server (${names.join(', ')})`);
 // A request to a server that exited can leave its timeout timer running
-exitProcess(findings.length > 0 ? 1 : 0);
+exitProcess(findings.length > 0 ? 1 : unmeasured.length > 0 ? 2 : 0);

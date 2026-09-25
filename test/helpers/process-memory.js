@@ -12,8 +12,10 @@ import os from 'os';
 import path from 'path';
 
 /**
- * Starts sampling. Returns `peakOf(pid)` and `peakOfName(prefix)` (bytes) and
- * `stop()`, which the caller must call.
+ * Starts sampling. Returns `peakOf(pid)` and `peakOfName(prefix)` (bytes),
+ * `failure()` and `stop()`, which the caller must call. `failure()` says why
+ * sampling failed (the sampler couldn't run or exited, or a sample failed),
+ * else is undefined: peaks read without samples are 0, which measures nothing.
  */
 export function watchPeakMemory(rootPid, intervalMs = 100) {
   const peaks = new Map(); // pid -> { name, bytes }
@@ -22,6 +24,8 @@ export function watchPeakMemory(rootPid, intervalMs = 100) {
     if (!peak) peaks.set(pid, { name, bytes });
     else peak.bytes = Math.max(peak.bytes, bytes);
   };
+  let failure;
+  const fail = (message) => { failure ??= message; };
 
   let stop;
   if (process.platform === 'win32') {
@@ -40,6 +44,11 @@ export function watchPeakMemory(rootPid, intervalMs = 100) {
       // module cache below the working directory instead
       env: { ...process.env, PSModuleAnalysisCachePath: path.join(os.tmpdir(), 'dc-test-ps-module-analysis-cache') },
     });
+    let stopped = false;
+    sampler.on('error', (error) => fail(`the PowerShell sampler could not run: ${error.message}`));
+    sampler.on('exit', (code, signal) => {
+      if (!stopped) fail(`the PowerShell sampler exited (${signal ?? `exit code ${code}`})`);
+    });
     let pending = '';
     sampler.stdout.on('data', (chunk) => {
       const lines = (pending + chunk).split(/\r?\n/);
@@ -49,11 +58,16 @@ export function watchPeakMemory(rootPid, intervalMs = 100) {
         if (sample) record(Number(sample[1]), sample[2], Number(sample[3]) * 1024); // KB
       }
     });
-    stop = () => sampler.kill();
+    stop = () => {
+      stopped = true;
+      sampler.kill();
+    };
   } else {
     let running = true;
     const sample = () => execFile('ps', ['-A', '-o', 'pid=,ppid=,rss=,comm='], { maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
-      if (!error) {
+      if (error) {
+        fail(`ps failed: ${error.message}`); // maxBuffer too
+      } else {
         for (const line of stdout.split('\n')) {
           const row = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/);
           if (row && (Number(row[1]) === rootPid || Number(row[2]) === rootPid)) {
@@ -72,6 +86,8 @@ export function watchPeakMemory(rootPid, intervalMs = 100) {
     peakOf: (pid) => peaks.get(pid)?.bytes ?? 0,
     /** Largest peak among the processes whose executable name starts with `prefix` */
     peakOfName: (prefix) => Math.max(0, ...[...peaks.values()].filter((p) => p.name.startsWith(prefix)).map((p) => p.bytes)),
+    /** Why sampling failed, or undefined */
+    failure: () => failure,
     stop: () => stop(),
   };
 }
