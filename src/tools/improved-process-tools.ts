@@ -6,6 +6,7 @@ import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { configManager } from '../config-manager.js';
 import { getDefaultShell } from '../utils/shell.js';
+import { terminateProcessTree } from '../utils/process-tree.js';
 import { MAX_PROCESS_WAIT_MS } from '../config.js';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
@@ -21,6 +22,17 @@ const mcpRoot = path.resolve(__dirname, '..', '..');
 const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
 let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
 
+/** How long a node:local script's output pipes may stay open after its timeout ended its tree */
+const PIPES_CLOSE_WAIT_MS = 1000;
+
+/** The answer when some processes of a session could not be ended */
+function terminationFailedResult(pid: number): ServerResult {
+  return {
+    content: [{ type: "text", text: `Error: Could not terminate every process of session ${pid}; some may still be running` }],
+    isError: true,
+  };
+}
+
 /**
  * Execute Node.js code via temp file (fallback when Python unavailable)
  * Creates temp .mjs file in MCP directory for ES module import access
@@ -31,15 +43,31 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
   try {
     await fs.writeFile(tempFile, code, 'utf8');
 
-    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; treeSurvived?: boolean }>((resolve) => {
       const proc = spawn(process.execPath, [tempFile], {
         cwd: mcpRoot,
-        timeout: timeout_ms,
         windowsHide: true  // Prevent visible console windows on Windows
       });
 
       let stdout = '';
       let stderr = '';
+
+      // Not spawn's own timeout option: that kills only the script, leaving the
+      // processes it started running and holding its output pipes open, so
+      // 'close' never came and the call never returned.
+      const timer = setTimeout(async () => {
+        if (await terminateProcessTree(proc)) {
+          // The tree ended, but a process that left it before the walk (one
+          // started by a child that has exited) may still hold the output
+          // pipes: 'close' answers if it comes within PIPES_CLOSE_WAIT_MS
+          await new Promise((wait) => setTimeout(wait, PIPES_CLOSE_WAIT_MS).unref());
+        }
+        // Some of the tree survived, or a process outside it holds the output
+        // pipes, so 'close' may never come: answer now and stop reading them
+        proc.stdout.destroy();
+        proc.stderr.destroy();
+        resolve({ stdout, stderr, exitCode: 1, treeSurvived: true });
+      }, timeout_ms);
 
       proc.stdout.on('data', (data) => {
         stdout += data.toString();
@@ -50,16 +78,22 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000, session
       });
 
       proc.on('close', (exitCode) => {
+        clearTimeout(timer);
         resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
       });
 
       proc.on('error', (err) => {
+        clearTimeout(timer);
         resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1 });
       });
     });
 
     // Clean up temp file
     await fs.unlink(tempFile).catch(() => {});
+
+    if (result.treeSurvived) {
+      return terminationFailedResult(sessionPid);
+    }
 
     if (result.exitCode !== 0) {
       return {
@@ -459,9 +493,10 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
     });
 
     // Execute code via temp file approach
-    // Respect per-call timeout if provided, otherwise use session default, within
-    // the process wait ceiling: the call answers only once the script ends
-    const effectiveTimeout = Math.min(timeout_ms ?? session.timeout_ms, waitLimit.capMs);
+    // Respect per-call timeout if provided, otherwise use session default
+    // (parsed.data's: timeout_ms above already holds the 8000ms default for processes),
+    // within the process wait ceiling: the call answers only once the script ends
+    const effectiveTimeout = Math.min(parsed.data.timeout_ms ?? session.timeout_ms, waitLimit.capMs);
     return executeNodeCode(input, effectiveTimeout, pid);
   }
 
@@ -747,11 +782,15 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
     };
   }
 
-  const success = terminalManager.forceTerminate(pid);
+  // Returns once the session's processes are gone, so a success means they no longer run
+  const outcome = await terminalManager.forceTerminate(pid);
+  if (outcome === 'failed') {
+    return terminationFailedResult(pid);
+  }
   return {
     content: [{
       type: "text",
-      text: success
+      text: outcome === 'terminated'
         ? `Successfully initiated termination of session ${pid}`
         : `No active session found for PID ${pid}`
     }],
