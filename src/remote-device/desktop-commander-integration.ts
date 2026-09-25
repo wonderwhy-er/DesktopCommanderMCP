@@ -1,10 +1,17 @@
 import path from 'path';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 import { resolveShellPath } from '../utils/shell.js';
+
+/** The device's environment, as the string map a child process gets */
+function deviceEnvironment(): Record<string, string> {
+    return Object.fromEntries(
+        Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+    );
+}
 
 // Restart pacing: grows with consecutive failures, caps, and jitters so a
 // fleet-wide fault does not stampede.
@@ -89,12 +96,17 @@ export class DesktopCommanderIntegration {
 
         try {
             console.debug('[DEBUG] Creating StdioClientTransport');
+            // The server gets the device's whole environment, as a Desktop
+            // Commander started directly would: what the user set for the
+            // device (telemetry opt-out, container variables, what commands
+            // need) must reach the tools. The SDK's default passes only a
+            // minimal set, meant for starting untrusted servers.
             // DC_REMOTE_DEVICE tells the spawned server it is serving remote
             // services, so it suppresses local-only behavior like opening the
             // welcome page in a browser the remote user would never see.
             this.mcpTransport = new StdioClientTransport({
                 ...config,
-                env: { ...getDefaultEnvironment(), ...config.env, DC_REMOTE_DEVICE: 'true' }
+                env: { ...deviceEnvironment(), ...config.env, DC_REMOTE_DEVICE: 'true' }
             });
 
             // Create MCP client
