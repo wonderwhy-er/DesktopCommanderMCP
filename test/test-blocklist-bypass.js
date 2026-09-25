@@ -54,6 +54,36 @@ async function runTests() {
         assert.ok(cmds8.includes('ls'), 'FAIL: should extract "ls" and ignore $MYVAR');
         assert.ok(!cmds8.includes('$MYVAR'), 'FAIL: should not include $MYVAR as a command');
 
+        // Test 9: 'export' prefix should not mask the real command
+        const cmds9 = commandManager.extractCommands('export PATH=/usr/bin rm -rf /');
+        console.log('  export PATH=/usr/bin rm -rf / =>', cmds9);
+        assert.ok(cmds9.includes('rm'), 'FAIL: should extract "rm" past an export prefix');
+        assert.ok(!cmds9.includes('export'), 'FAIL: should not extract "export" as the command');
+
+        // Test 10: quoted env var value (containing a space) should not desync tokenization
+        const cmds10 = commandManager.extractCommands('FOO="a b" rm -rf /');
+        console.log('  FOO="a b" rm -rf / =>', cmds10);
+        assert.ok(cmds10.includes('rm'), 'FAIL: should extract "rm" past a quoted env var value');
+
+        // Test 11: multiple leading env var assignments
+        const cmds11 = commandManager.extractCommands('A=1 B=2 rm -rf /');
+        console.log('  A=1 B=2 rm -rf / =>', cmds11);
+        assert.ok(cmds11.includes('rm'), 'FAIL: should extract "rm" past multiple env var assignments');
+
+        // Test 12: reasonable nesting still parses correctly (not affected by depth limit)
+        const cmds12 = commandManager.extractCommands('$($($(rm -rf /)))');
+        console.log('  $($($(rm -rf /))) =>', cmds12);
+        assert.ok(cmds12.includes('rm'), 'FAIL: should extract "rm" from reasonably nested $()');
+
+        // Test 13: excessive nesting depth must fail closed (throw) rather than
+        // silently returning an empty/incomplete result that could bypass validateCommand
+        const deeplyNested = '$('.repeat(25) + 'rm -rf /' + ')'.repeat(25);
+        assert.throws(
+            () => commandManager.extractCommands(deeplyNested),
+            'FAIL: should throw when nesting depth exceeds the limit, not fail open'
+        );
+        console.log('  25 levels of $() nesting => throws as expected (fail closed)');
+
         console.log('\nAll tests passed!');
     } catch (error) {
         console.error('Test failed:', error.message);
