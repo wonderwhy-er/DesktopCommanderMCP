@@ -805,9 +805,10 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             // If it's a directory and we have depth remaining, recurse
             if (isDirectory && currentDepth > 1) {
                 try {
-                    // Validate the path before recursing
-                    await validatePath(fullPath);
-                    await listRecursive(fullPath, currentDepth - 1, displayPath, false);
+                    // Validate the path before recursing, and list the folder that was
+                    // checked: a link can be retargeted between the check and the read
+                    const validatedPath = await validatePath(fullPath);
+                    await listRecursive(validatedPath, currentDepth - 1, displayPath, false);
                 } catch (error) {
                     // If validation fails or we can't access it, it will be marked as denied
                     // when we try to read it in the recursive call
