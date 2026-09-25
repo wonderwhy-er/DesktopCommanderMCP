@@ -44,7 +44,8 @@
 // results, the server grows by more than all the context text, a 48 MB line
 // takes more than 5 s or grows the server by more than 8 times its size, or the
 // server exits. 2 (NOT MEASURED) if a scenario judged by memory has no valid
-// measurement: its memory could not be sampled.
+// measurement: its memory could not be sampled, or (many, context) its search
+// failed or did not complete.
 import { constants } from 'buffer';
 import fs from 'fs';
 import os from 'os';
@@ -228,10 +229,12 @@ for (const name of names) {
   if (o.serverExited) findings.push(`${name}: the server exited during the search`);
   // Memory is judged only from valid samples
   const sampled = !o.samplingFailure;
-  if (name === 'many' && sampled && o.ripgrepPeak > 128 * MB) {
+  // many and context measure a search that completes (line counts one that doesn't as a finding)
+  const searched = !((name === 'many' || name === 'context') && (o.error || !o.complete));
+  if (name === 'many' && sampled && searched && o.ripgrepPeak > 128 * MB) {
     findings.push(`many: ripgrep held ${formatMB(o.ripgrepPeak)} for a ${MAX_RESULTS}-result search`);
   }
-  if (name === 'context' && sampled && growth > SCENARIOS.context.contextBytes()) {
+  if (name === 'context' && sampled && searched && growth > SCENARIOS.context.contextBytes()) {
     findings.push(`context: the server grew ${formatMB(growth)}, more than all the context text (${formatMB(SCENARIOS.context.contextBytes())}), for ${o.matches} matches whose answer shows ${SHOWN_CHARS} characters per entry`);
   }
   const lineFinding = name === 'line' && (!o.complete || o.seconds > 5 || (sampled && growth > 8 * SCENARIOS.line.size));
@@ -241,6 +244,9 @@ for (const name of names) {
   // many, context and line are judged by memory too (v8-limit and near-cap only by the server exiting)
   if ((name === 'many' || name === 'context' || (name === 'line' && !lineFinding)) && !o.serverExited && o.samplingFailure) {
     unmeasured.push(`${name}: memory not measured (${o.samplingFailure})`);
+  }
+  if (!searched && !o.serverExited) {
+    unmeasured.push(`${name}: the search ${o.error ? `failed (${o.error})` : `did not complete within ${SEARCH_LIMIT_MS / 1000} s`}`);
   }
 }
 
