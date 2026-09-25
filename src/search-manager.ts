@@ -651,18 +651,21 @@ function characterClassEnd(glob: string, start: number): number {
   }
 
   /**
-   * The Excel/DOCX files a filePattern selects, by the globs ripgrep's text
-   * files are selected by (ripgrepGlobMatcher), ignoring case: one of its
-   * alternatives matches the file, and none of its "!" alternatives leaves it
-   * out (see officeFileExcluded).
+   * The Excel/DOCX files a filePattern selects, as ripgrep's globs select text
+   * files (ripgrepGlobMatcher), ignoring case: one of its alternatives matches
+   * the file (any file, when all of them are "!" alternatives), and none of its
+   * "!" alternatives leaves it out (see officeFileExcluded). A search path that
+   * is itself a file is searched whatever the pattern says, as ripgrep searches
+   * a file it is given.
    */
   private filterOfficeFiles(files: string[], filePattern: string, rootPath: string): string[] {
     const patterns = filePatternAlternatives(filePattern);
     const includes = patterns.filter(pat => !pat.startsWith('!')).map(pat => ripgrepGlobMatcher(pat, true));
     const excludes = patterns.filter(pat => pat.startsWith('!')).map(pat => pat.slice(1));
     return files.filter(filePath => {
+      if (filePath === rootPath) return true;
       const relativePath = pathBelow(rootPath, filePath);
-      return includes.some(matches => matches(relativePath)) &&
+      return (includes.length === 0 || includes.some(matches => matches(relativePath))) &&
         !excludes.some(pat => this.officeFileExcluded(relativePath, pat));
     });
   }
