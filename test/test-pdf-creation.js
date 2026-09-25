@@ -11,7 +11,8 @@ import assert from 'assert';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { runIfMain } from './helpers/run-if-main.js';
+import { isNoChrome } from './helpers/pdf.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -150,6 +151,8 @@ console.log('Line 3');
         await fs.unlink(tempMergeFile).catch(() => { });
 
     } catch (error) {
+        // Every step renders markdown: without Chrome, none of them can run
+        if (isNoChrome(error)) return skip(`PDF creation and modification: no Chrome to render with (${error.message})`);
         console.error('❌ Failed:', error);
         return false;
     }
