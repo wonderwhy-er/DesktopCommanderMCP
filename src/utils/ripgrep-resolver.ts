@@ -1,7 +1,7 @@
-import { execSync } from 'child_process';
 import { existsSync, chmodSync } from 'fs';
 import path from 'path';
 import os from 'os';
+import { resolveShellPath } from './shell.js';
 
 let cachedRgPath: string | null = null;
 
@@ -33,17 +33,12 @@ export async function getRipgrepPath(): Promise<string> {
     // @vscode/ripgrep import or binary resolution failed, continue to fallbacks
   }
 
-  // Strategy 2: Try system ripgrep using 'which' (Unix) or 'where' (Windows)
-  try {
-    const systemRg = process.platform === 'win32' ? 'rg.exe' : 'rg';
-    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-    const result = execSync(`${whichCmd} ${systemRg}`, { encoding: 'utf-8' }).trim().split(/\r?\n/)[0];
-    if (result && existsSync(result)) {
-      cachedRgPath = result;
-      return result;
-    }
-  } catch (e) {
-    // System rg not found via which
+  // Strategy 2: system ripgrep on PATH (never the working folder, which
+  // 'where' searched first on Windows)
+  const systemRg = resolveShellPath(process.platform === 'win32' ? 'rg.exe' : 'rg');
+  if (systemRg) {
+    cachedRgPath = systemRg;
+    return systemRg;
   }
 
   // Strategy 3: Try common installation paths

@@ -1,8 +1,8 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
-import { getDefaultShell } from './shell.js';
+import { execFileSync } from 'child_process';
+import { getDefaultShell, resolveShellPath } from './shell.js';
 
 export interface DockerMount {
     hostPath: string;
@@ -472,8 +472,12 @@ function detectPythonInfo(): SystemInfo['pythonInfo'] {
         : ['python3', 'python'];        // Unix: prefer python3
 
     for (const cmd of pythonCommands) {
+        // The python on PATH, never one in the working folder (which Windows
+        // searches first for a bare name); not on PATH means not available
+        const program = resolveShellPath(cmd);
+        if (!program) continue;
         try {
-            const version = execSync(`${cmd} --version`, {
+            const version = execFileSync(program, ['--version'], {
                 encoding: 'utf8',
                 timeout: 5000,
                 stdio: ['pipe', 'pipe', 'pipe']
