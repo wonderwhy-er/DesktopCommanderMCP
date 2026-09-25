@@ -4,6 +4,9 @@
  * validatePath resolves the requested path to its real path before the check;
  * the allowed directories have to be compared the same way. On macOS this is
  * the everyday case: os.tmpdir() is under /var, a symlink to /private/var.
+ * An allowed directory whose real path never resolves (an unresponsive mount)
+ * must not hold up paths inside the others: they were refused after the 10 s
+ * validation timeout.
  *
  * Top-level script: runs on any runner and restores the original config.
  */
@@ -59,6 +62,24 @@ async function runTests() {
     await configManager.setValue('allowedDirectories', [realDir]);
     check('a file inside, by its real path', await allowed(path.join(realDir, 'inside.txt')), true);
     check('a file outside', await allowed(path.join(outsideDir, 'outside.txt')), false);
+
+    // An allowed directory on an unresponsive mount: resolving its real path
+    // never finishes. Paths in the other allowed directories must not wait for it.
+    console.log('Another allowed directory whose real path never resolves (an unresponsive mount)');
+    const hungDir = path.join(os.tmpdir(), `dc-allowed-hung-${stamp}`);
+    fs.mkdirSync(hungDir);
+    await configManager.setValue('allowedDirectories', [hungDir, realDir]);
+    const fsPromises = (await import('fs/promises')).default;
+    const realpath = fsPromises.realpath;
+    fsPromises.realpath = (p, ...rest) =>
+      path.resolve(String(p)) === path.resolve(hungDir) ? new Promise(() => {}) : realpath.call(fsPromises, p, ...rest);
+    try {
+      check('a file inside the other allowed directory', await allowed(path.join(realDir, 'inside.txt')), true);
+      check('a file outside every allowed directory', await allowed(path.join(outsideDir, 'outside.txt')), false);
+    } finally {
+      fsPromises.realpath = realpath;
+      fs.rmSync(hungDir, { recursive: true, force: true });
+    }
   } finally {
     await configManager.setValue('allowedDirectories', originalAllowed);
     try { fs.unlinkSync(linkDir); } catch { fs.rmdirSync(linkDir); }

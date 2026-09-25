@@ -169,18 +169,48 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 }
 
 /**
- * The forms an allowed directory matches by: as written and, when it exists,
- * its real path. validatePath checks real paths, so an allowed directory
- * reached through a symlink or junction (macOS: /var -> /private/var) must
- * match by its real path too. When the real path can't be read, only the
- * written form matches, which can only deny, never widen, access.
+ * An allowed directory's real path, or null when it can't be read. validatePath
+ * checks real paths, so an allowed directory reached through a symlink or
+ * junction (macOS: /var -> /private/var) must match by its real path too.
+ * When the real path can't be read, only the written form matches, which can
+ * only deny, never widen, access.
  */
-async function getAllowedDirForms(allowedDir: string): Promise<string[]> {
+async function getAllowedDirRealPath(allowedDir: string): Promise<string | null> {
     try {
-        return [allowedDir, await fs.realpath(expandHome(allowedDir))];
+        return await fs.realpath(expandHome(allowedDir));
     } catch {
-        return [allowedDir];
+        return null;
     }
+}
+
+/**
+ * Whether a normalized path is an allowed directory or inside it
+ */
+function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string): boolean {
+    let normalizedAllowedDir = normalizePath(allowedDir);
+    if (normalizedAllowedDir.slice(-1) === path.sep) {
+        normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
+    }
+
+    // Check if path is exactly the allowed directory
+    if (normalizedPathToCheck === normalizedAllowedDir) {
+        return true;
+    }
+
+    // Check if path is a subdirectory of the allowed directory
+    // Make sure to add a separator to prevent partial directory name matches
+    // e.g. /home/user vs /home/username
+    const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
+    if (subdirCheck) {
+        return true;
+    }
+
+    // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
+    if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
+        return normalizedPathToCheck.startsWith('c:');
+    }
+
+    return false;
 }
 
 /**
@@ -201,36 +231,27 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
-    // Check if the path is within any allowed directory, as written or by its real path
-    const allowedDirForms = (await Promise.all(allowedDirectories.map(getAllowedDirForms))).flat();
-    const isAllowed = allowedDirForms.some(allowedDir => {
-        let normalizedAllowedDir = normalizePath(allowedDir);
-        if (normalizedAllowedDir.slice(-1) === path.sep) {
-            normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
-        }
+    // As written first: no filesystem call, so an allowed directory on an
+    // unresponsive mount can't hold up a path inside another one
+    if (allowedDirectories.some((allowedDir) => isWithinAllowedDir(normalizedPathToCheck, allowedDir))) {
+        return true;
+    }
 
-        // Check if path is exactly the allowed directory
-        if (normalizedPathToCheck === normalizedAllowedDir) {
-            return true;
+    // Then by real path: the first match answers, so a real path that never
+    // resolves only holds up a path that no other allowed directory contains
+    return new Promise<boolean>((resolve) => {
+        let pending = allowedDirectories.length;
+        for (const allowedDir of allowedDirectories) {
+            void getAllowedDirRealPath(allowedDir).then((realPath) => {
+                if (realPath !== null && isWithinAllowedDir(normalizedPathToCheck, realPath)) {
+                    resolve(true);
+                }
+                if (--pending === 0) {
+                    resolve(false);
+                }
+            });
         }
-
-        // Check if path is a subdirectory of the allowed directory
-        // Make sure to add a separator to prevent partial directory name matches
-        // e.g. /home/user vs /home/username
-        const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
-        if (subdirCheck) {
-            return true;
-        }
-
-        // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
-        if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
-            return normalizedPathToCheck.startsWith('c:');
-        }
-
-        return false;
     });
-
-    return isAllowed;
 }
 
 /**
