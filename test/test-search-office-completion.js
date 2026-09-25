@@ -16,6 +16,7 @@ import { configManager } from '../dist/config-manager.js';
 import { startSearchAndWait } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { runNode } from './helpers/run-node.js';
+import { hookArgs } from './helpers/module-hooks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-office-completion-test');
@@ -200,8 +201,6 @@ async function testFailedOfficeSearchIsLogged() {
       }
       return nextResolve(specifier, context);
     }`;
-  const preload = `import { register } from 'node:module';
-    register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(hooks)}`)});`;
   const dist = (file) => pathToFileURL(path.join(__dirname, '..', 'dist', file)).href;
   const script = `
     import { handleGetMoreSearchResults } from ${JSON.stringify(dist('handlers/search-handlers.js'))};
@@ -212,7 +211,7 @@ async function testFailedOfficeSearchIsLogged() {
     searchManager.dispose();
     console.log(JSON.stringify({ sessionId, isError: !!page.isError, text: page.content[0].text }));`;
   const child = await runNode([
-    '--import', `data:text/javascript,${encodeURIComponent(preload)}`, '--input-type=module', '-e', script,
+    ...hookArgs(`data:text/javascript,${encodeURIComponent(hooks)}`), '--input-type=module', '-e', script,
   ], { timeoutMs: 60000 });
   assert.strictEqual(child.status, 0, `The search process failed (${child.status}): ${child.stderr}`);
 
