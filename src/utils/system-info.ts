@@ -1,7 +1,8 @@
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
+import { getDefaultShell, resolveShellPath } from './shell.js';
 
 export interface DockerMount {
     hostPath: string;
@@ -471,8 +472,12 @@ function detectPythonInfo(): SystemInfo['pythonInfo'] {
         : ['python3', 'python'];        // Unix: prefer python3
 
     for (const cmd of pythonCommands) {
+        // The python on PATH, never one in the working folder (which Windows
+        // searches first for a bare name); not on PATH means not available
+        const program = resolveShellPath(cmd);
+        if (!program) continue;
         try {
-            const version = execSync(`${cmd} --version`, {
+            const version = execFileSync(program, ['--version'], {
                 encoding: 'utf8',
                 timeout: 5000,
                 stdio: ['pipe', 'pipe', 'pipe']
@@ -508,13 +513,12 @@ export function getSystemInfo(): SystemInfo {
     const mountPoints = containerDetection.isContainer ? discoverContainerMounts(containerDetection.isContainer) : [];
     
     let platformName: string;
-    let defaultShell: string;
+    const defaultShell = getDefaultShell();
     let pathSeparator: string;
     let examplePaths: SystemInfo['examplePaths'];
     
     if (isWindows) {
         platformName = 'Windows';
-        defaultShell = 'powershell.exe';
         pathSeparator = '\\';
         examplePaths = {
             home: 'C:\\Users\\username',
@@ -523,7 +527,6 @@ export function getSystemInfo(): SystemInfo {
         };
     } else if (isMacOS) {
         platformName = 'macOS';
-        defaultShell = 'zsh';
         pathSeparator = '/';
         examplePaths = {
             home: '/Users/username',
@@ -532,7 +535,6 @@ export function getSystemInfo(): SystemInfo {
         };
     } else if (isLinux) {
         platformName = 'Linux';
-        defaultShell = 'bash';
         pathSeparator = '/';
         examplePaths = {
             home: '/home/username',
@@ -542,7 +544,6 @@ export function getSystemInfo(): SystemInfo {
     } else {
         // Fallback for other Unix-like systems
         platformName = 'Unix';
-        defaultShell = 'bash';
         pathSeparator = '/';
         examplePaths = {
             home: '/home/username',
