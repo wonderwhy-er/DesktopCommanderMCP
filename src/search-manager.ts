@@ -1057,12 +1057,17 @@ const MAX_KEPT_ERROR_CHARS = 64 * 1024;
   private setupProcessHandlers(session: SearchSession): void {
     const { process } = session;
 
-    process.stdout?.on('data', (data: Buffer) => {
+    // Decoded as streams: a character cut between two chunks stays whole
+    // (decoding each chunk on its own made it U+FFFD, in matches and paths)
+    process.stdout?.setEncoding('utf8');
+    process.stderr?.setEncoding('utf8');
+
+    process.stdout?.on('data', (data: string) => {
       session.printedOutput = true;
-      this.processOutput(session, data.toString());
+      this.processOutput(session, data);
     });
 
-    process.stderr?.on('data', (data: Buffer) => {
+    process.stderr?.on('data', (data: string | Buffer) => {
       const errorText = data.toString();
 
       // Store error text for potential user display (bounded: see keepErrorOutput)

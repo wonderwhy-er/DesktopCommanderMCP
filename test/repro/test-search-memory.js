@@ -146,6 +146,7 @@ async function runScenario(name) {
 
     const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER], env: { ...process.env }, stderr: 'pipe' });
     let serverLog = '';
+    transport.stderr?.setEncoding('utf8');
     transport.stderr?.on('data', (chunk) => { serverLog += chunk; });
     const client = new Client({ name: 'repro-search-memory', version: '1.0.0' }, { capabilities: {} });
     // The server's console.error reaches the client as log notifications
