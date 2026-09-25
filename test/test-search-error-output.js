@@ -7,18 +7,18 @@
  */
 import assert from 'assert';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { handleStartSearch } from '../dist/handlers/search-handlers.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { createTempDir } from './helpers/test-env.js';
 
 const MAX_KEPT_CHARS = 64 * 1024;
 
 export default async function runTests() {
   const originalConfig = await configManager.getConfig();
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-search-errors-')));
+  const dir = createTempDir('dc-search-errors-');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'text\n');
   await configManager.setValue('allowedDirectories', [dir]);
   let sessionId;
