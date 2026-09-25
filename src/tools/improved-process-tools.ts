@@ -24,7 +24,7 @@ let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
  * Execute Node.js code via temp file (fallback when Python unavailable)
  * Creates temp .mjs file in MCP directory for ES module import access
  */
-async function executeNodeCode(code: string, timeout_ms: number = 30000): Promise<ServerResult> {
+async function executeNodeCode(code: string, timeout_ms: number = 30000, sessionPid: number): Promise<ServerResult> {
   const tempFile = path.join(mcpRoot, `.mcp-exec-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
 
   try {
@@ -70,11 +70,20 @@ async function executeNodeCode(code: string, timeout_ms: number = 30000): Promis
       };
     }
 
+    // Each call runs a fresh script and the session waits for the next one; the output isn't cut
+    const outputLines = result.stdout.trim().length > 0 ? result.stdout.replace(/\r?\n$/, '').split('\n').length : 0;
     return {
       content: [{
         type: "text",
         text: result.stdout || '(no output)'
-      }]
+      }],
+      structuredContent: {
+        pid: sessionPid,
+        status: 'waiting_for_input',
+        truncated: false,
+        shownLines: outputLines,
+        totalLines: outputLines,
+      },
     };
 
   } catch (error) {
@@ -150,6 +159,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
 🔄 Ready for code - send complete self-contained script via interact_with_process.`
       }],
+      structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
     };
   }
 
@@ -440,7 +450,7 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
     // Execute code via temp file approach
     // Respect per-call timeout if provided, otherwise use session default
     const effectiveTimeout = timeout_ms ?? session.timeout_ms;
-    return executeNodeCode(input, effectiveTimeout);
+    return executeNodeCode(input, effectiveTimeout, pid);
   }
 
   // Timing telemetry
@@ -492,6 +502,8 @@ export async function interactWithProcess(args: unknown): Promise<ServerResult> 
           type: "text",
           text: `✅ Input sent to process ${pid}. Use read_process_output to get the response.${timingMessage}`
         }],
+        // Not waited for: no output was read
+        structuredContent: { pid, status: 'running', truncated: false, shownLines: 0, totalLines: 0 },
       };
     }
 
