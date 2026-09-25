@@ -51,6 +51,8 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
   let failDeviceLookups = 0;
   let failRefreshes = 0;
   let failRefreshStatus = 500;
+  /** Set by holdDeviceLookups(): { waiting: responders, arrived() } */
+  let deviceLookupHold = null;
 
   const standIn = {
     url: '',
@@ -104,6 +106,25 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     failRefreshes(count, status = 500) {
       failRefreshes = count;
       failRefreshStatus = status;
+    },
+
+    /**
+     * Device lookups get no answer until release(). A starting device looks its
+     * saved device up after loading device.json and before saving it again, so
+     * this holds it in between. `reached` resolves at the first held lookup.
+     */
+    holdDeviceLookups() {
+      let reached;
+      const hold = { waiting: [], reached: new Promise((resolve) => { reached = resolve; }) };
+      hold.arrived = () => reached();
+      deviceLookupHold = hold;
+      return {
+        reached: hold.reached,
+        release() {
+          if (deviceLookupHold === hold) deviceLookupHold = null;
+          for (const respond of hold.waiting.splice(0)) respond();
+        },
+      };
     },
 
     /** One line for assertion messages */
@@ -238,13 +259,22 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     request.setEncoding('utf8');
     request.on('data', (chunk) => { body += chunk; });
     request.on('end', () => {
-      const [status, payload] = handle(request, body);
-      response.writeHead(status, {
-        'Content-Type': 'application/json',
-        // Error bodies carry `code`, the shape auth-js reads from API version 2024-01-01 on
-        'X-Supabase-Api-Version': '2024-01-01',
-      });
-      response.end(payload === null ? undefined : JSON.stringify(payload));
+      const respond = () => {
+        const [status, payload] = handle(request, body);
+        response.writeHead(status, {
+          'Content-Type': 'application/json',
+          // Error bodies carry `code`, the shape auth-js reads from API version 2024-01-01 on
+          'X-Supabase-Api-Version': '2024-01-01',
+        });
+        response.end(payload === null ? undefined : JSON.stringify(payload));
+      };
+      const isDeviceLookup = request.method === 'GET' && new URL(request.url, standIn.url).pathname === '/rest/v1/mcp_devices';
+      if (deviceLookupHold && isDeviceLookup) {
+        deviceLookupHold.waiting.push(respond);
+        deviceLookupHold.arrived();
+        return;
+      }
+      respond();
     });
   });
   // Realtime is out of scope: refuse the websocket instead of leaving it hanging
