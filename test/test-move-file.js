@@ -118,10 +118,17 @@ async function testMoveToAnotherVolume(dir) {
   await asIfOtherVolumes(here, there, () => checkMovedAcross(path.join(here, 'folder'), path.join(there, 'folder'), 'another volume'));
 }
 
-/** Makes `file` unreadable until the returned function is called */
+/**
+ * Makes `file` unreadable until the returned function is called. Returns null
+ * when this process can still read it: root ignores a file's mode.
+ */
 async function makeUnreadable(file) {
   if (process.platform !== 'win32') {
     await fs.chmod(file, 0o000);
+    if (await fs.readFile(file).then(() => true, () => false)) {
+      await fs.chmod(file, 0o644);
+      return null;
+    }
     return () => fs.chmod(file, 0o644);
   }
   // Windows: another process holds it open without sharing it
@@ -142,6 +149,9 @@ async function testFailedCopyToAnotherVolume(dir) {
   const source = path.join(here, 'folder');
   const tree = await makeTree(source);
   const release = await makeUnreadable(path.join(source, 'sub', 'inner.txt'));
+  if (!release) {
+    return skip('a copy to another volume that fails: this process can read a file with mode 000 (it runs as root), so the copy can\'t be made to fail');
+  }
   let answer;
   try {
     answer = await asIfOtherVolumes(here, there, async () => text(await handleMoveFile({ source, destination: path.join(there, 'folder') })));
