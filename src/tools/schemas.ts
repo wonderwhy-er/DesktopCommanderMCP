@@ -109,6 +109,31 @@ const PdfOptionsSchema = z.object({
   waitForFonts: z.boolean().optional(),
 }).strict();
 
+const PuppeteerLaunchOptionsSchema = z.object({
+  channel: z.enum(['chrome', 'chrome-beta', 'chrome-canary', 'chrome-dev']).optional(),
+  ignoreDefaultArgs: z.union([z.boolean(), z.array(z.string())]).optional(),
+  enableExtensions: z.union([z.boolean(), z.array(z.string())]).optional(),
+  handleSIGINT: z.boolean().optional(),
+  handleSIGTERM: z.boolean().optional(),
+  handleSIGHUP: z.boolean().optional(),
+  timeout: z.number().optional(),
+  dumpio: z.boolean().optional(),
+  pipe: z.boolean().optional(),
+  browser: z.enum(['chrome', 'firefox']).optional(),
+  waitForInitialPage: z.boolean().optional(),
+  headless: z.union([z.boolean(), z.literal('shell')]).optional(),
+  userDataDir: z.string().optional(),
+  devtools: z.boolean().optional(),
+  debuggingPort: z.number().optional(),
+  args: z.array(z.string()).optional(),
+  acceptInsecureCerts: z.boolean().optional(),
+  networkEnabled: z.boolean().optional(),
+  slowMo: z.number().optional(),
+  handleDevToolsAsPage: z.boolean().optional(),
+  protocol: z.enum(['cdp', 'webDriverBiDi']).optional(),
+  protocolTimeout: z.number().optional(),
+}).strict();
+
 const WritePdfOptionsSchema = z.object({
   basedir: z.string().optional(),
   stylesheet: z.array(z.string()).optional(),
@@ -119,6 +144,7 @@ const WritePdfOptionsSchema = z.object({
   page_media_type: z.enum(["screen", "print"]).optional(),
   highlight_style: z.string().optional(),
   pdf_options: PdfOptionsSchema.optional(),
+  launch_options: PuppeteerLaunchOptionsSchema.optional(),
 }).strict();
 
 // PDF modification schemas - exported for reuse
@@ -180,6 +206,17 @@ export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
 
+const ExcelCellValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  z.object({
+    formula: z.string(),
+    result: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+  }).strict(),
+]);
+
 // Edit tools schema - SIMPLIFIED from three modes to two
 // Previously supported: text replacement, location-based edits (edits array), and range rewrites
 // Now supports only: text replacement and range rewrites
@@ -196,7 +233,7 @@ export const EditBlockArgsSchema = z.object({
   range: z.string().optional(),
   content: z.union([
     z.string(),
-    z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+    z.array(z.array(ExcelCellValueSchema)),
     z.array(PdfOperationSchema),
   ]).optional(),
   options: z.object({

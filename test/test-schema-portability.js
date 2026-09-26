@@ -91,6 +91,24 @@ try {
     true,
     'edit_block must preserve PDF operation arrays',
   );
+  assert.equal(
+    WritePdfArgsSchema.safeParse({
+      path: 'out.pdf',
+      content: '# PDF',
+      options: { launch_options: { args: ['--no-sandbox'], headless: true } },
+    }).success,
+    true,
+    'write_pdf must preserve supported Puppeteer launch options',
+  );
+  assert.equal(
+    EditBlockArgsSchema.safeParse({
+      file_path: 'sheet.xlsx',
+      range: 'Sheet1!A1:A1',
+      content: [[{ formula: 'A2+A3', result: 3 }]],
+    }).success,
+    true,
+    'edit_block must preserve Excel formula cell values',
+  );
 
   console.log(`✓ ${tools.length} published MCP tool schemas are portable`);
 } finally {
