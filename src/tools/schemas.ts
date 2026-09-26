@@ -109,8 +109,10 @@ const PdfOptionsSchema = z.object({
   waitForFonts: z.boolean().optional(),
 }).strict();
 
+// Intentionally omit `browser` and `channel` here.
+// Desktop Commander resolves and injects the Chrome executable itself, so exposing
+// browser/channel would advertise selection semantics the runtime does not honor.
 const PuppeteerLaunchOptionsSchema = z.object({
-  channel: z.enum(['chrome', 'chrome-beta', 'chrome-canary', 'chrome-dev']).optional(),
   ignoreDefaultArgs: z.union([z.boolean(), z.array(z.string())]).optional(),
   enableExtensions: z.union([z.boolean(), z.array(z.string())]).optional(),
   handleSIGINT: z.boolean().optional(),
@@ -119,7 +121,6 @@ const PuppeteerLaunchOptionsSchema = z.object({
   timeout: z.number().optional(),
   dumpio: z.boolean().optional(),
   pipe: z.boolean().optional(),
-  browser: z.enum(['chrome', 'firefox']).optional(),
   waitForInitialPage: z.boolean().optional(),
   headless: z.union([z.boolean(), z.literal('shell')]).optional(),
   userDataDir: z.string().optional(),
@@ -206,14 +207,38 @@ export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
 
+const ExcelErrorValues = [
+  '#N/A',
+  '#REF!',
+  '#NAME?',
+  '#DIV/0!',
+  '#NULL!',
+  '#VALUE!',
+  '#NUM!',
+] as const;
+
+// Date is intentionally omitted despite being part of ExcelJS CellValue:
+// MCP inputs are JSON, so a true JavaScript Date cannot cross the wire as a Date.
+const createCellErrorSchema = () =>
+  z.object({
+    error: z.enum(ExcelErrorValues),
+  }).strict();
+
 const ExcelCellValueSchema = z.union([
   z.string(),
   z.number(),
   z.boolean(),
   z.null(),
+  createCellErrorSchema(),
   z.object({
     formula: z.string(),
-    result: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
+    result: z.union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      z.null(),
+      createCellErrorSchema(),
+    ]).optional(),
   }).strict(),
 ]);
 
