@@ -60,7 +60,6 @@ export const ReadFileArgsSchema = z.object({
   length: z.number().optional().default(1000),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
-  options: z.record(z.any()).optional(),
   // Whether the call came from the file-preview UI (refresh/navigation) or the
   // LLM. 'ui' calls are excluded from tool-call telemetry; see isUiOriginCall
   // in server.ts.
@@ -80,13 +79,81 @@ export const WriteFileArgsSchema = z.object({
   origin: z.enum(['ui', 'llm']).optional(),
 });
 
+// Public PDF-generation options intentionally expose only the md-to-pdf
+// settings that are meaningful when Desktop Commander supplies markdown content.
+const PdfOptionsSchema = z.object({
+  scale: z.number().min(0.1).max(2).optional(),
+  displayHeaderFooter: z.boolean().optional(),
+  headerTemplate: z.string().optional(),
+  footerTemplate: z.string().optional(),
+  printBackground: z.boolean().optional(),
+  landscape: z.boolean().optional(),
+  pageRanges: z.string().optional(),
+  format: z.string().optional(),
+  width: z.union([z.string(), z.number()]).optional(),
+  height: z.union([z.string(), z.number()]).optional(),
+  preferCSSPageSize: z.boolean().optional(),
+  margin: z.union([
+    z.string(),
+    z.object({
+      top: z.union([z.string(), z.number()]).optional(),
+      right: z.union([z.string(), z.number()]).optional(),
+      bottom: z.union([z.string(), z.number()]).optional(),
+      left: z.union([z.string(), z.number()]).optional(),
+    }).strict(),
+  ]).optional(),
+  omitBackground: z.boolean().optional(),
+  tagged: z.boolean().optional(),
+  outline: z.boolean().optional(),
+  timeout: z.number().optional(),
+  waitForFonts: z.boolean().optional(),
+}).strict();
+
+// Intentionally omit `browser` and `channel` here.
+// Desktop Commander resolves and injects the Chrome executable itself, so exposing
+// browser/channel would advertise selection semantics the runtime does not honor.
+const PuppeteerLaunchOptionsSchema = z.object({
+  ignoreDefaultArgs: z.union([z.boolean(), z.array(z.string())]).optional(),
+  enableExtensions: z.union([z.boolean(), z.array(z.string())]).optional(),
+  handleSIGINT: z.boolean().optional(),
+  handleSIGTERM: z.boolean().optional(),
+  handleSIGHUP: z.boolean().optional(),
+  timeout: z.number().optional(),
+  dumpio: z.boolean().optional(),
+  pipe: z.boolean().optional(),
+  waitForInitialPage: z.boolean().optional(),
+  headless: z.union([z.boolean(), z.literal('shell')]).optional(),
+  userDataDir: z.string().optional(),
+  devtools: z.boolean().optional(),
+  debuggingPort: z.number().optional(),
+  args: z.array(z.string()).optional(),
+  acceptInsecureCerts: z.boolean().optional(),
+  networkEnabled: z.boolean().optional(),
+  slowMo: z.number().optional(),
+  handleDevToolsAsPage: z.boolean().optional(),
+  protocol: z.enum(['cdp', 'webDriverBiDi']).optional(),
+  protocolTimeout: z.number().optional(),
+}).strict();
+
+const WritePdfOptionsSchema = z.object({
+  basedir: z.string().optional(),
+  stylesheet: z.array(z.string()).optional(),
+  stylesheet_encoding: z.string().optional(),
+  css: z.string().optional(),
+  document_title: z.string().optional(),
+  body_class: z.array(z.string()).optional(),
+  page_media_type: z.enum(["screen", "print"]).optional(),
+  highlight_style: z.string().optional(),
+  pdf_options: PdfOptionsSchema.optional(),
+  launch_options: PuppeteerLaunchOptionsSchema.optional(),
+}).strict();
+
 // PDF modification schemas - exported for reuse
 export const PdfInsertOperationSchema = z.object({
   type: z.literal('insert'),
   pageIndex: z.number(),
   markdown: z.string().optional(),
   sourcePdfPath: z.string().optional(),
-  pdfOptions: z.object({}).passthrough().optional(),
 });
 
 export const PdfDeleteOperationSchema = z.object({
@@ -116,7 +183,7 @@ export const WritePdfArgsSchema = z.object({
     z.union([z.string(), z.array(PdfOperationSchema)])
   ),
   outputPath: z.string().optional(),
-  options: z.object({}).passthrough().optional(), // Allow passing options to md-to-pdf
+  options: WritePdfOptionsSchema.optional(), // Allow passing supported options to md-to-pdf
 });
 
 export const CreateDirectoryArgsSchema = z.object({
@@ -140,6 +207,41 @@ export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
 
+const ExcelErrorValues = [
+  '#N/A',
+  '#REF!',
+  '#NAME?',
+  '#DIV/0!',
+  '#NULL!',
+  '#VALUE!',
+  '#NUM!',
+] as const;
+
+// Date is intentionally omitted despite being part of ExcelJS CellValue:
+// MCP inputs are JSON, so a true JavaScript Date cannot cross the wire as a Date.
+const createCellErrorSchema = () =>
+  z.object({
+    error: z.enum(ExcelErrorValues),
+  }).strict();
+
+const ExcelCellValueSchema = z.union([
+  z.string(),
+  z.number(),
+  z.boolean(),
+  z.null(),
+  createCellErrorSchema(),
+  z.object({
+    formula: z.string(),
+    result: z.union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      z.null(),
+      createCellErrorSchema(),
+    ]).optional(),
+  }).strict(),
+]);
+
 // Edit tools schema - SIMPLIFIED from three modes to two
 // Previously supported: text replacement, location-based edits (edits array), and range rewrites
 // Now supports only: text replacement and range rewrites
@@ -151,10 +253,17 @@ export const EditBlockArgsSchema = z.object({
   old_string: z.string().optional(),
   new_string: z.string().optional(),
   expected_replacements: z.number().optional().default(1),
-  // Structured file range rewrite (Excel, etc.)
+  // Structured file range rewrite (Excel/PDF). JSON strings are accepted because
+  // some MCP clients serialize array arguments before sending them.
   range: z.string().optional(),
-  content: z.any().optional(),
-  options: z.record(z.any()).optional(),
+  content: z.union([
+    z.string(),
+    z.array(z.array(ExcelCellValueSchema)),
+    z.array(PdfOperationSchema),
+  ]).optional(),
+  options: z.object({
+    outputPath: z.string().optional(),
+  }).strict().optional(),
   // 'ui' when fired by the file-preview UI, else 'llm'. 'ui' calls are
   // excluded from tool-call telemetry; see isUiOriginCall in server.ts.
   origin: z.enum(['ui', 'llm']).optional(),
