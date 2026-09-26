@@ -382,8 +382,9 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(url);
+            // Consume the already-fetched response body instead of making a second network request (#786)
+            const buffer = await response.arrayBuffer();
+            const pdfResult = await parsePdfToMarkdown(Buffer.from(buffer));
 
             return {
                 content: "",
