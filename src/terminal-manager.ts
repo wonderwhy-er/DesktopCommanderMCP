@@ -65,21 +65,32 @@ export function _resetCachedSystemPathExt(val: string | null | undefined = undef
 
 /**
  * Return a healthy PATHEXT for spawned Windows shells.
- * - Unset           -> use the system registry PATHEXT, or standard list if unavailable.
- * - Missing ".EXE"  -> corrupted; merge the system/standard list with whatever was
- *                      present (preserves any extra extensions such as .LNK, order-stable).
- * - Otherwise       -> leave the inherited value untouched.
+ * - If inherited value already contains ".EXE", return it immediately without querying registry.
+ * - If unset, use the system registry PATHEXT (ensuring ".EXE" is included), or standard list if unavailable.
+ * - If missing ".EXE" (corrupted), merge the system/standard base with whatever was present
+ *   (preserves any extra extensions such as .LNK, order-stable).
  */
 export function getRepairedPathExt(): string {
   const current = process.env.PATHEXT;
-  const base = getSystemRegistryPathExt() || STANDARD_PATHEXT;
-  if (!current) return base;
-  const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
-  if (!exts.includes('.EXE')) {
-    const baseExts = base.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
-    return [...new Set([...baseExts, ...exts])].join(';');
+  if (current) {
+    const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+    if (exts.includes('.EXE')) {
+      return current;
+    }
   }
-  return current;
+
+  // PATHEXT is unset or corrupted (missing .EXE).
+  let base = getSystemRegistryPathExt() || STANDARD_PATHEXT;
+  const baseExts = base.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  if (!baseExts.includes('.EXE')) {
+    base = [...new Set([...STANDARD_PATHEXT.split(';'), ...baseExts])].join(';');
+  }
+
+  if (!current) return base;
+
+  const currentExts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  const finalBaseExts = base.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  return [...new Set([...finalBaseExts, ...currentExts])].join(';');
 }
 
 interface CompletedSession {

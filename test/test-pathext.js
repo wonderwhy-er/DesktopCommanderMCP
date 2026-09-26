@@ -39,13 +39,32 @@ try {
   assert.ok(repaired.includes('.LNK'), 'Repaired PATHEXT must preserve .LNK');
   assert.ok(repaired.includes('.BAT'), 'Repaired PATHEXT must include .BAT');
 
-  // Test 5: Valid PATHEXT with .EXE is left untouched
-  _resetCachedSystemPathExt(null);
+  // Test 5: Valid PATHEXT with .EXE is left untouched and does NOT query registry
+  _resetCachedSystemPathExt('UNTOUCHED_SENTINEL');
   process.env.PATHEXT = '.EXE;.BAT;.CUSTOM';
   assert.strictEqual(
     getRepairedPathExt(),
     '.EXE;.BAT;.CUSTOM',
     'Valid PATHEXT with .EXE must be returned untouched'
+  );
+  // Verify cache was not accessed or overwritten
+  assert.strictEqual(
+    getSystemRegistryPathExt(),
+    'UNTOUCHED_SENTINEL',
+    'Valid PATHEXT with .EXE must skip querying registry'
+  );
+
+  // Test 6: Incomplete registry value lacking .EXE merges STANDARD_PATHEXT
+  _resetCachedSystemPathExt('.BAT;.CMD;.LNK');
+  delete process.env.PATHEXT;
+  const repairedFromIncompleteRegistry = getRepairedPathExt();
+  assert.ok(
+    repairedFromIncompleteRegistry.includes('.EXE'),
+    'Repaired PATHEXT from incomplete registry value must include .EXE'
+  );
+  assert.ok(
+    repairedFromIncompleteRegistry.includes('.LNK'),
+    'Repaired PATHEXT from incomplete registry value must preserve custom .LNK'
   );
 
   console.log('All PATHEXT tests passed successfully! ✓');
