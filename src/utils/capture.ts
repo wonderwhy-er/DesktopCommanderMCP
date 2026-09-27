@@ -1,6 +1,7 @@
 import { platform, homedir } from 'os';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
+import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
 import { configManager, isTelemetryDisabledValue } from '../config-manager.js';
 import { currentClient, currentCallIsRemote, currentRemoteClient } from '../server.js';
 
@@ -580,9 +581,8 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
 // can be silently dropped. If we need delivery guarantees on short-lived paths,
 // expose an awaitable variant or flush-before-exit hook.
 export const capture = async (event: string, properties?: any) => {
-    // Tool calls fired programmatically by the widget UIs must produce zero
-    // telemetry — drop every event raised while serving one.
-    if (isInsideUiOriginCall()) {
+    // Drop UI-origin calls and explicit opt-outs before preparing an event.
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) {
         return;
     }
     void (async () => {
@@ -594,6 +594,19 @@ export const capture = async (event: string, properties?: any) => {
         }
     })();
 }
+
+/** Send only contract-validated transport fields through the existing proxy sender. */
+export const captureTransport = async (event: string, properties: TransportParams) => {
+    if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
+    void (async () => {
+        try {
+            if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
+            await sendToTelemetryProxy(event, properties);
+        } catch {
+            // Telemetry must not affect command handling.
+        }
+    })();
+};
 
 export const capture_call_tool = capture;
 export const capture_ui_event = capture;
