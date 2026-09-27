@@ -42,6 +42,46 @@ class CommandManager {
                     continue;
                 }
 
+                // Handle PowerShell here-strings: @"\r?\n or @'\r?\n
+                if (!inQuote && char === '@' && (commandString[i + 1] === "'" || commandString[i + 1] === '"')) {
+                    const hereQuote = commandString[i + 1];
+                    const hereStartMatch = commandString.slice(i).match(/^@(['"])(\r?\n)/);
+                    if (hereStartMatch) {
+                        const searchStart = i + hereStartMatch[0].length;
+                        const closePattern = new RegExp(`(?:\\r?\\n)${hereQuote}@`);
+                        const closeMatch = commandString.slice(searchStart).match(closePattern);
+                        if (closeMatch && closeMatch.index !== undefined) {
+                            const fullHereEnd = searchStart + closeMatch.index + closeMatch[0].length;
+                            const hereContent = commandString.substring(searchStart, searchStart + closeMatch.index);
+
+                            // In double-quoted here-strings, PowerShell evaluates $() subshell expansions
+                            if (hereQuote === '"') {
+                                for (let k = 0; k < hereContent.length; k++) {
+                                    if (hereContent[k] === '$' && hereContent[k + 1] === '(') {
+                                        let openP = 1;
+                                        let m = k + 2;
+                                        while (m < hereContent.length && openP > 0) {
+                                            if (hereContent[m] === '(') openP++;
+                                            if (hereContent[m] === ')') openP--;
+                                            m++;
+                                        }
+                                        if (m <= hereContent.length && openP === 0) {
+                                            const subContent = hereContent.substring(k + 2, m - 1);
+                                            const subCommands = this.extractCommands(subContent);
+                                            commands.push(...subCommands);
+                                            k = m - 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            currentCmd += commandString.substring(i, fullHereEnd);
+                            i = fullHereEnd - 1;
+                            continue;
+                        }
+                    }
+                }
+
                 // Handle quotes (both single and double)
                 if ((char === '"' || char === "'") && !inQuote) {
                     inQuote = true;
