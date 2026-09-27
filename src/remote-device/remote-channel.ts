@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
+import { observeTransport } from './transport-telemetry.js';
 import { VERSION } from '../version.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -804,6 +805,10 @@ export class RemoteChannel {
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
+                        if (!this.shuttingDown) {
+                            observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
+                                userId: this.user?.id, transport: 'broadcast' });
+                        }
                         this.onDoorbell(payload).catch((e: any) => {
                             console.error('[DEBUG] Doorbell handling failed:', e?.message);
                         });
@@ -1277,7 +1282,7 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null) {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,

@@ -46,6 +46,7 @@
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
     "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
+    "test:transport:telemetry": "npm run build && node test/test-transport-telemetry.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",
@@ -88,6 +89,7 @@
     "file-operations"
   ],
   "dependencies": {
+    "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
     "@modelcontextprotocol/sdk": "^1.9.0",
     "@opendocsg/pdf2md": "^0.2.2",
     "@supabase/supabase-js": "^2.89.0",
