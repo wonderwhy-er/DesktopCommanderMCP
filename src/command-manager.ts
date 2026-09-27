@@ -58,14 +58,43 @@ class CommandManager {
                             if (hereQuote === '"') {
                                 for (let k = 0; k < hereContent.length; k++) {
                                     if (hereContent[k] === '$' && hereContent[k + 1] === '(') {
+                                        // Ignore backtick-escaped `$()` expressions
+                                        let backtickCount = 0;
+                                        let b = k - 1;
+                                        while (b >= 0 && hereContent[b] === '`') {
+                                            backtickCount++;
+                                            b--;
+                                        }
+                                        if (backtickCount % 2 === 1) {
+                                            continue;
+                                        }
+
                                         let openP = 1;
+                                        let subInQuote = false;
+                                        let subQuoteChar = '';
                                         let m = k + 2;
                                         while (m < hereContent.length && openP > 0) {
-                                            if (hereContent[m] === '(') openP++;
-                                            if (hereContent[m] === ')') openP--;
+                                            const c = hereContent[m];
+                                            if (c === '`' && m + 1 < hereContent.length) {
+                                                m += 2;
+                                                continue;
+                                            }
+                                            if (!subInQuote && (c === '"' || c === "'")) {
+                                                subInQuote = true;
+                                                subQuoteChar = c;
+                                            } else if (subInQuote && c === subQuoteChar) {
+                                                if (m + 1 < hereContent.length && hereContent[m + 1] === subQuoteChar) {
+                                                    m += 2;
+                                                    continue;
+                                                }
+                                                subInQuote = false;
+                                            } else if (!subInQuote) {
+                                                if (c === '(') openP++;
+                                                if (c === ')') openP--;
+                                            }
                                             m++;
                                         }
-                                        if (m <= hereContent.length && openP === 0) {
+                                        if (openP === 0) {
                                             const subContent = hereContent.substring(k + 2, m - 1);
                                             const subCommands = this.extractCommands(subContent);
                                             commands.push(...subCommands);
@@ -76,7 +105,20 @@ class CommandManager {
                             }
 
                             currentCmd += commandString.substring(i, fullHereEnd);
-                            i = fullHereEnd - 1;
+                            const restAfterHere = commandString.slice(fullHereEnd);
+                            const newlineMatch = restAfterHere.match(/^(\r?\n)+/);
+                            if (newlineMatch) {
+                                if (currentCmd.trim()) {
+                                    const baseCmd = this.extractBaseCommand(currentCmd.trim());
+                                    if (baseCmd) {
+                                        commands.push(baseCmd);
+                                    }
+                                }
+                                currentCmd = '';
+                                i = fullHereEnd + newlineMatch[0].length - 1;
+                            } else {
+                                i = fullHereEnd - 1;
+                            }
                             continue;
                         }
                     }

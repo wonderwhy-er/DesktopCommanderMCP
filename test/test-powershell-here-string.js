@@ -45,4 +45,19 @@ const isValid = await commandManager.validateCommand(testCase4);
 console.log('Test 4 validateCommand result (expected true):', isValid);
 assert.strictEqual(isValid, true, 'Command containing Format inside here-string should be valid and not blocked');
 
+// Test 5: Backtick-escaped subshell expressions should not be extracted
+const escapedSubshell = '@"\n`$(format C:)\n"@';
+const escapedCommands = commandManager.extractCommands(escapedSubshell);
+assert.ok(!escapedCommands.includes('format'), 'Backtick-escaped $(format) should not be extracted');
+
+// Test 6: Subshell expression with quoted parenthesis should properly extract command
+const quotedParenSubshell = "@\"\n$(Write-Output ')' ; format C:)\n\"@";
+const quotedParenCommands = commandManager.extractCommands(quotedParenSubshell);
+assert.ok(quotedParenCommands.includes('format'), 'format command should be extracted even with quoted parenthesis inside subshell');
+
+// Test 7: Statement terminator newline after here-string should split independent commands
+const statementTerminatorCmd = "$code = @'\ntext\n'@\nformat C:";
+const terminatorCommands = commandManager.extractCommands(statementTerminatorCmd);
+assert.ok(terminatorCommands.includes('format'), 'format command following here-string after newline should be extracted independently');
+
 console.log('All PowerShell here-string tests passed successfully!');
