@@ -200,17 +200,9 @@ function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string): 
     // Check if path is a subdirectory of the allowed directory
     // Make sure to add a separator to prevent partial directory name matches
     // e.g. /home/user vs /home/username
-    const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
-    if (subdirCheck) {
-        return true;
-    }
-
-    // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
-    if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
-        return normalizedPathToCheck.startsWith('c:');
-    }
-
-    return false;
+    // An allowed drive root (D:\, normalized to d:) allows its whole drive this
+    // way, whatever the letter: the paths checked here are always absolute (d:\...)
+    return normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
 }
 
 /**
