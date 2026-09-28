@@ -270,18 +270,28 @@ export async function pruneOldPuppeteerChromeBuilds(activeExecutablePath: string
 }
 
 /**
+ * Where Chrome and Chromium install on Windows. Windows is not always on C:,
+ * so the Program Files and local app data folders come from Windows' own
+ * settings. ProgramW6432 is the 64-bit Program Files seen from a 32-bit Node.
+ */
+function windowsChromePaths(): string[] {
+    const env = process.env;
+    const programFiles = [...new Set([env.ProgramFiles, env.ProgramW6432, env['ProgramFiles(x86)']])]
+        .filter((dir): dir is string => Boolean(dir));
+    return [
+        ...programFiles.map(dir => join(dir, 'Google', 'Chrome', 'Application', 'chrome.exe')),
+        ...(env.LOCALAPPDATA ? [join(env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')] : []),
+        ...programFiles.map(dir => join(dir, 'Chromium', 'Application', 'chrome.exe')),
+    ];
+}
+
+/**
  * Find system-installed Chrome/Chromium browser
  * Returns the executable path if found, undefined otherwise
  */
-function findSystemChrome(): string | undefined {
-    const paths: string[] = process.platform === 'win32' 
-        ? [
-            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-            `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-            'C:\\Program Files\\Chromium\\Application\\chrome.exe',
-            'C:\\Program Files (x86)\\Chromium\\Application\\chrome.exe',
-        ]
+export function findSystemChrome(): string | undefined {
+    const paths: string[] = process.platform === 'win32'
+        ? windowsChromePaths()
         : process.platform === 'darwin'
         ? [
             '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
