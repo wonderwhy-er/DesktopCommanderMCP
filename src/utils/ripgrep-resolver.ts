@@ -45,9 +45,10 @@ export async function getRipgrepPath(): Promise<string> {
   const commonPaths: string[] = [];
 
   if (process.platform === 'win32') {
+    // Windows' own Program Files folders, which aren't always on C:
     commonPaths.push(
-      'C:\\Program Files\\Ripgrep\\rg.exe',
-      'C:\\Program Files (x86)\\Ripgrep\\rg.exe',
+      path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Ripgrep', 'rg.exe'),
+      path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Ripgrep', 'rg.exe'),
       path.join(os.homedir(), 'scoop', 'apps', 'ripgrep', 'current', 'rg.exe'),
       path.join(os.homedir(), '.cargo', 'bin', 'rg.exe')
     );
