@@ -617,6 +617,9 @@ export class MCPDevice {
         }
         this.rememberCallId(call_id);
 
+        // Running the tool and saving its result fail separately: only a tool
+        // that didn't run is "tool_call_failed"
+        let result;
         try {
             // DB claim second — keeps the row state machine honest, gives
             // cross-restart/cross-process protection, and is observable. It may
@@ -628,8 +631,6 @@ export class MCPDevice {
                 // markCallExecuting already logged the duplicate-delivery skip.
                 return;
             }
-
-            let result;
 
             // Handle 'ping' tool specially
             if (tool_name === 'ping') {
@@ -657,9 +658,18 @@ export class MCPDevice {
                 // Execute other tools using desktop integration
                 result = await this.desktop.callClientTool(tool_name, tool_args, metadata);
             }
+        } catch (error: any) {
+            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            observeTransport({ stage: 'tool_call_failed', ...observation });
+            await this.reportToolCallFailure(call_id, tool_name, error);
+            return;
+        }
 
-            console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
+        console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
+        // The tool ran. A result that can't be saved is reported and written as
+        // failed, as before, but its telemetry stays "tool_call_completed"
+        try {
             try {
                 await this.remoteChannel.updateCallResult(call_id, 'completed', result);
             } finally {
@@ -667,16 +677,20 @@ export class MCPDevice {
             }
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            observeTransport({ stage: 'tool_call_failed', ...observation });
-            // The failure path must not fail: this method's promise is discarded
-            // at every call site, so a throw here becomes an unhandled rejection
-            // and takes the device process down.
-            try {
-                await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-                await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
-            } catch (reportError: any) {
-                console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
-            }
+            await this.reportToolCallFailure(call_id, tool_name, error);
+        }
+    }
+
+    /** Reports a tool call that failed, or whose result couldn't be saved, and writes its "failed" row. */
+    private async reportToolCallFailure(call_id: string, tool_name: string, error: any) {
+        // The failure path must not fail: handleNewToolCall's promise is discarded
+        // at every call site, so a throw here becomes an unhandled rejection
+        // and takes the device process down.
+        try {
+            await captureRemote('remote_device_tool_call_failed', { error, tool_name });
+            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+        } catch (reportError: any) {
+            console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
         }
     }
 
