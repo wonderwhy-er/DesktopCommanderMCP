@@ -66,11 +66,19 @@ export function isShellAvailable(shell: string): boolean {
  * The full path to start a program by: the one found on PATH. Windows looks
  * for a bare name ("powershell.exe", "cmd", "tasklist") in the working folder
  * before PATH, so a file of that name there would run instead; every program
- * Desktop Commander starts by name goes through here. A program not found on
- * PATH keeps its name, so starting it fails as it did before.
+ * Desktop Commander starts by name goes through here. On Windows a bare name
+ * not found on PATH is an error rather than a name Windows would look up in
+ * the working folder. A path (absolute, or with a folder in it) is kept as
+ * given, and so is a bare name elsewhere, where the working folder isn't searched.
  */
 export function resolveProgramPath(program: string): string {
-  return resolveShellPath(program) ?? program;
+  const resolved = resolveShellPath(program);
+  if (resolved) return resolved;
+  const name = program.trim();
+  if (isWindows() && !name.includes('/') && !name.includes('\\')) {
+    throw new Error(`${name} was not found on PATH`);
+  }
+  return program;
 }
 
 /**
