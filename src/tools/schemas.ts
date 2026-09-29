@@ -193,16 +193,22 @@ export const GiveFeedbackArgsSchema = z.object({
 // Search schemas (renamed for natural language)
 export const StartSearchArgsSchema = z.object({
   path: z.string(),
-  pattern: z.string(),
+  pattern: z.string().describe(
+    'Search pattern. File searches use exact filename, glob, or substring matching (not regex). Content searches use regex for text files by default; Excel and DOCX content uses literal substring matching.'
+  ),
   searchType: z.enum(['files', 'content']).default('files'),
-  filePattern: z.string().optional(),
+  filePattern: z.string().optional().describe(
+    'Optional glob filter for file names/types (for example *.js or *.js|*.ts).'
+  ),
   ignoreCase: z.boolean().optional().default(true),
   maxResults: z.number().optional(),
   includeHidden: z.boolean().optional().default(false),
   contextLines: z.number().optional().default(5),
   timeout_ms: z.number().optional(), // Match process naming convention
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
-  literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
+  literalSearch: z.boolean().optional().default(false).describe(
+    'Only affects text content searches: false uses regex and true uses fixed-string matching. For file searches this option is ignored; Excel and DOCX content searches are always literal.'
+  ),
   // 'ui' marks widget-fired calls (e.g. markdown link-target search);
   // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
   origin: z.enum(['ui', 'llm']).optional(),
