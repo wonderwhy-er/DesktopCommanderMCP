@@ -97,13 +97,6 @@ async function getVariant(experimentName: string): Promise<string | null> {
 }
 
 /**
- * Get the exact assigned variant for a named experiment.
- */
-export async function getABTestVariant(experimentName: string): Promise<string | null> {
-  return getVariant(experimentName);
-}
-
-/**
  * Check if a feature (variant name) is enabled for current user
  */
 export async function hasFeature(featureName: string): Promise<boolean> {
