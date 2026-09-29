@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import path from 'path';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT } from './config.js';
@@ -7,8 +7,8 @@ import {capture} from "./utils/capture.js";
 import { analyzeProcessState } from './utils/process-detection.js';
 
 /**
- * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
- * spawning child shells.
+ * Standard Windows PATHEXT value, used as a fallback to repair a corrupted PATHEXT
+ * before spawning child shells.
  *
  * On some Windows Claude Desktop / DXT launches the server process inherits a
  * broken PATHEXT (observed as ".CPL" only). Because we build the child env from
@@ -16,23 +16,81 @@ import { analyzeProcessState } from './utils/process-detection.js';
  * shell, stripping ".EXE" and breaking resolution of git / node / python / rg /
  * etc. (and even full-path .exe invocations under PowerShell). See issue #481.
  */
-const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+export const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
+
+/**
+ * Cached system PATHEXT read from Windows registry.
+ * undefined: not yet queried; null: query failed or non-win32 platform.
+ */
+let cachedSystemPathExt: string | null | undefined = undefined;
+
+/**
+ * Attempt to query the actual system PATHEXT from the Windows registry.
+ * Preserves custom extensions configured at the OS level (e.g., .LNK, .PS1, .PY).
+ */
+export function getSystemRegistryPathExt(): string | null {
+  if (cachedSystemPathExt !== undefined) {
+    return cachedSystemPathExt;
+  }
+  if (process.platform !== 'win32') {
+    cachedSystemPathExt = null;
+    return null;
+  }
+  try {
+    const regExe = process.env.SystemRoot
+      ? path.join(process.env.SystemRoot, 'System32', 'reg.exe')
+      : 'reg';
+    const stdout = execSync(
+      `"${regExe}" query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v PATHEXT`,
+      { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 1500 }
+    );
+    const match = stdout.match(/PATHEXT\s+REG_\w+\s+([^\r\n]+)/i);
+    if (match && match[1]) {
+      cachedSystemPathExt = match[1].trim();
+      return cachedSystemPathExt;
+    }
+  } catch {
+    // Registry query failed or timed out; fall back to STANDARD_PATHEXT
+  }
+  cachedSystemPathExt = null;
+  return null;
+}
+
+/**
+ * Reset the cached system PATHEXT (primarily for unit testing).
+ */
+export function _resetCachedSystemPathExt(val: string | null | undefined = undefined): void {
+  cachedSystemPathExt = val;
+}
 
 /**
  * Return a healthy PATHEXT for spawned Windows shells.
- * - Unset           -> use the standard list.
- * - Missing ".EXE"  -> corrupted; merge the standard list with whatever was
- *                      present (preserves any extra extensions, order-stable).
- * - Otherwise       -> leave the inherited value untouched.
+ * - If inherited value already contains ".EXE", return it immediately without querying registry.
+ * - If unset, use the system registry PATHEXT (ensuring ".EXE" is included), or standard list if unavailable.
+ * - If missing ".EXE" (corrupted), merge the system/standard base with whatever was present
+ *   (preserves any extra extensions such as .LNK, order-stable).
  */
-function getRepairedPathExt(): string {
+export function getRepairedPathExt(): string {
   const current = process.env.PATHEXT;
-  if (!current) return STANDARD_PATHEXT;
-  const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
-  if (!exts.includes('.EXE')) {
-    return [...new Set([...STANDARD_PATHEXT.split(';'), ...exts])].join(';');
+  if (current) {
+    const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+    if (exts.includes('.EXE')) {
+      return current;
+    }
   }
-  return current;
+
+  // PATHEXT is unset or corrupted (missing .EXE).
+  let base = getSystemRegistryPathExt() || STANDARD_PATHEXT;
+  const baseExts = base.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  if (!baseExts.includes('.EXE')) {
+    base = [...new Set([...STANDARD_PATHEXT.split(';'), ...baseExts])].join(';');
+  }
+
+  if (!current) return base;
+
+  const currentExts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  const finalBaseExts = base.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
+  return [...new Set([...finalBaseExts, ...currentExts])].join(';');
 }
 
 interface CompletedSession {
