@@ -100,6 +100,27 @@ interface ResolvedRender {
     ignoredOptions: IgnoredRenderOption[];
 }
 
+/** md-to-pdf's switch-off of gray-matter's JavaScript engine, which evaluates the header's code */
+const DISABLED_JS_ENGINE = (defaultConfig.gray_matter_options as { engines: Record<string, unknown> }).engines.javascript;
+
+/**
+ * The caller's gray_matter_options over md-to-pdf's defaults, with the
+ * JavaScript engine off whatever the caller says: a caller's settings (even
+ * `{}` or null) replaced the defaults and switched it back on, so a `---js`
+ * header, or any header with `language: 'javascript'`, ran in the server.
+ * gray-matter finds an engine by name, then by alias (js -> javascript), so
+ * both names are switched off.
+ */
+function safeGrayMatterOptions(callerOptions: unknown): Record<string, unknown> {
+    const caller = isPlainObject(callerOptions) ? callerOptions : {};
+    const callerEngines = isPlainObject(caller.engines) ? caller.engines : {};
+    return {
+        ...defaultConfig.gray_matter_options,
+        ...caller,
+        engines: { ...callerEngines, js: DISABLED_JS_ENGINE, javascript: DISABLED_JS_ENGINE },
+    };
+}
+
 /**
  * The single place write_pdf's `options` and the markdown's front matter are
  * merged. Front matter wins (as in md-to-pdf), pdf_options is merged key by
@@ -110,15 +131,18 @@ interface ResolvedRender {
  */
 export function resolveRender(markdown: string, options: unknown = {}): ResolvedRender {
     const fromOptions = isPlainObject(options) ? options : {};
-    // Parse the front matter the way md-to-pdf would: with the caller's
-    // gray_matter_options if given, otherwise md-to-pdf's default (its JS engine
-    // stays disabled unless the caller enables it, exactly as before)
-    const grayMatterOptions = 'gray_matter_options' in fromOptions ? fromOptions.gray_matter_options : defaultConfig.gray_matter_options;
+    // Parse the front matter the way md-to-pdf would, with the caller's
+    // gray_matter_options, but never with gray-matter's JavaScript engine
+    const grayMatterOptions = safeGrayMatterOptions(fromOptions.gray_matter_options);
     const { content, data } = grayMatter(markdown, grayMatterOptions);
     const frontMatter = isPlainObject(data) ? data : {};
 
     // md-to-pdf's merge: front matter over options, with pdf_options merged key by key
     const merged: Record<string, unknown> = { ...fromOptions, ...frontMatter };
+    // md-to-pdf's own parse (it finds no front matter in the body) gets the same settings
+    if ('gray_matter_options' in merged) {
+        merged.gray_matter_options = grayMatterOptions;
+    }
     const optionsPdf = isPlainObject(fromOptions.pdf_options) ? fromOptions.pdf_options : {};
     const frontMatterPdf = isPlainObject(frontMatter.pdf_options) ? frontMatter.pdf_options : {};
     if ('pdf_options' in fromOptions || 'pdf_options' in frontMatter) {
