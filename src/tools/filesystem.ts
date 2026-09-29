@@ -637,6 +637,7 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
 
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
     const validPath = await validatePath(filePath);
+    await fs.mkdir(path.dirname(validPath), { recursive: true });
 
     // Get file extension for telemetry
     const fileExtension = getFileExtension(validPath);
