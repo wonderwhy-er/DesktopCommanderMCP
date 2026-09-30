@@ -340,6 +340,14 @@ async function testReadFilePreviewMetadata() {
   assert.ok(typeof imageContentItem.data === 'string' && imageContentItem.data.length > 0, 'Image content item should carry non-empty base64 data');
   assert.strictEqual(imageResult.structuredContent, undefined, 'LLM-facing image read should carry no structuredContent');
 
+  // Explicit resource response: embedded bytes for hosts that expose tool resources as artifacts.
+  const resourceResult = await handleReadFile({ path: IMAGE_FILE, options: { responseFormat: 'resource' } });
+  const resourceContentItem = resourceResult.content.find((item) => item.type === 'resource');
+  assert.ok(resourceContentItem, 'resource response should include an embedded resource content item');
+  assert.strictEqual(resourceContentItem.resource.mimeType, 'image/png', 'resource should carry the png mimeType');
+  assert.strictEqual(resourceContentItem.resource.blob, tinyPngBase64, 'resource should carry the original base64 image bytes');
+  assert.ok(resourceContentItem.resource.uri.startsWith('file://'), 'resource should carry a file URI');
+
   // Widget image read: base64 rides in a TEXT block (no image block), plus
   // metadata-only structuredContent with the mimeType the widget renders with.
   const uiImageResult = await handleReadFile({ path: IMAGE_FILE, origin: 'ui' });
