@@ -1,5 +1,7 @@
 import { spawn } from 'child_process';
 import path from 'path';
+import os from 'os';
+import { constants as fsConstants } from 'fs';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -250,10 +252,32 @@ export class DesktopCommanderIntegration {
         try {
             await fs.access(devPath);
             console.debug(' - 🔍 Found local MCP server at:', devPath);
+            const rootDir = path.parse(process.execPath).root;
+            let homeDir = '';
+            try {
+                homeDir = os.homedir();
+            } catch {
+                // Fall back to the executable's filesystem root below.
+            }
+            let stableCwd = rootDir;
+            for (const candidate of [homeDir, rootDir]) {
+                if (!candidate) continue;
+                try {
+                    const candidateStats = await fs.stat(candidate);
+                    if (!candidateStats.isDirectory()) continue;
+                    await fs.access(candidate, fsConstants.X_OK);
+                    stableCwd = candidate;
+                    break;
+                } catch {
+                    // Try the next durable candidate.
+                }
+            }
             return {
                 command: process.execPath, // Use the current node executable
                 args: [devPath],
-                cwd: path.dirname(devPath)
+                // Anchor the long-lived child to a durable directory rather than
+                // replaceable package bytes or an arbitrary launcher cwd.
+                cwd: stableCwd
             };
         } catch {
             console.debug('[DEBUG] Local dev path not found, trying global installation');
