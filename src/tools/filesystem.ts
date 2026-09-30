@@ -368,9 +368,6 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
             signal: controller.signal
         });
 
-        // Clear the timeout since fetch completed
-        clearTimeout(timeoutId);
-
         if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
         }
@@ -382,8 +379,9 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(url);
+            // Consume the already-fetched response body instead of making a second network request (#786)
+            const buffer = await response.arrayBuffer();
+            const pdfResult = await parsePdfToMarkdown(Buffer.from(buffer));
 
             return {
                 content: "",
@@ -411,15 +409,15 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
             return { content, mimeType: contentType, metadata: { isImage } };
         }
     } catch (error) {
-        // Clear the timeout to prevent memory leaks
-        clearTimeout(timeoutId);
-
         // Return error information instead of throwing
         const errorMessage = error instanceof DOMException && error.name === 'AbortError'
             ? `URL fetch timed out after ${FILE_OPERATION_TIMEOUTS.URL_FETCH}ms: ${url}`
             : `Failed to fetch URL: ${error instanceof Error ? error.message : String(error)}`;
 
         throw new Error(errorMessage);
+    } finally {
+        // Clear the timeout to prevent memory leaks while keeping timeout active during body read
+        clearTimeout(timeoutId);
     }
 }
 

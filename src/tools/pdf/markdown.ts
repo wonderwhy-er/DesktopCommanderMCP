@@ -259,19 +259,22 @@ export function ensureChromeAvailable(): void {
     });
 }
 
-async function loadPdfToBuffer(source: string): Promise<Buffer | ArrayBuffer> {
-    if (isUrl(source)) {
+async function loadPdfToBuffer(source: string | Buffer | ArrayBuffer | Uint8Array): Promise<Buffer | ArrayBuffer | Uint8Array> {
+    if (Buffer.isBuffer(source) || source instanceof ArrayBuffer || source instanceof Uint8Array) {
+        return source;
+    }
+    if (typeof source === 'string' && isUrl(source)) {
         const response = await fetch(source);
         return await response.arrayBuffer();
     } else {
-        return await fs.readFile(source);
+        return await fs.readFile(source as string);
     }
 }
 
 /**
  * Convert PDF to Markdown using @opendocsg/pdf2md
  */
-export async function parsePdfToMarkdown(source: string, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
+export async function parsePdfToMarkdown(source: string | Buffer | ArrayBuffer | Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
     try {
         const data = await loadPdfToBuffer(source);
 
