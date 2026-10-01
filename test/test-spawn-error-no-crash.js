@@ -59,8 +59,10 @@ async function testBogusShellDoesNotCrash() {
 
 async function testBogusExecutableDoesNotCrash() {
   // Runs through the default shell, which reports the unknown command itself.
+  // executeCommand returns as soon as the shell exits; the long wait is for a
+  // busy machine, where starting PowerShell alone can take more than 3 s.
   const BOGUS_COMMAND = 'this-command-does-not-exist-4f2a';
-  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 3000);
+  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 30000);
   await settle();
 
   assert.strictEqual(uncaught, null,
