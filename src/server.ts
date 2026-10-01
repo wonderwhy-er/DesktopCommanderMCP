@@ -372,6 +372,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000)
                           * Used with positive offsets for range reading
                           * Ignored when offset is negative (reads all requested tail lines)
+                          * 'limit' is accepted as an alias for 'length' (some clients name it that way)
                         
                         Examples:
                         - offset: 0, length: 10     → First 10 lines
