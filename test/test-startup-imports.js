@@ -1,26 +1,37 @@
 /**
  * Starting the server must not load the packages only Excel, PDF and DOCX
- * files need (#715). Every launch loaded them before answering `initialize`,
- * whether or not the session ever opened such a file: 1,183 of the 1,556
- * modules loaded before the answer, which one reporter saw take 25-90 s and
- * time the client out. Each package still loads the first time a file needs it.
+ * files need before it answers `initialize` (#715). Every launch loaded them
+ * first, whether or not the session ever opened such a file: 1,183 of the
+ * 1,556 modules loaded before the answer, which one reporter saw take 25-90 s
+ * and time the client out. Nor may a tool call wait for one to load: a client
+ * gives a call a few seconds (review on #777). So right after `initialize` the
+ * server loads them in the background, one at a time; a call that needs one
+ * still loading answers at once that it is still loading, and works once it
+ * is loaded. A load that fails is not kept: the call says so, and a later call
+ * loads it again.
  *
  * Starts the real server (dist/index.js) over MCP stdio, the way a client
  * does, recording every module it resolves (import and require).
  */
 import assert from 'assert';
+import ExcelJS from 'exceljs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { HEAVY_PACKAGES, packageOf, startServerRecordingModules } from './helpers/server-modules.js';
+import { callToolOnceLoaded } from './helpers/heavy-packages.js';
 import { isTestHome } from './helpers/test-env.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SAMPLE_PDF = path.join(PROJECT_ROOT, 'test/samples/01_sample_simple.pdf');
-const WARM_UP_TIMEOUT_MS = 60_000;
+/** The background load takes a few seconds at most; far above that */
+const LOAD_DEADLINE_MS = 30_000;
+/** An answer "at once": a refused call takes milliseconds; far above that */
+const AT_ONCE_MS = 5_000;
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const heavyLoaded = (modules) => HEAVY_PACKAGES.filter((pkg) => modules.some((module) => packageOf(module.url) === pkg));
 
 function text(result) {
@@ -28,35 +39,40 @@ function text(result) {
 }
 
 async function callTool(client, name, args) {
-  const result = await client.callTool({ name, arguments: args });
+  const result = await callToolOnceLoaded(client, { name, arguments: args });
   assert.notStrictEqual(result.isError, true, `${name} ${JSON.stringify(args)} failed: ${text(result)}`);
   return text(result);
 }
 
-/** Nothing for Excel, PDF or DOCX files is loaded before the server answers `initialize` */
+/** Nothing for Excel, PDF or DOCX is loaded before the server answers `initialize` */
 async function testNothingLoadedBeforeInitialize(server) {
-  const beforeAnswer = server.modules().filter((module) => module.at <= server.initializedAt && !module.url.startsWith('node:'));
+  // Before the answer arrived: the server starts its background load only after it
+  const beforeAnswer = server.modules().filter((module) => module.at < server.initializedAt && !module.url.startsWith('node:'));
   const loaded = heavyLoaded(beforeAnswer);
   assert.deepStrictEqual(loaded, [],
-    `with no Excel, PDF or DOCX file opened, the server loaded ${loaded.join(', ')} before answering initialize ` +
+    `the server loaded ${loaded.join(', ')} before answering initialize ` +
     `(${beforeAnswer.length} modules resolved before the answer)`);
   console.log(`✓ Nothing for Excel, PDF or DOCX loaded before initialize was answered (${beforeAnswer.length} modules)`);
 }
 
-/** Nor once the tools are listed and the Chrome warm-up after the handshake has run */
-async function testNothingLoadedAfterWarmUp(server) {
-  await server.client.listTools();
-  assert(await server.waitForChromeWarmUp(WARM_UP_TIMEOUT_MS),
-    `the Chrome warm-up after the handshake did not finish within ${WARM_UP_TIMEOUT_MS} ms`);
-  const loaded = heavyLoaded(server.modules());
-  assert.deepStrictEqual(loaded, [],
-    `with no Excel, PDF or DOCX file opened, the server loaded ${loaded.join(', ')} by the time tools/list ` +
-    'was answered and the Chrome warm-up had run');
-  console.log('✓ Nothing for Excel, PDF or DOCX loaded after tools/list and the Chrome warm-up');
+/** Shortly after it, all of them are loaded, without any tool call */
+async function testLoadedSoonAfterInitialize(server) {
+  const deadline = Date.now() + LOAD_DEADLINE_MS;
+  let missing = HEAVY_PACKAGES;
+  while (missing.length > 0 && Date.now() < deadline) {
+    await sleep(100);
+    const loaded = heavyLoaded(server.modules());
+    missing = HEAVY_PACKAGES.filter((pkg) => !loaded.includes(pkg));
+  }
+  assert.deepStrictEqual(missing, [],
+    `${LOAD_DEADLINE_MS / 1000} s after initialize, with no tool call, the server had not loaded ${missing.join(', ')}: ` +
+    'the first call that needs them loads them inside the call, which a client gives only a few seconds');
+  const lastAt = Math.max(...server.modules().filter((module) => HEAVY_PACKAGES.includes(packageOf(module.url))).map((module) => module.at));
+  console.log(`✓ All of them loaded in the background, the last ${lastAt - server.initializedAt} ms after initialize was answered`);
 }
 
-/** Each package loads when a file first needs it, and the file works */
-async function testLoadedOnFirstUse(server, dir) {
+/** Excel, DOCX and PDF files work once loaded */
+async function testFilesWorkOnceLoaded(server, dir) {
   const { client } = server;
   const xlsx = path.join(dir, 'budget.xlsx');
   await callTool(client, 'write_file', { path: xlsx, content: JSON.stringify([['Item', 'Note'], ['Alice', 'ZebraQuartz budget']]) });
@@ -71,12 +87,79 @@ async function testLoadedOnFirstUse(server, dir) {
 
   assert((await callTool(client, 'read_file', { path: SAMPLE_PDF })).trim().length > 0,
     'reading a PDF through the server should return its text');
+  console.log('✓ Excel, DOCX and PDF files work once their support is loaded');
+}
 
-  const loaded = heavyLoaded(server.modules());
-  for (const pkg of ['exceljs', 'pizzip', '@opendocsg/pdf2md']) {
-    assert(loaded.includes(pkg), `${pkg} should be loaded once a file needed it; loaded: ${loaded.join(', ') || 'none'}`);
+/** A call that needs a package still loading answers at once that it is still loading */
+async function testCallWhileLoadingAnswersAtOnce(server, file) {
+  const started = Date.now();
+  const call = server.client.callTool({ name: 'read_file', arguments: { path: file } }, undefined, { timeout: 120_000 });
+  const answer = await Promise.race([call, sleep(AT_ONCE_MS).then(() => null)]);
+  try {
+    assert(answer,
+      `with Excel support still loading, read_file of an .xlsx gave no answer within ${AT_ONCE_MS / 1000} s: ` +
+      'it waited for exceljs to load inside the call, and a client gives a call only a few seconds');
+    assert(answer.isError === true && /Can't read held\.xlsx yet: Desktop Commander is still loading its Excel support/.test(text(answer)),
+      `with Excel support still loading, read_file of held.xlsx should answer at once that it can't read held.xlsx yet, as Excel support is still loading; it answered: ${text(answer)}`);
+    console.log(`✓ A call while Excel support is loading answers in ${Date.now() - started} ms: ${text(answer)}`);
+  } finally {
+    server.release();
+    await call.catch(() => {});
   }
-  console.log('✓ Excel, DOCX and PDF files work on first use, loading their packages then');
+}
+
+/** read_multiple_files says so for each file that needs it, by its name */
+async function testReadMultipleFilesWhileLoading(server, file, second) {
+  const answer = text(await server.client.callTool({ name: 'read_multiple_files', arguments: { paths: [file, second] } }));
+  for (const name of [path.basename(file), path.basename(second)]) {
+    const escaped = name.replace(/\./g, '\\.');
+    assert(new RegExp(`${escaped}: Error - Can't read ${escaped} yet: Desktop Commander is still loading its Excel support`).test(answer),
+      `with Excel support still loading, read_multiple_files should say for ${name} that it can't read ${name} yet; it answered: ${answer}`);
+  }
+  console.log('✓ read_multiple_files says for each file, by name, that it can\'t be read yet');
+}
+
+/** write_pdf with markdown that starts with a link is writing a PDF, not editing one, as the tool reads it */
+async function testWritePdfMarkdownStartingWithLink(server, dir) {
+  // PDF writing (md-to-pdf) failed to load once; PDF editing (pdf-lib) is loaded
+  const deadline = Date.now() + LOAD_DEADLINE_MS;
+  while (!server.logs().some((line) => /Loading md-to-pdf failed/.test(line)) && Date.now() < deadline) await sleep(100);
+  const answer = await server.client.callTool({ name: 'write_pdf', arguments: { path: path.join(dir, 'links.pdf'), content: '[Home](https://example.com)\n\n# Links' } });
+  assert(answer.isError === true && /Can't write links\.pdf: Desktop Commander couldn't load its PDF writing support/.test(text(answer)),
+    `write_pdf with markdown starting with a link, while PDF writing can't be loaded, should say it can't write links.pdf ` +
+    `(markdown, as the tool reads it, not page edits); it answered: ${text(answer)}`);
+  console.log(`✓ write_pdf with markdown starting with a link is writing a PDF: ${text(answer)}`);
+}
+
+/** The same call works once the package is loaded */
+async function testSameCallWorksOnceLoaded(server, file) {
+  assert(/ZebraQuartz held/.test(await callTool(server.client, 'read_file', { path: file })),
+    'once Excel support has loaded, read_file of the .xlsx should show its cells');
+  console.log('✓ The same call works once Excel support has loaded');
+}
+
+/** A failed load isn't kept: the call says so, with the reason, and a later call loads it again */
+async function testFailedLoadIsNotKept(server, file) {
+  // Calls only once the background load has tried exceljs and logged the failure
+  const deadline = Date.now() + LOAD_DEADLINE_MS;
+  while (!server.logs().some((line) => /Loading exceljs failed/.test(line)) && Date.now() < deadline) await sleep(100);
+  const answer = await server.client.callTool({ name: 'read_file', arguments: { path: file } });
+  assert(answer.isError === true && /Can't read held\.xlsx: Desktop Commander couldn't load its Excel support \(.*exceljs failed to load \(test\)/.test(text(answer)),
+    `when exceljs failed to load, read_file of held.xlsx should say it can't read held.xlsx as Excel support couldn't be loaded, and why; it answered: ${text(answer)}`);
+  assert(/ZebraQuartz held/.test(await callTool(server.client, 'read_file', { path: file })),
+    'after a failed load, a later read_file of the .xlsx should load Excel support again and show its cells');
+  console.log(`✓ A failed load isn't kept: "${text(answer)}", and a later call loads it`);
+}
+
+async function runCases(failures, cases) {
+  for (const [check, ...args] of cases) {
+    try {
+      await check(...args);
+    } catch (error) {
+      failures.push(error);
+      console.error(`❌ ${check.name}: ${error.message}`);
+    }
+  }
 }
 
 export default async function runTests() {
@@ -86,19 +169,59 @@ export default async function runTests() {
   }
   const dir = fs.mkdtempSync(path.join(os.homedir(), 'startup-imports-'));
   const failures = [];
-  let server;
   try {
-    server = await startServerRecordingModules();
-    for (const test of [testNothingLoadedBeforeInitialize, testNothingLoadedAfterWarmUp, testLoadedOnFirstUse]) {
-      try {
-        await test(server, dir);
-      } catch (error) {
-        failures.push(error);
-        console.error(`❌ ${test.name}: ${error.message}`);
-      }
+    const server = await startServerRecordingModules();
+    try {
+      await runCases(failures, [
+        [testNothingLoadedBeforeInitialize, server],
+        [testLoadedSoonAfterInitialize, server],
+        [testFilesWorkOnceLoaded, server, dir],
+      ]);
+    } finally {
+      await server.close();
+    }
+
+    // Excel support held back: exceljs doesn't load until the server is released
+    const held = path.join(dir, 'held.xlsx');
+    const heldToo = path.join(dir, 'held-too.xlsx');
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Sheet1').addRow(['Item', 'ZebraQuartz held']);
+    await workbook.xlsx.writeFile(held);
+    fs.copyFileSync(held, heldToo);
+    const holding = await startServerRecordingModules({ holdPackage: 'exceljs' });
+    try {
+      await runCases(failures, [
+        [testCallWhileLoadingAnswersAtOnce, holding, held],
+        [testSameCallWorksOnceLoaded, holding, held],
+      ]);
+    } finally {
+      await holding.close();
+    }
+    // A server of its own: after a call that succeeds, the server loads modules
+    // of its own, which a held import would hold up (see startServerRecordingModules)
+    const holdingToo = await startServerRecordingModules({ holdPackage: 'exceljs' });
+    try {
+      await runCases(failures, [[testReadMultipleFilesWhileLoading, holdingToo, held, heldToo]]);
+    } finally {
+      await holdingToo.close();
+    }
+
+    // Excel support failing to load once
+    const failing = await startServerRecordingModules({ failPackageOnce: 'exceljs' });
+    try {
+      await runCases(failures, [[testFailedLoadIsNotKept, failing, held]]);
+    } finally {
+      await failing.close();
+    }
+
+    // PDF writing failing to load once
+    const failingPdf = await startServerRecordingModules({ failPackageOnce: 'md-to-pdf' });
+    try {
+      await runCases(failures, [[testWritePdfMarkdownStartingWithLink, failingPdf, dir]]);
+    } finally {
+      await failingPdf.close();
     }
   } finally {
-    await server?.close();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   if (failures.length > 0) {

@@ -16,6 +16,7 @@ import { exitProcess } from '../../dist/utils/exit-process.js';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { callToolOnceLoaded } from '../helpers/heavy-packages.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,7 +60,7 @@ function assertToolSuccess(result, message) {
 }
 
 async function callTool(client, name, args) {
-  return client.callTool({ name, arguments: args }, undefined, { timeout: 120000 });
+  return callToolOnceLoaded(client, { name, arguments: args }, { requestOptions: { timeout: 120000 } });
 }
 
 async function sleep(ms) {
