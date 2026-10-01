@@ -4,8 +4,8 @@ import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProces
 import { capture } from "../utils/capture.js";
 import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
-import * as os from 'os';
 import { configManager } from '../config-manager.js';
+import { getDefaultShell } from '../utils/shell.js';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
@@ -167,18 +167,7 @@ export async function startProcess(args: unknown): Promise<ServerResult> {
 
   if (!shellUsed) {
     const config = await configManager.getConfig();
-    if (config.defaultShell) {
-      shellUsed = config.defaultShell;
-    } else {
-      const isWindows = os.platform() === 'win32';
-      if (isWindows && process.env.COMSPEC) {
-        shellUsed = process.env.COMSPEC;
-      } else if (!isWindows && process.env.SHELL) {
-        shellUsed = process.env.SHELL;
-      } else {
-        shellUsed = isWindows ? 'cmd.exe' : '/bin/sh';
-      }
-    }
+    shellUsed = config.defaultShell || getDefaultShell();
   }
 
   const result = await terminalManager.executeCommand(

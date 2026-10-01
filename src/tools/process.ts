@@ -1,10 +1,11 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
 import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
+import { resolveProgramPath } from '../utils/shell.js';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /**
  * Parse `tasklist /FO CSV /NH` output (#662). Fields per row, all quoted:
@@ -51,9 +52,9 @@ export function parsePsAux(stdout: string): ProcessInfo[] {
 
 export async function listProcesses(): Promise<ServerResult> {
   const isWindows = os.platform() === 'win32';
-  const command = isWindows ? 'tasklist /FO CSV /NH' : 'ps aux';
+  const [program, args]: [string, string[]] = isWindows ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['aux']];
   try {
-    const { stdout } = await execAsync(command);
+    const { stdout } = await execFileAsync(resolveProgramPath(program), args);
     const processes = isWindows ? parseWindowsTasklistCsv(stdout) : parsePsAux(stdout);
 
     return {
