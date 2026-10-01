@@ -11,15 +11,24 @@ import {
     FileInfo
 } from './base.js';
 
+const SVG_MIME_TYPE = 'image/svg+xml';
+
+/**
+ * Whether content of this MIME type is answered as an image: every image type
+ * but SVG, which is text (XML), read and written as text. Only the file preview
+ * widget draws an SVG as an image (svgAsImage). Files and URLs both decide here.
+ */
+export function isImageAnswer(mimeType: string, svgAsImage = false): boolean {
+    const type = mimeType.toLowerCase().split(';')[0].trim();
+    return type.startsWith('image/') && (svgAsImage || type !== SVG_MIME_TYPE);
+}
+
 /**
  * Image file handler implementation
- * Supports: PNG, JPEG, GIF, WebP, BMP, SVG
+ * Supports: PNG, JPEG, GIF, WebP, BMP; an SVG only for the file preview widget
+ * (isImageAnswer), everyone else reads and writes it as text.
  */
 export class ImageFileHandler implements FileHandler {
-    private static readonly IMAGE_EXTENSIONS = [
-        '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'
-    ];
-
     private static readonly IMAGE_MIME_TYPES: { [key: string]: string } = {
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
@@ -30,9 +39,8 @@ export class ImageFileHandler implements FileHandler {
         '.svg': 'image/svg+xml'
     };
 
-    canHandle(path: string): boolean {
-        const lowerPath = path.toLowerCase();
-        return ImageFileHandler.IMAGE_EXTENSIONS.some(ext => lowerPath.endsWith(ext));
+    canHandle(path: string, options?: { svgAsImage?: boolean }): boolean {
+        return isImageAnswer(this.getMimeType(path), options?.svgAsImage);
     }
 
     async read(path: string, options?: ReadOptions): Promise<FileResult> {
@@ -50,7 +58,11 @@ export class ImageFileHandler implements FileHandler {
         };
     }
 
-    async write(path: string, content: Buffer | string): Promise<void> {
+    async write(path: string, content: Buffer | string, mode?: 'rewrite' | 'append'): Promise<void> {
+        // An image can't take text at its end: writing the content would replace the file
+        if (mode === 'append') {
+            throw new Error('Image append not supported.');
+        }
         // If content is base64 string, convert to buffer
         if (typeof content === 'string') {
             const buffer = Buffer.from(content, 'base64');

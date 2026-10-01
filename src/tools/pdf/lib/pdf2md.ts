@@ -64,7 +64,8 @@ export type PageRange = {
 /**
  * Reads a PDF and converts it to Markdown, returning structured data.
  * @param pdfBuffer The PDF buffer to convert.
- * @param pageNumbers The page numbers to extract. If empty, all pages are extracted.
+ * @param pageNumbers The page numbers to extract. If an empty array, all pages are extracted;
+ * a range that selects no pages (offset past the last page, length 0) extracts none.
  * @returns A Promise that resolves to a PdfParseResult object containing the parsed data.
  */
 export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
@@ -73,16 +74,17 @@ export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | Page
     const { fonts, pages, pdfDocument } = result;
 
     // Calculate which pages to process
+    const allPages = Array.isArray(pageNumbers) && pageNumbers.length === 0;
     const filterPageNumbers = Array.isArray(pageNumbers) ?
         pageNumbers :
         generatePageNumbers(pageNumbers.offset, pageNumbers.length, pages.length);
 
     // Filter and transform pages
-    const pagesToProcess = filterPageNumbers.length === 0 ?
+    const pagesToProcess = allPages ?
         pages :
         pages.filter((_: any, index: number) => filterPageNumbers.includes(index + 1));
 
-    const pageNumberMap = filterPageNumbers.length === 0 ?
+    const pageNumberMap = allPages ?
         pages.map((_: any, index: number) => index + 1) :
         filterPageNumbers.filter(pageNum => pageNum >= 1 && pageNum <= pages.length);
 

@@ -11,6 +11,6 @@ export { getFileHandler, isExcelFile, isImageFile } from './factory.js';
 
 // File handlers
 export { TextFileHandler } from './text.js';
-export { ImageFileHandler } from './image.js';
+export { ImageFileHandler, isImageAnswer } from './image.js';
 export { BinaryFileHandler } from './binary.js';
 export { ExcelFileHandler } from './excel.js';

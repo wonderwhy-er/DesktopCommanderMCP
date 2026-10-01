@@ -104,7 +104,10 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             offset: parsed.offset ?? 0,
             length: lengthGiven ? parsed.length : defaultLimit,
             sheet: parsed.sheet,
-            range: parsed.range
+            range: parsed.range,
+            // The preview widget draws an SVG as an image (ui/file-preview/src/image-preview.ts);
+            // everyone else reads it as the text it is
+            svgAsImage: parsed.origin === 'ui'
         };
 
         // Resolve to absolute path for local files (not URLs) so "Open in folder" works
@@ -490,10 +493,12 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
 export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
-        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const ignoredOptions = await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         const targetPath = parsed.outputPath || parsed.path;
         return {
             content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            // Which options were ignored, and why: internal (tests), not sent to the client (see utils/internal-facts.ts)
+            ...(ignoredOptions.length > 0 ? { structuredContent: { ignoredOptions } } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
