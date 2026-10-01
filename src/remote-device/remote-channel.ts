@@ -143,6 +143,19 @@ export function presenceRetryDelayMs(failedAttempt: number, random: () => number
 const rawDateNow = Date.now;
 let clockOffsetMs = 0;
 let clockPatched = false;
+// Server time minus this device's, from the last Date header; kept at any
+// size, unlike clockOffsetMs.
+let serverOffsetMs = 0;
+
+/**
+ * Server time, for the times this device writes to its rows. The server
+ * compares last_seen and completed_at with its own clock (a device is offline
+ * after 15 min, a finished call is deleted after 1 min); new Date() is never
+ * corrected, and Date.now only above 5 min.
+ */
+function serverNow(): Date {
+    return new Date(rawDateNow() + serverOffsetMs);
+}
 
 export function observeServerDate(dateHeader: string | null): void {
     if (!dateHeader) return;
@@ -150,6 +163,7 @@ export function observeServerDate(dateHeader: string | null): void {
     if (Number.isNaN(serverMs)) return;
 
     const offsetMs = serverMs - rawDateNow();
+    serverOffsetMs = offsetMs;
     if (Math.abs(offsetMs) <= CLOCK_SKEW_CORRECTION_THRESHOLD_MS) {
         if (clockPatched) {
             Date.now = rawDateNow;
@@ -529,7 +543,7 @@ export class RemoteChannel {
             // 'online'; presence writes the capability.
             const { error: registrationError } = await this.updateDevice(existingDevice.id, {
                 status: 'offline',
-                last_seen: new Date().toISOString(),
+                last_seen: serverNow().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
             });
@@ -1234,7 +1248,7 @@ export class RemoteChannel {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
-            completed_at: new Date().toISOString()
+            completed_at: serverNow().toISOString()
         };
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
@@ -1375,7 +1389,7 @@ export class RemoteChannel {
 
             const { error } = await this.client
                 .from('mcp_devices')
-                .update({ last_seen: new Date().toISOString(), status: 'online' })
+                .update({ last_seen: serverNow().toISOString(), status: 'online' })
                 .eq('id', deviceId);
 
             if (error) {
@@ -1476,7 +1490,7 @@ export class RemoteChannel {
 
         const { error } = await this.client
             .from('mcp_devices')
-            .update({ status: status, last_seen: new Date().toISOString() })
+            .update({ status: status, last_seen: serverNow().toISOString() })
             .eq('id', deviceId);
 
         if (error) {
