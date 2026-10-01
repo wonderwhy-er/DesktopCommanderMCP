@@ -2,7 +2,7 @@ import assert from 'assert';
 import { runIfMain } from '../helpers/run-if-main.js';
 import { terminalManager } from '../../dist/terminal-manager.js';
 import { interactWithProcess } from '../../dist/tools/improved-process-tools.js';
-import { configManager } from '../../dist/config-manager.js';
+import { MAX_PROCESS_WAIT_MS } from '../../dist/config.js';
 
 /**
  * FAILING repro for the "No result received after 4 minutes" crash.
@@ -22,24 +22,22 @@ import { configManager } from '../../dist/config-manager.js';
  * and should PASS once a fix lands:
  *
  *   The single-call blocking wait of start_process and interact_with_process
- *   MUST be capped at min(timeout_ms, maxProcessWaitMs), where maxProcessWaitMs
- *   is a config value defaulting BELOW the client ceiling (suggested 180000).
+ *   MUST be capped at min(timeout_ms, MAX_PROCESS_WAIT_MS), a fixed ceiling
+ *   BELOW the client ceiling (60000).
  *   When the cap is hit, the tool returns an "is still running, use
  *   read_process_output" handoff (isBlocked=true) instead of continuing to
  *   block for the full timeout_ms.
  *
- * The fast tests below set maxProcessWaitMs to a tiny value so they run in ms.
+ * The fast tests below pass a tiny ceiling (the internal maxWaitMs parameter,
+ * not reachable from the tools) so they run in ms.
  * Set DC_REPRO_REALTIME=1 to additionally run a fix-agnostic ~200s proof that
  * uses the real client ceiling.
  */
 
 // The MCP client (Claude Desktop) kills a single tool call at ~4 minutes.
 const CLIENT_CEILING_MS = 240000;
-// Config key the fix should read to bound the single-call wait.
-const CAP_KEY = 'maxProcessWaitMs';
-
 // Fast-test values: tiny cap so a fixed tool returns in ms.
-const TEST_CAP_MS = 400;          // stand-in for the production maxProcessWaitMs
+const TEST_CAP_MS = 400;          // stand-in for the production MAX_PROCESS_WAIT_MS
 const LARGE_TIMEOUT_MS = 4000;    // stand-in for "user/agent set a big timeout"
 const CHILD_LIFETIME_MS = 8000;   // child outlives both cap and timeout
 const CAP_MARGIN_MS = 1600;       // tolerance above the cap for scheduling/overhead
@@ -47,11 +45,6 @@ const CAP_MARGIN_MS = 1600;       // tolerance above the cap for scheduling/over
 const since = (t) => Date.now() - t;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cleanup = (pid) => { try { if (pid > 0) terminalManager.forceTerminate(pid); } catch {} };
-
-let ORIGINAL_CAP;
-async function setCap(v) { await configManager.setValue(CAP_KEY, v); }
-async function snapshotCap() { ORIGINAL_CAP = await configManager.getValue(CAP_KEY); }
-async function restoreCap() { await configManager.setValue(CAP_KEY, ORIGINAL_CAP); }
 
 // A silent, long-running, non-exiting process: matches none of the early-exit
 // paths (no prompt, no output, no exit) so only the wait cap can end the call.
@@ -64,9 +57,8 @@ const SILENT_CHILD = `node -e "setTimeout(function(){}, ${CHILD_LIFETIME_MS})"`;
  */
 async function testStartProcessCapsWait() {
   console.log('\n📋 Test 1: start_process caps initial wait below timeout_ms...');
-  await setCap(TEST_CAP_MS);
   const t0 = Date.now();
-  const res = await terminalManager.executeCommand(SILENT_CHILD, LARGE_TIMEOUT_MS, undefined, true);
+  const res = await terminalManager.executeCommand(SILENT_CHILD, LARGE_TIMEOUT_MS, undefined, true, TEST_CAP_MS);
   const elapsed = since(t0);
   cleanup(res.pid);
 
@@ -98,9 +90,8 @@ async function testInteractCapsWait() {
   const pid = start.pid;
   assert(pid > 0, 'should have started a REPL session');
 
-  await setCap(TEST_CAP_MS);
   const t0 = Date.now();
-  await interactWithProcess({ pid, input: BUSY_INPUT, timeout_ms: LARGE_TIMEOUT_MS });
+  await interactWithProcess({ pid, input: BUSY_INPUT, timeout_ms: LARGE_TIMEOUT_MS }, TEST_CAP_MS);
   const elapsed = since(t0);
   cleanup(pid);
 
@@ -115,14 +106,14 @@ async function testInteractCapsWait() {
 
 /**
  * Test 3 (guard, passes now AND after the fix): the cap must not slow the
- * normal fast path. With a generous cap, a prompt-emitting process still
+ * normal fast path. With the real ceiling, a prompt-emitting process still
  * returns early via prompt detection, nowhere near the cap or the timeout.
  * This stops a "fix" that just blanket-shortens every wait.
  */
 async function testPromptStillReturnsEarly() {
   console.log('\n📋 Test 3 (guard): prompt-emitting process still returns early...');
-  await setCap(60000); // generous cap, larger than the timeout below
   const bigTimeout = 5000;
+  assert(bigTimeout < MAX_PROCESS_WAIT_MS, 'the real ceiling must be larger than this timeout');
   const t0 = Date.now();
   const res = await terminalManager.executeCommand(
     `node -e "process.stdout.write('>>> ');setTimeout(function(){}, ${CHILD_LIFETIME_MS})"`,
@@ -150,7 +141,6 @@ async function testPromptStillReturnsEarly() {
  */
 async function testRealTimeClientCeiling() {
   console.log('\n📋 Test 4 (real-time): single call must stay under the client ceiling...');
-  await restoreCap(); // use production default, not the tiny test cap
   const SAFE_CEILING_MS = 200000;
   const HUGE_TIMEOUT_MS = 300000;
 
@@ -176,7 +166,6 @@ async function testRealTimeClientCeiling() {
 
 async function runAllTests() {
   console.log('🚀 Starting process-wait client-ceiling repro tests...');
-  await snapshotCap();
   let ok = true;
   try {
     await testStartProcessCapsWait();   // FAILS until fix
@@ -191,8 +180,6 @@ async function runAllTests() {
   } catch (error) {
     ok = false;
     console.error('\n❌ Test failed:', error.message);
-  } finally {
-    await restoreCap();
   }
   return ok;
 }
