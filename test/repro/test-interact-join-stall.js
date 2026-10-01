@@ -6,6 +6,7 @@
 //
 // Run: node test/test-interact-join-stall.js
 import { startProcess, interactWithProcess } from '../../dist/tools/improved-process-tools.js';
+import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const T0 = Date.now();
 const log = (m) => console.log(`[${Date.now() - T0}ms] ${m}`);
@@ -52,4 +53,4 @@ log(maxLag > 150 || sumLag > wall * 0.3
   ? `STALL REPRODUCED: per-poll whole-buffer join starves the event loop`
   : `no significant stall observed`);
 try { await interactWithProcess({ pid, input: 'exit()', timeout_ms: 800, wait_for_prompt: false }); } catch {}
-process.exit(0);
+exitProcess(0);
