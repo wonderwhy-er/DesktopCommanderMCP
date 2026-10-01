@@ -8,6 +8,14 @@ import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 import { getDefaultShell } from './utils/shell.js';
 import { writeFileAtomic } from './utils/atomic-write.js';
+import {
+  keepDamagedCopy,
+  RecoveryEvents,
+  replacementConfig,
+  sendRecoveryEvent,
+  type CorruptConfigPhase,
+  type CorruptConfigRecoveryTelemetry,
+} from './config-recovery.js';
 
 // Desktop Commander 0.2.48 and older write config.json in place, so while such
 // a version runs alongside, the file can be empty or partly written for a
@@ -45,19 +53,6 @@ export interface ClientInfo {
   version: string;
 }
 
-type CorruptConfigPhase = 'startup' | 'mutation' | 'watcher';
-
-interface CorruptConfigRecoveryTelemetry {
-  phase: CorruptConfigPhase;
-  parse_error_kind: 'truncated' | 'invalid_json';
-  config_bytes: number | null;
-  config_age_bucket: '<1s' | '<1m' | '<1h' | '>=1h' | 'unknown';
-  temp_file_count: number;
-  persisted_version: string;
-  backup_created: boolean;
-  recovered_by_other_process: boolean;
-}
-
 export function normalizeTelemetryEnabledValue(value: unknown): unknown {
   if (typeof value !== 'string') {
     return value;
@@ -77,71 +72,6 @@ export function normalizeTelemetryEnabledValue(value: unknown): unknown {
 
 export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
-}
-
-/**
- * Where the array value of the config object's own `key` field starts (its '['),
- * or null. Only a top-level field counts: the scan tracks the open objects and
- * arrays, with strings skipped, so a nested object holding the same key (e.g.
- * {"usageStats":{"allowedDirectories":["/"]},"allowedDirectories":["/work"],…)
- * is never taken for it. The first top-level `key` decides.
- */
-function topLevelArrayStart(text: string, key: string): number | null {
-  const open: string[] = [];
-  const colon = /\s*:\s*/y;
-  let i = 0;
-  while (i < text.length) {
-    const char = text[i];
-    if (char === '"') {
-      let end = i + 1;
-      while (end < text.length && text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
-      if (end >= text.length) return null; // cut inside a string
-      if (open.length === 1 && open[0] === '{') {
-        colon.lastIndex = end + 1;
-        const after = colon.exec(text);
-        if (after && text.slice(i + 1, end) === key) {
-          const value = end + 1 + after[0].length;
-          return text[value] === '[' ? value : null;
-        }
-      }
-      i = end + 1;
-      continue;
-    }
-    if (char === '{' || char === '[') open.push(char);
-    else if (char === '}' || char === ']') open.pop();
-    i++;
-  }
-  return null;
-}
-
-function extractRecoverableStringArray(text: string, key: string): string[] | null {
-  const start = topLevelArrayStart(text, key);
-  if (start === null) return null;
-
-  let inString = false;
-  let escaped = false;
-  let depth = 0;
-
-  for (let i = start; i < text.length; i++) {
-    const char = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') { inString = true; continue; }
-    if (char === '[') depth++;
-    else if (char === ']' && --depth === 0) {
-      try {
-        const value = JSON.parse(text.slice(start, i + 1));
-        return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
 }
 
 /**
@@ -188,7 +118,7 @@ class ConfigManager {
   private pendingMutations: Array<(config: ServerConfig) => void> = [];
   private watcher: FSWatcher | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
-  private pendingCorruptConfigTelemetry: CorruptConfigRecoveryTelemetry[] = [];
+  private recoveryEvents = new RecoveryEvents((telemetry) => this.emitCorruptConfigTelemetry(telemetry));
   // True while background saves are held because config.json can't be written (see holdSaves)
   private savesHeld = false;
   // The hold is already logged or told to the user, until a write succeeds
@@ -242,7 +172,7 @@ class ConfigManager {
           });
           this._isFirstRun = created;
         } else {
-          // There, but reading it failed (e.g. no permission, #419): nothing to repair or create
+          // There, but reading it failed (e.g. no permission, #419): nothing to replace or create
           unreadable = true;
           throw error;
         }
@@ -257,25 +187,25 @@ class ConfigManager {
       this.config['version'] = VERSION;
       this.initialized = true;
       this.startConfigWatcher();
-      if (corruptConfigTelemetry) this.pendingCorruptConfigTelemetry.push(corruptConfigTelemetry);
+      if (corruptConfigTelemetry) this.recoveryEvents.record(corruptConfigTelemetry, false); // sent by the flush below
     } catch (error) {
       console.error('Failed to initialize config:', error);
       if (damaged || unreadable) {
-        // The repair itself failed (the corrupt file couldn't be copied, the
-        // repaired config couldn't be written, the lock couldn't be taken), or the
-        // file can't be read: the defaults' allowedDirectories [] would open the
-        // whole filesystem (#419). Use what a repair would have written, for this
-        // session only (from nothing, for a file that can't be read).
-        this.config = this.recoveredConfig(damaged ? await this.readDamagedConfigText() : '');
-        // Saves would fail the same way: held, and tried again every HELD_SAVES_CHECK_MS
+        // Replacing the damaged config.json failed (its copy couldn't be made, the new
+        // file couldn't be written, the lock couldn't be taken), or it can't be read at
+        // all. It is left as it is, and this session uses what a replacement would have
+        // written: the settings still readable in it and the defaults for the rest
+        // (just the defaults, for a file that can't be read).
+        const damagedText = damaged ? await fs.readFile(this.configPath, 'utf8').catch(() => '') : '';
+        this.config = replacementConfig(this.getDefaultConfig(), null, damagedText);
+        // Saves would fail the same way (one that can't read config.json writes
+        // nothing): held, and tried again every HELD_SAVES_CHECK_MS
         this.failedSaves = 1;
         this.holdSaves(); // the warning below says why
         const reason = error instanceof Error ? error.message : String(error);
-        warnUser((damaged ? `config.json could not be read, and repairing it failed (${reason}). ` : `config.json could not be read (${reason}). `) +
-          `For this session Desktop Commander uses the default settings with what it could recover: ` +
-          `file tools only reach ${JSON.stringify(this.config.allowedDirectories)}` +
-          (this.config.blockedCommands?.includes('*') ? ', every command is blocked' : '') +
-          (this.config.telemetryEnabled === false ? ', telemetry stays off' : '') + '.');
+        warnUser(damaged
+          ? `config.json could not be parsed, and replacing it failed (${reason}). For this session Desktop Commander uses the settings still readable in it and the defaults for the rest; config.json is left as it is.`
+          : `config.json could not be read (${reason}). For this session Desktop Commander uses the default settings; config.json is left as it is.`);
       } else if (read && this.config && typeof this.config === 'object') {
         // Read, but a later step failed: the one-time migration's write (a read-only file
         // system, a full disk, a lock that can't be taken). The settings read stay in effect,
@@ -292,7 +222,7 @@ class ConfigManager {
       this.initialized = true;
       this.startConfigWatcher();
     } finally {
-      this.flushCorruptConfigTelemetry();
+      this.recoveryEvents.flush();
     }
   }
 
@@ -375,198 +305,47 @@ class ConfigManager {
     }
   }
 
-  private classifyConfigParseError(error: SyntaxError, text: string): 'truncated' | 'invalid_json' {
-    const message = error.message.toLowerCase();
-    if (message.includes('unexpected end') || message.includes('unterminated')) return 'truncated';
-
-    // Node's newer JSON parser often reports an "Expected ... at position N"
-    // error for truncation. If the failure position is at the end of the file,
-    // classify it as truncation rather than a malformed token in the middle.
-    const position = /position (\d+)/i.exec(error.message)?.[1];
-    if (position !== undefined && Number(position) >= text.length) return 'truncated';
-    return 'invalid_json';
+  /** config.json's size, for the recovery event; null when it can't be read */
+  private async configBytes(): Promise<number | null> {
+    return (await fs.stat(this.configPath).catch(() => null))?.size ?? null;
   }
 
-  private configAgeBucket(mtimeMs: number | null): CorruptConfigRecoveryTelemetry['config_age_bucket'] {
-    if (mtimeMs === null) return 'unknown';
-    const ageMs = Math.max(0, Date.now() - mtimeMs);
-    if (ageMs < 1_000) return '<1s';
-    if (ageMs < 60_000) return '<1m';
-    if (ageMs < 3_600_000) return '<1h';
-    return '>=1h';
-  }
-
-  private async inspectCorruptConfig(
-    error: SyntaxError,
-    phase: CorruptConfigPhase
-  ): Promise<Omit<CorruptConfigRecoveryTelemetry, 'backup_created' | 'recovered_by_other_process'>> {
-    const [stat, corruptText] = await Promise.all([
-      fs.stat(this.configPath).catch(() => null),
-      fs.readFile(this.configPath, 'utf8').catch(() => ''),
-    ]);
-    const configDir = path.dirname(this.configPath);
-    const configName = path.basename(this.configPath);
-    const entries = await fs.readdir(configDir).catch(() => [] as string[]);
-    const tempFileCount = entries.filter((name) =>
-      name.startsWith(`${configName}.`) && name.endsWith('.tmp')
-    ).length;
-    const persistedVersion = /"version"\s*:\s*"([0-9A-Za-z._+-]{1,32})"/.exec(corruptText)?.[1] ?? 'unknown';
-
-    return {
-      phase,
-      parse_error_kind: this.classifyConfigParseError(error, corruptText),
-      config_bytes: stat?.size ?? null,
-      config_age_bucket: this.configAgeBucket(stat?.mtimeMs ?? null),
-      temp_file_count: tempFileCount,
-      persisted_version: persistedVersion,
-    };
-  }
-
-  private recordCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): void {
-    if (!this.initialized) {
-      this.pendingCorruptConfigTelemetry.push(telemetry);
-      return;
-    }
-    void this.emitCorruptConfigTelemetry(telemetry);
-  }
-
-  private flushCorruptConfigTelemetry(): void {
-    const pending = this.pendingCorruptConfigTelemetry.splice(0);
-    for (const telemetry of pending) void this.emitCorruptConfigTelemetry(telemetry);
-  }
-
+  /** Sends a recovery event (a method of its own, so tests can record the events instead) */
   private async emitCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): Promise<void> {
-    try {
-      const { capture } = await import('./utils/capture.js');
-      await capture('config_parse_error_recovered', telemetry);
-    } catch {
-      // Recovery must never depend on telemetry delivery.
-    }
+    await sendRecoveryEvent(telemetry);
   }
 
+  /**
+   * Replaces a damaged config.json (the caller holds the config lock): keeps a copy
+   * of it and writes replacementConfig() of its text (config-recovery.ts). Used at
+   * startup, by the file watcher and by a write while running.
+   */
   private async recoverCorruptConfigUnderLock(
     error: SyntaxError,
     phase: CorruptConfigPhase
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    const forensics = await this.inspectCorruptConfig(error, phase);
+    const damaged = await fs.readFile(this.configPath).catch(() => Buffer.alloc(0));
+    const config = replacementConfig(this.getDefaultConfig(), this.initialized ? this.config : null, damaged.toString('utf8'));
+    const copyName = await keepDamagedCopy(this.configPath, damaged);
 
-    const corruptText = await fs.readFile(this.configPath, 'utf8').catch(() => '');
-    const recovered = this.recoveredConfig(corruptText);
+    await this.writeConfigAtomically(config);
+    this.config = { ...config, version: VERSION };
 
-    let backupCreated = false;
-    if (existsSync(this.configPath)) {
-      const backupPath = `${this.configPath}.corrupt.${Date.now()}.${process.pid}`;
-      try {
-        // A copy, not a move: if writing the repaired config below fails, config.json
-        // stays as it was and the next start repairs it, instead of finding it missing
-        // and taking it for a first run (allowedDirectories [] opens every folder).
-        // A repair done again after such a failure keeps the copy it already made.
-        if (!(await this.newestCorruptCopyMatches())) await fs.copyFile(this.configPath, backupPath);
-        backupCreated = true;
-      } catch (backupError) {
-        console.error('Failed to preserve corrupt config before recovery:', backupError);
-        throw backupError;
-      }
-    }
-
-    await this.writeConfigAtomically(recovered);
-    this.config = { ...recovered, version: VERSION };
-
-    console.error(`Recovered corrupt config during ${phase}; using defaults${backupCreated ? ' and preserved the corrupt file' : ''}.`);
+    console.error(`config.json could not be parsed (${error.message})${copyName ? `; kept as ${copyName}` : ''}; ` +
+      'replaced with the settings still readable in it and the defaults for the rest.');
     return {
-      config: recovered,
-      telemetry: { ...forensics, backup_created: backupCreated, recovered_by_other_process: false },
+      config,
+      telemetry: { phase, config_bytes: damaged.length, backup_created: copyName !== null, recovered_by_other_process: false },
     };
-  }
-
-  /**
-   * The damaged config's text after a failed repair (which leaves config.json as
-   * it was); '' when it can't be read (recoveredConfig then gives the closed policy).
-   */
-  private async readDamagedConfigText(): Promise<string> {
-    return fs.readFile(this.configPath, 'utf8').catch((error) => {
-      console.error('Failed to read the damaged config.json again:', error);
-      return '';
-    });
-  }
-
-  /**
-   * What recovery writes in place of a corrupt config.json. While running: the
-   * config last parsed from disk, every setting kept. At startup, when nothing
-   * was parsed yet: the defaults, with the blocked commands and allowed folders
-   * the damaged text still gives, else a closed policy.
-   */
-  private recoveredConfig(corruptText: string): ServerConfig {
-    // Prefer the last parsed in-memory policy during runtime recovery. On startup,
-    // salvage only complete string-array policy fields from the damaged JSON.
-    // This keeps recovery narrow without introducing a persistent shadow config.
-    const clientIdMatch = corruptText.match(/"clientId"\s*:\s*"([0-9a-fA-F-]{36})"/);
-    const preservedClientId = clientIdMatch?.[1];
-    const telemetryWasDisabled = /"telemetryEnabled"\s*:\s*false\b/.test(corruptText);
-    const inMemoryBlockedCommands = Array.isArray(this.config.blockedCommands)
-      && this.config.blockedCommands.every((item) => typeof item === 'string')
-      ? this.config.blockedCommands : null;
-    const inMemoryAllowedDirectories = Array.isArray(this.config.allowedDirectories)
-      && this.config.allowedDirectories.every((item) => typeof item === 'string')
-      ? this.config.allowedDirectories : null;
-    const preservedBlockedCommands = inMemoryBlockedCommands
-      ?? extractRecoverableStringArray(corruptText, 'blockedCommands');
-    const preservedAllowedDirectories = inMemoryAllowedDirectories
-      ?? extractRecoverableStringArray(corruptText, 'allowedDirectories');
-
-    const defaults = this.getDefaultConfig();
-    // While running, the last parsed config is known: keep all of it (telemetry
-    // off, line limits, shell, client id, ...), not only its policy lists
-    if (this.initialized) {
-      const { version: _version, ...lastParsed } = this.config;
-      Object.assign(defaults, lastParsed);
-    }
-    if (preservedClientId) defaults['clientId'] = preservedClientId;
-    if (telemetryWasDisabled) defaults['telemetryEnabled'] = false;
-    if (preservedBlockedCommands !== null) {
-      defaults['blockedCommands'] = [...preservedBlockedCommands];
-    } else {
-      // We cannot know a user's custom blocklist from an incomplete value.
-      // `*` is treated by command validation as deny-all until the user resets it.
-      defaults['blockedCommands'] = ['*'];
-    }
-    if (preservedAllowedDirectories !== null) {
-      defaults['allowedDirectories'] = [...preservedAllowedDirectories];
-    } else {
-      // Never turn an unknown prior allowlist into unrestricted filesystem access.
-      defaults['allowedDirectories'] = [path.dirname(this.configPath)];
-    }
-    // This is an existing install, not a first run. Do not replay onboarding.
-    defaults['welcomeOnboardingEligible'] = false;
-    defaults['pendingWelcomeOnboarding'] = false;
-    return defaults;
-  }
-
-  /** Whether the newest config.json.corrupt.<ms>.<pid> copy holds config.json's bytes */
-  private async newestCorruptCopyMatches(): Promise<boolean> {
-    const folder = path.dirname(this.configPath);
-    const prefix = `${path.basename(this.configPath)}.corrupt.`;
-    const names = await fs.readdir(folder).catch(() => [] as string[]);
-    // The newest has the largest <ms>
-    const newest = names.filter((name) => name.startsWith(prefix))
-      .sort((a, b) => parseInt(a.slice(prefix.length), 10) - parseInt(b.slice(prefix.length), 10))
-      .pop();
-    if (!newest) return false;
-    const [copy, current] = await Promise.all([
-      fs.readFile(path.join(folder, newest)).catch(() => null),
-      fs.readFile(this.configPath),
-    ]);
-    return copy !== null && copy.equals(current);
   }
 
   private async recoverCorruptConfig(
     error: SyntaxError,
     phase: CorruptConfigPhase
   ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    // Keep a snapshot of what this process originally observed. If another
-    // process repairs the file while we wait for the lock, this is the only
-    // evidence of the corruption this process saw.
-    const observedForensics = await this.inspectCorruptConfig(error, phase);
+    // The size this process saw damaged: if another process replaces the file while
+    // this one waits for the lock, it is all the event can say about it
+    const observedBytes = await this.configBytes();
     const release = await this.acquireConfigLock();
     try {
       try {
@@ -574,12 +353,11 @@ class ConfigManager {
         const latest = await this.readConfigFromDisk(0);
         return {
           config: latest,
-          telemetry: { ...observedForensics, backup_created: false, recovered_by_other_process: true },
+          telemetry: { phase, config_bytes: observedBytes, backup_created: false, recovered_by_other_process: true },
         };
       } catch (latestError: any) {
         if (latestError instanceof SyntaxError) {
-          // The file is still corrupt under the lock. Inspect it again so the
-          // forensic fields correspond to the exact snapshot we are replacing.
+          // Still damaged under the lock: this process replaces it
           return await this.recoverCorruptConfigUnderLock(latestError, phase);
         }
         if (latestError?.code !== 'ENOENT') throw latestError;
@@ -591,7 +369,7 @@ class ConfigManager {
         this.config = { ...defaults, version: VERSION };
         return {
           config: defaults,
-          telemetry: { ...observedForensics, backup_created: false, recovered_by_other_process: false },
+          telemetry: { phase, config_bytes: observedBytes, backup_created: false, recovered_by_other_process: false },
         };
       }
     } finally {
@@ -682,7 +460,7 @@ class ConfigManager {
           throw error;
         }
       }
-      // What config.json holds as read (or as repaired above): if it holds anything
+      // What config.json holds as read (or as replaced above): if it holds anything
       // else when the write is about to commit, another process saved meanwhile
       const readText = await this.readConfigText();
       held = this.pendingMutations.splice(0);
@@ -708,7 +486,7 @@ class ConfigManager {
         // must not make callers replay a mutation that already persisted.
         console.error('Failed to release config lock:', error);
       }
-      if (corruptConfigTelemetry) this.recordCorruptConfigTelemetry(corruptConfigTelemetry);
+      if (corruptConfigTelemetry) this.recoveryEvents.record(corruptConfigTelemetry, this.initialized);
     }
     if (!result) throw new Error('Config mutation completed without a result');
     return result;
@@ -803,7 +581,7 @@ class ConfigManager {
           const latest = recovery.config;
           for (const mutate of this.pendingMutations) mutate(latest);
           this.config = { ...latest, version: VERSION };
-          this.recordCorruptConfigTelemetry(recovery.telemetry);
+          this.recoveryEvents.record(recovery.telemetry, this.initialized);
         } catch (recoveryError) {
           console.error('Failed to recover corrupt config after file change:', recoveryError);
         }
