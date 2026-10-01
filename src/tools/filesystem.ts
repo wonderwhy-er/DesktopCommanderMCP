@@ -1063,6 +1063,11 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         if (fileInfo.metadata.isBinary) {
             info.isBinary = true;
         }
+
+        // A file its handler couldn't read (e.g. a workbook Excel can't open): say why
+        if (fileInfo.metadata.error && fileInfo.metadata.errorMessage) {
+            info.errorMessage = fileInfo.metadata.errorMessage;
+        }
     }
 
     return info;
