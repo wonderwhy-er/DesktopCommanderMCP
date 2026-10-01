@@ -4,8 +4,9 @@
  * Regression tests for missed new_call recovery.
  *
  * Realtime Broadcast is a wake-up signal, not a durable queue. If a device
- * reconnects after missing a doorbell, it must discover still-live pending rows
- * for itself and route them through the same atomic claim path as a doorbell.
+ * reconnects after missing a doorbell, it must discover pending rows for itself
+ * and route them through the same atomic claim path as a doorbell. Expiry is a
+ * server-side concern: client clock skew must never suppress a valid claim.
  */
 
 import assert from 'node:assert';
@@ -140,7 +141,7 @@ const baseRow = (id, overrides = {}) => ({
   const rows = [
     baseRow('live-old', { created_at: iso(-10_000) }),
     baseRow('live-new', { created_at: iso(-1_000) }),
-    baseRow('expired', { timeout_at: iso(-1_000) }),
+    baseRow('client-thinks-expired', { timeout_at: iso(-1_000) }),
     baseRow('other-device', { device_id: OTHER_DEVICE_ID }),
     baseRow('completed', { status: 'completed' }),
   ];
@@ -150,22 +151,30 @@ const baseRow = (id, overrides = {}) => ({
 
   assert.deepEqual(
     delivered.map((payload) => payload.new.id),
-    ['live-old', 'live-new'],
-    'only live pending calls for this device should be recovered in creation order',
+    ['live-old', 'client-thinks-expired', 'live-new'],
+    'pending calls for this device should be recovered in creation order without client-clock expiry filtering',
   );
   assert(delivered.every((payload) => payload.claimed === true), 'recovered rows must be atomically claimed before dispatch');
-  assert.equal(rows.find((row) => row.id === 'expired').status, 'pending', 'expired call must not be claimed');
   assert.equal(rows.find((row) => row.id === 'other-device').status, 'pending', 'another device call must not be claimed');
 }
 
 {
-  const rows = [baseRow('expires-before-claim', { timeout_at: iso(-1) })];
-  const { rc, delivered } = makeRemoteChannel(rows);
+  const rows = [baseRow('fast-clock-claim', { timeout_at: iso(60_000) })];
+  const { rc, delivered, client } = makeRemoteChannel(rows);
+  const realNow = Date.now;
 
-  await rc.onDoorbell({ call_id: 'expires-before-claim', device_id: DEVICE_ID });
+  try {
+    Date.now = () => now + 10 * 60_000;
+    await rc.onDoorbell({ call_id: 'fast-clock-claim', device_id: DEVICE_ID });
+  } finally {
+    Date.now = realNow;
+  }
 
-  assert.equal(delivered.length, 0, 'the atomic claim must reject an already-expired call');
-  assert.equal(rows[0].status, 'pending');
+  assert.equal(delivered.length, 1, 'a fast client clock must not suppress a pending doorbell claim');
+  assert.equal(delivered[0].new.id, 'fast-clock-claim');
+  assert.equal(rows[0].status, 'executing');
+  const claim = client.calls.find((call) => call.mode === 'update' && call.filters.id === 'fast-clock-claim');
+  assert.deepEqual(claim?.gtFilters, {}, 'doorbell claim must not compare timeout_at to client time');
 }
 
 {
