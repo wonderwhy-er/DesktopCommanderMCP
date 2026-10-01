@@ -69,7 +69,7 @@ import { toolHistory } from './utils/toolHistory.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
-import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
+import { addToolCallPaths, capture, capture_call_tool, runInUiOriginCallContext, runWithToolCallPaths } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
@@ -1211,11 +1211,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     // (server_call_tool, server_read_file, server_edit_block, ...). Deliberate
     // UI interactions are tracked separately via mcp_ui_event.
     const isUiOriginCall = !!(args && typeof args === 'object' && (args as any).origin === 'ui');
-    if (isUiOriginCall) {
-        return runInUiOriginCallContext(() => handleCallToolRequest(request));
-    }
-    return handleCallToolRequest(request);
+    // Each call keeps the paths it works on, starting with its path arguments,
+    // so telemetry can replace them whole in any error text the call produces
+    return runWithToolCallPaths(() => {
+        addToolCallPaths(...pathArguments(args));
+        if (isUiOriginCall) {
+            return runInUiOriginCallContext(() => handleCallToolRequest(request));
+        }
+        return handleCallToolRequest(request);
+    });
 });
+
+/** The values of the tool arguments that hold paths (path, paths, file_path, outputPath, source, destination, shell, ...). */
+function pathArguments(args: unknown): unknown[] {
+    if (!args || typeof args !== 'object') return [];
+    return Object.entries(args)
+        .filter(([key]) => /path/i.test(key) || key === 'source' || key === 'destination' || key === 'shell')
+        .map(([, value]) => value);
+}
 
 async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;

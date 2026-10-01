@@ -2,7 +2,7 @@
  * Unit tests for A/B test feature flag system
  * Tests that missing/empty experiments config doesn't break anything
  *
- * Tests 1-9 run the real ab-test module (dist/utils/ab-test.js) in a fresh
+ * Tests 1-11 run the real ab-test module (dist/utils/ab-test.js) in a fresh
  * process per scenario: the experiments go into the feature-flag cache and
  * assignments into config.json under a temporary HOME, exactly where the
  * product reads them. The MCP UI tests call resolveMcpUiPreviewDecision with
@@ -223,6 +223,34 @@ async function runTests() {
     const persisted = first.config.abTest_OnboardingPreTool;
     assert.ok(['noOnboardingPage', 'showOnboardingPage'].includes(persisted), 'Assignment should be persisted to config');
     assert.strictEqual(second.config.abTest_OnboardingPreTool, persisted, 'Same clientId should get the same variant');
+  });
+
+  // Test 10: Malformed experiment data doesn't crash, and the valid experiment next to it still answers
+  await test('malformed experiment data does not throw', async () => {
+    const { features, error } = await runAbTest({
+      experiments: {
+        BadExp1: null,
+        BadExp2: 'not an object',
+        BadExp3: { variants: 'not an array' },
+        GoodExp: { variants: [{ name: 'a', weight: 50 }, { name: 'b', weight: 50 }] },
+      },
+      config: { abTest_GoodExp: 'a' },
+      features: ['a'],
+    });
+    assert.strictEqual(error, undefined, 'hasFeature should not throw on malformed experiments');
+    assert.strictEqual(features.a, true, 'The valid experiment next to the malformed ones should still answer');
+  });
+
+  // Test 11: An experiment name is a plain key, even one an object treats specially.
+  // JSON.parse makes "__proto__" an own key, as it is in the flags the product reads.
+  await test('an experiment named __proto__ answers like any other', async () => {
+    const { features, error } = await runAbTest({
+      experiments: JSON.parse('{"__proto__": {"variants": [{"name": "protoA", "weight": 50}, {"name": "protoB", "weight": 50}]}}'),
+      config: { abTest___proto__: 'protoA' },
+      features: ['protoA', 'protoB'],
+    });
+    assert.strictEqual(error, undefined);
+    assert.deepStrictEqual(features, { protoA: true, protoB: false }, 'The assigned variant of an experiment named __proto__ should be on');
   });
 
 
