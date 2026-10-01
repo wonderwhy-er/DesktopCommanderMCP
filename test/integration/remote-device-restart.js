@@ -35,22 +35,27 @@
  *     was handed and keeping nothing
  *   - a refresh refused once: auth-js drops the session, the device restores it
  *
+ * And the other way round: `remote --logout` while the device runs must stick.
+ * The device keeps running on its session, but must not write device.json back
+ * at its next rotation or at shutdown, so the next start asks to log in.
+ *
  * Real processes and real rotations take 40-50 s, so this runs with the
  * integration tests: `npm run test:integration`, or alone:
  *   npm run build && node test/integration/run-all-integration-tests.js remote-device-restart.js
  */
 import assert from 'node:assert';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { signalProcessGroup } from '../helpers/process-tree.js';
+import {
+  STARTED, deviceConfigPath, runLogout, startDevice, stopGracefully, stopHard, tail, waitFor, writeDeviceConfig,
+} from '../helpers/remote-device.js';
 import { startRemoteStandIn } from '../helpers/remote-stand-in.js';
 import { createTestEnv } from '../helpers/test-env.js';
 import { runIfMain, skip } from '../helpers/run-if-main.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const DEVICE = path.join(PROJECT_ROOT, 'dist/remote-device/device.js');
 const OFFLINE_UPDATE = path.join(PROJECT_ROOT, 'dist/remote-device/scripts/blocking-offline-update.js');
 
 /** auth-js refreshes these 5 s after they are issued (its margin is 90 s) */
@@ -62,72 +67,11 @@ const ROTATION_DEADLINE_MS = 120_000;
 /** A device that stops on its own (failed start) is gone within its 5 s shutdown limit */
 const EXIT_DEADLINE_MS = 30_000;
 
-/** Printed once a start got past registration, reachable or not */
-const STARTED = /- Device ID:\s+\S/;
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const configPath = (home) => path.join(home, '.desktop-commander-device', 'device.json');
-const readPersistedSession = (home) => JSON.parse(fs.readFileSync(configPath(home), 'utf8')).session;
+const readPersistedSession = (home) => JSON.parse(fs.readFileSync(deviceConfigPath(home), 'utf8')).session;
 
 /** What a completed device authorization leaves in the home */
 function writeLoggedInHome(home, standIn, session) {
-  fs.mkdirSync(path.dirname(configPath(home)), { recursive: true });
-  fs.writeFileSync(configPath(home), JSON.stringify({ deviceId: standIn.deviceId, session }, null, 2));
-}
-
-/** Starts a device process: `desktop-commander remote` as a service runs it */
-function startDevice(env, args = []) {
-  const child = spawn(process.execPath, [DEVICE, ...args], {
-    cwd: PROJECT_ROOT,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    // Own process group on macOS/Linux, so a stop reaches the local MCP child
-    // too, as a systemd unit's control group does
-    detached: process.platform !== 'win32',
-    windowsHide: true,
-  });
-  const device = { child, output: '', exited: false, code: null, signal: null };
-  child.stdout.on('data', (data) => { device.output += data; });
-  child.stderr.on('data', (data) => { device.output += data; });
-  device.closed = new Promise((resolve) => child.on('close', (code, signal) => {
-    Object.assign(device, { exited: true, code, signal });
-    resolve();
-  }));
-  return device;
-}
-
-/** Waits until `predicate` holds or the device exits; returns the predicate's last value */
-async function waitFor(device, predicate, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate() && !device.exited && Date.now() < deadline) await sleep(100);
-  return predicate();
-}
-
-const tail = (output) => output.trim().split(/\r?\n/).slice(-25).map((line) => `      | ${line}`).join('\n');
-
-/** kill -9 of the whole unit, local MCP child included: a crash, an OOM kill, a power cut */
-async function stopHard(device) {
-  if (!device.exited) {
-    if (process.platform === 'win32') {
-      const taskkill = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-      spawnSync(taskkill, ['/PID', String(device.child.pid), '/T', '/F'], { windowsHide: true });
-    } else {
-      signalProcessGroup(device.child.pid, 'SIGKILL');
-    }
-  }
-  await device.closed;
-  // Whatever of the group outlived it
-  if (process.platform !== 'win32') signalProcessGroup(device.child.pid, 'SIGKILL');
-}
-
-/** systemctl stop / restart: SIGTERM to the whole unit, SIGKILL for what is left after a grace period */
-async function stopGracefully(device) {
-  signalProcessGroup(device.child.pid, 'SIGTERM');
-  const grace = setTimeout(() => signalProcessGroup(device.child.pid, 'SIGKILL'), EXIT_DEADLINE_MS);
-  await device.closed;
-  clearTimeout(grace);
-  signalProcessGroup(device.child.pid, 'SIGKILL');
+  writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
 }
 
 async function expectStarted(device, standIn, what) {
@@ -279,6 +223,42 @@ async function runTests() {
 
     const saved = persistedGeneration(home, standIn);
     await expectReconnected(start(), standIn, `a refused refresh, a restore and a restart (${saved})`);
+  });
+
+  await test('a logout while the device runs sticks: device.json is not written back', async ({ standIn, env, home, start }) => {
+    standIn.accessTtlSec = ROTATING_ACCESS_TTL_SEC;
+    writeLoggedInHome(home, standIn, standIn.login());
+
+    const running = start();
+    await expectStarted(running, standIn, 'the first start, right after login'); // it has saved device.json by then
+    const logout = await runLogout(env);
+    const sinceLogout = running.output.length;
+    assert.ok(!fs.existsSync(deviceConfigPath(home)),
+      `setup: remote --logout did not remove device.json (exit ${logout.code}):
+${tail(logout.output)}`);
+
+    // The device keeps running on its session: it rotates it, then stops
+    // (gracefully where a signal can do that, as systemctl stop does). The
+    // rotation's save runs just after it: wait for its outcome in the output,
+    // a write or the note that the credentials were removed.
+    await rotateWhileRunning(running, standIn, 1);
+    const saveOutcome = /Config saved to|credentials were removed/;
+    await waitFor(running, () => saveOutcome.test(running.output.slice(sinceLogout)), START_DEADLINE_MS);
+    const afterRotation = fs.existsSync(deviceConfigPath(home));
+    await (process.platform === 'win32' ? stopHard : stopGracefully)(running);
+    const afterStop = fs.existsSync(deviceConfigPath(home));
+
+    const restarted = start();
+    await waitFor(restarted, () => STARTED.test(restarted.output) || standIn.deviceFlowRequests > 0, START_DEADLINE_MS);
+    const askedToLogIn = standIn.deviceFlowRequests > 0;
+    assert.ok(!afterRotation && !afterStop && askedToLogIn,
+      'after remote --logout, the running device wrote device.json back '
+      + `(after its next token refresh: ${afterRotation ? 'back' : 'gone'}; after it stopped: ${afterStop ? 'back' : 'gone'}), `
+      + `so the logout did not stick: the next start ${askedToLogIn ? 'asked' : 'did not ask'} to log in.
+`
+      + `    Stand-in: ${standIn.describe()}
+    The running device's output:
+${tail(running.output)}`);
   });
 
   console.log(`\n${failures.length ? '🔴' : '✅'} remote device restart: ${failures.length} failing test(s).`);
