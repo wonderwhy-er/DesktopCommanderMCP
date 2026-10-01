@@ -14,6 +14,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { closeClient } from './helpers/close-client.js';
+import { callToolOnceLoaded } from './helpers/heavy-packages.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -22,7 +23,7 @@ const textOf = (result) => result.content?.find((block) => block.type === 'text'
 /** write_pdf with an option Desktop Commander ignores: the answer is the plain success line */
 async function writePdfIgnoringAnOption(client, dir) {
   const target = path.join(dir, 'ignored-option.pdf');
-  const result = await client.callTool({
+  const result = await callToolOnceLoaded(client, {
     name: 'write_pdf',
     arguments: { path: target, content: '# Client results\n', options: { devtools: true } },
   });

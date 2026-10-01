@@ -11,20 +11,19 @@
 //
 // Here the built server is started the way a client starts it (MCP over
 // stdio), with a preload that records every module it resolves (import and
-// require). Each run reports how long `initialize` took (a measurement, not a
-// verdict), how many modules were loaded before the answer and how many of
-// them came in through those packages, then lists the ones loaded once
-// tools/list has been answered and the Chrome warm-up after the handshake has
-// run.
+// require). Each run reports how long `initialize` took, counted to the
+// moment its answer arrived (a measurement, not a verdict), how many modules
+// were loaded before the answer and how many of them came in through those
+// packages. The server loads them right after `initialize`, in the background;
+// that is test-startup-imports.js's to check.
 //
 // Run: node test/repro/run-repro.js test-startup-heavy-imports.js
 //      (REPRO_RUNS=5 starts by default)
-// Exit code: 1 if any of those packages is loaded by then.
+// Exit code: 1 if any of those packages is loaded before the answer.
 import { HEAVY_PACKAGES, packageOf, startServerRecordingModules } from '../helpers/server-modules.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const RUNS = Number(process.env.REPRO_RUNS || 5);
-const WARM_UP_TIMEOUT_MS = 60_000;
 
 /** For each module, the heavy package it was first loaded through, if any */
 function heavyPackageBehind(modules) {
@@ -63,23 +62,21 @@ const startupMs = [];
 for (let run = 1; run <= RUNS; run++) {
   const server = await startServerRecordingModules();
   try {
-    const beforeAnswer = server.modules().filter((module) => module.at <= server.initializedAt);
+    // Before the answer arrived: the server's background load starts only after it
+    const beforeAnswer = server.modules().filter((module) => module.at < server.initializedAt);
+    const loaded = heavyLoaded(beforeAnswer);
+    if (loaded.length > 0) runsLoadingHeavy++;
     startupMs.push(server.initializedAt - server.startedAt);
     console.log(`start ${run}: initialize answered after ${server.initializedAt - server.startedAt} ms; loaded before it: ${describe(beforeAnswer)}`);
-
-    await server.client.listTools();
-    const warmedUp = await server.waitForChromeWarmUp(WARM_UP_TIMEOUT_MS);
-    const loaded = heavyLoaded(server.modules());
-    if (loaded.length > 0) runsLoadingHeavy++;
-    console.log(`  after tools/list and the Chrome warm-up${warmedUp ? '' : ' (still running)'}: ${loaded.length ? `loaded ${loaded.join(', ')}` : 'none of those packages loaded'}`);
   } finally {
     await server.close();
   }
 }
 
-startupMs.sort((a, b) => a - b);
-const median = startupMs[Math.floor(startupMs.length / 2)];
+const sorted = [...startupMs].sort((a, b) => a - b);
+const median = sorted[Math.floor(sorted.length / 2)];
+const times = `initialize answered after ${startupMs.join(', ')} ms (median ${median} ms)`;
 console.log(runsLoadingHeavy > 0
-  ? `REPRODUCED: ${runsLoadingHeavy} of ${RUNS} starts loaded Excel/PDF/DOCX packages without opening any such file (initialize answered after ${median} ms median)`
-  : `NOT REPRODUCED: ${RUNS} starts, none loaded Excel/PDF/DOCX packages (initialize answered after ${median} ms median)`);
+  ? `REPRODUCED: ${runsLoadingHeavy} of ${RUNS} starts loaded Excel/PDF/DOCX packages before answering initialize; ${times}`
+  : `NOT REPRODUCED: ${RUNS} starts, none loaded Excel/PDF/DOCX packages before answering initialize; ${times}`);
 exitProcess(runsLoadingHeavy > 0 ? 1 : 0);

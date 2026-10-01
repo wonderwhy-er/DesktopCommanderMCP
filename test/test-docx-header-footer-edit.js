@@ -19,6 +19,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { closeClient } from './helpers/close-client.js';
+import { callToolOnceLoaded } from './helpers/heavy-packages.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PizZip = createRequire(import.meta.url)('pizzip');
@@ -77,7 +78,7 @@ export default async function runTests() {
   try {
     await client.connect(transport, { timeout: 30_000 });
     const file = path.join(dir, 'sections.docx');
-    await client.callTool({ name: 'write_file', arguments: { path: file, content: '# Title\n\nBody text' } });
+    await callToolOnceLoaded(client, { name: 'write_file', arguments: { path: file, content: '# Title\n\nBody text' } });
     const texts = addSections(file);
     const outline = textOf(await client.callTool({ name: 'read_file', arguments: { path: file } }));
 
