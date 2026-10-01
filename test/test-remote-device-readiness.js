@@ -205,21 +205,25 @@ console.log([
 ].join('\n'));
 
 await test('a dead local executor is not advertised online, however healthy the channel', async () => {
-    const device = new MCPDevice();
-    const client = makeFakeClient();
-    device.remoteChannel.client = client;          // private in TS, plain property at runtime
-    device.remoteChannel.channel = { state: 'joined' };
+    // Joined channel with tracked presence: only the executor can keep the device offline.
+    const { device, client } = makeDevice();
     // The restart failed, so the device cannot execute anything.
     device.desktop = { ready: false };
 
     await device.remoteChannel.updateHeartbeat(DEVICE_ID);
 
-    const advertised = client.writes.filter((w) => w.status === 'online');
     assert.deepStrictEqual(
-        advertised, [],
+        advertisedOnline(client), [],
         'the heartbeat only consults the channel, so a device that cannot execute is put back ' +
         'into the server\'s selection pool within one heartbeat interval'
     );
+
+    // Control: the same device with a working executor is advertised online,
+    // so the executor probe is what made the difference above.
+    device.desktop = { ready: true };
+    await device.remoteChannel.updateHeartbeat(DEVICE_ID);
+    assert.strictEqual(advertisedOnline(client).length > 0, true,
+        'a device with a healthy channel and a ready executor should be advertised online');
 });
 
 await test('repeated restart failures are spaced, not one spawn per call', async () => {
@@ -230,6 +234,10 @@ await test('repeated restart failures are spaced, not one spawn per call', async
         await integration.ensureReady().catch(() => { /* expected */ });
     }
 
+    assert(
+        integration.spawns >= 1,
+        'ensureReady() should attempt to start the child at least once'
+    );
     assert(
         integration.spawns < 3,
         `three back-to-back calls spawned ${integration.spawns} children; a child that crashes on ` +

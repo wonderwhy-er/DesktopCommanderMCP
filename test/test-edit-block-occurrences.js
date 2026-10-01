@@ -16,6 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -25,6 +26,16 @@ const __dirname = path.dirname(__filename);
 const TEST_DIR = path.join(__dirname, 'test_edit_occurrences');
 const MULTI_OCCURRENCE_FILE = path.join(TEST_DIR, 'multiple_occurrences.txt');
 const CONTEXT_TEST_FILE = path.join(TEST_DIR, 'context_test.txt');
+
+/**
+ * A successful exact edit returns a preview of the edited area:
+ * "[Reading N lines from ... ]" followed by the updated lines.
+ */
+function assertEditSucceeded(result, newString, message) {
+  assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
+  const text = result.content[0].text;
+  assert.ok(text.startsWith('[Reading ') && text.includes(newString), `${message}, got: ${text}`);
+}
 
 /**
  * Setup function to prepare the test environment
@@ -154,11 +165,7 @@ async function testExactNumberOfOccurrences() {
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 4 edits'),
-      'Should report success with the correct number of edits'
-    );
+    assertEditSucceeded(result, 'This line has been replaced correctly.', 'Should report success with the correct number of edits');
     
     // Verify the file content
     const fileContent = await fs.readFile(MULTI_OCCURRENCE_FILE, 'utf8');
@@ -198,11 +205,7 @@ This is a MODIFIED target line in the header.`,
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the header edit'
-    );
+    assertEditSucceeded(result, 'This is a MODIFIED target line in the header.', 'Should report success with the header edit');
     
     // Target the occurrence in the footer section using context
     result = await handleEditBlock({
@@ -215,11 +218,7 @@ This is a MODIFIED target line in the footer.`,
     });
     
     // Check that the operation succeeded
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Successfully applied 1 edit'),
-      'Should report success with the footer edit'
-    );
+    assertEditSucceeded(result, 'This is a MODIFIED target line in the footer.', 'Should report success with the footer edit');
     
     // Verify the file content
     const fileContent = await fs.readFile(CONTEXT_TEST_FILE, 'utf8');
@@ -283,19 +282,16 @@ async function testEmptySearchString() {
   console.log('\nTest 6: Empty search string');
   
   try {
-    // Try to use an empty search string
-    const result = await handleEditBlock({
-      file_path: CONTEXT_TEST_FILE,
-      old_string: '',
-      new_string: 'This replacement should not be applied.',
-      expected_replacements: 1
-    });
-    
-    // Check that we got the appropriate error message
-    assert.strictEqual(result.content[0].type, 'text', 'Result should be text');
-    assert.ok(
-      result.content[0].text.includes('Empty search strings are not allowed'),
-      'Should report that empty search strings are not allowed'
+    // An empty search string is rejected by argument validation
+    await assert.rejects(
+      handleEditBlock({
+        file_path: CONTEXT_TEST_FILE,
+        old_string: '',
+        new_string: 'This replacement should not be applied.',
+        expected_replacements: 1
+      }),
+      (error) => error.message.includes('Must provide either (old_string + new_string) or (range + content)'),
+      'Should reject an empty search string'
     );
     
     console.log('✓ Test correctly rejected empty search string');
@@ -350,9 +346,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

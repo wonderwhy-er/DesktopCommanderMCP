@@ -17,6 +17,7 @@ import assert from 'assert';
 import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -27,6 +28,11 @@ const TEST_DIR = path.join(__dirname, 'test_excel_files');
 const BASIC_EXCEL = path.join(TEST_DIR, 'basic.xlsx');
 const MULTI_SHEET_EXCEL = path.join(TEST_DIR, 'multi_sheet.xlsx');
 const EDIT_EXCEL = path.join(TEST_DIR, 'edit_test.xlsx');
+
+/** The rows an Excel read returns: the JSON array after the status header */
+function sheetRows(content) {
+  return JSON.parse(content.slice(content.lastIndexOf('\n\n') + 2));
+}
 
 /**
  * Helper function to clean up test directories
@@ -196,8 +202,9 @@ async function testOffsetLengthRead() {
   const content = result.content.toString();
 
   // Should have rows 2-3 (Alice, Bob) but not header or Charlie
-  assert.ok(content.includes('Alice'), 'Should include Alice (row 2)');
-  assert.ok(content.includes('Bob'), 'Should include Bob (row 3)');
+  assert.deepStrictEqual(sheetRows(content), [['Alice', 30, 'New York'], ['Bob', 25, 'Los Angeles']],
+    'offset: 1, length: 2 should return exactly rows 2-3');
+  assert.ok(content.includes('[Showing rows 2-3 of 4 total.'), `Status line should report rows 2-3, got: ${content}`);
 
   console.log('✓ Offset and length read works correctly');
 }
@@ -363,8 +370,8 @@ async function testNegativeOffset() {
   const result = await readFile(BASIC_EXCEL, { offset: -2 });
   const content = result.content.toString();
 
-  assert.ok(content.includes('Fourth') || content.includes('Fifth'),
-    'Should include data from last rows');
+  assert.deepStrictEqual(sheetRows(content), [['4', 'Fourth'], ['5', 'Fifth']],
+    'offset: -2 should return exactly the last 2 rows');
 
   console.log('✓ Negative offset reads from end');
 }
@@ -408,11 +415,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly, execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then(success => {
-    process.exit(success ? 0 : 1);
-  }).catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

@@ -4,9 +4,11 @@
  */
 
 import { spawn } from 'child_process';
+import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
+import { createTestEnv } from './helpers/test-env.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -29,9 +31,11 @@ const colors = {
  */
 function runCommand(command, args, cwd = __dirname) {
   return new Promise((resolve, reject) => {
-    console.log(`${colors.blue}Running command: ${command} ${args.join(' ')}${colors.reset}`);
-    
-    const proc = spawn(command, args, {
+    const commandLine = [command, ...args].join(' ');
+    console.log(`${colors.blue}Running command: ${commandLine}${colors.reset}`);
+
+    // One command string: with shell: true, Node 24 deprecates separate args (DEP0190)
+    const proc = spawn(commandLine, {
       cwd,
       stdio: 'inherit',
       shell: true
@@ -59,24 +63,37 @@ function runTestFile(testFile) {
     console.log(`\n${colors.cyan}Running test module: ${testFile}${colors.reset}`);
     
     const startTime = Date.now();
+    // Tests record skipped checks here (see skip() in helpers/run-if-main.js)
+    const skipFile = path.join(os.tmpdir(), `dc-test-skips-${process.pid}-${path.basename(testFile)}.txt`);
+    // Every test file gets its own temporary home, so none can touch the real config
+    const testEnv = createTestEnv();
     const proc = spawn('node', [testFile], {
       cwd: __dirname,
       stdio: 'inherit',
-      shell: false
+      shell: false,
+      env: { ...testEnv.env, DC_TEST_SKIP_FILE: skipFile }
     });
-    
-    proc.on('close', (code) => {
+
+    proc.on('close', async (code) => {
+      testEnv.cleanup();
       const duration = Date.now() - startTime;
+      const skipped = await fs.readFile(skipFile, 'utf8')
+        .then((text) => text.split('\n').filter(Boolean), () => []);
+      await fs.rm(skipFile, { force: true });
       if (code === 0) {
         console.log(`${colors.green}✓ Test passed: ${testFile} (${duration}ms)${colors.reset}`);
-        resolve({ success: true, file: testFile, duration, exitCode: code });
+        if (skipped.length > 0) {
+          console.log(`${colors.yellow}⚠️  ${skipped.length} check(s) skipped in ${testFile}${colors.reset}`);
+        }
+        resolve({ success: true, file: testFile, duration, exitCode: code, skipped });
       } else {
         console.error(`${colors.red}✗ Test failed: ${testFile} (${duration}ms) - Exit code: ${code}${colors.reset}`);
-        resolve({ success: false, file: testFile, duration, exitCode: code });
+        resolve({ success: false, file: testFile, duration, exitCode: code, skipped });
       }
     });
     
     proc.on('error', (err) => {
+      testEnv.cleanup();
       const duration = Date.now() - startTime;
       console.error(`${colors.red}✗ Error running ${testFile}: ${err.message}${colors.reset}`);
       resolve({ success: false, file: testFile, duration, error: err.message });
@@ -102,11 +119,15 @@ async function runTestModules() {
   let testFiles = [];
   try {
     const files = await fs.readdir(__dirname);
-    
-    // Get all test files, starting with 'test' and ending with '.js'
-    const discoveredTests = files
-      .filter(file => file.startsWith('test') && file.endsWith('.js') && file !== 'run-all-tests.js')
-      .sort(); // Sort for consistent order
+
+    // The files named on the command line (`node test/run-all-tests.js test-x.js`),
+    // so one test can run isolated too; else all files starting with 'test' and ending with '.js'
+    const requested = process.argv.slice(2).map(file => path.basename(file));
+    const discoveredTests = requested.length > 0
+      ? requested
+      : files
+        .filter(file => file.startsWith('test') && file.endsWith('.js') && file !== 'run-all-tests.js')
+        .sort(); // Sort for consistent order
     
     // Ensure main test.js runs first if it exists
     if (discoveredTests.includes('test.js')) {
@@ -146,7 +167,8 @@ async function runTestModules() {
   const passed = results.filter(r => r.success).length;
   const failed = results.filter(r => !r.success).length;
   const failedTests = results.filter(r => !r.success);
-  
+  const skippedChecks = results.flatMap(r => (r.skipped || []).map(reason => ({ file: r.file, reason })));
+
   // Print detailed summary
   console.log(`\n${colors.bold}${colors.cyan}===== TEST SUMMARY =====${colors.reset}\n`);
   
@@ -155,7 +177,16 @@ async function runTestModules() {
   console.log(`  Total tests:     ${passed + failed}`);
   console.log(`  ${colors.green}✓ Passed:        ${passed}${colors.reset}`);
   console.log(`  ${failed > 0 ? colors.red : colors.green}✗ Failed:        ${failed}${colors.reset}`);
+  console.log(`  ${skippedChecks.length > 0 ? colors.yellow : colors.green}⚠️  Skipped checks: ${skippedChecks.length}${colors.reset}`);
   console.log(`  Total duration:  ${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`);
+
+  // Skipped checks details: preconditions missing on this machine
+  if (skippedChecks.length > 0) {
+    console.log(`\n${colors.yellow}${colors.bold}Skipped Checks:${colors.reset}`);
+    skippedChecks.forEach(({ file, reason }) => {
+      console.log(`  ${colors.yellow}⚠️  ${file}: ${reason}${colors.reset}`);
+    });
+  }
   
   // Failed tests details
   if (failed > 0) {
