@@ -89,7 +89,7 @@
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
-    "@opendocsg/pdf2md": "^0.2.2",
+    "@opendocsg/pdf2md": "^0.3.2",
     "@supabase/supabase-js": "^2.89.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-image": "^3.22.3",
