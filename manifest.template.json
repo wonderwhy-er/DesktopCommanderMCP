@@ -72,6 +72,10 @@
       "description": "Move or rename files and directories between locations."
     },
     {
+      "name": "copy_file_exclusive",
+      "description": "Copy one regular file to a new destination with exclusive no-overwrite creation and exact expected size/SHA-256 verification."
+    },
+    {
       "name": "start_search",
       "description": "Start streaming search for files by name or content patterns. Searches text files, Excel, and DOCX content."
     },
@@ -168,3 +172,5 @@
     }
   }
 }
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]
