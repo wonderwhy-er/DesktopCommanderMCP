@@ -188,7 +188,8 @@ async function testTimeoutStopsOfficeSearches() {
  * An Office search that fails as a whole (here: ExcelJS can't be loaded) must
  * not vanish: the search still answers as before, with the other sources'
  * matches, and the log says which part failed and why. Runs in a child process
- * whose search-manager can't import exceljs.
+ * where exceljs can't be loaded (the search loads it with loadExcelJS(), in
+ * utils/files/excel.js).
  */
 async function testFailedOfficeSearchIsLogged() {
   console.log('Testing that a failed Office search is logged...');
@@ -196,7 +197,7 @@ async function testFailedOfficeSearchIsLogged() {
   const REASON = 'exceljs is unavailable in this test';
   const hooks = `
     export async function resolve(specifier, context, nextResolve) {
-      if (specifier === 'exceljs' && context.parentURL?.endsWith('/search-manager.js')) {
+      if (specifier === 'exceljs' && context.parentURL?.endsWith('/utils/files/excel.js')) {
         throw new Error(${JSON.stringify(REASON)});
       }
       return nextResolve(specifier, context);

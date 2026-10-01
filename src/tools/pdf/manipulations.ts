@@ -16,10 +16,17 @@ type PdfOperations = z.infer<typeof PdfOperationSchema>;
 
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
+/**
+ * pdf-lib, loaded when first used, not with this module: the server loads the
+ * PDF tools at startup, before it answers initialize (#715). The server loads
+ * it right after initialize (utils/heavy-packages.ts).
+ */
+export function loadPdfLib(): { PDFDocument: typeof PDFDocumentType } {
+    return require('pdf-lib');
+}
+
 async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocumentType> {
-    // pdf-lib is loaded here, on first use, not with this module: the server loads
-    // the PDF tools at startup, and most sessions never edit a PDF (#715)
-    const { PDFDocument } = require('pdf-lib') as { PDFDocument: typeof PDFDocumentType };
+    const { PDFDocument } = loadPdfLib();
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);

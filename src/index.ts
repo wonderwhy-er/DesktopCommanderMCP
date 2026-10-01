@@ -15,6 +15,7 @@ import { logToStderr, logger } from './utils/logger.js';
 import { exitProcess } from './utils/exit-process.js';
 import { runRemote } from './npm-scripts/remote.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
+import { startBackgroundLoad } from './utils/heavy-packages.js';
 
 // Store messages to defer until after initialization
 const deferredMessages: Array<{ level: string, message: string }> = [];
@@ -136,6 +137,10 @@ async function runServer() {
 
       // Preemptively check/download Chrome for PDF generation (runs in background)
       ensureChromeAvailable();
+
+      // Load the Excel, DOCX and PDF packages, one at a time, now that initialize
+      // has been answered; until then the calls that need them answer at once
+      void startBackgroundLoad();
     };
 
     await server.connect(transport);
