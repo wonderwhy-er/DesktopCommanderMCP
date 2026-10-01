@@ -18,7 +18,7 @@ import { createTempDir } from './helpers/test-env.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
-const FILES = ['test-config-corrupt-fail-closed.js', 'test-config-corrupt-concurrency.js'];
+const FILES = ['test-config-corrupt-concurrency.js', 'test-config-corrupt-recovery.js'];
 
 async function run() {
   const failures = [];
