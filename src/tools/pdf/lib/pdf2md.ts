@@ -7,6 +7,17 @@ const require = createRequire(import.meta.url);
 /** What @opendocsg/pdf2md's parse() returns: its modules are loaded untyped, with require() */
 type ParseResult = any;
 
+/**
+ * @opendocsg/pdf2md, loaded when first used, not with this module: the server
+ * loads the PDF tools at startup, before it answers initialize (#715). The
+ * server loads it right after initialize (utils/heavy-packages.ts).
+ */
+export function loadPdf2md(): { parse: (pdfBuffer: Uint8Array) => Promise<ParseResult>; makeTransformations: any; transform: any } {
+    const { parse } = require('@opendocsg/pdf2md/lib/util/pdf');
+    const { makeTransformations, transform } = require('@opendocsg/pdf2md/lib/util/transformations');
+    return { parse, makeTransformations, transform };
+}
+
 
 /**
  * PDF metadata structure
@@ -67,10 +78,7 @@ export type PageRange = {
  * @returns A Promise that resolves to a PdfParseResult object containing the parsed data.
  */
 export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
-    // @opendocsg/pdf2md is loaded here, on first use, not with this module: the
-    // server loads the PDF tools at startup, and most sessions never read a PDF (#715)
-    const { parse } = require('@opendocsg/pdf2md/lib/util/pdf');
-    const { makeTransformations, transform } = require('@opendocsg/pdf2md/lib/util/transformations');
+    const { parse, makeTransformations, transform } = loadPdf2md();
 
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;

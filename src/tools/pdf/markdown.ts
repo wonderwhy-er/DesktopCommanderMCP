@@ -38,11 +38,11 @@ const require = createRequire(import.meta.url);
 /**
  * md-to-pdf, with its own Puppeteer, file server and front matter parser
  * loaded the way md-to-pdf loads them (they are its dependencies, not Desktop
- * Commander's). Loaded here, on first use, not with this module: the server
- * loads this module at startup for the Chrome warm-up, and most sessions
- * never write a PDF (#715).
+ * Commander's). Loaded when first used, not with this module: the server
+ * loads this module at startup, before it answers initialize (#715). The
+ * server loads it right after initialize (utils/heavy-packages.ts).
  */
-function loadMdToPdf() {
+export function loadMdToPdf() {
     const requireFromMdToPdf = createRequire(require.resolve('md-to-pdf'));
     const { convertMdToPdf }: typeof import('md-to-pdf/dist/lib/md-to-pdf.js') = require('md-to-pdf/dist/lib/md-to-pdf.js');
     const { defaultConfig }: typeof import('md-to-pdf/dist/lib/config.js') = require('md-to-pdf/dist/lib/config.js');

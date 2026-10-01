@@ -75,12 +75,17 @@ interface DocxZipContents {
 const require = createRequire(import.meta.url);
 
 /**
- * Opens a zip from its bytes, or a new, empty one. pizzip is loaded here, on
- * first use, not with this module: the server loads the file handlers at
- * startup, and most sessions never open a DOCX file (#715).
+ * pizzip, loaded when first used, not with this module: the server loads the
+ * file handlers at startup, before it answers initialize (#715). The server
+ * loads it right after initialize (utils/heavy-packages.ts).
  */
+export function loadPizZip(): typeof PizZip {
+    return require('pizzip');
+}
+
+/** Opens a zip from its bytes, or a new, empty one */
 function openZip(data?: Buffer): PizZip {
-    const PizZipClass: typeof PizZip = require('pizzip');
+    const PizZipClass = loadPizZip();
     return data === undefined ? new PizZipClass() : new PizZipClass(data);
 }
 

@@ -15,13 +15,19 @@ import {
 } from './base.js';
 
 /**
- * A new exceljs Workbook. exceljs is loaded here, on first use, not with this
- * module: the server loads the file handlers at startup, and most sessions
- * never open a spreadsheet (#715).
+ * exceljs, loaded when first used, not with this module: the server loads the
+ * file handlers at startup, before it answers initialize (#715). The server
+ * loads it right after initialize (utils/heavy-packages.ts).
  */
+export async function loadExcelJS(): Promise<typeof ExcelJS> {
+    const { default: ExcelJSModule } = await import('exceljs');
+    return ExcelJSModule;
+}
+
+/** A new exceljs Workbook */
 async function newWorkbook(): Promise<ExcelJS.Workbook> {
-    const { default: ExcelJS } = await import('exceljs');
-    return new ExcelJS.Workbook();
+    const ExcelJSModule = await loadExcelJS();
+    return new ExcelJSModule.Workbook();
 }
 
 // File size limit: 10MB
