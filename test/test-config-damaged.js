@@ -2,22 +2,19 @@
  * #692 / #419: when config.json can't be used as it is, the settings Desktop
  * Commander falls back to must never open the whole filesystem.
  *
- * A damaged config.json is repaired at startup (kept as a copy,
- * config.json.corrupt.<time>.<pid>, and replaced by the defaults with the
- * blocked commands and allowed folders it still gives). If that repair itself
- * fails (the copy can't be made, the repaired file can't be written), the
- * session uses what the repair would have written: file tools only reach the
- * config folder unless the damaged file still gives its allowed folders, and
- * every command is blocked unless it still gives its blocked commands.
- * config.json is left as it was, so the next start repairs it again instead of
- * taking it for a first run (whose allowedDirectories [] opens every folder),
- * and keeps the copy it already made. One warning, as a log notification and
- * on stderr, says the repair failed and why. A config.json that can't be
- * read gets the same closed settings (recovered from nothing). One that is read
- * but can't be written keeps its settings in effect; changes, the client id and
- * a value set_config_value says it "changed in memory" are held (no retry loop)
- * and saved once it can be written. A config.json removed while running is
- * recreated with the defaults, not with only the value being set.
+ * A damaged config.json is replaced (kept as a copy,
+ * config.json.corrupt.<time>.<pid>): every setting still readable in it is
+ * kept, the rest get their defaults (test-config-damaged-reset.js). If that
+ * replacement itself fails (the copy can't be made, the new file can't be
+ * written), the session uses what it would have written, and config.json is
+ * left as it was, so the next start replaces it instead of taking it for a
+ * first run, and keeps the copy it already made. One warning, as a log
+ * notification and on stderr, says the replacement failed and why. A
+ * config.json that is read but can't be written keeps its settings in effect;
+ * changes, the client id and a value set_config_value says it "changed in
+ * memory" are held (no retry loop) and saved once it can be written. A
+ * config.json removed while running is recreated with the defaults, not with
+ * only the value being set.
  *
  * Each case loads the config manager in a child process of its own, whose file
  * system fails the way the case needs.
@@ -47,10 +44,11 @@ const copyAsideFails = `
     ? Promise.reject(Object.assign(new Error('EBUSY: resource busy or locked, copyfile'), { code: 'EBUSY' }))
     : copyFile(from, to, ...rest);`;
 
-/** runConfigManagerChild body: the settings in effect after startup */
+/** runConfigManagerChild body: the settings in effect after startup, and the defaults' blocked commands */
 const settingsInEffect = `
   const config = await configManager.getConfig();
-  console.log(JSON.stringify({ allowedDirectories: config.allowedDirectories, blockedCommands: config.blockedCommands, telemetryEnabled: config.telemetryEnabled }));`;
+  console.log(JSON.stringify({ allowedDirectories: config.allowedDirectories, blockedCommands: config.blockedCommands, telemetryEnabled: config.telemetryEnabled,
+    defaultBlockedCommands: configManager.getDefaultConfig().blockedCommands }));`;
 
 /** A temporary home whose config.json holds `content` (bytes or text) */
 function homeWithConfig(content) {
@@ -80,28 +78,28 @@ async function run() {
     }
   };
 
-  // Nothing recoverable (NUL bytes, as a crash mid-write leaves them), and the repair
+  // Nothing readable (NUL bytes, as a crash mid-write leaves them), and the replacement
   // can't keep a copy of it
-  await check('repair fails, nothing recoverable: file tools only reach the config folder, every command is blocked, a warning says so', async () => {
+  await check('replacement fails, nothing readable: the session uses the defaults, config.json is left as it is, a warning says so', async () => {
     const damaged = Buffer.alloc(64);
     const home = homeWithConfig(damaged);
     try {
       const child = runConfigManagerChild(home.env, { prelude: copyAsideFails, body: settingsInEffect });
       assert(child.status === 0 && child.result, `loading the config failed (${child.status}): ${child.stderr}`);
-      assert.deepStrictEqual(child.result.allowedDirectories, [home.configDir], `when the repair failed, allowedDirectories is ${JSON.stringify(child.result.allowedDirectories)}: file tools must only reach the config folder, not the whole filesystem`);
-      assert.deepStrictEqual(child.result.blockedCommands, ['*'], `when the repair failed and no blocked commands could be recovered, blockedCommands is ${JSON.stringify(child.result.blockedCommands)} instead of ["*"] (every command blocked)`);
+      assert.deepStrictEqual(child.result.allowedDirectories, [], `when the replacement failed with nothing readable, allowedDirectories is ${JSON.stringify(child.result.allowedDirectories)} instead of the default []`);
+      assert.deepStrictEqual(child.result.blockedCommands, child.result.defaultBlockedCommands, `when the replacement failed with nothing readable, blockedCommands is ${JSON.stringify(child.result.blockedCommands)} instead of the defaults`);
       assert.strictEqual(child.result.telemetryEnabled, true, 'with no telemetry opt-out in the damaged file, telemetry keeps its default (on)');
       assert(fs.readFileSync(home.configPath).equals(damaged), 'config.json changed although no copy of it could be kept');
-      assert(child.stderr.includes('config.json could not be read, and repairing it failed (EBUSY') && child.stderr.includes('every command is blocked'),
-        `the warning should say the repair failed, why, and what the session uses: ${child.stderr}`);
+      assert(child.stderr.includes('config.json could not be parsed, and replacing it failed (EBUSY'),
+        `the warning should say the replacement failed, and why: ${child.stderr}`);
     } finally {
       home.cleanup();
     }
   });
 
-  // The copy is kept, then the repaired config can't be written (a full disk): what
+  // The copy is kept, then the new config can't be written (a full disk): what
   // the damaged file still gives applies for the session
-  await check('repair fails after keeping a copy: the settings it still gives apply for the session', async () => {
+  await check('replacement fails after keeping a copy: the settings it still gives apply for the session', async () => {
     const damaged = '{"blockedCommands": ["rm"], "allowedDirectories": ["/work"], "telemetryEnabled": false, BROKEN';
     const home = homeWithConfig(damaged);
     try {
@@ -113,15 +111,15 @@ async function run() {
       const copies = corruptCopiesIn(home.configDir);
       assert.strictEqual(copies.length, 1, `the damaged file should be kept as one corrupt copy: ${copies.join(', ')}`);
       assert.strictEqual(fs.readFileSync(path.join(home.configDir, copies[0]), 'utf8'), damaged, 'the corrupt copy should hold the damaged text');
-      assert(child.stderr.includes('config.json could not be read, and repairing it failed (ENOSPC'), `the warning should say the repair failed and why: ${child.stderr}`);
+      assert(child.stderr.includes('config.json could not be parsed, and replacing it failed (ENOSPC'), `the warning should say the replacement failed and why: ${child.stderr}`);
     } finally {
       home.cleanup();
     }
   });
 
-  // The repaired config can't be written (a full disk). The next start, with space
-  // again, must repair config.json, not find it missing and take it for a first run.
-  await check('a repair that could not be written is done at the next start: the settings the damaged file gives, not a first run', async () => {
+  // The new config can't be written (a full disk). The next start, with space
+  // again, must replace config.json, not find it missing and take it for a first run.
+  await check('a replacement that could not be written is done at the next start: the settings the damaged file gives, not a first run', async () => {
     const damaged = '{"blockedCommands": ["rm"], "allowedDirectories": ["/work"], BROKEN';
     const home = homeWithConfig(damaged);
     try {
@@ -151,48 +149,17 @@ async function run() {
   });
 
   // A nested object in the damaged text holds the same keys before (or instead of) the
-  // config's own fields: only the config's own fields are recovered
-  await check("a repair recovers only the config's own fields, not a nested object's of the same name", async () => {
+  // config's own fields: only the config's own fields are taken as settings
+  await check("a replacement keeps the config's own fields, not a nested object's of the same name", async () => {
     const damaged = '{"usageStats": {"blockedCommands": [], "allowedDirectories": ["/"]}, "allowedDirectories": ["/work"], "telemetryEnabled": ';
     const home = homeWithConfig(damaged);
     try {
-      const child = runConfigManagerChild(home.env, {
-        body: `
-          const config = await configManager.getConfig();
-          console.log(JSON.stringify({ allowedDirectories: config.allowedDirectories, blockedCommands: config.blockedCommands }));`,
-      });
+      const child = runConfigManagerChild(home.env, { body: settingsInEffect });
       assert(child.status === 0 && child.result, `loading the config failed (${child.status}): ${child.stderr}`);
-      assert.deepStrictEqual(child.result.allowedDirectories, ['/work'], `the repair recovered allowedDirectories ${JSON.stringify(child.result.allowedDirectories)} instead of the config's own ["/work"] (["/"] is a nested object's)`);
-      assert.deepStrictEqual(child.result.blockedCommands, ['*'], `the repair recovered blockedCommands ${JSON.stringify(child.result.blockedCommands)}: the config has none of its own, so every command must be blocked (["*"]), not a nested object's []`);
+      assert.deepStrictEqual(child.result.allowedDirectories, ['/work'], `the replacement kept allowedDirectories ${JSON.stringify(child.result.allowedDirectories)} instead of the config's own ["/work"] (["/"] is a nested object's)`);
+      assert.deepStrictEqual(child.result.blockedCommands, child.result.defaultBlockedCommands, `the replacement kept blockedCommands ${JSON.stringify(child.result.blockedCommands)}: the config has none of its own, so they must be the defaults, not a nested object's []`);
       const onDisk = JSON.parse(fs.readFileSync(home.configPath, 'utf8'));
-      assert.deepStrictEqual([onDisk.allowedDirectories, onDisk.blockedCommands], [['/work'], ['*']], `config.json was repaired as ${JSON.stringify([onDisk.allowedDirectories, onDisk.blockedCommands])}`);
-    } finally {
-      home.cleanup();
-    }
-  });
-
-  // #419: config.json is there but can't be read (e.g. chmod 000): there is nothing to
-  // repair, and the defaults' allowedDirectories [] would open the whole filesystem
-  await check('config.json can\'t be read: file tools only reach the config folder, every command is blocked, the file is left as it is, a warning says why', async () => {
-    const home = homeWithConfig(JSON.stringify({ allowedDirectories: ['/work'] }, null, 2));
-    const before = fs.readFileSync(home.configPath);
-    try {
-      const child = runConfigManagerChild(home.env, {
-        prelude: `
-          const { CONFIG_FILE } = await import(DIST + '/config.js');
-          const readFile = fs.readFile;
-          fs.readFile = (file, ...rest) => String(file) === CONFIG_FILE
-            ? Promise.reject(Object.assign(new Error("EACCES: permission denied, open '" + CONFIG_FILE + "'"), { code: 'EACCES' }))
-            : readFile(file, ...rest);`,
-        body: settingsInEffect,
-      });
-      assert(child.status === 0 && child.result, `loading the config failed (${child.status}): ${child.stderr}`);
-      assert.deepStrictEqual(child.result.allowedDirectories, [home.configDir], `with a config.json that can't be read, allowedDirectories is ${JSON.stringify(child.result.allowedDirectories)}: file tools must only reach the config folder, not the whole filesystem`);
-      assert.deepStrictEqual(child.result.blockedCommands, ['*'], `with a config.json that can't be read, blockedCommands is ${JSON.stringify(child.result.blockedCommands)} instead of ["*"] (every command blocked)`);
-      assert(fs.readFileSync(home.configPath).equals(before), 'a config.json that could not be read was changed');
-      assert.deepStrictEqual(corruptCopiesIn(home.configDir), [], 'a config.json that could not be read is not damaged: no corrupt copy');
-      assert(child.stderr.includes('config.json could not be read (EACCES: permission denied') && child.stderr.includes('every command is blocked'),
-        `the warning should say config.json could not be read, why, and what the session uses: ${child.stderr}`);
+      assert.deepStrictEqual([onDisk.allowedDirectories, onDisk.blockedCommands], [['/work'], child.result.defaultBlockedCommands], `config.json was replaced with ${JSON.stringify([onDisk.allowedDirectories, onDisk.blockedCommands])}`);
     } finally {
       home.cleanup();
     }
@@ -254,9 +221,9 @@ async function run() {
     }
   });
 
-  // The startup repair failed (the repaired config can't be written): the session has
+  // The startup replacement failed (the new config can't be written): the session has
   // no client id, and telemetry asks for one on every event
-  await check('after a failed startup repair: the client id is kept for the session, and saved with the recovered settings once writes work', async () => {
+  await check('after a failed startup replacement: the client id is kept for the session, and saved with the settings read once writes work', async () => {
     const home = homeWithConfig('{"blockedCommands": ["rm"], "allowedDirectories": ["/work"], BROKEN');
     try {
       const child = runConfigManagerChild(home.env, {
@@ -376,9 +343,9 @@ async function run() {
   });
 
   // config.json damaged while running (a write cut short), in a way that leaves no
-  // "telemetryEnabled": false in it: the repair must keep the settings the process
+  // "telemetryEnabled": false in it: the replacement must keep the settings the process
   // last read, not bring back the defaults (telemetry on, default line limits, ...)
-  await check('config.json damaged while running: the repair keeps the settings last read, telemetry off included', async () => {
+  await check('config.json damaged while running: the replacement keeps the settings last read, telemetry off included', async () => {
     const clientId = '0b7f9a52-5a3e-4c6e-9d59-3f1a2b4c5d6e';
     const settings = {
       clientId, telemetryEnabled: false, fileReadLineLimit: 123, fileWriteLineLimit: 45, defaultShell: 'test-shell',
