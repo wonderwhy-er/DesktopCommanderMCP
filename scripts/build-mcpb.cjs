@@ -85,7 +85,8 @@ const filesToCopy = [
     'README.md',
     'LICENSE',
     'PRIVACY.md',
-    'icon.png'
+    'icon.png',
+    'vendor/telemetry-contract' // a file: dependency, installed from here in step 6b
 ];
 
 filesToCopy.forEach(file => {
@@ -128,7 +129,8 @@ fs.writeFileSync(
 // Step 6b: Install dependencies in bundle directory
 console.log('📦 Installing production dependencies in bundle...');
 try {
-    execSync('npm install --omit=dev --production', { cwd: BUNDLE_DIR, stdio: 'inherit' });
+    // --install-links: file: dependencies as real files in the bundle, not links
+    execSync('npm install --omit=dev --production --install-links', { cwd: BUNDLE_DIR, stdio: 'inherit' });
     console.log('✅ Dependencies installed');
 } catch (error) {
     console.error('❌ Failed to install dependencies:', error.message);
