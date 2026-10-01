@@ -23,7 +23,8 @@
   "files": [
     "dist",
     "logo.png",
-    "testemonials"
+    "testemonials",
+    "vendor/telemetry-contract"
   ],
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
@@ -125,6 +126,9 @@
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
+  "bundleDependencies": [
+    "@desktop-commander/telemetry-contract"
+  ],
   "optionalDependencies": {
     "caffeinate": "^1.0.1"
   },
