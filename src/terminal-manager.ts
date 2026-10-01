@@ -5,6 +5,7 @@ import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
 import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { terminateProcessTree } from './utils/process-tree.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -54,7 +55,11 @@ function newStreamTails(): StreamTails {
 /** An active session plus the per-stream tails that state detection reads. */
 interface ManagedSession extends TerminalSession {
   streams: StreamTails;
+  termination?: Promise<boolean>;  // The forceTerminate in progress (or done); calls meanwhile await it, a failed one is dropped
 }
+
+/** Outcome of forceTerminate */
+export type TerminateOutcome = 'terminated' | 'failed' | 'not_found';
 
 interface CompletedSession {
   // The session itself, not a copy: a process the command started can keep
@@ -864,26 +869,30 @@ export class TerminalManager {
     return this.sessions.get(pid);
   }
 
-  forceTerminate(pid: number): boolean {
+  /**
+   * End a session: its shell and every process the command started (see
+   * terminateProcessTree). Killing only the shell left the program running.
+   * Resolves once they are gone: 'terminated', or 'failed' if some could not
+   * be ended; 'not_found' when no session runs as `pid`. Never rejects.
+   */
+  async forceTerminate(pid: number): Promise<TerminateOutcome> {
     const session = this.sessions.get(pid);
     if (!session) {
-      return false;
+      return 'not_found';
     }
 
-    try {
-        session.process.kill('SIGINT');
-        setTimeout(() => {
-          if (this.sessions.has(pid)) {
-            session.process.kill('SIGKILL');
-          }
-        }, 1000);
-        return true;
-      } catch (error) {
-        // Convert error to string, handling both Error objects and other types
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        capture('server_request_error', {error: errorMessage, message: `Failed to terminate process ${pid}:`});
-        return false;
-      }
+    if (!session.termination) {
+      // Calls made while it runs share it; a failed one is dropped, so the next call tries again
+      session.termination = terminateProcessTree(session.process).then((ended) => {
+        if (!ended) session.termination = undefined;
+        return ended;
+      });
+    }
+    if (await session.termination) {
+      return 'terminated';
+    }
+    capture('server_request_error', {error: 'Process tree termination failed', message: `Failed to terminate process ${pid}:`});
+    return 'failed';
   }
 
   listActiveSessions(): ActiveSession[] {

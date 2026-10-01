@@ -4,6 +4,7 @@ import os from 'os';
 import { ProcessInfo, ServerResult } from '../types.js';
 import { KillProcessArgsSchema } from './schemas.js';
 import { resolveProgramPath } from '../utils/shell.js';
+import { terminatePid } from '../utils/process-tree.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +84,8 @@ export async function killProcess(args: unknown): Promise<ServerResult> {
   }
 
   try {
-    process.kill(parsed.data.pid);
+    // Returns once the process is gone, so a success means it no longer runs
+    await terminatePid(parsed.data.pid);
     return {
       content: [{ type: "text", text: `Successfully terminated process ${parsed.data.pid}` }],
     };
