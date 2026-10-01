@@ -481,6 +481,38 @@ async function goHalfOpenThenDrive(rc, client) {
 }
 
 async function main() {
+  await test('heartbeat startup is idempotent for the same device', async () => {
+    const { rc } = makeRemoteChannel();
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    let intervalsCreated = 0;
+    let timeoutsCreated = 0;
+    globalThis.setInterval = () => ({ id: ++intervalsCreated });
+    globalThis.clearInterval = () => {};
+    globalThis.setTimeout = () => ({ id: ++timeoutsCreated });
+    globalThis.clearTimeout = () => {};
+    try {
+      await withQuietLogs(async () => {
+        rc.startHeartbeat('device-1');
+        const intervalsAfterFirstStart = intervalsCreated;
+        const timeoutsAfterFirstStart = timeoutsCreated;
+        rc.startHeartbeat('device-1');
+        assert.strictEqual(intervalsCreated, intervalsAfterFirstStart,
+          'repeated start must not create another connection-health interval');
+        assert.strictEqual(timeoutsCreated, timeoutsAfterFirstStart,
+          'repeated start must not create another heartbeat timeout');
+      });
+    } finally {
+      rc.stopHeartbeat();
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
   // CONTROL: prove the harness CAN observe recovery — when the dead socket is
   // actually torn down (disconnect()), the next recreate re-subscribes.
   await test('control: recovers when the half-open socket is torn down before recreate', async () => {
