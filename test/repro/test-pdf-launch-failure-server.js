@@ -22,6 +22,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { closeClient } from '../helpers/close-client.js';
+import { callToolOnceLoaded } from '../helpers/heavy-packages.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -67,7 +68,7 @@ const remainingProfiles = () => [...profiles].filter((name) => fs.existsSync(pat
 
 let failed = false;
 try {
-  const result = await client.callTool({
+  const result = await callToolOnceLoaded(client, {
     name: 'write_pdf',
     arguments: {
       path: path.join(tempDir, 'never-written.pdf'),

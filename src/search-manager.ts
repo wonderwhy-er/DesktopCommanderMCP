@@ -7,7 +7,8 @@ import { capture } from './utils/capture.js';
 import { logger } from './utils/logger.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
-import PizZip from 'pizzip';
+import { loadExcelJS } from './utils/files/excel.js';
+import { loadPizZip } from './utils/files/docx.js';
 
 export interface SearchResult {
   file: string;
@@ -528,14 +529,15 @@ function characterClassEnd(glob: string, start: number): number {
       excelFiles = this.filterOfficeFiles(excelFiles, filePattern, rootPath);
     }
 
-    // Dynamically import ExcelJS to search all sheets
-    const ExcelJS = await import('exceljs');
+    // ExcelJS, to search all sheets; while the server is still loading it in
+    // the background, this waits for it (the search runs in the background too)
+    const ExcelJS = await loadExcelJS();
 
     for (const filePath of excelFiles) {
       if (sink.isStopped()) break;
 
       try {
-        const workbook = new ExcelJS.default.Workbook();
+        const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.readFile(filePath);
 
         // Search ALL sheets in the workbook (row-wise for speed and cross-column matching)
@@ -722,6 +724,9 @@ function characterClassEnd(glob: string, start: number): number {
     if (filePattern) {
       docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
     }
+
+    // PizZip, to open the DOCX files
+    const PizZip = loadPizZip();
 
     for (const filePath of docxFiles) {
       if (sink.isStopped()) break;
