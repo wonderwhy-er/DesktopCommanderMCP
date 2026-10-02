@@ -353,5 +353,58 @@ assertEditDiffIsClean(
   }
 }
 
+// --- Test 7: edit a line that carries a hyphenated-scheme link ---
+// Tiptap 3.27+ rejects schemes containing '-' in its default link
+// validator; the link mark is dropped on parse, so the user's edit
+// arrives in the same hunk as a silently stripped `[text](url)`. The
+// expected substring is the whole edited line, link markup included.
+const CUSTOM_SCHEMES = `# Shortcuts
+
+Deep links into desktop apps, collected from a notes vault.
+
+## Links
+
+- Open [display settings](ms-settings:display) to fix scaling.
+- Open [the note](vscode-insiders://file/a.md) in Insiders.
+- Jump to [the record](x-devonthink-item://ABC) in DEVONthink.
+- Trigger [the callback](x-callback-url://x) from the phone.
+
+## Notes
+
+Each link opens the target app directly.
+
+Nothing else here.
+`;
+
+assertEditDiffIsClean(
+  'edit text next to a ms-settings: link',
+  CUSTOM_SCHEMES,
+  (h) => h.replaceText('to fix scaling.', 'to fix display scaling.'),
+  '- Open [display settings](ms-settings:display) to fix display scaling.\n',
+);
+
+assertEditDiffIsClean(
+  'edit text next to a vscode-insiders:// link',
+  CUSTOM_SCHEMES,
+  (h) => h.replaceText('in Insiders.', 'in VS Code Insiders.'),
+  '- Open [the note](vscode-insiders://file/a.md) in VS Code Insiders.\n',
+);
+
+// Untouched, the document must not drift at all — otherwise autosave
+// strips every hyphenated-scheme link the moment the file is opened.
+{
+  const handle = mountForEdit(CUSTOM_SCHEMES);
+  const after = handle.getMarkdown();
+  handle.destroy();
+  const hunks = computeEditBlocks(CUSTOM_SCHEMES, after);
+  if (hunks.length === 0) {
+    pass('no edit on custom-scheme doc -> no hunks');
+  } else {
+    diagnoseDiff(CUSTOM_SCHEMES, after, hunks);
+    fail('no edit on custom-scheme doc -> no hunks',
+      `expected 0 hunks for an untouched custom-scheme doc, got ${hunks.length}`);
+  }
+}
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed > 0 ? 1 : 0);

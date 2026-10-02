@@ -513,6 +513,108 @@ async function testListItemWithContinuationLine() {
   console.log('OK list item continuation preserved');
 }
 
+async function testCustomSchemeLinksSurvive() {
+  console.log('\n--- Test: links with hyphenated / custom URL schemes survive ---');
+  // Tiptap 3.27 tightened the Link extension's isAllowedUri: schemes
+  // containing a hyphen (ms-settings:, vscode-insiders://,
+  // x-devonthink-item://) used to slip through a character-class bug and
+  // stopped being accepted. The link mark is then dropped on parse and
+  // autosave writes the bare link text back to disk. These are the link
+  // shapes that round-tripped unchanged on Tiptap 3.22.
+  const input =
+    '- [Display](ms-settings:display)\n' +
+    '- [Insiders](vscode-insiders://file/a.md)\n' +
+    '- [DEVONthink](x-devonthink-item://ABC)\n' +
+    '- [Callback](x-callback-url://x)\n' +
+    '- [Phone](tel:+1-555)\n' +
+    '- [Mail](mailto:a-b@c.de)\n' +
+    '- [Site](https://ex-ample.com/a-b)\n' +
+    '- [FTP](ftp://x)\n' +
+    '- [Anchor](#anchor)\n' +
+    '- [Rel](./rel/path.md)\n' +
+    '- [Script](scripts/foo.mjs)\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    input,
+    'links with hyphenated or other custom schemes must keep their URL on round-trip'
+  );
+  console.log('OK custom-scheme links preserved');
+}
+
+async function testRawHtmlAnchorWithHyphenatedSchemeKeepsHref() {
+  console.log('\n--- Test: raw-HTML <a> with a hyphenated scheme keeps its href ---');
+  // With `html: true`, an inline <a href> is parsed through the Link
+  // extension's parseHTML, which consults isAllowedUri. Tiptap 3.22
+  // accepted these and serialized them as a markdown link.
+  const input = 'Open <a href="ms-settings:display">display settings</a> now.\n';
+  const output = roundTrip(input);
+  assert.strictEqual(
+    output,
+    'Open [display settings](ms-settings:display) now.\n',
+    'raw-HTML anchors with a hyphenated scheme must not lose their href'
+  );
+  console.log('OK raw-HTML hyphenated-scheme anchor preserved');
+}
+
+async function testRawHtmlAnchorWithLeadingWhitespaceKeepsLink() {
+  console.log('\n--- Test: raw-HTML <a> with whitespace before a hyphenated scheme keeps its link ---');
+  // Tiptap's validator strips whitespace / control chars from the href
+  // before checking the scheme; the hyphenated-scheme check must too, or
+  // these anchors lose their link (3.22 kept them).
+  for (const lead of [' ', '&#9;', '&#160;']) {
+    const input = `Open <a href="${lead}ms-settings:display">display settings</a> now.\n`;
+    const output = roundTrip(input);
+    assert.ok(
+      /\[display settings\]\([^)]*ms-settings:display\)/.test(output),
+      `${JSON.stringify(input)} lost its link: ${JSON.stringify(output)}`
+    );
+  }
+  console.log('OK leading-whitespace hyphenated-scheme anchors keep their link');
+}
+
+async function testDangerousSchemesNeverBecomeLinks() {
+  console.log('\n--- Test: javascript:/vbscript:/data:/file: never become editor links ---');
+  // Accepting custom schemes must not widen what reaches an <a href> in
+  // the editor. markdown-it's validateLink stops these in [t](url) form;
+  // a raw-HTML <a> relies on the Link extension's isAllowedUri alone.
+  const urls = [
+    'javascript:alert(1)',
+    'JAVASCRIPT:alert(1)',
+    'java\tscript:alert(1)',
+    'java&#9;script:alert(1)',
+    ' javascript:alert(1)',
+    '&#9;javascript:alert(1)',
+    '&#160;javascript:alert(1)',
+    'vbscript:x',
+    'data:text/html,<b>x</b>',
+    'file:///etc/passwd',
+  ];
+  const target = document.getElementById('root');
+  for (const url of urls) {
+    for (const input of [`[t](${url})\n`, `<${url}>\n`, `<a href="${url}">t</a>\n`]) {
+      target.innerHTML = '';
+      const { editorInput } = editorMod.preprocessForEditor(input);
+      const editor = new Editor({
+        element: target,
+        extensions: editorMod.buildTiptapExtensions(),
+        content: editorInput,
+      });
+      const hrefs = [...editor.view.dom.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+      editor.destroy();
+      for (const href of hrefs) {
+        // Strip what browsers ignore in a scheme before checking it.
+        const scheme = href.replace(/[\u0000- ]/g, '').toLowerCase();
+        assert.ok(
+          !/^(javascript|vbscript|data|file):/.test(scheme),
+          `${JSON.stringify(input)} rendered a dangerous editor link: ${JSON.stringify(href)}`
+        );
+      }
+    }
+  }
+  console.log('OK dangerous schemes not linked');
+}
+
 async function runAllTests() {
   const tests = [
     testPipeTableSurvivesRoundTrip,
@@ -539,6 +641,10 @@ async function runAllTests() {
     testBoldAroundInlineCodePreserved,
     testEscapedPipeInTableCellPreserved,
     testListItemWithContinuationLine,
+    testCustomSchemeLinksSurvive,
+    testRawHtmlAnchorWithHyphenatedSchemeKeepsHref,
+    testRawHtmlAnchorWithLeadingWhitespaceKeepsLink,
+    testDangerousSchemesNeverBecomeLinks,
   ];
   let passed = 0;
   let failed = 0;
