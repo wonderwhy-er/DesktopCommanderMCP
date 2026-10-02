@@ -397,23 +397,39 @@ export class TextFileHandler implements FileHandler {
         encoding?: BufferEncoding,
         start?: number
     ): Promise<FileResult> {
+        const input = createReadStream(filePath, { signal, encoding, start });
+        const inputClosed = new Promise<void>((resolve) => input.once('close', resolve));
         const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
+            input,
             crlfDelay: Infinity
         });
+
+        let inputError: Error | undefined;
+        const onInputError = (error: Error) => {
+            inputError ??= error;
+            rl.close();
+        };
+        input.on('error', onInputError);
 
         const result: string[] = [];
         let lineNumber = 0;
 
-        for await (const line of rl) {
-            if (lineNumber >= offset && result.length < length) {
-                result.push(line);
+        try {
+            for await (const line of rl) {
+                if (lineNumber >= offset && result.length < length) {
+                    result.push(line);
+                }
+                if (result.length >= length) break;
+                lineNumber++;
             }
-            if (result.length >= length) break;
-            lineNumber++;
+        } finally {
+            rl.close();
+            input.destroy();
+            await inputClosed;
+            input.off('error', onInputError);
         }
 
-        rl.close();
+        if (inputError) throw inputError;
 
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
