@@ -11,6 +11,9 @@ import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
 import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { fetchUrlValidated } from '../utils/urlSafety.js';
+
+export { assertUrlIsFetchable } from '../utils/urlSafety.js';
 import { isBinaryFile } from 'isbinaryfile';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
@@ -364,9 +367,9 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
 
     try {
-        const response = await fetch(url, {
-            signal: controller.signal
-        });
+        // SSRF guard: validates the URL (and every redirect hop) before any
+        // request leaves the process.
+        const { response, finalUrl: currentUrl } = await fetchUrlValidated(url, controller.signal);
 
         // Clear the timeout since fetch completed
         clearTimeout(timeoutId);
@@ -378,12 +381,15 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
         const isImage = isImageFile(contentType);
-        const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
+        const isPdf = isPdfFile(contentType) || currentUrl.toLowerCase().endsWith('.pdf');
 
         // NEW: Add PDF handling before image check
         if (isPdf) {
-            // Use URL directly - pdfreader handles URL downloads internally
-            const pdfResult = await parsePdfToMarkdown(url);
+            // Parse the bytes from the request we already validated. Handing the URL
+            // to the parser would download it a second time, resolving DNS again and
+            // bypassing the checks above.
+            const pdfBytes = new Uint8Array(await response.arrayBuffer());
+            const pdfResult = await parsePdfToMarkdown(pdfBytes);
 
             return {
                 content: "",
