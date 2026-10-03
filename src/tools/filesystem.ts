@@ -169,6 +169,41 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
 }
 
 /**
+ * Resolves a path to its canonical form, following symlinks.
+ *
+ * Mirrors how validatePath() canonicalizes the requested path: if the path
+ * exists its realpath is returned, otherwise the deepest existing ancestor is
+ * resolved and the remaining segments are re-appended. This lets a configured
+ * allowlist entry that has not been created yet still be compared on equal
+ * terms with an already-resolved requested path. Best-effort: if nothing along
+ * the chain resolves, the input is returned unchanged.
+ *
+ * @param absolutePath An absolute path to canonicalize
+ * @returns Promise<string> The canonical path
+ */
+async function canonicalizePath(absolutePath: string): Promise<string> {
+    try {
+        return await fs.realpath(absolutePath, { encoding: 'utf8' });
+    } catch {
+        let current = absolutePath;
+        const remaining: string[] = [];
+        while (true) {
+            const parent = path.dirname(current);
+            if (parent === current) break; // reached the filesystem root
+            remaining.unshift(path.basename(current));
+            current = parent;
+            try {
+                const resolvedAncestor = await fs.realpath(current, { encoding: 'utf8' });
+                return path.join(resolvedAncestor, ...remaining);
+            } catch {
+                // keep walking up until an existing ancestor is found
+            }
+        }
+        return absolutePath;
+    }
+}
+
+/**
  * Checks if a path is within any of the allowed directories
  *
  * @param pathToCheck Path to check
@@ -186,8 +221,23 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
+    // Canonicalize the configured allowlist entries the same way validatePath()
+    // canonicalizes the requested path before it reaches here. On macOS
+    // fs.realpath("/tmp/x") resolves to "/private/tmp/x"; if the allowlist entry
+    // is left unresolved the resolved requested path can never match its own
+    // configured directory and every access is rejected (#590).
+    const canonicalAllowedDirs = await Promise.all(
+        allowedDirectories.map((allowedDir) => {
+            const expanded = expandHome(allowedDir);
+            const absolute = path.isAbsolute(expanded)
+                ? path.resolve(expanded)
+                : path.resolve(process.cwd(), expanded);
+            return canonicalizePath(absolute);
+        })
+    );
+
     // Check if the path is within any allowed directory
-    const isAllowed = allowedDirectories.some(allowedDir => {
+    const isAllowed = canonicalAllowedDirs.some(allowedDir => {
         let normalizedAllowedDir = normalizePath(allowedDir);
         if (normalizedAllowedDir.slice(-1) === path.sep) {
             normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
