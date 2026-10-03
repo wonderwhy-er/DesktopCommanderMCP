@@ -13,6 +13,20 @@ import { isPdfFile } from "./mime-types.js";
 import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
 
+/**
+ * Detect UTF-16 BOM (Byte Order Mark) in a buffer.
+ * Returns the encoding name if a BOM is found, or null otherwise.
+ * - 0xFF 0xFE → UTF-16 LE (common on Windows, e.g. PowerShell 5.1 redirection)
+ * - 0xFE 0xFF → UTF-16 BE
+ */
+function detectUtf16Bom(buffer: Buffer): 'utf-16le' | 'utf-16be' | null {
+    if (buffer.length >= 2) {
+        if (buffer[0] === 0xFF && buffer[1] === 0xFE) return 'utf-16le';
+        if (buffer[0] === 0xFE && buffer[1] === 0xFF) return 'utf-16be';
+    }
+    return null;
+}
+
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
     PATH_VALIDATION: 10000,    // 10 seconds
@@ -503,6 +517,38 @@ export async function readFileFromDisk(
         // If we can't stat the file, continue anyway and let the read operation handle errors
     }
 
+    // Detect UTF-16 BOM before delegating to the text handler.
+    // PowerShell 5.1 on Windows writes UTF-16 LE by default when using redirection
+    // (e.g., `echo "hello" > file.txt`). The readline-based text handler assumes UTF-8
+    // and would produce garbled output with embedded NUL characters. By detecting the
+    // BOM early, we can decode the file correctly.
+    try {
+        const rawBuffer = await fs.readFile(validPath);
+        const utf16Encoding = detectUtf16Bom(rawBuffer);
+        if (utf16Encoding) {
+            const decoder = new TextDecoder(utf16Encoding);
+            let decoded = decoder.decode(rawBuffer);
+            // Strip the BOM character if present at the start
+            if (decoded.charCodeAt(0) === 0xFEFF) {
+                decoded = decoded.slice(1);
+            }
+
+            // Apply offset/length in terms of lines, consistent with the text handler
+            const lines = TextFileHandler.splitLinesPreservingEndings(decoded);
+            const selectedLines = lines.slice(offset, offset + length);
+            const content = selectedLines.join('');
+
+            return {
+                content,
+                mimeType: 'text/plain',
+                metadata: {}
+            };
+        }
+    } catch (error) {
+        // If BOM detection fails, fall through to the normal handler path
+        console.error('UTF-16 BOM detection failed, falling back to default handler:', error);
+    }
+
     // Read under an abortable timeout so a hung/stalled read is cancelled
     // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
@@ -610,14 +656,27 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     // preserve exact file content including original line endings.
     // We cannot use readline-based reading as it strips line endings.
 
-    // Read entire file content preserving line endings, under a 3-minute,
-    // cancellable timeout so an edit on a stalled/cloud path can't hang forever
-    // (previously this read had no timeout at all).
-    const content = await runWithAbortableTimeout(
-        (signal) => fs.readFile(validPath, { encoding: 'utf8', signal }),
+    // Detect UTF-16 BOM before reading. PowerShell 5.1 on Windows writes UTF-16 LE
+    // by default when using redirection (e.g., `echo "hello" > file.txt`).
+    // Reading such files as UTF-8 would produce garbled text with embedded NUL characters.
+    const rawBuffer: Buffer = await runWithAbortableTimeout(
+        (signal) => fs.readFile(validPath, { signal }),
         READ_OPERATION_TIMEOUT_MS,
         `Internal read for ${filePath}`
     );
+
+    let content: string;
+    const utf16Encoding = detectUtf16Bom(rawBuffer);
+    if (utf16Encoding) {
+        const decoder = new TextDecoder(utf16Encoding);
+        content = decoder.decode(rawBuffer);
+        // Strip the BOM character if present at the start
+        if (content.charCodeAt(0) === 0xFEFF) {
+            content = content.slice(1);
+        }
+    } else {
+        content = rawBuffer.toString('utf8');
+    }
 
     // If we need to apply offset/length, do it while preserving line endings
     if (offset === 0 && length >= Number.MAX_SAFE_INTEGER) {
