@@ -20,7 +20,7 @@ export const CONFIG_FIELD_DEFINITIONS = {
   },
   defaultShell: {
     label: 'Default Shell',
-    description: 'This is the shell used for new command sessions (for example /bin/bash or /bin/zsh). Only change this if you know your environment requires a specific shell.',
+    description: 'This is the shell used for new command sessions (for example /bin/bash or /bin/zsh). You can include arguments, for example "pwsh.exe -NoProfile -NoLogo". Only change this if you know your environment requires a specific shell.',
     valueType: 'string',
   },
   telemetryEnabled: {
