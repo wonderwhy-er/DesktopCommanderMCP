@@ -19,6 +19,7 @@
 import fs from 'fs/promises';
 import { createRequire } from 'module';
 import type PizZip from 'pizzip';
+import { LazyPackage } from '../lazy-package.js';
 import { FileHandler, FileResult, FileInfo, ReadOptions, EditResult } from './base.js';
 
 // ════════════════════════════════════════════════════════════════
@@ -74,18 +75,11 @@ interface DocxZipContents {
 
 const require = createRequire(import.meta.url);
 
-/**
- * pizzip, loaded when first used, not with this module: the server loads the
- * file handlers at startup, before it answers initialize (#715). The server
- * loads it right after initialize (utils/heavy-packages.ts).
- */
-export function loadPizZip(): typeof PizZip {
-    return require('pizzip');
-}
+export const pizzipPackage = new LazyPackage('pizzip', 'DOCX support', (): typeof PizZip => require('pizzip'));
 
 /** Opens a zip from its bytes, or a new, empty one */
 function openZip(data?: Buffer): PizZip {
-    const PizZipClass = loadPizZip();
+    const PizZipClass = pizzipPackage.load();
     return data === undefined ? new PizZipClass() : new PizZipClass(data);
 }
 

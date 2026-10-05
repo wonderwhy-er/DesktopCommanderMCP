@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import { createRequire } from 'module';
 import type { PDFDocument as PDFDocumentType, PDFPage } from 'pdf-lib';
+import { LazyPackage } from '../../utils/lazy-package.js';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
 import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
@@ -16,17 +17,10 @@ type PdfOperations = z.infer<typeof PdfOperationSchema>;
 
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
-/**
- * pdf-lib, loaded when first used, not with this module: the server loads the
- * PDF tools at startup, before it answers initialize (#715). The server loads
- * it right after initialize (utils/heavy-packages.ts).
- */
-export function loadPdfLib(): { PDFDocument: typeof PDFDocumentType } {
-    return require('pdf-lib');
-}
+export const pdfLibPackage = new LazyPackage('pdf-lib', 'PDF editing support', (): { PDFDocument: typeof PDFDocumentType } => require('pdf-lib'));
 
 async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocumentType> {
-    const { PDFDocument } = loadPdfLib();
+    const { PDFDocument } = pdfLibPackage.load();
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);

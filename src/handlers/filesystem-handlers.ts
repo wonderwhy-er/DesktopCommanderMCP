@@ -243,9 +243,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 /**
  * Handle read_multiple_files command
  */
-export async function handleReadMultipleFiles(args: unknown, notReady?: (filePath: string) => string | undefined): Promise<ServerResult> {
+export async function handleReadMultipleFiles(args: unknown, stillLoadingError?: (filePath: string) => string | undefined): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
-    const fileResults = await readMultipleFiles(parsed.paths, notReady);
+    const fileResults = await readMultipleFiles(parsed.paths, stillLoadingError);
 
     // Create a text summary of all files
     const textSummary = fileResults.map(result => {

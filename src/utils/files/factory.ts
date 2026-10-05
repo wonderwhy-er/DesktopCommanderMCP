@@ -6,13 +6,19 @@
  * or async (content-based like BinaryFileHandler using isBinaryFile)
  */
 
+import path from 'path';
 import { FileHandler } from './base.js';
 import { TextFileHandler } from './text.js';
 import { ImageFileHandler } from './image.js';
 import { BinaryFileHandler } from './binary.js';
-import { ExcelFileHandler } from './excel.js';
+import { ExcelFileHandler, exceljsPackage } from './excel.js';
 import { PdfFileHandler } from './pdf.js';
-import { DocxFileHandler } from './docx.js';
+import { DocxFileHandler, pizzipPackage } from './docx.js';
+import { pdfLibPackage } from '../../tools/pdf/manipulations.js';
+import { pdf2mdPackage } from '../../tools/pdf/lib/pdf2md.js';
+import { unpdfPackage } from '../../tools/pdf/extract-images.js';
+import { mdToPdfPackage } from '../../tools/pdf/markdown.js';
+import type { LazyPackage } from '../lazy-package.js';
 
 // Singleton instances of each handler
 let excelHandler: ExcelFileHandler | null = null;
@@ -122,4 +128,57 @@ export function isExcelFile(path: string): boolean {
  */
 export function isImageFile(path: string): boolean {
     return getImageHandler().canHandle(path);
+}
+
+export type FileAction = 'read' | 'write' | 'edit';
+
+/**
+ * Right after initialize (#777): the packages Excel, DOCX and PDF files need,
+ * loaded in the background one at a time, smaller first, so each pause of the
+ * main thread is one package.
+ */
+export function preloadFileSupport(): void {
+    void (async () => {
+        for (const pkg of [pizzipPackage, pdfLibPackage, pdf2mdPackage, unpdfPackage, exceljsPackage, mdToPdfPackage]) {
+            await pkg.preload();
+        }
+    })();
+}
+
+/** The packages a file needs for `action`, by the handlers' canHandle() (its name, no disk access) */
+function packagesFor(filePath: string, action: FileAction, isPdf: boolean, isUrl: boolean): LazyPackage<unknown>[] {
+    if (isPdf) {
+        // Editing a PDF can insert markdown pages, which are rendered
+        return action === 'read' ? [pdf2mdPackage, unpdfPackage] : action === 'write' ? [mdToPdfPackage] : [pdfLibPackage, mdToPdfPackage];
+    }
+    // A URL is fetched, not opened by a file handler: only a PDF one is parsed
+    if (isUrl) return [];
+    if (getDocxHandler().canHandle(filePath)) return [pizzipPackage];
+    if (getExcelHandler().canHandle(filePath)) return [exceljsPackage];
+    return [];
+}
+
+/**
+ * The answer for a tool call that would `action` `filePath` while a package it
+ * needs is still loading, naming the file; undefined once loaded. A package
+ * not preloading yet (before initialize, or after a failure) starts here,
+ * after the call has answered. `isPdf` for a PDF whatever its name (write_pdf),
+ * `isUrl` for a URL read.
+ */
+export function stillLoadingError(
+    filePath: string,
+    action: FileAction,
+    { isPdf = getPdfHandler().canHandle(filePath), isUrl = false }: { isPdf?: boolean; isUrl?: boolean } = {}
+): string | undefined {
+    const pending = packagesFor(filePath, action, isPdf, isUrl).find((pkg) => !pkg.loaded);
+    if (!pending) return undefined;
+    const file = path.basename(filePath);
+    const { error, needsRestart, support } = pending;
+    if (!needsRestart) void pending.preload();
+    if (!error) {
+        return `Can't ${action} ${file} yet: Desktop Commander is still loading its ${support} (it starts right after launch). Try again in a few seconds.`;
+    }
+    return needsRestart
+        ? `Can't ${action} ${file}: Desktop Commander couldn't load its ${support} (${error}). Restart Desktop Commander to load it again.`
+        : `Can't ${action} ${file}: Desktop Commander couldn't load its ${support} (${error}). It's loading it again; try again in a few seconds.`;
 }

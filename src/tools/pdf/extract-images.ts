@@ -1,3 +1,5 @@
+import { LazyPackage } from '../../utils/lazy-package.js';
+
 export interface ImageInfo {
     /** Object ID within PDF */
     objId: number;
@@ -27,14 +29,8 @@ export interface ImageCompressionOptions {
     maxDimension?: number;
 }
 
-/**
- * unpdf, loaded when first used, not with this module: the server loads the
- * PDF tools at startup, before it answers initialize (#715). The server loads
- * it right after initialize (utils/heavy-packages.ts).
- */
-export function loadUnpdf(): Promise<typeof import('unpdf')> {
-    return import('unpdf');
-}
+// import(): unpdf is an ES module only. If it fails, Node keeps it failed until a restart.
+export const unpdfPackage = new LazyPackage('unpdf', 'PDF reading support', () => import('unpdf'));
 
 /**
  * Optimized image extraction from PDF using unpdf's built-in extractImages method
@@ -48,7 +44,7 @@ export async function extractImagesFromPdf(
     pageNumbers?: number[],
     compressionOptions: ImageCompressionOptions = {}
 ): Promise<Record<number, ImageInfo[]>> {
-    const { getDocumentProxy, extractImages } = await loadUnpdf();
+    const { getDocumentProxy, extractImages } = await unpdfPackage.load();
     const pdfDocument = await getDocumentProxy(pdfBuffer);
 
     const pagesToProcess = pageNumbers || Array.from({ length: pdfDocument.numPages }, (_, i) => i + 1);

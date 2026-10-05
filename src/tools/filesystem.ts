@@ -751,16 +751,16 @@ export interface MultiFileResult {
 }
 
 /**
- * Reads each file; a failure is that file's `error`. `notReady` (the server's)
- * gives the error for a file whose support is still loading, which is then
- * not read (utils/heavy-packages.ts).
+ * Reads each file; a failure is that file's `error`. `stillLoadingError` (the
+ * server's) gives the error for a file whose package is still loading, which
+ * is then not read (utils/files/factory.ts).
  */
-export async function readMultipleFiles(paths: string[], notReady?: (filePath: string) => string | undefined): Promise<MultiFileResult[]> {
+export async function readMultipleFiles(paths: string[], stillLoadingError?: (filePath: string) => string | undefined): Promise<MultiFileResult[]> {
     return Promise.all(
         paths.map(async (filePath: string) => {
-            const notReadyError = notReady?.(filePath);
-            if (notReadyError) {
-                return { path: filePath, error: notReadyError };
+            const stillLoading = stillLoadingError?.(filePath);
+            if (stillLoading) {
+                return { path: filePath, error: stillLoading };
             }
             try {
                 const validPath = await validatePath(filePath);

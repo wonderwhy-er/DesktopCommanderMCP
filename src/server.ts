@@ -1202,60 +1202,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 import * as handlers from './handlers/index.js';
 import { ServerResult } from './types.js';
 import { withoutInternalFacts } from './utils/internal-facts.js';
-import { createErrorResponse } from './error-handlers.js';
-import { isExcelFile } from './utils/files/index.js';
-import { isReady, notReadyMessage, type FileAction, type HeavySupport } from './utils/heavy-packages.js';
-
-/** What a file needs from utils/heavy-packages.ts to be read, written or edited */
-function heavySupportFor(filePath: string, action: FileAction): HeavySupport[] {
-    const lower = filePath.toLowerCase();
-    if (isExcelFile(lower)) return ['excel'];
-    if (lower.endsWith('.docx')) return ['docx'];
-    if (lower.endsWith('.pdf')) {
-        // Editing a PDF can insert markdown pages, which are rendered
-        return action === 'read' ? ['pdfRead'] : action === 'write' ? ['pdfWrite'] : ['pdfEdit', 'pdfWrite'];
-    }
-    return [];
-}
+import { stillLoadingError, type FileAction } from './utils/files/index.js';
 
 /**
- * If `action` on `filePath` needs support not loaded yet (by default, what its
- * file type needs), the error the call answers with at once, naming the file
+ * A tool call on an Excel, DOCX or PDF file whose package is still loading
+ * after initialize answers at once with this error (utils/files/factory.ts)
+ * instead of loading it inside the call. Not sent to telemetry, unlike other
+ * errors: it names the file. read_multiple_files answers per file;
+ * get_file_info waits for the load, or loads it itself, and so does a search.
  */
-function notReady(filePath: unknown, action: FileAction, supports?: HeavySupport[]): string | undefined {
-    if (typeof filePath !== 'string') return undefined;
-    const pending = (supports ?? heavySupportFor(filePath, action)).find((support) => !isReady(support));
-    return pending && notReadyMessage(pending, filePath, action);
-}
-
-/**
- * A tool call on an Excel, DOCX or PDF file whose support is still loading
- * in the background (utils/heavy-packages.ts) answers at once with this error
- * instead of loading it inside the call; undefined for every other call.
- * read_multiple_files answers per file (readMultipleFiles), get_file_info
- * falls back to the basic info, and a search waits for the load.
- */
-function heavySupportNotReady(name: string, args: unknown): string | undefined {
-    const params = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
-    switch (name) {
-        case 'read_file':
-            return notReady(params.path, 'read');
-        case 'write_file':
-            return notReady(params.path, 'write');
-        case 'edit_block':
-            return notReady(params.file_path, 'edit');
-        case 'write_pdf': {
-            // Markdown (a new PDF) or page edits, read exactly as the tool reads
-            // them; arguments the tool refuses get its own error
-            const parsed = WritePdfArgsSchema.safeParse(args);
-            if (!parsed.success) return undefined;
-            return typeof parsed.data.content === 'string'
-                ? notReady(parsed.data.path, 'write', ['pdfWrite'])
-                : notReady(parsed.data.path, 'edit', ['pdfEdit', 'pdfWrite']);
-        }
-        default:
-            return undefined;
-    }
+function stillLoading(filePath: unknown, action: FileAction, options?: { isPdf?: boolean; isUrl?: boolean }): ServerResult | undefined {
+    const error = typeof filePath === 'string' ? stillLoadingError(filePath, action, options) : undefined;
+    return error === undefined ? undefined : { content: [{ type: 'text', text: `Error: ${error}` }], isError: true };
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
@@ -1347,11 +1305,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // Using a more structured approach with dedicated handlers
         // (result is declared above so the finally block can read execution status)
 
-        // A call whose Excel, DOCX or PDF support is still loading answers at once
-        const notReadyError = heavySupportNotReady(name, args);
-        if (notReadyError) {
-            result = createErrorResponse(notReadyError);
-        } else switch (name) {
+        switch (name) {
             // Config tools
             case "get_config":
                 try {
@@ -1504,20 +1458,25 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Filesystem tools
             case "read_file":
-                result = await handlers.handleReadFile(args);
+                result = stillLoading(args?.path, 'read', { isUrl: args?.isUrl === true }) ?? await handlers.handleReadFile(args);
                 break;
 
             case "read_multiple_files":
-                result = await handlers.handleReadMultipleFiles(args, (filePath) => notReady(filePath, 'read'));
+                result = await handlers.handleReadMultipleFiles(args, (filePath) => stillLoadingError(filePath, 'read'));
                 break;
 
             case "write_file":
-                result = await handlers.handleWriteFile(args);
+                result = stillLoading(args?.path, 'write') ?? await handlers.handleWriteFile(args);
                 break;
 
-            case "write_pdf":
-                result = await handlers.handleWritePdf(args);
+            case "write_pdf": {
+                // Markdown (a new PDF) or page edits, read as the tool reads them;
+                // arguments the tool refuses get its own error
+                const parsed = WritePdfArgsSchema.safeParse(args);
+                const action = parsed.success && typeof parsed.data.content === 'string' ? 'write' : 'edit';
+                result = (parsed.success ? stillLoading(parsed.data.path, action, { isPdf: true }) : undefined) ?? await handlers.handleWritePdf(args);
                 break;
+            }
 
             case "create_directory":
                 result = await handlers.handleCreateDirectory(args);
@@ -1552,7 +1511,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 break;
 
             case "edit_block":
-                result = await handlers.handleEditBlock(args);
+                result = stillLoading(args?.file_path, 'edit') ?? await handlers.handleEditBlock(args);
                 break;
 
             default:

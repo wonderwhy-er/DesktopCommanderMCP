@@ -17,7 +17,6 @@ import { configManager } from '../dist/config-manager.js';
 import { startSearchAndWait } from './helpers/search.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { runNode } from './helpers/run-node.js';
-import { hookArgs } from './helpers/module-hooks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-office-completion-test');
@@ -189,20 +188,20 @@ async function testTimeoutStopsOfficeSearches() {
  * An Office search that fails as a whole (here: ExcelJS can't be loaded) must
  * not vanish: the search answers that part of it failed, with the other sources'
  * matches, and the log says which part failed and why. Runs in a child process
- * where exceljs can't be loaded (the search loads it with loadExcelJS(), in
- * utils/files/excel.js).
+ * where exceljs can't be loaded (the search loads it with require(), through
+ * exceljsPackage in utils/files/excel.js).
  */
 async function testFailedOfficeSearchIsLogged() {
   console.log('Testing that a failed Office search is logged...');
 
   const REASON = 'exceljs is unavailable in this test';
-  const hooks = `
-    export async function resolve(specifier, context, nextResolve) {
-      if (specifier === 'exceljs' && context.parentURL?.endsWith('/utils/files/excel.js')) {
-        throw new Error(${JSON.stringify(REASON)});
-      }
-      return nextResolve(specifier, context);
-    }`;
+  const preload = `
+    import Module from 'node:module';
+    const resolveFilename = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) {
+      if (request === 'exceljs') throw new Error(${JSON.stringify(REASON)});
+      return resolveFilename.call(this, request, ...rest);
+    };`;
   const dist = (file) => pathToFileURL(path.join(__dirname, '..', 'dist', file)).href;
   const script = `
     import { handleGetMoreSearchResults } from ${JSON.stringify(dist('handlers/search-handlers.js'))};
@@ -213,7 +212,7 @@ async function testFailedOfficeSearchIsLogged() {
     searchManager.dispose();
     console.log(JSON.stringify({ sessionId, isError: !!page.isError, text: page.content[0].text }));`;
   const child = await runNode([
-    ...hookArgs(`data:text/javascript,${encodeURIComponent(hooks)}`), '--input-type=module', '-e', script,
+    '--import', `data:text/javascript,${encodeURIComponent(preload)}`, '--input-type=module', '-e', script,
   ], { timeoutMs: 60000 });
   assert.strictEqual(child.status, 0, `The search process failed (${child.status}): ${child.stderr}`);
 

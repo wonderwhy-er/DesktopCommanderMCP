@@ -7,8 +7,8 @@ import { capture } from './utils/capture.js';
 import { logger } from './utils/logger.js';
 import { getRipgrepPath } from './utils/ripgrep-resolver.js';
 import { isExcelFile } from './utils/files/index.js';
-import { loadExcelJS } from './utils/files/excel.js';
-import { loadPizZip } from './utils/files/docx.js';
+import { exceljsPackage } from './utils/files/excel.js';
+import { pizzipPackage } from './utils/files/docx.js';
 
 export interface SearchResult {
   context?: boolean;  // A line around a match (contextLines), not a match
@@ -577,9 +577,10 @@ function characterClassEnd(glob: string, start: number): number {
       excelFiles = this.filterOfficeFiles(excelFiles, filePattern, rootPath);
     }
 
-    // ExcelJS, to search all sheets; while the server is still loading it in
-    // the background, this waits for it (the search runs in the background too)
-    const ExcelJS = await loadExcelJS();
+    if (excelFiles.length === 0) return;
+    // ExcelJS, to search all sheets: loaded here if the server hasn't yet
+    // (a search runs in the background, so it isn't refused while it loads)
+    const ExcelJS = exceljsPackage.load();
 
     for (const filePath of excelFiles) {
       if (sink.isStopped()) break;
@@ -775,8 +776,9 @@ function characterClassEnd(glob: string, start: number): number {
       docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
     }
 
-    // PizZip, to open the DOCX files
-    const PizZip = loadPizZip();
+    if (docxFiles.length === 0) return;
+    // PizZip, to open the DOCX files: loaded here if the server hasn't yet
+    const PizZip = pizzipPackage.load();
 
     for (const filePath of docxFiles) {
       if (sink.isStopped()) break;

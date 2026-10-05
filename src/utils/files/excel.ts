@@ -5,6 +5,8 @@
 
 import type ExcelJS from 'exceljs';
 import fs from 'fs/promises';
+import { createRequire } from 'module';
+import { LazyPackage } from '../lazy-package.js';
 import {
     FileHandler,
     ReadOptions,
@@ -14,20 +16,13 @@ import {
     ExcelSheet
 } from './base.js';
 
-/**
- * exceljs, loaded when first used, not with this module: the server loads the
- * file handlers at startup, before it answers initialize (#715). The server
- * loads it right after initialize (utils/heavy-packages.ts).
- */
-export async function loadExcelJS(): Promise<typeof ExcelJS> {
-    const { default: ExcelJSModule } = await import('exceljs');
-    return ExcelJSModule;
-}
+const require = createRequire(import.meta.url);
 
-/** A new exceljs Workbook */
+// require(), not import(): Node keeps a failed import() failed, so it couldn't load again
+export const exceljsPackage = new LazyPackage('exceljs', 'Excel support', (): typeof ExcelJS => require('exceljs'));
+
 async function newWorkbook(): Promise<ExcelJS.Workbook> {
-    const ExcelJSModule = await loadExcelJS();
-    return new ExcelJSModule.Workbook();
+    return new (exceljsPackage.load().Workbook)();
 }
 
 // File size limit: 10MB
