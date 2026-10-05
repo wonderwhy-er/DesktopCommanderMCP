@@ -55,7 +55,7 @@ export interface SearchState {
   maxResults?: number;       // Outcome 'max_results'
   totalMatches: number;
   totalResults: number;      // Matches and context lines: the rows offsets count
-  runtime: number;           // Since the search started
+  runtime: number;           // Until now, or until the session completed
 }
 
 export interface SearchSession {
@@ -83,6 +83,7 @@ export interface SearchSession {
   ripgrepTrouble?: string;  // How ripgrep ended unexpectedly, or its first error that isn't about permissions
   failure?: SearchFailure;  // ripgrep couldn't search at all; or set on completion (see outcomeOf)
   outcome?: SearchOutcome;  // Set once, when the session completes
+  endTime?: number;  // When the session completed: its runtime stops there
   completed: Promise<void>;  // Settles when the session completes
   markCompleted: () => void;
 }
@@ -382,6 +383,9 @@ function characterClassEnd(glob: string, start: number): number {
     // Get all results (excluding internal markers)
     const allResults = session.results.filter(r => r.file !== '__LAST_READ_MARKER__');
     
+    // Every read keeps the session from cleanup, a read of the last results too
+    session.lastReadTime = Date.now();
+
     // Handle negative offsets (tail behavior) - like file reading
     if (offset < 0) {
       const tailCount = Math.abs(offset);
@@ -397,8 +401,6 @@ function characterClassEnd(glob: string, start: number): number {
     // Handle positive offsets (range behavior) - like file reading
     const slicedResults = allResults.slice(offset, offset + length);
     const hasMoreResults = offset + length < allResults.length || !session.isComplete;
-
-    session.lastReadTime = Date.now();
 
     return {
       ...this.stateOf(session),
@@ -420,7 +422,7 @@ function characterClassEnd(glob: string, start: number): number {
       maxResults: session.options.maxResults,
       totalMatches: session.totalMatches,
       totalResults: session.totalMatches + session.totalContextLines,
-      runtime: Date.now() - session.startTime
+      runtime: (session.endTime ?? Date.now()) - session.startTime
     };
   }
 
@@ -503,7 +505,7 @@ function characterClassEnd(glob: string, start: number): number {
       pattern: session.options.pattern,
       isComplete: session.isComplete,
       isError: session.outcome === 'failed',
-      runtime: Date.now() - session.startTime,
+      runtime: (session.endTime ?? Date.now()) - session.startTime,
       totalResults: session.totalMatches + session.totalContextLines
     }));
   }
@@ -1186,6 +1188,7 @@ function characterClassEnd(glob: string, start: number): number {
 
     session.outcome = this.outcomeOf(session);
     session.isComplete = true;
+    session.endTime = Date.now();
     clearTimeout(session.timeoutTimer);
 
     capture('search_session_completed', {
@@ -1193,7 +1196,7 @@ function characterClassEnd(glob: string, start: number): number {
       exitCode: session.exitCode,
       totalResults: session.totalMatches + session.totalContextLines,
       totalMatches: session.totalMatches,
-      runtime: Date.now() - session.startTime,
+      runtime: session.endTime - session.startTime,
       outcome: session.outcome,
       wasIncomplete: session.outcome === 'partial'  // Some files couldn't be searched
     });
