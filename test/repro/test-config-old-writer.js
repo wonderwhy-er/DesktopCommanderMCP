@@ -15,8 +15,8 @@
 //
 // Run: node test/repro/run-repro.js test-config-old-writer.js
 //      (REPRO_RUNS=5 starts by default)
-// Exit code: 1 if any start failed, started without the config it was given
-// ("Failed to initialize config": the server then runs on its defaults), or
+// Exit code: 1 if any start failed, ran without the config it was given,
+// replaced config.json as damaged (a config.json.corrupt.* copy appears), or
 // logged "Failed to reload config".
 import fs from 'fs';
 import os from 'os';
@@ -69,9 +69,11 @@ async function runRepro() {
     }
   })();
 
+  const corruptCopies = () => fs.readdirSync(path.dirname(configPath)).filter((name) => name.startsWith('config.json.corrupt.'));
   let failedStarts = 0;
   let reloadErrors = 0;
   for (let run = 1; run <= RUNS; run++) {
+    const copiesBefore = corruptCopies().length;
     let log = '';
     const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER], env: { ...process.env }, stderr: 'pipe' });
     transport.stderr?.on('data', (chunk) => { log += chunk; });
@@ -82,14 +84,16 @@ async function runRepro() {
     try {
       await client.connect(transport, { timeout: 30_000 });
       await sleep(STAY_UP_MS);
+      const { config: inEffect } = (await client.callTool({ name: 'get_config', arguments: {} })).structuredContent;
+      if (inEffect.writtenBy !== 'older-version') error = `runs without the config it was given (writtenBy: ${inEffect.writtenBy})`;
     } catch (e) {
       error = e?.message ?? String(e);
     } finally {
       await closeClient(client);
     }
-    // A start whose first read of config.json failed goes on with the defaults and
-    // answers normally, so it fails without an error the client sees
-    if (!error && /Failed to initialize config/.test(log)) error = 'started without its config ("Failed to initialize config")';
+    // The old version's half-written file isn't damaged: it must not be replaced
+    const copies = corruptCopies();
+    if (!error && copies.length > copiesBefore) error = `replaced config.json as damaged (${copies.at(-1)})`;
     if (error) failedStarts++;
     const reloads = (log.match(/Failed to reload config/g) ?? []).length;
     reloadErrors += reloads;
