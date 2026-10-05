@@ -22,7 +22,18 @@ const { CONFIG_FILE } = await import(pathToFileURL(path.join(ROOT, 'dist', 'conf
 
 function holdConfigLock() {
   fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-  const release = lockfile.lockSync(CONFIG_FILE, { realpath: false, stale: 30_000, update: 10_000 });
+  let release;
+  try {
+    release = lockfile.lockSync(CONFIG_FILE, { realpath: false, stale: 30_000, update: 10_000 });
+  } catch (error) {
+    if (error.code !== 'ELOCKED') throw error;
+    // The home is this test's own and its child hasn't started: the lock is
+    // held by this process's own config write (the client id a telemetry
+    // capture writes, still in flight when the machine is busy). That is the
+    // moment this preload sets up; that write releases the lock when it is done.
+    process.stderr.write(`[config-lock-at-child-spawn] holding the config lock while a Node.js child starts (this process's own config write holds it)\n`);
+    return;
+  }
   process.stderr.write(`[config-lock-at-child-spawn] holding the config lock while a Node.js child starts\n`);
   setTimeout(() => {
     try {
