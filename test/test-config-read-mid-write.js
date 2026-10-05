@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTestEnv } from './helpers/test-env.js';
@@ -18,6 +18,7 @@ const TEST_FILE = fileURLToPath(import.meta.url);
 const EMPTY_MS = 300; // longer than any empty window measured
 const TIMEOUT_MS = 5_000;
 const KEY = '__readMidWriteTest';
+const FREEZE_MS = 1_100; // longer than the one-second wait for a half-written file
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function worker() {
@@ -63,6 +64,29 @@ async function startupWorker() {
   process.send?.({ type: 'started', value: await configManager.getValue('writtenBy'), initErrors });
 }
 
+// A start that freezes (loading modules, a busy machine) while another version
+// writes config.json: its first two reads find the file empty, with a freeze
+// longer than the wait between them; the third finds it whole
+async function freezeWorker() {
+  const initErrors = [];
+  const logError = console.error;
+  console.error = (...args) => {
+    if (String(args[0]).includes('Failed to initialize config')) initErrors.push(String(args[1]?.message ?? args[1]));
+    logError(...args);
+  };
+  const { promises: fsPromises } = await import('node:fs');
+  const readFile = fsPromises.readFile;
+  let reads = 0;
+  fsPromises.readFile = async function (file, ...rest) {
+    if (!String(file).endsWith('config.json') || ++reads > 2) return readFile.call(this, file, ...rest);
+    if (reads === 1) setTimeout(() => { for (const until = Date.now() + FREEZE_MS; Date.now() < until;); }, 0);
+    return rest.length > 0 ? '' : Buffer.alloc(0);
+  };
+  const { configManager } = await import('../dist/config-manager.js');
+  await configManager.getConfig();
+  process.send?.({ type: 'started', value: await configManager.getValue('writtenBy'), initErrors });
+}
+
 function waitFor(child, type) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timeout waiting for ${type}`)), TIMEOUT_MS + 500);
@@ -87,6 +111,8 @@ if (process.env.DC_MID_WRITE_WORKER === '1') {
   await worker();
 } else if (process.env.DC_MID_WRITE_WORKER === 'startup') {
   await startupWorker();
+} else if (process.env.DC_MID_WRITE_WORKER === 'freeze') {
+  await freezeWorker();
 } else await runIfMain(import.meta.url, async () => {
   const { env, home, cleanup } = createTestEnv();
   const configPath = path.join(home, '.claude-server-commander', 'config.json');
@@ -153,7 +179,27 @@ if (process.env.DC_MID_WRITE_WORKER === '1') {
         started.cleanup();
       }
     });
-    assert.deepEqual(failures, [], `${failures.length} of 3 cases failed`);
+    // The same, with a freeze that spends the one-second wait between two reads
+    // of the empty file: the freeze is no time the file was seen half-written
+    await check('a start that freezes while another version writes config.json still reads the finished config', async () => {
+      const started = createTestEnv();
+      const configDir = path.join(started.home, '.claude-server-commander');
+      mkdirSync(configDir, { recursive: true });
+      writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ ...config, writtenBy: 'older-version-after-freeze' }, null, 2));
+      const starter = fork(TEST_FILE, [], { env: { ...started.env, HOME: started.home, USERPROFILE: started.home, DC_MID_WRITE_WORKER: 'freeze' }, stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+      try {
+        const { value, initErrors } = await waitFor(starter, 'started');
+        assert.deepEqual(initErrors, [], `"Failed to initialize config" after a freeze: ${initErrors.join('; ')}`);
+        assert.equal(value, 'older-version-after-freeze', 'the process must start with what the other version wrote, not the defaults');
+        assert.deepEqual(readdirSync(configDir).filter((name) => name.startsWith('config.json.corrupt.')), [], 'config.json must not be replaced as damaged');
+      } finally {
+        const exited = starter.exitCode !== null || starter.signalCode !== null ? Promise.resolve() : new Promise((resolve) => starter.once('exit', resolve));
+        starter.kill('SIGTERM');
+        await exited;
+        started.cleanup();
+      }
+    });
+    assert.deepEqual(failures, [], `${failures.length} of 4 cases failed`);
   } finally {
     const exited = child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise((resolve) => child.once('exit', resolve));
     child.kill('SIGTERM');
