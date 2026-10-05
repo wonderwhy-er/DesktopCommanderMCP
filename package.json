@@ -88,22 +88,22 @@
     "file-operations"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.9.0",
-    "@opendocsg/pdf2md": "^0.2.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@opendocsg/pdf2md": "^0.3.4",
     "@supabase/supabase-js": "^2.89.0",
-    "@tiptap/core": "^3.22.3",
-    "@tiptap/extension-image": "^3.22.3",
-    "@tiptap/extension-table": "^3.22.4",
-    "@tiptap/extension-table-cell": "^3.22.4",
-    "@tiptap/extension-table-header": "^3.22.4",
-    "@tiptap/extension-table-row": "^3.22.4",
-    "@tiptap/pm": "^3.22.3",
-    "@tiptap/starter-kit": "^3.22.3",
+    "@tiptap/core": "^3.31.4",
+    "@tiptap/extension-image": "^3.31.4",
+    "@tiptap/extension-table": "^3.31.4",
+    "@tiptap/extension-table-cell": "^3.31.4",
+    "@tiptap/extension-table-header": "^3.31.4",
+    "@tiptap/extension-table-row": "^3.31.4",
+    "@tiptap/pm": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4",
     "@vscode/ripgrep": "^1.15.9",
     "cross-fetch": "^4.1.0",
     "exceljs": "^4.4.0",
     "fastest-levenshtein": "^1.0.16",
-    "file-type": "^21.1.1",
+    "file-type": "^22.1.1",
     "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
     "isbinaryfile": "^5.0.4",
@@ -116,7 +116,7 @@
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
     "unpdf": "^1.4.0",
@@ -141,5 +141,13 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.3.3"
+  },
+  "overrides": {
+    "md-to-pdf": {
+      "chokidar": "^4.0.3"
+    },
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   }
 }
