@@ -97,11 +97,11 @@ async function testCallWhileLoadingAnswersAtOnce(server, file) {
   const answer = await Promise.race([call, sleep(AT_ONCE_MS).then(() => null)]);
   try {
     assert(answer,
-      `with Excel support still loading, read_file of an .xlsx gave no answer within ${AT_ONCE_MS / 1000} s: ` +
-      'it waited for exceljs to load inside the call, and a client gives a call only a few seconds');
-    assert(answer.isError === true && /Can't read held\.xlsx yet: Desktop Commander is still loading its Excel support/.test(text(answer)),
-      `with Excel support still loading, read_file of held.xlsx should answer at once that it can't read held.xlsx yet, as Excel support is still loading; it answered: ${text(answer)}`);
-    console.log(`✓ A call while Excel support is loading answers in ${Date.now() - started} ms: ${text(answer)}`);
+      `with PDF reading support still loading, read_file of a PDF gave no answer within ${AT_ONCE_MS / 1000} s: ` +
+      'it waited for unpdf to load inside the call, and a client gives a call only a few seconds');
+    assert(answer.isError === true && /Can't read held\.pdf yet: Desktop Commander is still loading its PDF reading support/.test(text(answer)),
+      `with PDF reading support still loading, read_file of held.pdf should answer at once that it can't read held.pdf yet; it answered: ${text(answer)}`);
+    console.log(`✓ A call while PDF reading support is loading answers in ${Date.now() - started} ms: ${text(answer)}`);
   } finally {
     server.release();
     await call.catch(() => {});
@@ -113,8 +113,8 @@ async function testReadMultipleFilesWhileLoading(server, file, second) {
   const answer = text(await server.client.callTool({ name: 'read_multiple_files', arguments: { paths: [file, second] } }));
   for (const name of [path.basename(file), path.basename(second)]) {
     const escaped = name.replace(/\./g, '\\.');
-    assert(new RegExp(`${escaped}: Error - Can't read ${escaped} yet: Desktop Commander is still loading its Excel support`).test(answer),
-      `with Excel support still loading, read_multiple_files should say for ${name} that it can't read ${name} yet; it answered: ${answer}`);
+    assert(new RegExp(`${escaped}: Error - Can't read ${escaped} yet: Desktop Commander is still loading its PDF reading support`).test(answer),
+      `with PDF reading support still loading, read_multiple_files should say for ${name} that it can't read ${name} yet; it answered: ${answer}`);
   }
   console.log('✓ read_multiple_files says for each file, by name, that it can\'t be read yet');
 }
@@ -133,9 +133,9 @@ async function testWritePdfMarkdownStartingWithLink(server, dir) {
 
 /** The same call works once the package is loaded */
 async function testSameCallWorksOnceLoaded(server, file) {
-  assert(/ZebraQuartz held/.test(await callTool(server.client, 'read_file', { path: file })),
-    'once Excel support has loaded, read_file of the .xlsx should show its cells');
-  console.log('✓ The same call works once Excel support has loaded');
+  assert((await callTool(server.client, 'read_file', { path: file })).trim().length > 0,
+    'once PDF reading support has loaded, read_file of the PDF should return its text');
+  console.log('✓ The same call works once PDF reading support has loaded');
 }
 
 /** A failed load isn't kept: the call says so, with the reason, and a later call loads it again */
@@ -147,8 +147,21 @@ async function testFailedLoadIsNotKept(server, file) {
   assert(answer.isError === true && /Can't read held\.xlsx: Desktop Commander couldn't load its Excel support \(.*exceljs failed to load \(test\)/.test(text(answer)),
     `when exceljs failed to load, read_file of held.xlsx should say it can't read held.xlsx as Excel support couldn't be loaded, and why; it answered: ${text(answer)}`);
   assert(/ZebraQuartz held/.test(await callTool(server.client, 'read_file', { path: file })),
-    'after a failed load, a later read_file of the .xlsx should load Excel support again and show its cells');
+    'after a failed load, a later read_file of the .xlsx should load Excel support again and show its cells ' +
+    '(Node keeps a failed import() failed, so it has to be loaded with require())');
   console.log(`✓ A failed load isn't kept: "${text(answer)}", and a later call loads it`);
+}
+
+/** A package Node can't load again (an import() that failed) says to restart, not to try again */
+async function testFailedImportSaysRestart(server, file) {
+  const deadline = Date.now() + LOAD_DEADLINE_MS;
+  while (!server.logs().some((line) => /Loading unpdf failed/.test(line)) && Date.now() < deadline) await sleep(100);
+  const answer = await server.client.callTool({ name: 'read_file', arguments: { path: file } });
+  assert(answer.isError === true &&
+    /Can't read held\.pdf: Desktop Commander couldn't load its PDF reading support \(.*unpdf failed to load \(test\)\)\. Restart Desktop Commander/.test(text(answer)),
+    'when unpdf failed to load, read_file of held.pdf should say to restart Desktop Commander: Node keeps a failed import() failed, ' +
+    `so trying again can't work; it answered: ${text(answer)}`);
+  console.log(`✓ A failed import() says to restart: ${text(answer)}`);
 }
 
 async function runCases(failures, cases) {
@@ -181,37 +194,48 @@ export default async function runTests() {
       await server.close();
     }
 
-    // Excel support held back: exceljs doesn't load until the server is released
-    const held = path.join(dir, 'held.xlsx');
-    const heldToo = path.join(dir, 'held-too.xlsx');
-    const workbook = new ExcelJS.Workbook();
-    workbook.addWorksheet('Sheet1').addRow(['Item', 'ZebraQuartz held']);
-    await workbook.xlsx.writeFile(held);
-    fs.copyFileSync(held, heldToo);
-    const holding = await startServerRecordingModules({ holdPackage: 'exceljs' });
+    // PDF reading support held back: unpdf (loaded with import()) doesn't load
+    // until the server is released
+    const heldPdf = path.join(dir, 'held.pdf');
+    const heldPdfToo = path.join(dir, 'held-too.pdf');
+    fs.copyFileSync(SAMPLE_PDF, heldPdf);
+    fs.copyFileSync(SAMPLE_PDF, heldPdfToo);
+    const holding = await startServerRecordingModules({ holdPackage: 'unpdf' });
     try {
       await runCases(failures, [
-        [testCallWhileLoadingAnswersAtOnce, holding, held],
-        [testSameCallWorksOnceLoaded, holding, held],
+        [testCallWhileLoadingAnswersAtOnce, holding, heldPdf],
+        [testSameCallWorksOnceLoaded, holding, heldPdf],
       ]);
     } finally {
       await holding.close();
     }
     // A server of its own: after a call that succeeds, the server loads modules
     // of its own, which a held import would hold up (see startServerRecordingModules)
-    const holdingToo = await startServerRecordingModules({ holdPackage: 'exceljs' });
+    const holdingToo = await startServerRecordingModules({ holdPackage: 'unpdf' });
     try {
-      await runCases(failures, [[testReadMultipleFilesWhileLoading, holdingToo, held, heldToo]]);
+      await runCases(failures, [[testReadMultipleFilesWhileLoading, holdingToo, heldPdf, heldPdfToo]]);
     } finally {
       await holdingToo.close();
     }
 
     // Excel support failing to load once
+    const held = path.join(dir, 'held.xlsx');
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('Sheet1').addRow(['Item', 'ZebraQuartz held']);
+    await workbook.xlsx.writeFile(held);
     const failing = await startServerRecordingModules({ failPackageOnce: 'exceljs' });
     try {
       await runCases(failures, [[testFailedLoadIsNotKept, failing, held]]);
     } finally {
       await failing.close();
+    }
+
+    // PDF reading support (unpdf, loaded with import()) failing to load once
+    const failingImport = await startServerRecordingModules({ failPackageOnce: 'unpdf' });
+    try {
+      await runCases(failures, [[testFailedImportSaysRestart, failingImport, heldPdf]]);
+    } finally {
+      await failingImport.close();
     }
 
     // PDF writing failing to load once

@@ -16,7 +16,7 @@ const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modu
 const HOOKS = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/record-modules-hooks.mjs')).href;
 /** Holds one package back, or makes it fail once (startServerRecordingModules({ holdPackage, failPackageOnce })) */
 const PACKAGE_LOAD_HOOKS = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/package-load-hooks.mjs')).href;
-/** Makes a package's first require() fail (startServerRecordingModules({ failPackageOnce })) */
+/** Makes a package's first CommonJS file fail (startServerRecordingModules({ failPackageOnce })) */
 const PACKAGE_LOAD_PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/package-load-preload.mjs')).href;
 
 /** Packages only reading, writing or rendering Excel, PDF and DOCX files need */
@@ -59,11 +59,12 @@ function seedChromeCache() {
  * does, with a preload that records every module it resolves (import and
  * require). Resolves once `initialize` is answered.
  *
- * With `holdPackage` (an npm package name), the server's imports of that
- * package don't resolve until release() is called: it stays "still loading".
- * With `failPackageOnce`, the server's first import or require() of that package fails.
- * While a package is held, keep other module loads out of the test: the
- * held import can hold up the server's other imports and requires.
+ * With `holdPackage` (a package the server loads with import()), the server's
+ * imports of it don't resolve until release() is called: it stays "still
+ * loading". While it is held, keep other module loads out of the test: the
+ * held import can hold up the server's other imports.
+ * With `failPackageOnce`, the first file of that package the server runs fails, as
+ * a broken package does.
  *
  * Returns:
  * - client: the connected MCP client
