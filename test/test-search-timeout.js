@@ -3,7 +3,7 @@
  * report.json") stops after a short default time limit; a CONTENT search for
  * the same text (references to report.json) must not, or it silently returns
  * partial results. And a search stopped by its time limit must say so
- * (timedOut) instead of looking like a complete search.
+ * (its outcome: timed_out) instead of looking like a complete search.
  */
 
 import assert from 'assert';
@@ -121,7 +121,7 @@ async function testContentSearchHasNoFilenameDefault() {
     // Stopped by the caller, not by a time limit
     await handleStopSearch({ sessionId });
     const stopped = await waitUntilComplete(sessionId, 'A stopped search');
-    assert.strictEqual(stopped.timedOut, false, 'A search stopped with stop_search did not time out');
+    assert.strictEqual(stopped.outcome, 'stopped', 'A search stopped with stop_search was stopped on request, not by a time limit');
 
     console.log('✓ Content search kept running past the exact-filename default');
   } finally {
@@ -144,33 +144,33 @@ async function testFileSearchStopsAtFilenameDefault() {
     assert(elapsed >= EXACT_FILENAME_TIMEOUT_MS,
       `The file search should run until the ${EXACT_FILENAME_TIMEOUT_MS}ms default, it completed after ${elapsed}ms`);
     assert.deepStrictEqual(
-      { isComplete: state.isComplete, timedOut: state.timedOut, totalMatches: state.totalMatches },
-      { isComplete: true, timedOut: true, totalMatches: 0 },
-      `A file search stopped at the default time limit should report timedOut, got: ${JSON.stringify(state)}`);
+      { isComplete: state.isComplete, outcome: state.outcome, totalMatches: state.totalMatches },
+      { isComplete: true, outcome: 'timed_out', totalMatches: 0 },
+      `A file search stopped at the default time limit should report it timed out, got: ${JSON.stringify(state)}`);
 
-    console.log(`✓ File search stopped after ${elapsed}ms with timedOut: true`);
+    console.log(`✓ File search stopped after ${elapsed}ms, outcome timed_out`);
   } finally {
     await handleStopSearch({ sessionId });
   }
 }
 
 /**
- * A search stopped by the caller's timeout_ms reports timedOut: it is
+ * A search stopped by the caller's timeout_ms reports it timed out: it is
  * complete, but did not search everything
  */
 async function testTimeoutMsReportsTimedOut() {
-  console.log('Testing that a search stopped by timeout_ms reports timedOut...');
+  console.log('Testing that a search stopped by timeout_ms reports it timed out...');
 
   const { sessionId } = await startStalledSearch(
     { pattern: FILENAME, searchType: 'content', timeout_ms: 300 });
   try {
     const state = await waitUntilComplete(sessionId, 'A search with timeout_ms: 300');
     assert.deepStrictEqual(
-      { isComplete: state.isComplete, timedOut: state.timedOut, totalMatches: state.totalMatches, maxResultsReached: state.maxResultsReached },
-      { isComplete: true, timedOut: true, totalMatches: 0, maxResultsReached: false },
-      `A search stopped at timeout_ms should report timedOut, got: ${JSON.stringify(state)}`);
+      { isComplete: state.isComplete, outcome: state.outcome, totalMatches: state.totalMatches },
+      { isComplete: true, outcome: 'timed_out', totalMatches: 0 },
+      `A search stopped at timeout_ms should report it timed out, got: ${JSON.stringify(state)}`);
 
-    console.log('✓ Timed-out search reports timedOut: true');
+    console.log('✓ Timed-out search reports outcome timed_out');
   } finally {
     await handleStopSearch({ sessionId });
   }
@@ -178,10 +178,10 @@ async function testTimeoutMsReportsTimedOut() {
 
 /**
  * Searches that finish within their time limit find their matches and report
- * timedOut: false
+ * that they completed
  */
 async function testFinishedSearchesDidNotTimeOut() {
-  console.log('Testing that searches that finish in time report timedOut: false...');
+  console.log('Testing that searches that finish in time report they completed...');
 
   const root = await fs.realpath(TEST_DIR);
   const cases = [
@@ -194,7 +194,7 @@ async function testFinishedSearchesDidNotTimeOut() {
     const { sessionId } = await startSearch({ path: TEST_DIR, ...args });
     try {
       const state = await waitUntilComplete(sessionId, JSON.stringify(args));
-      assert.strictEqual(state.timedOut, false, `${JSON.stringify(args)} finished in time, so it did not time out`);
+      assert.strictEqual(state.outcome, 'completed', `${JSON.stringify(args)} finished in time, so it did not time out`);
       assert.deepStrictEqual(searchManager.readSearchResults(sessionId).results, results,
         `${JSON.stringify(args)} should find exactly its match`);
     } finally {
@@ -202,7 +202,7 @@ async function testFinishedSearchesDidNotTimeOut() {
     }
   }
 
-  console.log('✓ Finished searches report timedOut: false');
+  console.log('✓ Finished searches report outcome completed');
 }
 
 export default async function runTests() {

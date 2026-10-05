@@ -5,7 +5,8 @@
  * ripgrep's own report ("rg: regex parse error", "rg: <path>: …") was dropped
  * as a system message, and its exit code 2 taken for files it couldn't read.
  * - An invalid pattern: get_more_search_results answers with the error it
- *   gives for a failed search ("Search session … encountered an error: …").
+ *   gives for a failed search ("Search session … encountered an error: …"),
+ *   or start_search does, when the search failed before it answered (#768).
  * - A missing path: start_search answers with the error it gives when a search
  *   can't start ("Error starting search session: …").
  * - An invalid glob, as a file search's pattern or in a filePattern: the error
@@ -34,8 +35,9 @@ export default async function runTests() {
   /** A search ripgrep can't run for one of its globs answers with ripgrep's error for that glob */
   const answersGlobError = async (searchArgs, glob) => {
     const { started, page } = await searchUntilDone({ path: dir, ...searchArgs });
-    const text = (page ?? started).content[0].text;
-    assert(page?.isError && /^Search session \S+ encountered an error: /.test(text) && text.includes(`error parsing glob '${glob}'`),
+    const answer = page ?? started;
+    const text = answer.content[0].text;
+    assert(answer.isError && /^Search session \S+ encountered an error: /.test(text) && text.includes(`error parsing glob '${glob}'`),
       `a search with the invalid glob "${glob}" should answer with ripgrep's error for it, got:\n${text}`);
   };
 
@@ -49,10 +51,11 @@ export default async function runTests() {
       assert(!page.isError && page.content[0].text.includes('No matches found'), `a file search that finds nothing should say so, got:\n${page.content[0].text}`);
     }],
     ['an invalid regular expression, content search', async () => {
+      // ripgrep can fail before start_search answers: then start_search answers with the failure
       const { started, page } = await searchUntilDone({ path: dir, pattern: '(unclosed', searchType: 'content' });
-      assert(!started.isError, `start_search should start the search, got: ${started.content[0].text}`);
-      const text = page.content[0].text;
-      assert(page.isError && /^Search session \S+ encountered an error: /.test(text) && text.includes('regex parse error'),
+      const answer = page ?? started;
+      const text = answer.content[0].text;
+      assert(answer.isError && /^Search session \S+ encountered an error: /.test(text) && text.includes('regex parse error'),
         `a search for the invalid regex "(unclosed" should answer with ripgrep's error, got:\n${text}`);
     }],
     ['a missing path, content search', async () => {

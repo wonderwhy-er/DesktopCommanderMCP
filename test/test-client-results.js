@@ -1,8 +1,9 @@
 /**
  * What a client receives from the tools the stack's fixes touched: exactly
- * what it received before. Facts those fixes added for Desktop Commander's own
- * code and tests (structuredContent) are dropped before the reply
- * (src/utils/internal-facts.ts), so no new information reaches the client.
+ * what it received before, but for the search answers #768 made say how a
+ * search ended (here: stopped at maxResults). Facts those fixes added for
+ * Desktop Commander's own code and tests (structuredContent) are dropped before
+ * the reply (src/utils/internal-facts.ts), so no other new information reaches the client.
  * Runs the real server over stdio, as a client does.
  */
 import assert from 'assert';
@@ -116,8 +117,11 @@ async function searchToolsSendOnlyText(client, dir) {
   console.log('✓ start_search, get_more_search_results: nothing internal is sent');
 }
 
-/** A search that stops at maxResults answers as before: the results, with no note about stopping */
-async function searchStoppedAtMaxResultsAnswersAsBefore(client, dir) {
+/**
+ * A search that stops at maxResults says so: the results, and that there may be
+ * more (#768; it said "✅ Search completed.")
+ */
+async function searchStoppedAtMaxResultsSaysSo(client, dir) {
   const searchDir = path.join(dir, 'max-results');
   fs.mkdirSync(searchDir);
   for (const name of ['a.txt', 'b.txt', 'c.txt']) fs.writeFileSync(path.join(searchDir, name), 'needle\n');
@@ -132,20 +136,20 @@ async function searchStoppedAtMaxResultsAnswersAsBefore(client, dir) {
     const deadline = Date.now() + 10_000;
     for (;;) {
       page = await client.callTool({ name: 'get_more_search_results', arguments: { sessionId } });
-      if (textOf(page).includes('✅ Search completed.') || Date.now() > deadline) break;
+      if (textOf(page).includes('Status: COMPLETED') || Date.now() > deadline) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert(textOf(page).includes('✅ Search completed.'), `The search should complete, got: ${textOf(page)}`);
-    assert(!/Stopped at maxResults|Timed out before/.test(textOf(page)),
-      `get_more_search_results should add no note about stopping, got: ${textOf(page)}`);
+    assert(textOf(page).includes('Status: COMPLETED'), `The search should complete, got: ${textOf(page)}`);
+    assert(textOf(page).endsWith('\nStopped at maxResults (1): there may be more.') && !textOf(page).includes('✅ Search completed.'),
+      `get_more_search_results should say the search stopped at maxResults, got: ${textOf(page)}`);
   } finally {
     await client.callTool({ name: 'stop_search', arguments: { sessionId } });
   }
   const { tools } = await client.listTools();
   const description = tools.find((tool) => tool.name === 'get_more_search_results')?.description ?? '';
-  assert(!/maxResultsReached|timedOut/.test(description),
+  assert(!/maxResultsReached|timedOut|max_results|timed_out/.test(description),
     "get_more_search_results's description should not mention the internal stop reasons");
-  console.log('✓ get_more_search_results: a search stopped at maxResults answers as before');
+  console.log('✓ get_more_search_results: a search stopped at maxResults says so');
 }
 
 export default async function runTests() {
@@ -163,7 +167,7 @@ export default async function runTests() {
     await client.connect(transport, { timeout: 30_000 });
     for (const check of [
       writePdfIgnoringAnOption, processToolsSendOnlyText, searchToolsSendOnlyText, toolDescriptionsAsBefore,
-      searchStoppedAtMaxResultsAnswersAsBefore,
+      searchStoppedAtMaxResultsSaysSo,
     ]) {
       try {
         await check(client, dir);

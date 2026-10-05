@@ -7,7 +7,7 @@
  * without one, with anything on stderr and no match, was taken for a failed one.
  * Here ripgrep is a stand-in that reports a folder it may not read and goes on
  * searching (fixtures/ripgrep-still-searching-hooks.mjs), in a child process;
- * a 1 s time limit stops it (the session knows: its internal timedOut).
+ * a 1 s time limit stops it (the session knows: its internal outcome).
  */
 
 import assert from 'assert';
@@ -33,10 +33,10 @@ export default async function runTests() {
       path.join(FIXTURES, 'search-stopped-by-time-limit.mjs'), dir,
     ], { timeoutMs: 60_000 });
     assert.strictEqual(child.status, 0, `the search process failed (${child.status}): ${child.stderr}`);
-    const { isError, text, timedOut } = JSON.parse(child.stdout.trim().split('\n').pop());
+    const { isError, text, outcome } = JSON.parse(child.stdout.trim().split('\n').pop());
     assert(!isError && /^Search session: /.test(text) && text.includes('Status: COMPLETED'),
       `a search its time limit stopped should end as completed, not failed; the answer was:\n${text}`);
-    assert.strictEqual(timedOut, true, 'the session should know its time limit stopped it');
+    assert.strictEqual(outcome, 'timed_out', 'the session should know its time limit stopped it');
     console.log('✓ a search stopped by its time limit, after ripgrep reported a folder it may not read: completed, not an error');
   } catch (error) {
     console.log(`✗ a search stopped by its time limit ends as completed\n  ${error.message}`);

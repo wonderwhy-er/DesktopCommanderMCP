@@ -28,9 +28,9 @@ export default async function runTests() {
       const label = `timeout_ms ${timeout_ms}`;
       try {
         const { page } = await searchUntilDone({ path: dir, pattern: 'abc', searchType: 'content', contextLines: 0, timeout_ms });
-        const { totalMatches, timedOut } = page.structuredContent;
-        assert(!timedOut && totalMatches === FILES * LINES,
-          `a search with ${label} should run to its end: ${totalMatches} of ${FILES * LINES} matches, timedOut ${timedOut}`);
+        const { totalMatches, outcome } = page.structuredContent;
+        assert(outcome === 'completed' && totalMatches === FILES * LINES,
+          `a search with ${label} should run to its end: ${totalMatches} of ${FILES * LINES} matches, outcome ${outcome}`);
         console.log(`✓ ${label}: all ${totalMatches} matches, not timed out`);
       } catch (error) {
         failures.push(label);

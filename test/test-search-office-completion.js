@@ -2,7 +2,8 @@
  * Tests that a content search session reports isComplete only once every
  * source is done - ripgrep AND the Excel/DOCX searches that run alongside it -
  * and that stopping a search (stop_search, timeout, maxResults) stops them all.
- * An Office search that fails is logged, and the search answers as before.
+ * An Office search that fails is logged, and the search answers that some
+ * files couldn't be searched.
  */
 
 import assert from 'assert';
@@ -98,7 +99,7 @@ async function testOfficeResultsPresentWhenComplete() {
     assert.strictEqual(state.isComplete, true, 'Session should be complete');
     assert.strictEqual(state.totalMatches, XLSX_COUNT + 1,
       `Once complete, the session should hold every Excel match and the DOCX match, got ${state.totalMatches}`);
-    assert.strictEqual(state.maxResultsReached, false, 'No maxResults was set');
+    assert.strictEqual(state.outcome, 'completed', 'No maxResults was set: the search ran to its end');
 
     // Search results carry the validated (real) path of the search root
     const root = await fs.realpath(TEST_DIR);
@@ -136,10 +137,10 @@ async function testMaxResultsAcrossSources() {
     const state = await readSession(sessionId);
     assert.strictEqual(state.totalMatches, maxResults,
       `maxResults: ${maxResults} should stop at exactly ${maxResults} matches, got ${state.totalMatches}`);
-    assert.strictEqual(state.maxResultsReached, true, 'Session should report that it stopped at maxResults');
+    assert.strictEqual(state.outcome, 'max_results', 'Session should report that it stopped at maxResults');
     await assertStaysFinal(sessionId, 'maxResults');
 
-    console.log(`✓ ${maxResults} matches across the sources, maxResultsReached reported`);
+    console.log(`✓ ${maxResults} matches across the sources, stopped at maxResults reported`);
   } finally {
     await handleStopSearch({ sessionId });
   }
@@ -186,7 +187,7 @@ async function testTimeoutStopsOfficeSearches() {
 
 /**
  * An Office search that fails as a whole (here: ExcelJS can't be loaded) must
- * not vanish: the search still answers as before, with the other sources'
+ * not vanish: the search answers that part of it failed, with the other sources'
  * matches, and the log says which part failed and why. Runs in a child process
  * whose search-manager can't import exceljs.
  */
@@ -217,14 +218,16 @@ async function testFailedOfficeSearchIsLogged() {
 
   const lines = child.stdout.trim().split('\n');
   const { sessionId, isError, text } = JSON.parse(lines.pop());
-  assert.strictEqual(isError, false, `The search should answer as before, got: ${text}`);
-  assert(text.includes('memo.docx') && text.includes('✅ Search completed.'),
-    `The search should complete with the DOCX match, got: ${text}`);
+  assert.strictEqual(isError, false, `The search should answer with its matches, got: ${text}`);
+  // Some files couldn't be searched (#768): it said "✅ Search completed."
+  assert(text.includes('memo.docx') && !text.includes('✅ Search completed.') &&
+    text.endsWith(`\n⚠️ Completed, but some files couldn't be searched: the Excel search failed (${REASON}).`),
+    `The search should complete with the DOCX match and say its Excel part failed, got: ${text}`);
   // The rest of stdout is what the server logged: JSON-RPC notifications carrying the message in params.data
   const logged = lines.map((line) => JSON.parse(line).params?.data);
   assert.deepStrictEqual(logged, [`The excel part of search ${sessionId} failed; its matches are missing: ${REASON}`],
     'The log should say the Excel search failed, and why');
-  console.log('✓ The search answered as before, and the log says why its Excel part failed');
+  console.log('✓ The search answered that its Excel part failed, and the log says why');
 }
 
 export default async function runTests() {
