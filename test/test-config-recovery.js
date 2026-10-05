@@ -1,16 +1,16 @@
 /**
- * readableSettings() and replacementConfig() (src/config-recovery.ts), called
- * directly: what replaces a damaged config.json. readableSettings() keeps the
+ * salvageSettings() and buildRecoveredConfig() (src/config-recovery.ts), called
+ * directly: what replaces a damaged config.json. salvageSettings() keeps the
  * longest beginning of the text that is a JSON object once closed, so every
  * complete top-level setting before the damage, whatever its key, and {} when
- * nothing is readable. replacementConfig() puts it over the defaults (and,
+ * nothing is readable. buildRecoveredConfig() puts it over the defaults (and,
  * while running, over the settings last read), and keeps the welcome page off.
  *
  * test-config-damaged-reset.js checks the same through the config manager, in
  * a temporary home; these are the plain functions, in-process.
  */
 import assert from 'assert';
-import { readableSettings, replacementConfig } from '../dist/config-recovery.js';
+import { salvageSettings, buildRecoveredConfig } from '../dist/config-recovery.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const DEFAULTS = {
@@ -41,10 +41,10 @@ async function run() {
   // 1. Cut short (a write cut off): every complete setting before the cut
   await check('cut short: every complete setting before the cut, the cut one gets its default', () => {
     const text = '{\n  "allowedDirectories": ["/work", "/data"],\n  "telemetryEnabled": false,\n  "blockedCommands": ["mkfs", "su';
-    assert.deepStrictEqual(readableSettings(text), { allowedDirectories: ['/work', '/data'], telemetryEnabled: false });
-    assert.deepStrictEqual(readableSettings('{"note": "a, b", "telemetryEnabled": fal'), { note: 'a, b' },
+    assert.deepStrictEqual(salvageSettings(text), { allowedDirectories: ['/work', '/data'], telemetryEnabled: false });
+    assert.deepStrictEqual(salvageSettings('{"note": "a, b", "telemetryEnabled": fal'), { note: 'a, b' },
       'a comma inside a string is not a place to cut');
-    const config = replacementConfig(defaults(), null, text);
+    const config = buildRecoveredConfig(defaults(), null, text);
     assert.deepStrictEqual(config, {
       ...DEFAULTS, allowedDirectories: ['/work', '/data'], telemetryEnabled: false,
       welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false,
@@ -54,35 +54,35 @@ async function run() {
   // 2. A typo in the middle: what comes before it, defaults for it and everything after
   await check('typo in the middle: the settings before it, the defaults for the rest', () => {
     const text = '{"allowedDirectories": ["/work"], "fileReadLineLimit": 50O, "telemetryEnabled": false}';
-    assert.deepStrictEqual(readableSettings(text), { allowedDirectories: ['/work'] });
-    const config = replacementConfig(defaults(), null, text);
+    assert.deepStrictEqual(salvageSettings(text), { allowedDirectories: ['/work'] });
+    const config = buildRecoveredConfig(defaults(), null, text);
     assert.deepStrictEqual([config.allowedDirectories, config.fileReadLineLimit, config.telemetryEnabled], [['/work'], 1000, true]);
-    assert.deepStrictEqual(readableSettings('{"someFutureSetting": {"on": true}, "x": }'), { someFutureSetting: { on: true } },
+    assert.deepStrictEqual(salvageSettings('{"someFutureSetting": {"on": true}, "x": }'), { someFutureSetting: { on: true } },
       'any key is kept, not only known settings');
   });
 
   // 3. Nothing readable: empty, zero-filled, not an object
   await check('empty, NUL bytes or not an object: nothing readable, the defaults', () => {
     for (const text of ['', '\0\0\0\0\0\0\0\0', '   ', '[1, 2]', '"text"', 'null']) {
-      assert.deepStrictEqual(readableSettings(text), {}, `${JSON.stringify(text)} has no readable settings`);
-      assert.deepStrictEqual(replacementConfig(defaults(), null, text),
+      assert.deepStrictEqual(salvageSettings(text), {}, `${JSON.stringify(text)} has no readable settings`);
+      assert.deepStrictEqual(buildRecoveredConfig(defaults(), null, text),
         { ...DEFAULTS, welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false }, `${JSON.stringify(text)}: the defaults`);
     }
   });
 
   // 4. Saved as "UTF-8 with BOM"
   await check('a BOM before the object is skipped', () => {
-    assert.deepStrictEqual(readableSettings('\uFEFF{"allowedDirectories": ["/work"], "telemetryEnabled": tr'), { allowedDirectories: ['/work'] });
-    assert.deepStrictEqual(readableSettings('\uFEFF{"allowedDirectories": ["/work"]}garbage'), { allowedDirectories: ['/work'] });
+    assert.deepStrictEqual(salvageSettings('\uFEFF{"allowedDirectories": ["/work"], "telemetryEnabled": tr'), { allowedDirectories: ['/work'] });
+    assert.deepStrictEqual(salvageSettings('\uFEFF{"allowedDirectories": ["/work"]}garbage'), { allowedDirectories: ['/work'] });
   });
 
   // 5. Nested values: a setting is kept whole or not at all
   await check('nested object: commas inside it are not cuts; one cut inside it is dropped whole', () => {
-    assert.deepStrictEqual(readableSettings('{"limits": {"read": 1, "write": [1, 2]}, "allowedDirectories": ["/a", "/b"], "x": {"y": 1, "z"'),
+    assert.deepStrictEqual(salvageSettings('{"limits": {"read": 1, "write": [1, 2]}, "allowedDirectories": ["/a", "/b"], "x": {"y": 1, "z"'),
       { limits: { read: 1, write: [1, 2] }, allowedDirectories: ['/a', '/b'] });
-    assert.deepStrictEqual(readableSettings('{"telemetryEnabled": false, "limits": {"read": 1, "write": 2'), { telemetryEnabled: false },
+    assert.deepStrictEqual(salvageSettings('{"telemetryEnabled": false, "limits": {"read": 1, "write": 2'), { telemetryEnabled: false },
       'a nested object cut short is not kept in part');
-    assert.deepStrictEqual(readableSettings('{"path": "C:\\\\dir\\"x", "a": {"b": "}"}, "c": 1'), { path: 'C:\\dir"x', a: { b: '}' } },
+    assert.deepStrictEqual(salvageSettings('{"path": "C:\\\\dir\\"x", "a": {"b": "}"}, "c": 1'), { path: 'C:\\dir"x', a: { b: '}' } },
       'escaped quotes and braces inside strings are skipped');
   });
 
@@ -94,7 +94,7 @@ async function run() {
     };
     const lastReadBefore = structuredClone(lastRead);
     const passedDefaults = defaults();
-    const config = replacementConfig(passedDefaults, lastRead, '{"allowedDirectories": ["/new"], "fileReadLineLimit": 5');
+    const config = buildRecoveredConfig(passedDefaults, lastRead, '{"allowedDirectories": ["/new"], "fileReadLineLimit": 5');
     assert.deepStrictEqual(config, {
       ...DEFAULTS, allowedDirectories: ['/new'], telemetryEnabled: false, fileReadLineLimit: 200, clientId: 'abc',
       welcomeOnboardingEligible: false, pendingWelcomeOnboarding: false,

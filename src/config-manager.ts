@@ -8,32 +8,26 @@ import { VERSION } from './version.js';
 import { CONFIG_FILE } from './config.js';
 import { getDefaultShell } from './utils/shell.js';
 import { writeFileAtomic } from './utils/atomic-write.js';
-import {
-  keepDamagedCopy,
-  RecoveryEvents,
-  replacementConfig,
-  sendRecoveryEvent,
-  type CorruptConfigPhase,
-  type CorruptConfigRecoveryTelemetry,
-} from './config-recovery.js';
+import { backupCorruptConfig, buildRecoveredConfig, type RecoveryEvent, type RecoveryPhase } from './config-recovery.js';
 
 // Desktop Commander 0.2.48 and older write config.json in place, so while such
 // a version runs alongside, the file can be empty or partly written for a
 // moment: up to ~260ms measured on Windows (#697). A file that does not parse
 // is read again until it does, for up to this long and at least this many
 // reads (a start that freezes spends the time without reading); then it counts
-// as damaged. 30 reads 10 ms apart span longer than any empty moment measured.
+// as corrupt. 30 reads 10 ms apart span longer than any empty moment measured.
 const PARTIAL_CONFIG_WAIT_MS = 1_000;
 const PARTIAL_CONFIG_MIN_FAILED_READS = 30;
-// While background saves are held because config.json can't be written, how
-// often they are tried again
-const HELD_SAVES_CHECK_MS = 5_000;
-// How many times one config write is done over when its lock was lost, or
+// A failed background save is tried again after SAVE_RETRY_MS. If it fails again
+// (a read-only file system, a full disk), it is tried every HELD_SAVE_RETRY_MS.
+const SAVE_RETRY_MS = 250;
+const HELD_SAVE_RETRY_MS = 5_000;
+// How many times a config write runs again when its lock was lost, or
 // config.json changed, before it committed
-const MAX_CONFIG_MUTATION_ATTEMPTS = 3;
+const MAX_CONFIG_WRITE_ATTEMPTS = 3;
 
-/** A config write that didn't commit: its lock was lost, or config.json changed after it was read */
-class ConfigChangedBeforeCommitError extends Error {
+/** Thrown when the lock was lost, or config.json changed, before a config write committed */
+class ConfigChangedError extends Error {
   constructor() {
     super('config.json changed, or its lock was lost, before this write committed');
   }
@@ -80,16 +74,13 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
 /**
  * Parses config.json's text. Editors saving "UTF-8 with BOM" (Notepad,
  * PowerShell 5's Set-Content -Encoding UTF8) put U+FEFF first, which
- * JSON.parse rejects although the config is complete (#692).
+ * JSON.parse rejects although the config is complete.
  */
 function parseConfig(text: string): ServerConfig {
   return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 }
 
-/**
- * The one-time migration of a config written before the welcome page existed:
- * an existing install, so it never gets the welcome page.
- */
+/** Marks a config written before the welcome page existed as an existing install, which never gets it */
 function migrateLegacyConfig(config: ServerConfig): void {
   if (config['welcomeOnboardingEligible'] === undefined) {
     config['welcomeOnboardingEligible'] = false;
@@ -98,12 +89,16 @@ function migrateLegacyConfig(config: ServerConfig): void {
 }
 
 /**
- * A warning the user must see: as a log notification (console.warn inside the
- * MCP server), and on stderr, which `remote` shows in its terminal.
+ * Shows the user a warning, as a log notification (console.warn in the MCP
+ * server) and on stderr, which `remote` shows in its terminal.
  */
 function warnUser(message: string): void {
   console.warn(message);
   process.stderr.write(`[WARNING] Desktop Commander: ${message}\n`);
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -121,14 +116,11 @@ class ConfigManager {
   private pendingMutations: Array<(config: ServerConfig) => void> = [];
   private watcher: FSWatcher | null = null;
   private reloadTimer: NodeJS.Timeout | null = null;
-  private recoveryEvents = new RecoveryEvents((telemetry) => this.emitCorruptConfigTelemetry(telemetry));
-  // True while background saves are held because config.json can't be written (see holdSaves)
-  private savesHeld = false;
-  // The hold is already logged or told to the user, until a write succeeds
-  private holdReported = false;
-  // Background saves that failed in a row (see scheduleSave)
+  // Background saves that failed in a row, and the timer that tries them again (see scheduleSave)
   private failedSaves = 0;
-  private heldSavesCheck: NodeJS.Timeout | null = null;
+  private saveRetry: NodeJS.Timeout | null = null;
+  // Recovery events from before init() finished, sent when it does (see reportRecovery)
+  private heldRecoveryEvents: RecoveryEvent[] = [];
 
   constructor() {
     // Get user's home directory
@@ -144,89 +136,86 @@ class ConfigManager {
   async init() {
     if (this.initialized) return;
 
-    let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
-    let damaged = false;
-    let unreadable = false;
-    let read = false;
     try {
       const configDir = path.dirname(this.configPath);
       if (!existsSync(configDir)) {
         await mkdir(configDir, { recursive: true });
       }
 
-      try {
-        this.config = await this.readConfigFromDisk();
-        read = true;
-        this._isFirstRun = false;
-      } catch (error: any) {
-        if (error instanceof SyntaxError) {
-          damaged = true;
-          const recovery = await this.recoverCorruptConfig(error, 'startup');
-          this.config = recovery.config;
-          corruptConfigTelemetry = recovery.telemetry;
-          this._isFirstRun = false;
-        } else if (error?.code === 'ENOENT') {
-          let created = false;
-          await this.performConfigMutation((latest, existed) => {
-            if (!existed) {
-              Object.assign(latest, this.getDefaultConfig());
-              created = true;
-            }
-          });
-          this._isFirstRun = created;
-        } else {
-          // There, but reading it failed (e.g. no permission, #419): nothing to replace or create
-          unreadable = true;
-          throw error;
-        }
-      }
-
-      // Existing installs must not become welcome-page eligible merely because
-      // their config had to be recovered.
-      if (!this._isFirstRun && this.config['welcomeOnboardingEligible'] === undefined) {
-        await this.performConfigMutation(migrateLegacyConfig);
-      }
-
+      this.config = await this.loadStartupConfig();
       this.config['version'] = VERSION;
       this.initialized = true;
       this.startConfigWatcher();
-      if (corruptConfigTelemetry) this.recoveryEvents.record(corruptConfigTelemetry, false); // sent by the flush below
     } catch (error) {
       console.error('Failed to initialize config:', error);
-      if (damaged || unreadable) {
-        // Replacing the damaged config.json failed (its copy couldn't be made, the new
-        // file couldn't be written, the lock couldn't be taken), or it can't be read at
-        // all. It is left as it is, and this session uses what a replacement would have
-        // written: the settings still readable in it and the defaults for the rest
-        // (just the defaults, for a file that can't be read).
-        const damagedText = damaged ? await fs.readFile(this.configPath, 'utf8').catch(() => '') : '';
-        this.config = replacementConfig(this.getDefaultConfig(), null, damagedText);
-        // Saves would fail the same way (one that can't read config.json writes
-        // nothing): held, and tried again every HELD_SAVES_CHECK_MS
-        this.failedSaves = 1;
-        this.holdSaves(); // the warning below says why
-        const reason = error instanceof Error ? error.message : String(error);
-        warnUser(damaged
-          ? `config.json could not be parsed, and replacing it failed (${reason}). For this session Desktop Commander uses the settings still readable in it and the defaults for the rest; config.json is left as it is.`
-          : `config.json could not be read (${reason}). For this session Desktop Commander uses the default settings; config.json is left as it is.`);
-      } else if (read && this.config && typeof this.config === 'object') {
-        // Read, but a later step failed: the one-time migration's write (a read-only file
-        // system, a full disk, a lock that can't be taken). The settings read stay in effect,
-        // never the defaults' allowedDirectories [] (#419); changes wait until it is writable.
-        migrateLegacyConfig(this.config);
-        this.failedSaves = 1;
-        this.holdSaves(); // the warning below says why
-        this.queueMutation(migrateLegacyConfig);
-        warnUser(`config.json was read, but saving to it failed (${error instanceof Error ? error.message : String(error)}). ` +
-          `Desktop Commander uses the settings it read; changes to them can't be saved until config.json is writable.`);
-      } else {
-        this.config = this.getDefaultConfig();
-      }
+      this.config = this.getDefaultConfig();
       this.initialized = true;
       this.startConfigWatcher();
-    } finally {
-      this.recoveryEvents.flush();
     }
+    for (const event of this.heldRecoveryEvents.splice(0)) void this.emitCorruptConfigTelemetry(event);
+  }
+
+  /**
+   * Reads config.json at start. A missing one is created (a first run), a corrupt
+   * one is recovered, and one written before the welcome page existed is marked
+   * as an existing install. If it can't be read, recovered or saved, the session
+   * starts without saving it.
+   */
+  private async loadStartupConfig(): Promise<ServerConfig> {
+    let config: ServerConfig;
+    try {
+      config = await this.readConfigFromDisk();
+    } catch (error: any) {
+      if (error?.code === 'ENOENT') {
+        let created = false;
+        config = await this.performConfigMutation((latest, existed) => {
+          if (!existed) {
+            Object.assign(latest, this.getDefaultConfig());
+            created = true;
+          }
+        });
+        this._isFirstRun = created;
+      } else if (error instanceof SyntaxError) {
+        try {
+          config = await this.withConfigLock(() => this.recoverCorruptConfig('startup'));
+        } catch (recoveryError) {
+          // Left as it is, the next start recovers it
+          const text = await fs.readFile(this.configPath, 'utf8').catch(() => '');
+          return this.startWithoutSaving(buildRecoveredConfig(this.getDefaultConfig(), null, text),
+            `config.json could not be parsed, and replacing it failed (${messageOf(recoveryError)}). For this session Desktop Commander uses the settings still readable in it and the defaults for the rest; config.json is left as it is.`);
+        }
+      } else {
+        // There, but it can't be read (e.g. no permission): an existing install,
+        // so the welcome page stays off, and initialize has nothing to save for it
+        return this.startWithoutSaving(buildRecoveredConfig(this.getDefaultConfig(), null, ''),
+          `config.json could not be read (${messageOf(error)}). For this session Desktop Commander uses the default settings; config.json is left as it is.`);
+      }
+    }
+
+    if (!this._isFirstRun && config['welcomeOnboardingEligible'] === undefined) {
+      try {
+        config = await this.performConfigMutation(migrateLegacyConfig);
+      } catch (error) {
+        // The settings read stay in effect, not the defaults, which allow every folder
+        migrateLegacyConfig(config);
+        this.pendingMutations.push(migrateLegacyConfig);
+        return this.startWithoutSaving(config, `config.json was read, but saving to it failed (${messageOf(error)}). ` +
+          `Desktop Commander uses the settings it read; changes to them can't be saved until config.json is writable.`);
+      }
+    }
+    return config;
+  }
+
+  /**
+   * Starts the session on `config` and leaves config.json as it is. `warning`
+   * tells the user why; saves are tried again every HELD_SAVE_RETRY_MS.
+   */
+  private startWithoutSaving(config: ServerConfig, warning: string): ServerConfig {
+    // As after a second failed save, whose log line the warning stands for
+    this.failedSaves = 2;
+    this.retrySaves(HELD_SAVE_RETRY_MS);
+    warnUser(warning);
+    return config;
   }
 
   /**
@@ -296,8 +285,8 @@ class ConfigManager {
     };
   }
 
-  private async readConfigFromDisk(waitMs = PARTIAL_CONFIG_WAIT_MS): Promise<ServerConfig> {
-    const deadline = Date.now() + waitMs;
+  private async readConfigFromDisk(): Promise<ServerConfig> {
+    const deadline = Date.now() + PARTIAL_CONFIG_WAIT_MS;
     for (let failedReads = 1; ; failedReads++) {
       try {
         return parseConfig(await fs.readFile(this.configPath, 'utf8'));
@@ -309,79 +298,48 @@ class ConfigManager {
     }
   }
 
-  /** config.json's size, for the recovery event; null when it can't be read */
-  private async configBytes(): Promise<number | null> {
-    return (await fs.stat(this.configPath).catch(() => null))?.size ?? null;
-  }
-
-  /** Sends a recovery event (a method of its own, so tests can record the events instead) */
-  private async emitCorruptConfigTelemetry(telemetry: CorruptConfigRecoveryTelemetry): Promise<void> {
-    await sendRecoveryEvent(telemetry);
-  }
-
   /**
-   * Replaces a damaged config.json (the caller holds the config lock): keeps a copy
-   * of it and writes replacementConfig() of its text (config-recovery.ts). Used at
-   * startup, by the file watcher and by a write while running.
+   * Recovers a corrupt config.json; the caller holds the config lock. It is backed
+   * up once, then rewritten as buildRecoveredConfig(). Returns the config now on disk.
    */
-  private async recoverCorruptConfigUnderLock(
-    error: SyntaxError,
-    phase: CorruptConfigPhase
-  ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    const damaged = await fs.readFile(this.configPath).catch(() => Buffer.alloc(0));
-    const config = replacementConfig(this.getDefaultConfig(), this.initialized ? this.config : null, damaged.toString('utf8'));
-    const copyName = await keepDamagedCopy(this.configPath, damaged);
+  private async recoverCorruptConfig(phase: RecoveryPhase): Promise<ServerConfig> {
+    const bytes = await fs.readFile(this.configPath).catch((error) => {
+      if (error?.code === 'ENOENT') return Buffer.alloc(0);
+      throw error;
+    });
+    const text = bytes.toString('utf8');
+    let parseError: Error;
+    try {
+      const config = parseConfig(text);
+      // Another process recovered it while this one waited for the lock
+      this.reportRecovery({ phase, config_bytes: null, backup_created: false, recovered_by_other_process: true });
+      return config;
+    } catch (error) {
+      parseError = error as Error;
+    }
 
+    const backupName = await backupCorruptConfig(this.configPath, bytes);
+    const config = buildRecoveredConfig(this.getDefaultConfig(), this.initialized ? this.config : null, text);
     await this.writeConfigAtomically(config);
     this.config = { ...config, version: VERSION };
-
-    console.error(`config.json could not be parsed (${error.message})${copyName ? `; kept as ${copyName}` : ''}; ` +
+    console.error(`config.json could not be parsed (${parseError.message})${backupName ? `; kept as ${backupName}` : ''}; ` +
       'replaced with the settings still readable in it and the defaults for the rest.');
-    return {
-      config,
-      telemetry: { phase, config_bytes: damaged.length, backup_created: copyName !== null, recovered_by_other_process: false },
-    };
+    this.reportRecovery({ phase, config_bytes: bytes.length, backup_created: backupName !== null, recovered_by_other_process: false });
+    return config;
   }
 
-  private async recoverCorruptConfig(
-    error: SyntaxError,
-    phase: CorruptConfigPhase
-  ): Promise<{ config: ServerConfig; telemetry: CorruptConfigRecoveryTelemetry }> {
-    // The size this process saw damaged: if another process replaces the file while
-    // this one waits for the lock, it is all the event can say about it
-    const observedBytes = await this.configBytes();
-    const release = await this.acquireConfigLock();
-    try {
-      try {
-        // The partial-write wait already ran before this was called: read once under the lock
-        const latest = await this.readConfigFromDisk(0);
-        return {
-          config: latest,
-          telemetry: { phase, config_bytes: observedBytes, backup_created: false, recovered_by_other_process: true },
-        };
-      } catch (latestError: any) {
-        if (latestError instanceof SyntaxError) {
-          // Still damaged under the lock: this process replaces it
-          return await this.recoverCorruptConfigUnderLock(latestError, phase);
-        }
-        if (latestError?.code !== 'ENOENT') throw latestError;
+  /** Sends a recovery event. Telemetry reads the config, so events from before init() is done wait for it. */
+  private reportRecovery(event: RecoveryEvent): void {
+    if (this.initialized) void this.emitCorruptConfigTelemetry(event);
+    else this.heldRecoveryEvents.push(event);
+  }
 
-        const defaults = this.getDefaultConfig();
-        defaults['welcomeOnboardingEligible'] = false;
-        defaults['pendingWelcomeOnboarding'] = false;
-        await this.writeConfigAtomically(defaults);
-        this.config = { ...defaults, version: VERSION };
-        return {
-          config: defaults,
-          telemetry: { phase, config_bytes: observedBytes, backup_created: false, recovered_by_other_process: false },
-        };
-      }
-    } finally {
-      try {
-        await release();
-      } catch (releaseError) {
-        console.error('Failed to release config lock after corruption recovery:', releaseError);
-      }
+  private async emitCorruptConfigTelemetry(event: RecoveryEvent): Promise<void> {
+    try {
+      const { capture } = await import('./utils/capture.js');
+      await capture('config_parse_error_recovered', event);
+    } catch {
+      // Recovery never depends on telemetry
     }
   }
 
@@ -408,7 +366,7 @@ class ConfigManager {
       // This process couldn't refresh the lock for 30 s (frozen: machine sleep, a
       // suspended process, a blocked event loop) and another one took it over or
       // removed it. The default throws from a timer, which ends the server; here it
-      // is logged, and a write not yet committed is done again under a new lock
+      // is logged, and a write not yet committed runs again under a new lock
       // (performConfigMutation). Its release then fails (logged).
       onCompromised: (error) => {
         console.error(`The config lock was lost while held: ${error.message} (${(error as any).code})`);
@@ -417,72 +375,13 @@ class ConfigManager {
     });
   }
 
-  /**
-   * Read config.json, apply `mutate`, write it back, all under the cross-process
-   * lock. If the lock was lost, or config.json changed, before the write
-   * committed, nothing was written: the whole read, change and write runs again
-   * under a new lock, so the change lands on what the other process saved.
-   */
-  private async performConfigMutation(
-    mutate: (config: ServerConfig, existed: boolean) => void
-  ): Promise<ServerConfig> {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        return await this.performConfigMutationOnce(mutate);
-      } catch (error) {
-        if (!(error instanceof ConfigChangedBeforeCommitError) || attempt >= MAX_CONFIG_MUTATION_ATTEMPTS) throw error;
-      }
-    }
-  }
-
-  private async performConfigMutationOnce(
-    mutate: (config: ServerConfig, existed: boolean) => void
-  ): Promise<ServerConfig> {
-    let lockLost = false;
-    const release = await this.acquireConfigLock(() => { lockLost = true; });
-    let result: ServerConfig | null = null;
-    let corruptConfigTelemetry: CorruptConfigRecoveryTelemetry | null = null;
-    // Changes held from earlier writes that didn't save: older than this one, so
-    // applied first, and kept for later if this write doesn't commit either
-    let held: Array<(config: ServerConfig) => void> = [];
+  /** Runs `fn` holding the config lock; `lockLost()` tells whether the lock was lost meanwhile. */
+  private async withConfigLock<T>(fn: (lockLost: () => boolean) => Promise<T>): Promise<T> {
+    let lost = false;
+    const release = await this.acquireConfigLock(() => { lost = true; });
     try {
-      let latest: ServerConfig;
-      let existed = true;
-      try {
-        latest = await this.readConfigFromDisk();
-      } catch (error: any) {
-        if (error instanceof SyntaxError) {
-          const recovery = await this.recoverCorruptConfigUnderLock(error, 'mutation');
-          latest = recovery.config;
-          corruptConfigTelemetry = recovery.telemetry;
-        } else if (error?.code === 'ENOENT') {
-          // Missing (a first start, or removed while running): start from the
-          // defaults; `{}` would leave blockedCommands empty, blocking nothing
-          latest = this.getDefaultConfig();
-          existed = false;
-        } else {
-          throw error;
-        }
-      }
-      // What config.json holds as read (or as replaced above): if it holds anything
-      // else when the write is about to commit, another process saved meanwhile
-      const readText = await this.readConfigText();
-      held = this.pendingMutations.splice(0);
-      for (const apply of held) apply(latest);
-      mutate(latest, existed);
-      await this.writeConfigAtomically(latest, async () => {
-        if (lockLost || await this.readConfigText() !== readText) throw new ConfigChangedBeforeCommitError();
-      });
-      this.config = { ...latest, version: VERSION };
-      result = latest;
-      held = [];
-      // Written: whatever held saves before is solved
-      this.failedSaves = 0;
-      this.holdReported = false;
-      this.resumeSaves();
+      return await fn(() => lost);
     } finally {
-      // Not written: the held changes go back, ahead of any queued meanwhile
-      if (held.length > 0) this.pendingMutations.unshift(...held);
       try {
         await release();
       } catch (error) {
@@ -490,37 +389,73 @@ class ConfigManager {
         // must not make callers replay a mutation that already persisted.
         console.error('Failed to release config lock:', error);
       }
-      if (corruptConfigTelemetry) this.recoveryEvents.record(corruptConfigTelemetry, this.initialized);
     }
-    if (!result) throw new Error('Config mutation completed without a result');
-    return result;
   }
 
   /**
-   * Keep the queued changes instead of retrying them every 250 ms against a
-   * config.json that can't be written (a read-only file system, a full disk, a
-   * lock that can't be taken, a file that can't be read): every
-   * HELD_SAVES_CHECK_MS they are tried again; a save that still fails holds them
-   * again. `error` is logged once per problem (without it, the caller told the user).
+   * Read config.json, apply `mutate`, write it back, all under the cross-process
+   * lock. If the lock was lost, or config.json changed, before the write
+   * committed, nothing was written: it runs again under a new lock, so the
+   * change lands on what the other process saved.
    */
-  private holdSaves(error?: unknown): void {
-    if (this.savesHeld) return;
-    this.savesHeld = true;
-    if (error && !this.holdReported) {
-      console.error("config.json can't be written, so changes are kept and saved once it can:", error);
+  private async performConfigMutation(
+    mutate: (config: ServerConfig, existed: boolean) => void
+  ): Promise<ServerConfig> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.withConfigLock((lockLost) => this.mutateLockedConfig(mutate, lockLost));
+      } catch (error) {
+        if (!(error instanceof ConfigChangedError) || attempt >= MAX_CONFIG_WRITE_ATTEMPTS) throw error;
+      }
     }
-    this.holdReported = true;
-    this.heldSavesCheck = setInterval(() => this.resumeSaves(), HELD_SAVES_CHECK_MS);
-    this.heldSavesCheck.unref?.();
   }
 
-  /** Save the changes held meanwhile. */
-  private resumeSaves(): void {
-    if (!this.savesHeld) return;
-    this.savesHeld = false;
-    if (this.heldSavesCheck) clearInterval(this.heldSavesCheck);
-    this.heldSavesCheck = null;
-    if (this.pendingMutations.length > 0) this.scheduleSave();
+  private async mutateLockedConfig(
+    mutate: (config: ServerConfig, existed: boolean) => void,
+    lockLost: () => boolean
+  ): Promise<ServerConfig> {
+    let latest: ServerConfig;
+    let existed = true;
+    try {
+      latest = await this.readConfigFromDisk();
+    } catch (error: any) {
+      if (error instanceof SyntaxError) {
+        latest = await this.recoverCorruptConfig('mutation');
+      } else if (error?.code === 'ENOENT') {
+        // Missing (a first start, or removed while running): start from the
+        // defaults, as `{}` would leave blockedCommands empty, blocking nothing
+        latest = this.getDefaultConfig();
+        existed = false;
+        if (this.initialized) {
+          // Removed while running: still an existing install, which never gets the welcome page
+          latest['welcomeOnboardingEligible'] = false;
+          latest['pendingWelcomeOnboarding'] = false;
+        }
+      } else {
+        throw error;
+      }
+    }
+    // What config.json holds now. If it holds anything else when the write is
+    // about to commit, another process saved meanwhile.
+    const readText = await this.readConfigText();
+    // Queued changes are older than this one, so they apply first; if this
+    // write fails, they are queued again
+    const queued = this.pendingMutations.splice(0);
+    try {
+      for (const apply of queued) apply(latest);
+      mutate(latest, existed);
+      await this.writeConfigAtomically(latest, async () => {
+        if (lockLost() || await this.readConfigText() !== readText) throw new ConfigChangedError();
+      });
+    } catch (error) {
+      this.pendingMutations.unshift(...queued);
+      throw error;
+    }
+    this.config = { ...latest, version: VERSION };
+    // Saves work again, so queued changes needn't wait for a retry
+    this.failedSaves = 0;
+    if (this.saveRetry) this.retrySaves(0);
+    return latest;
   }
 
   private queueMutation(mutate: (config: ServerConfig) => void): void {
@@ -530,30 +465,40 @@ class ConfigManager {
 
   /** Non-blocking, coalesced persistence for high-frequency state updates. */
   scheduleSave(): void {
-    if (this.saveScheduled || this.savesHeld) return;
+    if (this.saveScheduled || this.saveRetry) return;
     this.saveScheduled = true;
     const write = this.writeChain.then(async () => {
       this.saveScheduled = false;
       // A write in between may have saved them already
       if (this.pendingMutations.length === 0) return;
       try {
-        // Saves the queued changes: every config write applies them first
+        // Every config write applies the queued changes first
         await this.performConfigMutation(() => {});
       } catch (error) {
-        // Persistence failed before commit: performConfigMutation kept the changes for a later retry.
-        // A failure can be brief (a lock, a file scanner): retried once after 250 ms. A second
-        // one in a row (a read-only file system, a full disk) holds the changes for the
-        // HELD_SAVES_CHECK_MS check instead of retrying every 250 ms
-        if (++this.failedSaves > 1) {
-          this.holdSaves(error);
-          return;
+        // The changes stay queued. A brief failure (a lock, a file scanner) is
+        // tried again soon, a lasting one (a read-only file system, a full disk)
+        // every few seconds, and logged once.
+        this.failedSaves++;
+        if (this.failedSaves === 1) {
+          console.error('Failed to save config (background), will retry:', error);
+          this.retrySaves(SAVE_RETRY_MS);
+        } else {
+          if (this.failedSaves === 2) console.error("config.json can't be written, so changes are kept and saved once it can:", error);
+          this.retrySaves(HELD_SAVE_RETRY_MS);
         }
-        console.error('Failed to save config (background), will retry:', error);
-        const retry = setTimeout(() => this.scheduleSave(), 250);
-        retry.unref?.();
       }
     });
     this.writeChain = write.catch(() => {});
+  }
+
+  /** Saves the queued changes in `ms`; until then scheduleSave() waits for it */
+  private retrySaves(ms: number): void {
+    if (this.saveRetry) clearTimeout(this.saveRetry);
+    this.saveRetry = setTimeout(() => {
+      this.saveRetry = null;
+      this.scheduleSave();
+    }, ms);
+    this.saveRetry.unref?.();
   }
 
   private startConfigWatcher(): void {
@@ -574,24 +519,17 @@ class ConfigManager {
 
   private async reloadConfigFromDisk(): Promise<void> {
     try {
-      const latest = await this.readConfigFromDisk();
-      for (const mutate of this.pendingMutations) mutate(latest);
-      latest['version'] = VERSION;
-      this.config = latest;
-    } catch (error: any) {
-      if (error instanceof SyntaxError) {
-        try {
-          const recovery = await this.recoverCorruptConfig(error, 'watcher');
-          const latest = recovery.config;
-          for (const mutate of this.pendingMutations) mutate(latest);
-          this.config = { ...latest, version: VERSION };
-          this.recoveryEvents.record(recovery.telemetry, this.initialized);
-        } catch (recoveryError) {
-          console.error('Failed to recover corrupt config after file change:', recoveryError);
-        }
-      } else if (error?.code !== 'ENOENT') {
-        console.error('Failed to reload config:', error);
+      let latest: ServerConfig;
+      try {
+        latest = await this.readConfigFromDisk();
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        latest = await this.withConfigLock(() => this.recoverCorruptConfig('watcher'));
       }
+      for (const mutate of this.pendingMutations) mutate(latest);
+      this.config = { ...latest, version: VERSION };
+    } catch (error: any) {
+      if (error?.code !== 'ENOENT') console.error('Failed to reload config:', error);
     }
   }
 
@@ -614,8 +552,8 @@ class ConfigManager {
   /**
    * Set a specific configuration value and wait until it is saved: the data is
    * flushed to disk before the rename; the folder flush after it is best effort.
-   * holdIfNotSaved: if the save fails, the value is in effect all the same and
-   * held, to be saved in its place among later writes (the call still rejects).
+   * With holdIfNotSaved, a value whose save fails is still in effect, and is
+   * queued to be saved with later writes (the call still rejects).
    */
   async setValue(key: string, value: any, options: { holdIfNotSaved?: boolean } = {}): Promise<void> {
     await this.init();
@@ -633,7 +571,7 @@ class ConfigManager {
     const write = this.writeChain.then(() => this.performConfigMutation((latest) => {
       latest[key] = nextValue;
     }).catch((error) => {
-      // Held here, before the next write in the chain starts: a later value of the
+      // Queued before the next write in the chain starts, so a later value of the
       // same key is applied after it and wins
       if (options.holdIfNotSaved) {
         this.config[key] = nextValue;
@@ -718,8 +656,8 @@ class ConfigManager {
    */
   async getOrCreateClientId(): Promise<string> {
     const { randomUUID } = await import('crypto');
-    if (this.savesHeld) {
-      // Can't be written now: keep one for the session, saved with the held changes
+    if (this.failedSaves > 0) {
+      // Saves fail until a write succeeds, so keep one for the session, saved with the queued changes
       const clientId = this.config.clientId || randomUUID();
       return await this.updateValueNonBlocking('clientId', (current) => current || clientId);
     }
