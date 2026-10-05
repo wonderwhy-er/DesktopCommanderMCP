@@ -12,8 +12,11 @@ import { writeFileAtomic } from './utils/atomic-write.js';
 // Desktop Commander 0.2.48 and older write config.json in place, so while such
 // a version runs alongside, the file can be empty or partly written for a
 // moment: up to ~260ms measured on Windows (#697). A file that does not parse
-// is read again until it does, for up to this long; then it counts as damaged.
+// is read again until it does, for up to this long and at least this many
+// reads (a start that freezes spends the time without reading); then it counts
+// as damaged. 30 reads 10 ms apart span longer than any empty moment measured.
 const PARTIAL_CONFIG_WAIT_MS = 1_000;
+const PARTIAL_CONFIG_MIN_FAILED_READS = 30;
 
 export interface ServerConfig {
   blockedCommands?: string[];
@@ -193,11 +196,12 @@ class ConfigManager {
 
   private async readConfigFromDisk(): Promise<ServerConfig> {
     const deadline = Date.now() + PARTIAL_CONFIG_WAIT_MS;
-    for (;;) {
+    for (let failedReads = 1; ; failedReads++) {
       try {
         return JSON.parse(await fs.readFile(this.configPath, 'utf8'));
       } catch (error: any) {
-        if (!(error instanceof SyntaxError) || Date.now() >= deadline) throw error;
+        if (!(error instanceof SyntaxError)) throw error;
+        if (Date.now() >= deadline && failedReads >= PARTIAL_CONFIG_MIN_FAILED_READS) throw error;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     }
