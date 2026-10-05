@@ -10,10 +10,52 @@ import { isExcelFile } from './utils/files/index.js';
 import PizZip from 'pizzip';
 
 export interface SearchResult {
+  context?: boolean;  // A line around a match (contextLines), not a match
   file: string;
   line?: number;
   match?: string;
   type: 'file' | 'content';
+}
+
+/**
+ * How a search ended, once it is complete (#768): it searched everything
+ * (completed); its time limit, stop_search or maxResults stopped it; some files
+ * couldn't be searched (partial: see Unsearched); or it failed (see
+ * SearchFailure). The answers are built from it (handlers/search-answers.ts).
+ */
+export type SearchOutcome = 'completed' | 'timed_out' | 'stopped' | 'max_results' | 'partial' | 'failed';
+
+/** What a search couldn't search (outcome 'partial') */
+export type UnsearchedKind =
+  | 'permissions'                  // ripgrep or the Excel/DOCX search may not read a folder or file
+  | 'ripgrep_error'                // ripgrep reported another error for a path
+  | 'ripgrep_ended'                // ripgrep ended unexpectedly
+  | 'excel_search' | 'docx_search' // the Excel/DOCX search failed as a whole
+  | 'excel_file' | 'docx_file'     // a file it couldn't read
+  | 'excel_folder' | 'docx_folder'; // a folder it couldn't list
+
+/** One kind of what a search couldn't search: how often, and the first met */
+export interface Unsearched {
+  kind: UnsearchedKind;
+  count: number;
+  example: string;
+}
+
+/** Why a search failed: ripgrep's error output, or how ripgrep ended when it said nothing */
+export type SearchFailure = { error: string } | { ripgrepEnded: string };
+
+/** A session as answers report it (see handlers/search-answers.ts) */
+export interface SearchState {
+  sessionId: string;
+  isComplete: boolean;
+  outcome?: SearchOutcome;   // Once complete
+  failure?: SearchFailure;   // Outcome 'failed'
+  unsearched: Unsearched[];  // Outcome 'partial'
+  timeLimitMs?: number;      // The time limit in effect, if any (outcome 'timed_out')
+  maxResults?: number;       // Outcome 'max_results'
+  totalMatches: number;
+  totalResults: number;      // Matches and context lines: the rows offsets count
+  runtime: number;           // Since the search started
 }
 
 export interface SearchSession {
@@ -21,7 +63,6 @@ export interface SearchSession {
   process: ChildProcess;
   results: SearchResult[];
   isComplete: boolean;
-  isError: boolean;
   error?: string;
   startTime: number;
   lastReadTime: number;
@@ -29,16 +70,19 @@ export interface SearchSession {
   buffer: string;  // For processing incomplete JSON lines
   totalMatches: number;
   totalContextLines: number;  // Track context lines separately
-  wasIncomplete?: boolean;  // NEW: Track if search was incomplete due to permissions/access issues
-  maxResultsReached?: boolean;  // options.maxResults matches collected; later matches are dropped
   trailingContext?: { file: string; lastLine: number };  // Where the last ripgrep match's trailing context ends
   pendingSources: Set<SearchSource>;  // Sources still producing results; the session completes when none is left
   timeoutTimer?: NodeJS.Timeout;  // Stops the search at its time limit
-  timedOut?: boolean;  // The time limit stopped the search before it finished; more matches may exist
   filePatternIncludes?: { root: string; matchers: Array<(relativePath: string) => boolean> };  // A file search's filePattern alternatives but "!" (see filePatternSelects)
   exitCode?: number | null;  // ripgrep's exit code, reported on completion
   printedOutput?: boolean;  // ripgrep wrote to stdout (see the 'close' handler)
   stoppedRipgrep?: boolean;  // We stopped ripgrep (stopRipgrep): its end without an exit code is no failure
+  timeLimitMs?: number;  // The time limit in effect, if any
+  stopReason?: 'timed_out' | 'stopped' | 'max_results';  // What stopped the search first, if anything did
+  unsearched: Map<UnsearchedKind, Unsearched>;  // What couldn't be searched so far
+  ripgrepTrouble?: string;  // How ripgrep ended unexpectedly, or its first error that isn't about permissions
+  failure?: SearchFailure;  // ripgrep couldn't search at all; or set on completion (see outcomeOf)
+  outcome?: SearchOutcome;  // Set once, when the session completes
   completed: Promise<void>;  // Settles when the session completes
   markCompleted: () => void;
 }
@@ -79,7 +123,22 @@ type SearchSource = 'ripgrep' | 'excel' | 'docx';
 interface SourceSink {
   onMatch(result: SearchResult): void;
   isStopped(): boolean;
+  couldNotRead(what: 'file' | 'folder', path: string, error: unknown): void;  // A file or folder it had to skip
 }
+
+/**
+ * The OS errors ripgrep reports for a path it may not read ("rg: <path>: ...
+ * (os error N)"): on Windows ERROR_ACCESS_DENIED (5); elsewhere EACCES (13) and
+ * EPERM (1: on macOS, a folder its privacy settings protect). On Windows, 1 is
+ * an error of another kind.
+ */
+const PERMISSION_OS_ERRORS = process.platform === 'win32' ? [5] : [1, 13];
+
+/** Whether an error of the Excel/DOCX search is about permissions */
+const isPermissionError = (error: unknown): boolean =>
+  ['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException)?.code ?? '');
+
+const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /**
  * One line of ripgrep's --json output: a match or a context line; the begin or
@@ -174,14 +233,7 @@ function characterClassEnd(glob: string, start: number): number {
    * Returns immediately with initial state and results
    */
 
-  async startSearch(options: SearchSessionOptions): Promise<{
-    sessionId: string;
-    isComplete: boolean;
-    isError: boolean;
-    results: SearchResult[];
-    totalResults: number;
-    runtime: number;
-  }> {
+  async startSearch(options: SearchSessionOptions): Promise<SearchState & { results: SearchResult[] }> {
     const sessionId = `search_${++this.sessionCounter}_${Date.now()}`;
     
     // Validate path first
@@ -217,7 +269,6 @@ function characterClassEnd(glob: string, start: number): number {
       process: rgProcess,
       results: [],
       isComplete: false,
-      isError: false,
       startTime: Date.now(),
       lastReadTime: Date.now(),
       options,
@@ -226,6 +277,7 @@ function characterClassEnd(glob: string, start: number): number {
       totalContextLines: 0,
       filePatternIncludes: this.filePatternIncludes(options, validPath),
       pendingSources: new Set<SearchSource>(['ripgrep']),
+      unsearched: new Map(),
       completed,
       markCompleted
     };
@@ -243,8 +295,9 @@ function characterClassEnd(glob: string, start: number): number {
     const timeoutMs = options.timeout ??
       (this.isExactFilenameSearch(options) ? EXACT_FILENAME_SEARCH_TIMEOUT_MS : undefined);
     if (timeoutMs) {
+      session.timeLimitMs = timeoutMs;
       session.timeoutTimer = setTimeout(() => {
-        session.timedOut = true;
+        session.stopReason ??= 'timed_out';
         this.stopSources(session);
       }, Math.min(timeoutMs, LONGEST_TIMER_MS));
     }
@@ -304,14 +357,7 @@ function characterClassEnd(glob: string, start: number): number {
     // Only wait for ripgrep first chunk - Excel results merge asynchronously
     await firstChunk;
 
-    return {
-      sessionId,
-      isComplete: session.isComplete,
-      isError: session.isError,
-      results: [...session.results],
-      totalResults: session.totalMatches,
-      runtime: Date.now() - session.startTime
-    };
+    return { ...this.stateOf(session), results: [...session.results] };
   }
 
   /**
@@ -322,19 +368,10 @@ function characterClassEnd(glob: string, start: number): number {
     sessionId: string, 
     offset: number = 0, 
     length: number = 100
-  ): {
+  ): SearchState & {
     results: SearchResult[];
-    returnedCount: number;        // Renamed from newResultsCount
-    totalResults: number;
-    totalMatches: number;         // Actual matches (excluding context)
-    isComplete: boolean;
-    isError: boolean;
-    error?: string;
-    hasMoreResults: boolean;      // New field
-    runtime: number;
-    wasIncomplete?: boolean;      // NEW: Indicates if search was incomplete due to permissions
-    maxResultsReached: boolean;   // Search stopped at maxResults matches; more may exist
-    timedOut: boolean;            // Search stopped at its time limit before it finished; more may exist
+    returnedCount: number;
+    hasMoreResults: boolean;      // Results past this page: found already, or still to come
   } {
     const session = this.sessions.get(sessionId);
     
@@ -350,18 +387,10 @@ function characterClassEnd(glob: string, start: number): number {
       const tailCount = Math.abs(offset);
       const tailResults = allResults.slice(-tailCount);
       return {
+        ...this.stateOf(session),
         results: tailResults,
         returnedCount: tailResults.length,
-        totalResults: session.totalMatches + session.totalContextLines,
-        totalMatches: session.totalMatches, // Actual matches only
-        isComplete: session.isComplete,
-        isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
-        error: session.error?.trim() || undefined,
-        hasMoreResults: false, // Tail always returns what's available
-        runtime: Date.now() - session.startTime,
-        wasIncomplete: session.wasIncomplete,
-        maxResultsReached: !!session.maxResultsReached,
-        timedOut: !!session.timedOut
+        hasMoreResults: false // Tail always returns what's available
       };
     }
 
@@ -372,18 +401,26 @@ function characterClassEnd(glob: string, start: number): number {
     session.lastReadTime = Date.now();
 
     return {
+      ...this.stateOf(session),
       results: slicedResults,
       returnedCount: slicedResults.length,
-      totalResults: session.totalMatches + session.totalContextLines,
-      totalMatches: session.totalMatches, // Actual matches only
+      hasMoreResults
+    };
+  }
+
+  /** What answers say about a session (see handlers/search-answers.ts) */
+  private stateOf(session: SearchSession): SearchState {
+    return {
+      sessionId: session.id,
       isComplete: session.isComplete,
-      isError: session.isError && !!session.error?.trim(), // Only error if we have actual errors
-      error: session.error?.trim() || undefined,
-      hasMoreResults,
-      runtime: Date.now() - session.startTime,
-      wasIncomplete: session.wasIncomplete,
-      maxResultsReached: !!session.maxResultsReached,
-      timedOut: !!session.timedOut
+      outcome: session.outcome,
+      failure: session.failure,
+      unsearched: [...session.unsearched.values()],
+      timeLimitMs: session.timeLimitMs,
+      maxResults: session.options.maxResults,
+      totalMatches: session.totalMatches,
+      totalResults: session.totalMatches + session.totalContextLines,
+      runtime: Date.now() - session.startTime
     };
   }
 
@@ -412,6 +449,7 @@ function characterClassEnd(glob: string, start: number): number {
       return false;
     }
 
+    if (!session.isComplete) session.stopReason ??= 'stopped';
     this.stopSources(session);
 
     // Don't delete session immediately - let user read final results
@@ -464,7 +502,7 @@ function characterClassEnd(glob: string, start: number): number {
       searchType: session.options.searchType,
       pattern: session.options.pattern,
       isComplete: session.isComplete,
-      isError: session.isError,
+      isError: session.outcome === 'failed',
       runtime: Date.now() - session.startTime,
       totalResults: session.totalMatches + session.totalContextLines
     }));
@@ -477,7 +515,7 @@ function characterClassEnd(glob: string, start: number): number {
    */
   private startOfficeSource(
     session: SearchSession,
-    source: SearchSource,
+    source: 'excel' | 'docx',
     search: (sink: SourceSink) => Promise<void>
   ): void {
     session.pendingSources.add(source);
@@ -486,15 +524,23 @@ function characterClassEnd(glob: string, start: number): number {
       onMatch: result => {
         if (session.pendingSources.has(source)) this.collectMatch(session, result);
       },
-      isStopped: () => !session.pendingSources.has(source)
+      isStopped: () => !session.pendingSources.has(source),
+      couldNotRead: (what, filePath, error) => {
+        if (!session.pendingSources.has(source)) return;
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (isPermissionError(error)) this.noteUnsearched(session, 'permissions', filePath);
+        else this.noteUnsearched(session, `${source}_${what}`, what === 'folder' ? `${filePath}: ${code ?? errorText(error)}` : filePath);
+      }
     };
 
     search(sink)
       .catch((err) => {
-        // Log Office search errors but don't fail the whole search
-        const message = err instanceof Error ? err.message : String(err);
+        // Log Office search errors but don't fail the whole search: its answer
+        // says that part couldn't be searched
+        const message = errorText(err);
         logger.error(`The ${source} part of search ${session.id} failed; its matches are missing: ${message}`);
         capture(`${source}_search_error`, { error: message });
+        if (session.pendingSources.has(source)) this.noteUnsearched(session, `${source}_search`, message);
       })
       .finally(() => this.finishSource(session, source));
   }
@@ -521,7 +567,7 @@ function characterClassEnd(glob: string, start: number): number {
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
     // Find Excel files recursively
-    let excelFiles = await this.findExcelFiles(rootPath, sink.isStopped, includeHidden);
+    let excelFiles = await this.findExcelFiles(rootPath, sink, includeHidden);
 
     // Filter by filePattern if provided
     if (filePattern) {
@@ -591,7 +637,8 @@ function characterClassEnd(glob: string, start: number): number {
           });
         }
       } catch (error) {
-        // Skip files that can't be read (permission issues, corrupted, etc.)
+        // Skip files that can't be read (permission issues, corrupted, etc.); the answer says so
+        sink.couldNotRead('file', filePath, error);
         continue;
       }
     }
@@ -608,14 +655,14 @@ function characterClassEnd(glob: string, start: number): number {
 
   /**
    * Find all Excel files in a directory recursively. Stops walking once the
-   * search is stopped.
+   * search is stopped; a folder it can't list is reported to the sink.
    */
-  private async findExcelFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
+  private async findExcelFiles(rootPath: string, sink: SourceSink, includeHidden = false): Promise<string[]> {
     const excelFiles: string[] = [];
     const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
 
     async function walk(dir: string): Promise<void> {
-      if (isStopped()) return;
+      if (sink.isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
 
@@ -630,8 +677,9 @@ function characterClassEnd(glob: string, start: number): number {
             excelFiles.push(fullPath);
           }
         }
-      } catch {
-        // Skip directories we can't read
+      } catch (error) {
+        // Skip directories we can't read; the answer says so
+        sink.couldNotRead('folder', dir, error);
       }
     }
 
@@ -717,7 +765,7 @@ function characterClassEnd(glob: string, start: number): number {
     // Regex patterns are treated as literal strings — this is intentional.
     const searchTerm = ignoreCase ? pattern.toLowerCase() : pattern;
 
-    let docxFiles = await this.findDocxFiles(rootPath, sink.isStopped, includeHidden);
+    let docxFiles = await this.findDocxFiles(rootPath, sink, includeHidden);
 
     if (filePattern) {
       docxFiles = this.filterOfficeFiles(docxFiles, filePattern, rootPath);
@@ -767,7 +815,9 @@ function characterClassEnd(glob: string, start: number): number {
             }
           }
         }
-      } catch {
+      } catch (error) {
+        // A file that can't be read: the answer says so
+        sink.couldNotRead('file', filePath, error);
         continue;
       }
     }
@@ -775,15 +825,15 @@ function characterClassEnd(glob: string, start: number): number {
 
   /**
    * Find all DOCX files in a directory recursively. Stops walking once the
-   * search is stopped.
+   * search is stopped; a folder it can't list is reported to the sink.
    */
-  private async findDocxFiles(rootPath: string, isStopped: () => boolean, includeHidden = false): Promise<string[]> {
+  private async findDocxFiles(rootPath: string, sink: SourceSink, includeHidden = false): Promise<string[]> {
     const docxFiles: string[] = [];
     const enters = (name: string) => this.officeWalkEnters(name, includeHidden);
     const isDocx = (name: string) => name.toLowerCase().endsWith('.docx');
 
     async function walk(dir: string): Promise<void> {
-      if (isStopped()) return;
+      if (sink.isStopped()) return;
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
@@ -796,7 +846,9 @@ function characterClassEnd(glob: string, start: number): number {
             docxFiles.push(fullPath);
           }
         }
-      } catch { /* skip */ }
+      } catch (error) {
+        sink.couldNotRead('folder', dir, error);
+      }
     }
 
     try {
@@ -1048,33 +1100,23 @@ function characterClassEnd(glob: string, start: number): number {
         this.processBufferedOutput(session, true);
       }
 
-      // Track if search was incomplete due to access issues
-      // Ripgrep exit code 2 means "some files couldn't be searched"
-      if (code === 2) {
-        session.wasIncomplete = true;
-      }
-
+      // Exit codes: 0 found, 1 found nothing, 2 an error. No code: a signal
+      // ended it, ours (time limit, stop_search, maxResults) or not.
       // A content search's ripgrep prints a JSON line for each file it searches
       // and a summary at the end: exiting 2 with nothing printed, it could not
       // search at all (an invalid pattern or glob), rather than meeting files it
       // couldn't read. A file search prints only the names it finds, so for it
-      // the error must say so: a glob it could not parse. Its error is the answer.
+      // the error must say so: a glob it could not parse. Its error is the answer,
+      // whatever the Excel/DOCX searches find.
       const couldNotSearch = session.options.searchType === 'content' || /^rg: error parsing glob /m.test(session.error ?? '');
       if (code === 2 && !session.printedOutput && session.error?.trim() && couldNotSearch) {
-        session.isError = true;
-      }
-
-      // Only treat as error if:
-      // 1. Unexpected exit code (not 0, 1, or 2), not from a stop of ours
-      //    (time limit, stop_search, maxResults: no exit code) AND
-      // 2. We have meaningful errors after filtering AND
-      // 3. We found no results at all
-      if (code !== 0 && code !== 1 && code !== 2 && !session.stoppedRipgrep) {
-        // Codes 0=success, 1=no matches, 2=some files couldn't be searched
-        if (session.error?.trim() && session.totalMatches === 0) {
-          session.isError = true;
-          session.error = session.error || `ripgrep exited with code ${code}`;
-        }
+        session.failure = { error: session.error.trim() };
+      } else if (code === 2) {
+        this.noteRipgrepErrors(session);
+      } else if (code !== 0 && code !== 1 && !session.stoppedRipgrep) {
+        const how = code === null ? `signal ${session.process.signalCode}` : `exit code ${code}`;
+        session.ripgrepTrouble ??= how;
+        this.noteUnsearched(session, 'ripgrep_ended', how);
       }
 
       session.exitCode = code;
@@ -1082,10 +1124,56 @@ function characterClassEnd(glob: string, start: number): number {
     });
 
     process.on('error', (error: Error) => {
-      session.isError = true;
       session.error = `Process error: ${error.message}`;
+      session.ripgrepTrouble ??= session.error;
+      this.noteUnsearched(session, 'ripgrep_ended', session.error);
       this.finishSource(session, 'ripgrep');
     });
+  }
+
+  /**
+   * ripgrep searched, and ended with exit code 2: some paths couldn't be
+   * searched, each named on stderr ("rg: <path>: <why> (os error N)"). Those it
+   * may not read are about permissions; any other error is trouble, which fails
+   * a search that found nothing (see outcomeOf).
+   */
+  private noteRipgrepErrors(session: SearchSession): void {
+    const errors = (session.error ?? '').split('\n').filter(line => line.startsWith('rg: ')).map(line => line.slice(4).trim());
+    for (const error of errors) {
+      const osError = Number(/\(os error (\d+)\)$/.exec(error)?.[1]);
+      if (PERMISSION_OS_ERRORS.includes(osError)) {
+        this.noteUnsearched(session, 'permissions', error);
+      } else {
+        session.ripgrepTrouble ??= error;
+        this.noteUnsearched(session, 'ripgrep_error', error);
+      }
+    }
+    if (errors.length === 0) {
+      session.ripgrepTrouble ??= 'exit code 2';
+      this.noteUnsearched(session, 'ripgrep_ended', 'exit code 2');
+    }
+  }
+
+  /** Something the search couldn't search: counted by kind, the first one kept as the example */
+  private noteUnsearched(session: SearchSession, kind: UnsearchedKind, example: string): void {
+    const noted = session.unsearched.get(kind);
+    if (noted) noted.count++;
+    else session.unsearched.set(kind, { kind, count: 1, example });
+  }
+
+  /**
+   * The session's one outcome, once every source is done. A failure first:
+   * ripgrep couldn't search at all, or had trouble and nothing was found. Then
+   * what stopped the search, if anything did; then what couldn't be searched.
+   */
+  private outcomeOf(session: SearchSession): SearchOutcome {
+    if (!session.failure && session.ripgrepTrouble && session.totalMatches === 0) {
+      const error = session.error?.trim();
+      session.failure = error ? { error } : { ripgrepEnded: session.ripgrepTrouble };
+    }
+    if (session.failure) return 'failed';
+    if (session.stopReason) return session.stopReason;
+    return session.unsearched.size > 0 ? 'partial' : 'completed';
   }
 
   /**
@@ -1096,11 +1184,7 @@ function characterClassEnd(glob: string, start: number): number {
     session.pendingSources.delete(source);
     if (session.pendingSources.size > 0 || session.isComplete) return;
 
-    // If we have results, don't mark as error even if there were permission issues
-    if (session.totalMatches > 0) {
-      session.isError = false;
-    }
-
+    session.outcome = this.outcomeOf(session);
     session.isComplete = true;
     clearTimeout(session.timeoutTimer);
 
@@ -1110,9 +1194,8 @@ function characterClassEnd(glob: string, start: number): number {
       totalResults: session.totalMatches + session.totalContextLines,
       totalMatches: session.totalMatches,
       runtime: Date.now() - session.startTime,
-      wasIncomplete: session.wasIncomplete || false,  // NEW: Track incomplete searches
-      maxResultsReached: session.maxResultsReached || false,  // Stopped at the cap (exitCode is then null)
-      timedOut: session.timedOut || false  // Stopped at the time limit (exitCode is then null)
+      outcome: session.outcome,
+      wasIncomplete: session.outcome === 'partial'  // Some files couldn't be searched
     });
 
     session.markCompleted();
@@ -1195,7 +1278,7 @@ function characterClassEnd(glob: string, start: number): number {
     if (line.kind !== 'match' && line.kind !== 'context') {
       // A file ended (or the next began): no trailing context is pending any more
       session.trailingContext = undefined;
-    } else if (!session.maxResultsReached) {
+    } else if (!this.atMaxResults(session)) {
       if (line.kind === 'context') {
         session.results.push(line.result);
         session.totalContextLines++;
@@ -1211,7 +1294,7 @@ function characterClassEnd(glob: string, start: number): number {
       const trailing = session.trailingContext;
       const lineNumber = line.result.line;
       if (trailing && line.result.file === trailing.file && lineNumber !== undefined && lineNumber <= trailing.lastLine) {
-        session.results.push(line.result);
+        session.results.push({ ...line.result, context: true });
         session.totalContextLines++;
         if (lineNumber === trailing.lastLine) {
           session.trailingContext = undefined;
@@ -1230,16 +1313,21 @@ function characterClassEnd(glob: string, start: number): number {
    * so maxResults caps the TOTAL number of matches a search returns.
    */
   private collectMatch(session: SearchSession, result: SearchResult): void {
-    if (session.maxResultsReached) return;
+    if (this.atMaxResults(session)) return;
 
     session.results.push(result);
     session.totalMatches++;
 
-    const { maxResults } = session.options;
-    if (maxResults && maxResults > 0 && session.totalMatches >= maxResults) {
-      session.maxResultsReached = true;
+    if (this.atMaxResults(session)) {
+      session.stopReason ??= 'max_results';
       this.stopAtMaxResults(session);
     }
+  }
+
+  /** Whether options.maxResults matches are in: later ones are dropped */
+  private atMaxResults(session: SearchSession): boolean {
+    const { maxResults } = session.options;
+    return !!maxResults && maxResults > 0 && session.totalMatches >= maxResults;
   }
 
   /**
@@ -1248,7 +1336,7 @@ function characterClassEnd(glob: string, start: number): number {
    * match's trailing context is complete.
    */
   private stopAtMaxResults(session: SearchSession): void {
-    if (!session.maxResultsReached) return;
+    if (!this.atMaxResults(session)) return;
 
     this.stopOfficeSources(session);
     if (!session.trailingContext) {
@@ -1280,6 +1368,7 @@ function characterClassEnd(glob: string, start: number): number {
           return {
             kind: 'context',
             result: {
+              context: true,
               file: parsed.data.path.text,
               line: parsed.data.line_number,
               match: parsed.data.lines.text.trim(),
