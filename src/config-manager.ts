@@ -76,7 +76,7 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
  * PowerShell 5's Set-Content -Encoding UTF8) put U+FEFF first, which
  * JSON.parse rejects although the config is complete.
  */
-function parseConfig(text: string): ServerConfig {
+export function parseConfig(text: string): ServerConfig {
   return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 }
 
