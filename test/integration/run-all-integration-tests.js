@@ -9,6 +9,7 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createTestEnv } from '../helpers/test-env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,13 +18,17 @@ function runTestFile(testFile) {
   return new Promise((resolve) => {
     console.log(`\nRunning integration test: ${testFile}`);
     const startedAt = Date.now();
+    // Every test file gets its own temporary home, so none can touch the real config
+    const testEnv = createTestEnv();
     const proc = spawn('node', [testFile], {
       cwd: __dirname,
       stdio: 'inherit',
       shell: false,
+      env: testEnv.env,
     });
 
     proc.on('close', (code) => {
+      testEnv.cleanup();
       const duration = Date.now() - startedAt;
       if (code === 0) {
         console.log(`PASS ${testFile} (${duration}ms)`);
@@ -35,6 +40,7 @@ function runTestFile(testFile) {
     });
 
     proc.on('error', (error) => {
+      testEnv.cleanup();
       const duration = Date.now() - startedAt;
       console.error(`FAIL ${testFile} (${duration}ms): ${error.message}`);
       resolve({ file: testFile, success: false, duration, error: error.message });
@@ -47,9 +53,13 @@ function formatDuration(duration) {
 }
 
 async function main() {
-  const files = (await fs.readdir(__dirname))
-    .filter((file) => file.endsWith('.js') && file !== 'run-all-integration-tests.js')
-    .sort();
+  // The files named on the command line, so one test can run isolated too; else all of them
+  const requested = process.argv.slice(2).map((file) => path.basename(file));
+  const files = requested.length > 0
+    ? requested
+    : (await fs.readdir(__dirname))
+      .filter((file) => file.endsWith('.js') && file !== 'run-all-integration-tests.js')
+      .sort();
 
   if (files.length === 0) {
     console.log('No integration tests found.');

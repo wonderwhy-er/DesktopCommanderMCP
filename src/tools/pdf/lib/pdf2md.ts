@@ -1,13 +1,18 @@
 import { createRequire } from 'module';
 
+import { LazyPackage } from '../../../utils/lazy-package.js';
 import { generatePageNumbers } from '../utils.js';
 import { extractImagesFromPdf, ImageInfo } from '../extract-images.js';
 const require = createRequire(import.meta.url);
 
-const { parse } = require('@opendocsg/pdf2md/lib/util/pdf');
-const { makeTransformations, transform } = require('@opendocsg/pdf2md/lib/util/transformations');
+/** What @opendocsg/pdf2md's parse() returns: its modules are loaded untyped, with require() */
+type ParseResult = any;
 
-type ParseResult = ReturnType<typeof parse>;
+export const pdf2mdPackage = new LazyPackage('@opendocsg/pdf2md', 'PDF reading support', () => {
+    const { parse } = require('@opendocsg/pdf2md/lib/util/pdf');
+    const { makeTransformations, transform } = require('@opendocsg/pdf2md/lib/util/transformations');
+    return { parse, makeTransformations, transform };
+});
 
 
 /**
@@ -64,25 +69,28 @@ export type PageRange = {
 /**
  * Reads a PDF and converts it to Markdown, returning structured data.
  * @param pdfBuffer The PDF buffer to convert.
- * @param pageNumbers The page numbers to extract. If empty, all pages are extracted.
+ * @param pageNumbers The page numbers to extract. If an empty array, all pages are extracted;
+ * a range that selects no pages (offset past the last page, length 0) extracts none.
  * @returns A Promise that resolves to a PdfParseResult object containing the parsed data.
  */
 export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | PageRange = []): Promise<PdfParseResult> {
+    const { parse, makeTransformations, transform } = pdf2mdPackage.load();
 
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;
 
     // Calculate which pages to process
+    const allPages = Array.isArray(pageNumbers) && pageNumbers.length === 0;
     const filterPageNumbers = Array.isArray(pageNumbers) ?
         pageNumbers :
         generatePageNumbers(pageNumbers.offset, pageNumbers.length, pages.length);
 
     // Filter and transform pages
-    const pagesToProcess = filterPageNumbers.length === 0 ?
+    const pagesToProcess = allPages ?
         pages :
         pages.filter((_: any, index: number) => filterPageNumbers.includes(index + 1));
 
-    const pageNumberMap = filterPageNumbers.length === 0 ?
+    const pageNumberMap = allPages ?
         pages.map((_: any, index: number) => index + 1) :
         filterPageNumbers.filter(pageNum => pageNum >= 1 && pageNum <= pages.length);
 

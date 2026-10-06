@@ -2,6 +2,7 @@ import assert from 'assert';
 import { readFileSync } from 'fs';
 import { configManager } from '../dist/config-manager.js';
 import { CONFIG_FILE } from '../dist/config.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 /**
  * Regression test for the parallel-load tool-call hang.
@@ -57,5 +58,5 @@ async function run() {
 }
 
 run()
-  .then(() => { console.log(`\nPASS (${passed}/3)`); process.exit(0); })
-  .catch((e) => { console.error(`\nFAIL: ${e.message}`); process.exit(1); });
+  .then(() => { console.log(`\nPASS (${passed}/3)`); exitProcess(0); })
+  .catch((e) => { console.error(`\nFAIL: ${e.message}`); exitProcess(1); });

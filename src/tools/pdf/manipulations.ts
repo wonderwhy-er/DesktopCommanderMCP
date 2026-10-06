@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import { createRequire } from 'module';
 import type { PDFDocument as PDFDocumentType, PDFPage } from 'pdf-lib';
+import { LazyPackage } from '../../utils/lazy-package.js';
 import { normalizePageIndexes } from './utils.js';
 import { parseMarkdownToPdf } from './markdown.js';
 import type { PdfInsertOperationSchema, PdfDeleteOperationSchema, PdfOperationSchema } from '../schemas.js';
@@ -8,7 +9,6 @@ import { z } from 'zod';
 
 // Use createRequire to load pdf-lib as CJS (works around Node 25 ESM resolution issues)
 const require = createRequire(import.meta.url);
-const { PDFDocument } = require('pdf-lib') as { PDFDocument: typeof PDFDocumentType };
 
 // Infer TypeScript types from Zod schemas for consistency
 type PdfInsertOperation = z.infer<typeof PdfInsertOperationSchema>;
@@ -17,10 +17,26 @@ type PdfOperations = z.infer<typeof PdfOperationSchema>;
 
 export type { PdfOperations, PdfInsertOperation, PdfDeleteOperation };
 
+export const pdfLibPackage = new LazyPackage('pdf-lib', 'PDF editing support', (): { PDFDocument: typeof PDFDocumentType } => require('pdf-lib'));
+
 async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uint8Array): Promise<PDFDocumentType> {
+    const { PDFDocument } = pdfLibPackage.load();
     const buffer = typeof filePathOrBuffer === 'string' ? await fs.readFile(filePathOrBuffer) : filePathOrBuffer;
     const pdfBytes = new Uint8Array(buffer);
     return await PDFDocument.load(pdfBytes);
+}
+
+/**
+ * The render options for an inserted page's markdown: the call's options, with
+ * the page size and margins of the original first page (pageLayout), then the
+ * call's pdf_options, then the insert's own pdfOptions, each over the one before.
+ */
+export function insertRenderOptions(
+    op: PdfInsertOperation,
+    options: Record<string, any> = {},
+    pageLayout?: Record<string, unknown>
+): Record<string, any> {
+    return { ...options, pdf_options: { ...pageLayout, ...options.pdf_options, ...op.pdfOptions } };
 }
 
 /**
@@ -30,6 +46,11 @@ async function loadPdfDocumentFromBuffer(filePathOrBuffer: string | Buffer | Uin
  */
 function deletePages(pdfDoc: PDFDocumentType, pageIndexes: number[]): PDFDocumentType {
     const pageCount = pdfDoc.getPageCount();
+
+    // A page that doesn't exist is an error, as for an insert: nothing is deleted
+    if (pageIndexes.some(idx => !Number.isInteger(idx) || idx >= pageCount || idx < -pageCount)) {
+        throw new Error('Invalid page index');
+    }
 
     // Transform negative indices to absolute and filter valid ones
     const normalizedIndexes = normalizePageIndexes(pageIndexes, pageCount).sort((a, b) => b - a);
@@ -100,7 +121,8 @@ async function insertPages(destPdfDocument: PDFDocumentType, pageIndex: number, 
  */
 export async function editPdf(
     pdfPath: string,
-    operations: PdfOperations[]
+    operations: PdfOperations[],
+    options: Record<string, any> = {}
 ): Promise<Uint8Array> {
     const pdfDoc = await loadPdfDocumentFromBuffer(pdfPath);
 
@@ -114,8 +136,7 @@ export async function editPdf(
         else if (op.type == 'insert') {
             let sourcePdfDocument: PDFDocumentType;
             if (op.markdown !== undefined) {
-                const pdfOptions = pageLayout ? { pdf_options: pageLayout } : undefined;
-                const pdfBuffer = await parseMarkdownToPdf(op.markdown, pdfOptions);
+                const pdfBuffer = await parseMarkdownToPdf(op.markdown, insertRenderOptions(op, options, pageLayout));
                 sourcePdfDocument = await loadPdfDocumentFromBuffer(pdfBuffer);
             } else if (op.sourcePdfPath) {
                 sourcePdfDocument = await loadPdfDocumentFromBuffer(op.sourcePdfPath);

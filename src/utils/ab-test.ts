@@ -31,14 +31,34 @@ interface Experiment {
   variants: WeightedVariant[];
 }
 
-// Cache for variant assignments (loaded once per session)
-const variantCache: Record<string, string> = {};
+// Cache for variant assignments (loaded once per session). This map and the
+// experiments map are keyed by experiment names from remote JSON, so they have
+// no prototype: a name like __proto__ or constructor is an entry like any other.
+const variantCache: Record<string, string> = Object.create(null);
 
 /**
- * Get experiments config from feature flags
+ * Get experiments config from feature flags.
+ * The config is remote JSON, so it is validated here once: every experiment
+ * comes back as { variants: WeightedVariant[] }, keeping only variants with a
+ * string name (an invalid or negative weight counts as 0). One malformed entry
+ * must not break the lookups for all the others.
  */
 function getExperiments(): Record<string, Experiment> {
-  return featureFlagManager.get('experiments', {});
+  const raw = featureFlagManager.get('experiments', {});
+  const experiments: Record<string, Experiment> = Object.create(null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return experiments;
+
+  for (const [name, experiment] of Object.entries<any>(raw)) {
+    const rawVariants = Array.isArray(experiment?.variants) ? experiment.variants : [];
+    const variants: WeightedVariant[] = [];
+    for (const v of rawVariants) {
+      if (typeof v?.name !== 'string' || !v.name) continue;
+      const weight = typeof v.weight === 'number' && Number.isFinite(v.weight) && v.weight > 0 ? v.weight : 0;
+      variants.push({ name: v.name, weight });
+    }
+    experiments[name] = { variants };
+  }
+  return experiments;
 }
 
 /**
@@ -48,7 +68,7 @@ function getExperiments(): Record<string, Experiment> {
 async function getVariant(experimentName: string): Promise<string | null> {
   const experiments = getExperiments();
   const experiment = experiments[experimentName];
-  if (!experiment?.variants?.length) return null;
+  if (!experiment?.variants.length) return null;
   
   // Check cache
   if (variantCache[experimentName]) {
@@ -108,11 +128,9 @@ export async function getABTestVariant(experimentName: string): Promise<string |
  */
 export async function hasFeature(featureName: string): Promise<boolean> {
   const experiments = getExperiments();
-  if (!experiments || typeof experiments !== 'object') return false;
-  
+
   for (const [expName, experiment] of Object.entries(experiments)) {
-    const variantNames = experiment?.variants?.map(v => v.name) || [];
-    if (variantNames.includes(featureName)) {
+    if (experiment.variants.some(v => v.name === featureName)) {
       const variant = await getVariant(expName);
       return variant === featureName;
     }

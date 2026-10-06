@@ -1,0 +1,32 @@
+{
+    "name": "@desktop-commander/telemetry-contract",
+    "version": "0.1.1",
+    "type": "module",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/desktop-commander/telemetry-proxy.git",
+        "directory": "packages/telemetry-contract"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com"
+    },
+    "exports": {
+        "./transport": {
+            "types": "./transport.d.ts",
+            "default": "./transport.js"
+        }
+    },
+    "files": [
+        "transport.js",
+        "transport.d.ts"
+    ],
+    "scripts": {
+        "preversion": "git diff --quiet && git diff --cached --quiet && npm test",
+        "version": "git add package.json && git commit -m \"chore: release telemetry contract v${npm_new_version}\" && git tag \"$(npm config get tag-version-prefix)${npm_new_version}\"",
+        "postversion": "git push --atomic origin HEAD \"refs/tags/$(npm config get tag-version-prefix)${npm_new_version}\"",
+        "test": "node transport.test.js"
+    },
+    "engines": {
+        "node": ">=20"
+    }
+}

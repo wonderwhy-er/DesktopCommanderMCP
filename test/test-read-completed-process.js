@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { startProcess, readProcessOutput } from '../dist/tools/improved-process-tools.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 /**
  * Proper test for read_process_output on completed processes
@@ -18,10 +19,8 @@ async function testReadCompletedProcessOutput() {
     timeout_ms: 500  // Returns before the output happens
   });
   
-  // Extract PID
-  const pidMatch = startResult.content[0].text.match(/Process started with PID (\d+)/);
-  assert(pidMatch, 'Should get PID from start_process');
-  const pid = parseInt(pidMatch[1]);
+  const pid = startResult.structuredContent?.pid;
+  assert(pid, 'Should get PID from start_process');
   
   // Wait for the actual command to complete
   await new Promise(resolve => setTimeout(resolve, 2000));
@@ -52,10 +51,8 @@ async function testImmediateCompletion() {
     timeout_ms: 2000
   });
   
-  // Extract PID
-  const pidMatch = startResult.content[0].text.match(/Process started with PID (\d+)/);
-  assert(pidMatch, 'Should get PID from start_process');
-  const pid = parseInt(pidMatch[1]);
+  const pid = startResult.structuredContent?.pid;
+  assert(pid, 'Should get PID from start_process');
   
   // Small delay to ensure process completed
   await new Promise(resolve => setTimeout(resolve, 100));
@@ -88,11 +85,4 @@ async function runTests() {
   }
 }
 
-runTests()
-  .then(success => {
-    process.exit(success ? 0 : 1);
-  })
-  .catch(error => {
-    console.error('Test error:', error);
-    process.exit(1);
-  });
+runIfMain(import.meta.url, runTests);

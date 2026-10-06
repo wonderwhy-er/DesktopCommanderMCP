@@ -1,7 +1,7 @@
 import assert from 'assert';
-import { pathToFileURL } from 'url';
 
 import { createWidgetStateStorage } from '../dist/ui/shared/widget-state.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 function createMockSessionStorage() {
   const data = new Map();
@@ -83,11 +83,4 @@ export default async function runTests() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runTests().then((success) => {
-    process.exit(success ? 0 : 1);
-  }).catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

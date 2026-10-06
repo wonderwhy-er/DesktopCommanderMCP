@@ -2,11 +2,15 @@
  * Unit tests for search functionality using new streaming search API
  */
 
+import assert from 'assert';
 import path from 'path';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+import { searchManager } from '../dist/search-manager.js';
+import { searchAndWaitForCompletion } from './helpers/search.js';
 import { configManager } from '../dist/config-manager.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,48 +30,6 @@ const colors = {
   yellow: '\x1b[33m',
   blue: '\x1b[34m'
 };
-
-/**
- * Helper function to wait for search completion and get all results
- */
-async function searchAndWaitForCompletion(searchArgs, timeout = 10000) {
-  const result = await handleStartSearch(searchArgs);
-  
-  // Extract session ID from result
-  const sessionIdMatch = result.content[0].text.match(/Started .+ session: (.+)/);
-  if (!sessionIdMatch) {
-    throw new Error('Could not extract session ID from search result');
-  }
-  const sessionId = sessionIdMatch[1];
-  
-  try {
-    // Wait for completion by polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeout) {
-      const moreResults = await handleGetMoreSearchResults({ sessionId });
-      
-      if (moreResults.content[0].text.includes('✅ Search completed')) {
-        return { initialResult: result, finalResult: moreResults, sessionId };
-      }
-      
-      if (moreResults.content[0].text.includes('❌ ERROR')) {
-        throw new Error(`Search failed: ${moreResults.content[0].text}`);
-      }
-      
-      // Wait a bit before polling again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    throw new Error('Search timed out');
-  } finally {
-    // Always stop the search session to prevent hanging
-    try {
-      await handleStopSearch({ sessionId });
-    } catch (e) {
-      // Ignore errors when stopping - session might already be completed
-    }
-  }
-}
 
 /**
  * Setup function to prepare test environment
@@ -150,32 +112,7 @@ class TestClass:
  */
 async function teardown(originalConfig) {
   console.log(`${colors.blue}Cleaning up search code tests...${colors.reset}`);
-  
-  // Clean up any remaining search sessions
-  try {
-    const { handleListSearches, handleStopSearch } = await import('../dist/handlers/search-handlers.js');
-    const sessionsResult = await handleListSearches();
-    if (sessionsResult.content && sessionsResult.content[0] && sessionsResult.content[0].text) {
-      const sessionsText = sessionsResult.content[0].text;
-      if (!sessionsText.includes('No active searches')) {
-        // Extract session IDs and stop them
-        const sessionMatches = sessionsText.match(/Session: (\S+)/g);
-        if (sessionMatches) {
-          for (const match of sessionMatches) {
-            const sessionId = match.replace('Session: ', '');
-            try {
-              await handleStopSearch({ sessionId });
-            } catch (e) {
-              // Ignore errors - session might already be stopped
-            }
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // Ignore errors in cleanup
-  }
-  
+
   // Remove test directory and all files
   await fs.rm(TEST_DIR, { force: true, recursive: true });
   
@@ -183,15 +120,6 @@ async function teardown(originalConfig) {
   await configManager.updateConfig(originalConfig);
   
   console.log(`${colors.green}✓ Teardown complete: Test files removed and config restored${colors.reset}`);
-}
-
-/**
- * Assert function for test validation
- */
-function assert(condition, message) {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
 }
 
 /**
@@ -232,8 +160,9 @@ async function testCaseSensitiveSearch() {
   });
   
   const text = finalResult.content[0].text;
-  // Should only find matches where 'Pattern' appears with capital P
+  // Only hidden.txt has 'Pattern' with a capital P; the other files say 'pattern'
   assert(text.includes('hidden.txt'), 'Should find Pattern in hidden.txt');
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 1, `Case-sensitive search should match only hidden.txt, got: ${text}`);
   
   console.log(`${colors.green}✓ Case-sensitive search test passed${colors.reset}`);
 }
@@ -287,25 +216,34 @@ async function testFilePatternFiltering() {
 async function testMaxResults() {
   console.log(`${colors.yellow}Testing maximum results limiting...${colors.reset}`);
   
-  // Test that the maxResults parameter is accepted and doesn't cause errors
+  // Count the lines containing 'function' in the fixture files written by setup()
+  let expectedMatches = 0;
+  for (const file of [TEST_FILE_1, TEST_FILE_2, TEST_FILE_3, TEST_FILE_4]) {
+    const content = await fs.readFile(file, 'utf8');
+    expectedMatches += content.split('\n').filter((line) => line.includes('function')).length;
+  }
+
+  const { finalResult: unlimited } = await searchAndWaitForCompletion({
+    path: TEST_DIR,
+    pattern: 'function',
+    searchType: 'content',
+    ignoreCase: false
+  });
+  assert.strictEqual(unlimited.structuredContent.totalMatches, expectedMatches,
+    `Without a limit all ${expectedMatches} matching lines should be found`);
+
+  const maxResults = 2;
   const { finalResult } = await searchAndWaitForCompletion({
     path: TEST_DIR,
-    pattern: 'function', // This pattern should appear multiple times
+    pattern: 'function',
     searchType: 'content',
-    maxResults: 5 // Small limit
+    ignoreCase: false,
+    maxResults
   });
-  
-  assert(finalResult.content, 'Should have content');
-  assert(finalResult.content.length > 0, 'Content should not be empty');
-  
-  const text = finalResult.content[0].text;
-  
-  // Verify we get some results
-  assert(text.length > 0, 'Should have some results');
-  
-  // Should have results but respect the limit
-  const hasResults = text.includes('function') || text.includes('No matches found');
-  assert(hasResults, 'Should have function results or no matches');
+
+  const { totalMatches } = finalResult.structuredContent;
+  assert(totalMatches > 0 && totalMatches <= maxResults,
+    `maxResults: ${maxResults} should limit the search to ${maxResults} results, got ${totalMatches}`);
   
   console.log(`${colors.green}✓ Max results limiting test passed${colors.reset}`);
 }
@@ -324,8 +262,11 @@ async function testContextLines() {
   });
   
   const text = finalResult.content[0].text;
-  // With context lines, we should see lines before and after the match
-  assert(text.length > 0, 'Should have context around matches');
+  // 'searchFunction' is on lines 2 and 10 of test1.js; context adds the lines around them
+  const { totalMatches, totalResults } = finalResult.structuredContent;
+  assert.strictEqual(totalMatches, 2, 'Should find both searchFunction lines');
+  assert(totalResults > totalMatches, `Context lines should be returned alongside matches (${totalResults} results for ${totalMatches} matches)`);
+  assert(text.includes('JavaScript test file'), `Line 1 should appear as context before the first match, got: ${text}`);
   
   console.log(`${colors.green}✓ Context lines test passed${colors.reset}`);
 }
@@ -349,8 +290,16 @@ async function testIncludeHidden() {
     });
     
     const text = finalResult.content[0].text;
-    const hasHiddenResults = text.includes('.hidden-file.txt') || text.includes('No matches found');
-    assert(hasHiddenResults, 'Should handle hidden files when includeHidden is true');
+    assert(text.includes('.hidden-file.txt'), `includeHidden: true should search dot-files, got: ${text}`);
+
+    // Control: without includeHidden the dot-file is skipped
+    const { finalResult: withoutHidden } = await searchAndWaitForCompletion({
+      path: TEST_DIR,
+      pattern: 'hidden content',
+      searchType: 'content',
+      includeHidden: false
+    });
+    assert.strictEqual(withoutHidden.structuredContent.totalMatches, 0, 'includeHidden: false should skip dot-files');
     
     console.log(`${colors.green}✓ Include hidden files test passed${colors.reset}`);
   } finally {
@@ -373,13 +322,9 @@ async function testTimeout() {
     timeout_ms: 5000 // 5 seconds should be plenty
   });
   
-  assert(finalResult.content, 'Result should have content even with timeout');
-  assert(finalResult.content.length > 0, 'Content should not be empty');
-  
-  const text = finalResult.content[0].text;
-  // Should have results or indicate completion
-  const hasValidResult = text.includes('pattern') || text.includes('No matches found') || text.includes('completed');
-  assert(hasValidResult, 'Should handle timeout gracefully');
+  // A generous timeout must not cut the search short
+  assert(finalResult.structuredContent.isComplete, 'Search should complete within the timeout');
+  assert(finalResult.structuredContent.totalMatches > 0, `Search with timeout_ms should still find matches, got: ${finalResult.content[0].text}`);
   
   console.log(`${colors.green}✓ Timeout test passed${colors.reset}`);
 }
@@ -400,7 +345,8 @@ async function testNoMatches() {
   assert(finalResult.content.length > 0, 'Content should not be empty');
   
   const text = finalResult.content[0].text;
-  assert(text.includes('No matches') || text.includes('Total results found: 0'), 'Should return no matches message');
+  assert.strictEqual(finalResult.structuredContent.totalMatches, 0, 'Should find no matches');
+  assert(text.includes('No matches found'), `Should tell the caller nothing matched, got: ${text}`);
   
   console.log(`${colors.green}✓ No matches test passed${colors.reset}`);
 }
@@ -411,24 +357,18 @@ async function testNoMatches() {
 async function testInvalidPath() {
   console.log(`${colors.yellow}Testing invalid path handling...${colors.reset}`);
   
-  try {
-    const result = await handleStartSearch({
-      path: '/nonexistent/path/that/does/not/exist',
-      pattern: 'pattern',
-      searchType: 'content'
-    });
-    
-    // Should handle gracefully
-    assert(result.content, 'Result should have content');
-    const text = result.content[0].text;
-    const isValidResponse = text.includes('Error') || text.includes('session:') || text.includes('not allowed');
-    assert(isValidResponse, 'Should handle invalid path gracefully');
-    
-    console.log(`${colors.green}✓ Invalid path test passed${colors.reset}`);
-  } catch (error) {
-    // It's also acceptable for the function to throw an error for invalid paths
-    console.log(`${colors.green}✓ Invalid path test passed (threw error as expected)${colors.reset}`);
-  }
+  // setup() limits allowedDirectories to TEST_DIR, so this path must be refused
+  const result = await handleStartSearch({
+    path: '/nonexistent/path/that/does/not/exist',
+    pattern: 'pattern',
+    searchType: 'content'
+  });
+
+  const text = result.content[0].text;
+  assert(result.isError === true, `Search outside allowedDirectories should be an error, got: ${text}`);
+  assert(text.includes('not allowed'), `Error should say the path is not allowed, got: ${text}`);
+
+  console.log(`${colors.green}✓ Invalid path test passed${colors.reset}`);
 }
 
 /**
@@ -437,31 +377,16 @@ async function testInvalidPath() {
 async function testInvalidArguments() {
   console.log(`${colors.yellow}Testing invalid arguments handling...${colors.reset}`);
   
-  // Test missing required path
-  try {
-    const result = await handleStartSearch({
-      pattern: 'test'
-      // Missing path
-    });
-    const text = result.content[0].text;
-    assert(text.includes('Invalid arguments'), 'Should validate path is required');
-  } catch (error) {
-    // Also acceptable to throw
-    assert(error.message.includes('path') || error.message.includes('required'), 'Should validate path is required');
-  }
-  
-  // Test missing required pattern
-  try {
-    const result = await handleStartSearch({
-      path: TEST_DIR
-      // Missing pattern
-    });
-    const text = result.content[0].text;
-    assert(text.includes('Invalid arguments'), 'Should validate pattern is required');
-  } catch (error) {
-    // Also acceptable to throw
-    assert(error.message.includes('pattern') || error.message.includes('required'), 'Should validate pattern is required');
-  }
+  // The handler validates its arguments and returns an error result (it never throws)
+  const missingPath = await handleStartSearch({ pattern: 'test' });
+  assert(missingPath.isError === true, 'Missing path should be rejected');
+  assert(missingPath.content[0].text.includes('Invalid arguments') && missingPath.content[0].text.includes('path'),
+    `Error should name the missing path argument, got: ${missingPath.content[0].text}`);
+
+  const missingPattern = await handleStartSearch({ path: TEST_DIR });
+  assert(missingPattern.isError === true, 'Missing pattern should be rejected');
+  assert(missingPattern.content[0].text.includes('Invalid arguments') && missingPattern.content[0].text.includes('pattern'),
+    `Error should name the missing pattern argument, got: ${missingPattern.content[0].text}`);
   
   console.log(`${colors.green}✓ Invalid arguments test passed${colors.reset}`);
 }
@@ -518,28 +443,12 @@ export async function testSearchCode() {
     console.error(error.stack);
     throw error;
   } finally {
+    // Stop any search still running (before its files are removed) and drop all sessions
+    searchManager.dispose();
+
     // Cleanup
     if (originalConfig) {
       await teardown(originalConfig);
-    }
-    
-    // Force cleanup of search manager to ensure process can exit
-    try {
-      const { searchManager, stopSearchManagerCleanup } = await import('../dist/search-manager.js');
-      
-      // Terminate all active sessions
-      const activeSessions = searchManager.listSearchSessions();
-      for (const session of activeSessions) {
-        searchManager.terminateSearch(session.id);
-      }
-      
-      // Stop the cleanup interval
-      stopSearchManagerCleanup();
-      
-      // Clear the sessions map  
-      searchManager.sessions?.clear?.();
-    } catch (e) {
-      // Ignore import errors
     }
   }
 }
@@ -548,12 +457,4 @@ export async function testSearchCode() {
 export default testSearchCode;
 
 // Run tests if this file is executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  testSearchCode().then(() => {
-    console.log('Search tests completed successfully.');
-    process.exit(0);
-  }).catch(error => {
-    console.error('Test execution failed:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, testSearchCode);

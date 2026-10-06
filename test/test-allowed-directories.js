@@ -15,6 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import os from 'os';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +31,13 @@ const ROOT_PATH = '/';
 // For Windows compatibility - use forward slash for more consistent recognition
 const isWindows = process.platform === 'win32';
 const TEST_ROOT_PATH = isWindows ? 'C:/' : '/';
+
+/** Whether a root allowlist entry reaches `target`: 'C:/' opens drive C: only, and the checkout or temp dir can be on another drive */
+async function onRootDrive(target) {
+  if (!isWindows) return true;
+  const rootDrive = path.parse(path.resolve(TEST_ROOT_PATH)).root.toLowerCase();
+  return path.parse(await fs.realpath(target)).root.toLowerCase() === rootDrive;
+}
 
 /**
  * Helper function to clean up test directories
@@ -193,35 +201,29 @@ async function testRootInAllowedDirectories() {
   
   // Root path should be accessible
   assert.strictEqual(rootAccess, true, 'Root path should be accessible when set in allowedDirectories');
-  assert.strictEqual(rootTildaAccess, true, 'Root path should be accessible when set in allowedDirectories');
+  const homeOnRootDrive = await onRootDrive(HOME_DIR);
+  assert.strictEqual(rootTildaAccess, homeOnRootDrive, `~ should ${homeOnRootDrive ? '' : 'not '}be accessible with ${TEST_ROOT_PATH} in allowedDirectories`);
   
-  // Check if we're on Windows
-  if (isWindows) {
-    console.log('DEBUG Test3 - Running on Windows, using modified expectations for root path');
-    // Since we're on Windows, we've already established that C:/ is accessible when set as
-    // an allowed directory. This is sufficient to demonstrate the root path allowance is working as expected.
-    // We'll skip the other path tests that would fail in the current implementation.
-  } else {
-    // On Unix systems, setting the root directory should allow access to all paths
-    console.log(`DEBUG Test3 - Testing HOME_DIR access: ${HOME_DIR}`);
-    const homeAccess = await isPathAccessible(HOME_DIR);
-    console.log(`DEBUG Test3 - HOME_DIR access result: ${homeAccess}`);
-    
-    console.log(`DEBUG Test3 - Testing TEST_DIR access: ${TEST_DIR}`);
-    const testDirAccess = await isPathAccessible(TEST_DIR);
-    console.log(`DEBUG Test3 - TEST_DIR access result: ${testDirAccess}`);
-    
-    console.log(`DEBUG Test3 - Testing OUTSIDE_DIR access: ${OUTSIDE_DIR}`);
-    const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
-    console.log(`DEBUG Test3 - OUTSIDE_DIR access result: ${outsideDirAccess}`);
-    
-    // All paths should be accessible on Unix
-    assert.strictEqual(homeAccess, true, 'Home directory should be accessible with root in allowedDirectories');
-    assert.strictEqual(testDirAccess, true, 'Test directory should be accessible with root in allowedDirectories');
-    assert.strictEqual(outsideDirAccess, true, 'Outside directory should be accessible with root in allowedDirectories');
-  }
-  
-  console.log('✓ Root in allowedDirectories test passed with platform-specific behavior');
+  // Setting the root directory should allow access to every path on that drive/filesystem
+  console.log(`DEBUG Test3 - Testing HOME_DIR access: ${HOME_DIR}`);
+  const homeAccess = await isPathAccessible(HOME_DIR);
+  console.log(`DEBUG Test3 - HOME_DIR access result: ${homeAccess}`);
+
+  console.log(`DEBUG Test3 - Testing TEST_DIR access: ${TEST_DIR}`);
+  const testDirAccess = await isPathAccessible(TEST_DIR);
+  console.log(`DEBUG Test3 - TEST_DIR access result: ${testDirAccess}`);
+
+  console.log(`DEBUG Test3 - Testing OUTSIDE_DIR access: ${OUTSIDE_DIR}`);
+  const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
+  console.log(`DEBUG Test3 - OUTSIDE_DIR access result: ${outsideDirAccess}`);
+
+  const testDirOnRootDrive = await onRootDrive(TEST_DIR);
+  const outsideDirOnRootDrive = await onRootDrive(OUTSIDE_DIR);
+  assert.strictEqual(homeAccess, homeOnRootDrive, `Home directory should ${homeOnRootDrive ? '' : 'not '}be accessible with ${TEST_ROOT_PATH} in allowedDirectories`);
+  assert.strictEqual(testDirAccess, testDirOnRootDrive, `Test directory should ${testDirOnRootDrive ? '' : 'not '}be accessible with ${TEST_ROOT_PATH} in allowedDirectories`);
+  assert.strictEqual(outsideDirAccess, outsideDirOnRootDrive, `Outside directory should ${outsideDirOnRootDrive ? '' : 'not '}be accessible with ${TEST_ROOT_PATH} in allowedDirectories`);
+
+  console.log('✓ Root in allowedDirectories test passed');
 }
 
 
@@ -239,8 +241,17 @@ async function testHomeAllowedDirectory() {
     console.log(`DEBUG Test4 - Config: ${JSON.stringify(config.allowedDirectories)}`);
     assert.deepStrictEqual(config.allowedDirectories, [HOME_DIR], 'allowedDirectories should contain only the home directory');
     
-    // Check if OUTSIDE_DIR is inside the home directory
-    const isOutsideDirInHome = OUTSIDE_DIR.toLowerCase().startsWith(HOME_DIR.toLowerCase());
+    // Expectations depend on where the repo and temp dir live relative to home
+    // (e.g. CI checkouts or an isolated HOME can put them outside it). Compared
+    // like validatePath does: real paths (links and Windows short names
+    // resolved), case-insensitively
+    const realHome = (await fs.realpath(HOME_DIR)).toLowerCase();
+    const isInsideHome = async (target) => {
+      const relative = path.relative(realHome, (await fs.realpath(target)).toLowerCase());
+      return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+    };
+    const isTestDirInHome = await isInsideHome(TEST_DIR);
+    const isOutsideDirInHome = await isInsideHome(OUTSIDE_DIR);
 
     // Test access to various locations
     const testDirAccess = await isPathAccessible(TEST_DIR);
@@ -250,9 +261,9 @@ async function testHomeAllowedDirectory() {
     const outsideDirAccess = await isPathAccessible(OUTSIDE_DIR);
     const rootAccess = await isPathAccessible(TEST_ROOT_PATH);
     
-    // Only test directory and its contents should be accessible
-    assert.strictEqual(testDirAccess, true, 'Test directory should be accessible');
-    assert.strictEqual(testFileAccess, true, 'Files in test directory should be accessible');
+    // Only paths inside the home directory should be accessible
+    assert.strictEqual(testDirAccess, isTestDirInHome, `Test directory should ${isTestDirInHome ? '' : 'not '}be accessible`);
+    assert.strictEqual(testFileAccess, isTestDirInHome, `Files in test directory should ${isTestDirInHome ? '' : 'not '}be accessible`);
     assert.strictEqual(homeDirAccess, true, 'Home directory should be accessible');
     assert.strictEqual(homeTildaDirAccess, true, 'HOME TILDA directory should be accessible');
     
@@ -403,9 +414,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

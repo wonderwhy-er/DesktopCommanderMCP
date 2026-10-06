@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
 const TIMEOUT_MS = 5_000;
@@ -54,6 +55,28 @@ async function worker() {
   assert.equal(JSON.parse(readFileSync(CONFIG_FILE, 'utf8')).__postCommitCounter, 1);
   configManager.acquireConfigLock = originalAcquire;
   assert.equal((await configManager.getConfig()).version, VERSION);
+
+  // Recovery telemetry must survive a later mutation write failure.
+  configManager.watcher?.close();
+  configManager.watcher = null;
+  const recoveryEvents = [];
+  configManager.emitCorruptConfigTelemetry = async (telemetry) => { recoveryEvents.push(telemetry); };
+  writeFileSync(CONFIG_FILE, '{"blockedCommands":["sudo"],"allowedDirectories":["/safe"],BROKEN}');
+  const originalWriteConfigAtomically = configManager.writeConfigAtomically.bind(configManager);
+  let recoveryWriteCount = 0;
+  configManager.writeConfigAtomically = async (...args) => {
+    recoveryWriteCount++;
+    if (recoveryWriteCount === 2) throw new Error('synthetic post-recovery mutation write failure');
+    return originalWriteConfigAtomically(...args);
+  };
+  await assert.rejects(
+    configManager.setValue('__postRecoveryFailure', 1),
+    /synthetic post-recovery mutation write failure/
+  );
+  configManager.writeConfigAtomically = originalWriteConfigAtomically;
+  assert.ok(recoveryEvents.some((event) => event.phase === 'mutation'),
+    'mutation recovery telemetry should be recorded even when the later write fails');
+
   process.send?.({ type: 'done' });
 }
 
@@ -84,4 +107,4 @@ async function parent() {
   }
 }
 
-if (process.env.DC_CONFIG_RECOVERY_WORKER === '1') await worker(); else await parent();
+if (process.env.DC_CONFIG_RECOVERY_WORKER === '1') await worker(); else await runIfMain(import.meta.url, parent);

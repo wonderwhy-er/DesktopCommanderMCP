@@ -4,6 +4,7 @@ import {
   isAllowedImageMimeType,
   normalizeImageMimeType
 } from '../dist/ui/file-preview/src/image-preview.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 async function testAllowedImageMimeTypes() {
   console.log('\n--- Test: image preview allowlist ---');
@@ -56,11 +57,4 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then((success) => {
-    process.exit(success ? 0 : 1);
-  }).catch((error) => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

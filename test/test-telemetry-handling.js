@@ -7,6 +7,7 @@ import {
 } from '../dist/config-manager.js';
 import { isInsideUiOriginCall, runInUiOriginCallContext } from '../dist/utils/capture.js';
 import { setConfigValue } from '../dist/tools/config.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 function testTelemetryHelpers() {
   console.log('\n--- Test: telemetry helper behavior ---');
@@ -188,13 +189,4 @@ export default async function runTests() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests()
-    .then((success) => {
-      process.exit(success ? 0 : 1);
-    })
-    .catch((error) => {
-      console.error('Unhandled error:', error);
-      process.exit(1);
-    });
-}
+runIfMain(import.meta.url, runTests);

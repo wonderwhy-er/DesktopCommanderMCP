@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const TEST_FILE = fileURLToPath(import.meta.url);
 const TIMEOUT_MS = 5_000;
@@ -130,5 +131,5 @@ async function runParent() {
 if (process.env.DC_ISSUE_678_WORKER === '1') {
   await runWorker();
 } else {
-  await runParent();
+  await runIfMain(import.meta.url, runParent);
 }

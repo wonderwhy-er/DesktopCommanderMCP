@@ -35,6 +35,7 @@
  */
 import assert from 'node:assert';
 import { ChannelUnreachableError, RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -182,6 +183,8 @@ class FakeClient {
             },
             insert: () => node,
             eq: () => node,
+            // The device bounds its row writes; no case here runs into that bound
+            abortSignal: () => node,
             maybeSingle: () =>
                 Promise.resolve({
                     data: client.deviceExists ? { id: DEVICE_ID, device_name: 'test-device' } : null,
@@ -397,4 +400,4 @@ await test('a missing device row is a startup failure, not a retryable channel f
 });
 
 out(`\ndevice readiness requires the channel: ${failures} failing test(s).`);
-process.exitCode = failures ? 1 : 0;
+exitProcess(failures ? 1 : 0);
