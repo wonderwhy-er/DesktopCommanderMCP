@@ -17,9 +17,10 @@ print_success() {
 if command -v node &> /dev/null; then
     NODE_VERSION=$(node -v | cut -d 'v' -f 2)
     NODE_MAJOR_VERSION=$(echo "$NODE_VERSION" | cut -d '.' -f 1)
+    NODE_MINOR_VERSION=$(echo "$NODE_VERSION" | cut -d '.' -f 2)
 
-    if [ "$NODE_MAJOR_VERSION" -lt 18 ]; then
-        print_error "Detected Node.js v$NODE_VERSION, but v18+ is required. Please upgrade Node.js."
+    if [ "$NODE_MAJOR_VERSION" -lt 22 ] || { [ "$NODE_MAJOR_VERSION" -eq 22 ] && [ "$NODE_MINOR_VERSION" -lt 12 ]; }; then
+        print_error "Detected Node.js v$NODE_VERSION, but v22.12+ is required. Please upgrade Node.js."
         exit 1
     else
         echo "Node.js v$NODE_VERSION detected. Continuing..."
