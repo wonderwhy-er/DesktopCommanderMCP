@@ -1,4 +1,13 @@
-import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
+import {
+    createClient,
+    SupabaseClient,
+    Session,
+    UserResponse,
+    User,
+    RealtimeChannel,
+    isAuthApiError,
+    isAuthRetryableFetchError,
+} from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { VERSION } from '../version.js';
 
@@ -88,6 +97,9 @@ const HEARTBEAT_STALE_TIMEOUT_MS = 75000;
 // Fixed cadence for our own token refresh, independent of auth-js's internal
 // ticker (disabled in initialize()) — see the clock-skew comment below for why.
 const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
+// A transient refresh failure must not leave the device on an aging JWT until
+// the next 45-minute tick. Keep retries bounded and single-flight.
+const TOKEN_REFRESH_RETRY_DELAYS_MS = [5000, 15000, 60 * 1000, 5 * 60 * 1000] as const;
 // Below this, skew is noise — leave Date.now untouched. Above it, correct.
 const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
 // Failed recreates before withdrawing transport_broadcast_v1 — keeping it while
@@ -235,6 +247,12 @@ export class RemoteChannel {
     private heartbeatListenerRegistered = false;
     /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
     private tokenRefreshInterval: NodeJS.Timeout | null = null;
+    /** Retry timer for transient refresh failures; never overlaps the main ticker. */
+    private tokenRefreshRetryTimer: NodeJS.Timeout | null = null;
+    /** Number of retry delays already consumed for the current refresh outage. */
+    private tokenRefreshRetryAttempt = 0;
+    /** Single-flight guard: scheduled and retry-triggered refreshes share one call. */
+    private tokenRefreshInFlight: Promise<void> | null = null;
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -1413,19 +1431,112 @@ export class RemoteChannel {
         console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
     }
 
+    /**
+     * Refresh-token errors fall into two buckets:
+     * - transient transport/provider failures: retry soon, because the current JWT
+     *   may otherwise expire before the next 45-minute scheduled refresh;
+     * - terminal session failures: stop retrying the spent token and use the existing
+     *   one-shot session-loss/restore path.
+     *
+     * Keep this deliberately local to RemoteChannel. There is no second daemon or
+     * control plane involved, and the normal TOKEN_REFRESHED listener remains the
+     * source of truth for realtime.setAuth() and persistence.
+     */
+    private isTerminalTokenRefreshError(error: any): boolean {
+        const code = String(error?.code ?? '').toLowerCase();
+        const message = String(error?.message ?? '').toLowerCase();
+        const terminalCodes = new Set([
+            'refresh_token_not_found',
+            'refresh_token_already_used',
+            'session_not_found',
+            'session_expired',
+        ]);
+
+        if (terminalCodes.has(code)) return true;
+        if (message.includes('refresh token not found')) return true;
+        if (message.includes('refresh token already used')) return true;
+        if (message.includes('invalid refresh token')) return true;
+
+        // Use auth-js's own error classification first. Retryable fetch errors
+        // include transient network failures; AuthApiError covers HTTP auth
+        // responses, where 429/5xx are transient but other statuses are terminal.
+        if (isAuthRetryableFetchError(error)) return false;
+        if (isAuthApiError(error)) {
+            const status = Number(error.status);
+            return status !== 429 && (status < 500 || status >= 600);
+        }
+
+        // Keep a small compatibility fallback for auth errors surfaced as plain
+        // objects by callers/tests rather than AuthError instances.
+        const status = Number(error?.status);
+        return status === 400 || status === 401;
+    }
+
+    private clearTokenRefreshRetry(): void {
+        if (this.tokenRefreshRetryTimer) {
+            clearTimeout(this.tokenRefreshRetryTimer);
+            this.tokenRefreshRetryTimer = null;
+        }
+        this.tokenRefreshRetryAttempt = 0;
+    }
+
+    private scheduleTokenRefreshRetry(): void {
+        if (this.shuttingDown || this.sessionLost || this.tokenRefreshRetryTimer) return;
+
+        const delayIndex = Math.min(
+            this.tokenRefreshRetryAttempt,
+            TOKEN_REFRESH_RETRY_DELAYS_MS.length - 1
+        );
+        const delayMs = TOKEN_REFRESH_RETRY_DELAYS_MS[delayIndex];
+        this.tokenRefreshRetryAttempt++;
+
+        console.debug(
+            `[DEBUG] Scheduling manual token refresh retry #${this.tokenRefreshRetryAttempt} in ${delayMs}ms`
+        );
+        this.tokenRefreshRetryTimer = setTimeout(() => {
+            this.tokenRefreshRetryTimer = null;
+            this.refreshTokenNow().catch(() => { /* logged inside */ });
+        }, delayMs);
+    }
+
     private async refreshTokenNow(): Promise<void> {
-        if (!this.client || this.shuttingDown) return;
-        try {
-            const { error } = await this.client.auth.refreshSession();
-            if (error) {
-                console.error('[DEBUG] Manual token refresh failed:', error.message);
+        if (this.tokenRefreshInFlight) return this.tokenRefreshInFlight;
+        if (!this.client || this.shuttingDown || this.sessionLost) return;
+
+        this.tokenRefreshInFlight = (async () => {
+            try {
+                const { error } = await this.client!.auth.refreshSession();
+                if (error) {
+                    console.error('[DEBUG] Manual token refresh failed:', error.message);
+                    await captureRemote('remote_channel_token_refresh_error', { error });
+
+                    if (this.isTerminalTokenRefreshError(error)) {
+                        this.clearTokenRefreshRetry();
+                        await this.handleSignedOut();
+                    } else {
+                        this.scheduleTokenRefreshRetry();
+                    }
+                } else {
+                    console.debug('[DEBUG] Manual token refresh ok');
+                    this.clearTokenRefreshRetry();
+                }
+            } catch (error: any) {
+                console.error('[DEBUG] Manual token refresh threw:', error?.message);
                 await captureRemote('remote_channel_token_refresh_error', { error });
-            } else {
-                console.debug('[DEBUG] Manual token refresh ok');
+
+                if (this.isTerminalTokenRefreshError(error)) {
+                    this.clearTokenRefreshRetry();
+                    await this.handleSignedOut();
+                } else {
+                    this.scheduleTokenRefreshRetry();
+                }
             }
-        } catch (error: any) {
-            console.error('[DEBUG] Manual token refresh threw:', error?.message);
-            await captureRemote('remote_channel_token_refresh_error', { error });
+        })();
+
+        try {
+            await this.tokenRefreshInFlight;
+        } finally {
+            this.tokenRefreshInFlight = null;
         }
     }
 
@@ -1441,6 +1552,7 @@ export class RemoteChannel {
             clearInterval(this.tokenRefreshInterval);
             this.tokenRefreshInterval = null;
         }
+        this.clearTokenRefreshRetry();
     }
 
     /** Arm (or re-arm) the last_seen timer at the current tier's cadence. */
