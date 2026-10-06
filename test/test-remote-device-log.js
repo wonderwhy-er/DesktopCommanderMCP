@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * The remote device log (~/.desktop-commander-device/remote.log): the device's
- * history that `remote --report` packs. `remote` passes the device's console
- * output through it. Every line is written, with a UTC timestamp and masked by
- * redact(); only the private kinds are dropped. It rotates at 1 MB into
- * remote.1.log and remote.2.log (3 files at most).
+ * The remote device log (~/.desktop-commander-device/remote-<day>.log): the
+ * device's history that `remote --report` packs. `remote` passes the device's
+ * console output through it. Every line is written, with a UTC timestamp and
+ * masked by redact(); only the private kinds are dropped. Each UTC weekday has
+ * its own files: remote-mon.log rotates at 1 MB into remote-mon.1.log and
+ * remote-mon.2.log. The first write on a weekday whose files are over a day old
+ * (last week's) removes them first, so the log never holds more than 21 files.
  *
  * The private kinds, each printed here as the device prints it, with a planted
  * secret that must be nowhere in the log:
@@ -63,16 +65,32 @@ try {
     console.error(`🔴 FAIL  device-log.js loads\n     ${error.message}`);
     finish();
 }
-const { DeviceLog, startDeviceLog, getDeviceLogDir, DEVICE_LOG_FILES, deviceLogName } = deviceLog;
+const { DeviceLog, startDeviceLog, getDeviceLogDir, DEVICE_LOG_FILES, deviceLogName, deviceLogNames } = deviceLog;
 
 let dirCount = 0;
 function freshDir() {
     return fs.mkdtempSync(path.join(home, `log-${++dirCount}-`));
 }
 
-function readLog(dir, name = 'remote.log') {
+/** A log file's text; by default the folder's one current-day file (remote-<day>.log), whatever the day. */
+function readLog(dir, name) {
+    if (name === undefined) {
+        const today = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => /^remote-[a-z]{3}\.log$/.test(f)) : [];
+        assert(today.length <= 1, `one current-day file expected, found: ${today.join(', ')}`);
+        name = today[0];
+        if (!name) return '';
+    }
     const file = path.join(dir, name);
     return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+// A Monday (UTC), so its files are remote-mon.*
+const MONDAY = Date.parse('2026-10-05T10:00:00Z');
+/** A clock the test moves: the log takes its time from it. */
+function clockAt(ms) {
+    const clock = { ms, now: () => clock.ms };
+    return clock;
 }
 
 /** Fails naming the secret and the log it leaked into. */
@@ -242,14 +260,26 @@ await test('kept lines are masked', () => {
     assert.match(text, /Z {2}Found persisted session for device <id>\n/);
 });
 
-await test('the files are one count and a name function: remote.log, remote.1.log, remote.2.log', () => {
+await test('the files are named by UTC weekday: remote-mon.log, remote-mon.1.log, remote-mon.2.log; 21 names in all', () => {
     assert.strictEqual(DEVICE_LOG_FILES, 3);
-    assert.deepStrictEqual([0, 1, 2, 3].map(deviceLogName), ['remote.log', 'remote.1.log', 'remote.2.log', 'remote.3.log']);
+    assert.deepStrictEqual([0, 1, 2].map((i) => deviceLogName(1, i)), ['remote-mon.log', 'remote-mon.1.log', 'remote-mon.2.log']);
+    assert.deepStrictEqual([0, 6].map((day) => deviceLogName(day, 0)), ['remote-sun.log', 'remote-sat.log']);
+    const names = deviceLogNames();
+    assert.strictEqual(names.length, 21);
+    assert.strictEqual(new Set(names).size, 21, 'no name twice');
 });
 
-await test('it rotates at 1 MB and, past the last file, keeps exactly DEVICE_LOG_FILES files, oldest last', () => {
+await test('it writes to the current UTC weekday\'s file, with the line timestamped by the same clock', () => {
     const dir = freshDir();
-    const log = new DeviceLog({ dir });
+    const clock = clockAt(MONDAY);
+    new DeviceLog({ dir, now: clock.now }).record(['✅ Channel subscribed']);
+    assert.deepStrictEqual(fs.readdirSync(dir), ['remote-mon.log']);
+    assert.match(readLog(dir, 'remote-mon.log'), /^2026-10-05T10:00:00Z {2}Channel subscribed\n$/);
+});
+
+await test('within a day it rotates at 1 MB and, past the last file, keeps exactly DEVICE_LOG_FILES files, oldest last', () => {
+    const dir = freshDir();
+    const log = new DeviceLog({ dir, now: clockAt(MONDAY).now });
     const filler = 'x'.repeat(900);
     let written = 0;
     // Enough for DEVICE_LOG_FILES + 2 files: the rotation runs past the last file twice
@@ -258,19 +288,73 @@ await test('it rotates at 1 MB and, past the last file, keeps exactly DEVICE_LOG
         written += 950;
     }
     log.record(['✅ Channel subscribed (the newest line)']);
-    const expected = Array.from({ length: DEVICE_LOG_FILES }, (_, i) => deviceLogName(i));
+    const expected = Array.from({ length: DEVICE_LOG_FILES }, (_, i) => deviceLogName(1, i));
     assert.deepStrictEqual(fs.readdirSync(dir).sort(), [...expected].sort(), `files: ${fs.readdirSync(dir).join(', ')}`);
     for (const name of expected) {
         const size = fs.statSync(path.join(dir, name)).size;
         assert(size <= MB, `${name} is ${size} bytes, over 1 MB`);
-        assert(size > MB / 2 || name === deviceLogName(0), `${name} holds a full file's worth: ${size} bytes`);
+        assert(size > MB / 2 || name === deviceLogName(1, 0), `${name} holds a full file's worth: ${size} bytes`);
     }
-    assert.match(readLog(dir), /Channel subscribed \(the newest line\)\n$/, 'the newest line is at the end of remote.log');
-    // Each older file starts with older lines: n… grows from the last file to remote.log's predecessor
+    assert.match(readLog(dir), /Channel subscribed \(the newest line\)\n$/, 'the newest line is at the end of remote-mon.log');
+    // Each older file starts with older lines: n… grows from the last file to remote-mon.log's predecessor
     const first = (name) => Number(readLog(dir, name).match(/n(\d{6})/)[1]);
     for (let i = 1; i < DEVICE_LOG_FILES - 1; i++) {
-        assert(first(deviceLogName(i + 1)) < first(deviceLogName(i)), `${deviceLogName(i + 1)} holds older lines than ${deviceLogName(i)}`);
+        assert(first(deviceLogName(1, i + 1)) < first(deviceLogName(1, i)), `${deviceLogName(1, i + 1)} holds older lines than ${deviceLogName(1, i)}`);
     }
+});
+
+await test('a new day starts its own file; the day before stays as it was', () => {
+    const dir = freshDir();
+    const clock = clockAt(MONDAY);
+    const log = new DeviceLog({ dir, now: clock.now });
+    log.record(['✅ Monday line']);
+    clock.ms = MONDAY + DAY_MS;
+    log.record(['✅ Tuesday line']);
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['remote-mon.log', 'remote-tue.log']);
+    assert.match(readLog(dir, 'remote-mon.log'), /Z {2}Monday line\n$/);
+    assert.match(readLog(dir, 'remote-tue.log'), /^2026-10-06T10:00:00Z {2}Tuesday line\n$/);
+});
+
+await test('the first write on a weekday removes that weekday\'s files from last week, and only those', () => {
+    const dir = freshDir();
+    const lastWeek = new Date(MONDAY - 7 * DAY_MS);
+    for (const name of [deviceLogName(1, 0), deviceLogName(1, 1), deviceLogName(1, 2)]) {
+        fs.writeFileSync(path.join(dir, name), `2026-09-28T10:00:00Z  last week (${name})\n`);
+        fs.utimesSync(path.join(dir, name), lastWeek, lastWeek);
+    }
+    // Tuesday's file from 6 days ago belongs to another weekday: it stays
+    const sixDaysAgo = new Date(MONDAY - 6 * DAY_MS);
+    fs.writeFileSync(path.join(dir, 'remote-tue.log'), '2026-09-29T10:00:00Z  last Tuesday\n');
+    fs.utimesSync(path.join(dir, 'remote-tue.log'), sixDaysAgo, sixDaysAgo);
+    new DeviceLog({ dir, now: clockAt(MONDAY).now }).record(['✅ This Monday']);
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['remote-mon.log', 'remote-tue.log'], 'remote-mon.1.log and .2.log are gone');
+    assert.match(readLog(dir, 'remote-mon.log'), /^2026-10-05T10:00:00Z {2}This Monday\n$/, 'last week\'s lines are gone');
+    assert.match(readLog(dir, 'remote-tue.log'), /last Tuesday/);
+});
+
+await test('a weekday\'s files under a day old are kept: a device started again the same day appends', () => {
+    const dir = freshDir();
+    const earlierToday = new Date(MONDAY - 2 * 60 * 60 * 1000);
+    fs.writeFileSync(path.join(dir, 'remote-mon.log'), '2026-10-05T08:00:00Z  earlier today\n');
+    fs.utimesSync(path.join(dir, 'remote-mon.log'), earlierToday, earlierToday);
+    new DeviceLog({ dir, now: clockAt(MONDAY).now }).record(['✅ After a restart']);
+    assert.match(readLog(dir, 'remote-mon.log'), /earlier today\n.*Z {2}After a restart\n$/s);
+});
+
+await test('two weeks of daily rotation never leave more than 21 files, all of them the fixed names', () => {
+    const dir = freshDir();
+    // Small files so each day rotates past its last file; the clock starts now, as the files' times do
+    const clock = clockAt(Date.now());
+    const log = new DeviceLog({ dir, now: clock.now, maxBytes: 300 });
+    for (let d = 0; d < 14; d++) {
+        clock.ms += DAY_MS;
+        for (let i = 0; i < 20; i++) log.record([`❌ Channel error: day ${d} line ${i} ${'x'.repeat(60)}`]);
+        assert(fs.readdirSync(dir).length <= 21, `day ${d}: ${fs.readdirSync(dir).length} files`);
+    }
+    const files = fs.readdirSync(dir).sort();
+    assert.deepStrictEqual(files, [...deviceLogNames()].sort(), `files: ${files.join(', ')}`);
+    // The oldest week is gone: every file holds lines from the last 7 days only
+    for (const name of files) assert.doesNotMatch(readLog(dir, name), /day [0-6] line/, `${name} still holds the first week`);
 });
 
 await test('startDeviceLog: the terminal is unchanged, and silenced debug lines still reach the log', () => {

@@ -7,7 +7,7 @@
  *
  * The zip lands in the home folder as desktop-commander-report-<date>.zip and
  * holds report.txt (readable), report.json (the same facts) and device-log/
- * (the remote.log files, masked again). It records versions (npm included),
+ * (the device log's remote-<day>.log files, oldest first, masked again). It records versions (npm included),
  * how Node runs (the Node executable and the entry script, the home folder
  * shown as ~, and what kind of install each is), the clock skew read from the
  * server's Date header, network timings to the server, Supabase REST and the
@@ -88,18 +88,21 @@ fs.writeFileSync(deviceJson, JSON.stringify({
 const savedAt = new Date(Date.now() - 3 * 60 * 60 * 1000);
 fs.utimesSync(deviceJson, savedAt, savedAt);
 fs.mkdirSync(path.join(deviceDir, 'device.json.lock'));
-// A log as an older or hand-edited version might have left it: raw secrets in kept lines
-fs.writeFileSync(path.join(deviceDir, 'remote.1.log'), [
+// A log as an older or hand-edited version might have left it: raw secrets in kept lines. One file per UTC weekday:
+// Thursday 1 Oct, then Monday 5 Oct, with modification times in that order
+fs.writeFileSync(path.join(deviceDir, 'remote-thu.log'), [
     '2026-10-01T09:12:00Z  Starting MCP Device...',
     `2026-10-01T09:12:05Z  Channel error: refresh failed for ${EMAIL} token ${ACCESS_TOKEN} — socket=closed(3) ch=errored attempt=1`,
     `2026-10-01T09:12:06Z  Persisted session invalid: ENOENT ${path.join(home, 'secret-project', 'plan.txt')}`,
     `2026-10-01T09:12:07Z  Channel error: device ${DEVICE_ID} not joined — socket=open(1) ch=errored attempt=2`,
 ].join('\n') + '\n');
-fs.writeFileSync(path.join(deviceDir, 'remote.log'), [
+fs.writeFileSync(path.join(deviceDir, 'remote-mon.log'), [
     '2026-10-05T14:20:44Z  Device marked as offline',
     `2026-10-05T14:20:45Z  Received tool call c-9: read_file {"path":"planted-tool-arg"}`,
     '2026-10-05T14:21:03Z  Channel subscribed (recovered after 1 attempt) — socket=open(1) ch=joined attempt=0',
 ].join('\n') + '\n');
+fs.utimesSync(path.join(deviceDir, 'remote-thu.log'), new Date('2026-10-01T09:12:07Z'), new Date('2026-10-01T09:12:07Z'));
+fs.utimesSync(path.join(deviceDir, 'remote-mon.log'), new Date('2026-10-05T14:21:03Z'), new Date('2026-10-05T14:21:03Z'));
 const configJson = path.join(configDir, 'config.json');
 fs.writeFileSync(configJson, JSON.stringify({
     telemetryEnabled: false,
@@ -252,7 +255,7 @@ await test('the zip is in the home folder, named by date, with report.txt, repor
     assert.strictEqual(zips.length, 1, `one zip expected in the home folder, found: ${zips.join(', ') || 'none'}`);
     assert.match(zips[0], /^desktop-commander-report-\d{4}-\d\d-\d\d-\d{4}\.zip$/);
     assert.deepStrictEqual(Object.keys(entries).sort(),
-        ['device-log/remote.1.log', 'device-log/remote.log', 'report.json', 'report.txt']);
+        ['device-log/remote-mon.log', 'device-log/remote-thu.log', 'report.json', 'report.txt']);
 });
 
 await test('the zip is readable by its owner only (0o600, like the device log; Windows has no such mode)', () => {
@@ -328,39 +331,42 @@ await test('the device id appears once in each report file, in the Device sectio
     assert.strictEqual(count(entries['report.json'] ?? ''), 1, 'report.json');
     const logs = Object.entries(entries).filter(([name]) => name.startsWith('device-log/'));
     for (const [name, text] of logs) assert.strictEqual(count(text), 0, name);
-    assert.match(entries['device-log/remote.1.log'] ?? '', /Channel error: device <id> not joined/);
+    assert.match(entries['device-log/remote-thu.log'] ?? '', /Channel error: device <id> not joined/);
 });
 
 await test('the device log part counts the lines and keeps a tool call\'s name, not its arguments', () => {
-    const log = entries['device-log/remote.log'] ?? '';
+    const log = entries['device-log/remote-mon.log'] ?? '';
     assert.match(log, /Z {2}Received tool call c-9: read_file\n/);
     assert(!log.includes('planted-tool-arg'), `a tool argument is dropped:\n${log}`);
     assert.match(log, /Channel subscribed \(recovered after 1 attempt\)/);
     assert.match(reportTxt, /\nDevice log +7 lines from 2026-10-01 09:12 to 2026-10-05 14:21 UTC; last: "Channel subscribed/, reportTxt);
 });
 
-await test('every existing device log file goes into the zip, oldest first', async () => {
-    const { DEVICE_LOG_FILES, deviceLogName } = await import('../dist/remote-device/diagnostics/device-log.js');
-    const names = Array.from({ length: DEVICE_LOG_FILES }, (_, i) => deviceLogName(i));
-    assert.deepStrictEqual(names, ['remote.log', 'remote.1.log', 'remote.2.log'], 'the files the report must pack');
+await test('every existing device log file goes into the zip (21 names), oldest first by modification time', async () => {
+    const { deviceLogNames } = await import('../dist/remote-device/diagnostics/device-log.js');
+    const names = deviceLogNames();
+    assert.strictEqual(names.length, 21, 'the files the report must pack');
     const fullHome = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-test-report-full-log-home-'));
     try {
         const logDir = path.join(fullHome, '.desktop-commander-device');
         fs.mkdirSync(logDir, { recursive: true });
-        // One line per file; the oldest file holds the oldest line
-        names.forEach((name, i) => {
-            fs.writeFileSync(path.join(logDir, name), `2026-10-0${5 - i}T12:00:00Z  Channel subscribed (file ${name})\n`);
+        // Written in an order that is not the names' order: every 8th name, wrapping, oldest first
+        const order = names.map((_, k) => names[(k * 8) % names.length]);
+        order.forEach((name, k) => {
+            const at = new Date(Date.UTC(2026, 8, 10 + k, 12));
+            fs.writeFileSync(path.join(logDir, name), `${at.toISOString().replace(/\.\d{3}Z$/, 'Z')}  Channel subscribed (file ${name})\n`);
+            fs.utimesSync(path.join(logDir, name), at, at);
         });
         const result = await runReport(process.execPath, { args: ['--no-upload'], runHome: fullHome });
         assert.strictEqual(result.code, 0, result.output);
         const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
         const logEntries = Object.keys(new PizZip(fs.readFileSync(saved)).files).filter((name) => name.startsWith('device-log/'));
-        assert.deepStrictEqual(logEntries, [...names].reverse().map((name) => `device-log/${name}`), 'all files, oldest first');
+        assert.deepStrictEqual(logEntries, order.map((name) => `device-log/${name}`), 'all files, oldest first');
         for (const name of names) {
             assert.match(zipFile(result, `device-log/${name}`), new RegExp(`Channel subscribed \\(file ${name.replace(/\./g, '\\.')}\\)`));
         }
-        assert.match(zipFile(result, 'report.txt'), new RegExp(`\\nDevice log +${names.length} lines from 2026-10-0${6 - names.length} 12:00 to 2026-10-05 12:00 UTC`));
-        assert.match(result.output, new RegExp(`device log \\(${names.length} files\\)`));
+        assert.match(zipFile(result, 'report.txt'), /\nDevice log +21 lines from 2026-09-10 12:00 to 2026-09-30 12:00 UTC/);
+        assert.match(result.output, /device log \(21 files\)/);
     } finally {
         fs.rmSync(fullHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }

@@ -6,20 +6,28 @@ import { VERSION } from '../../version.js';
 import { redact } from './redact.js';
 
 /**
- * The remote device log: ~/.desktop-commander-device/remote.log, the device's
- * history that `remote --report` packs for support.
+ * The remote device log: ~/.desktop-commander-device/remote-<day>.log, the
+ * device's history that `remote --report` packs for support.
  *
  * `remote` passes the device's console output through startDeviceLog(). Every
  * line is written, masked by redact() and timestamped in UTC; only the private
- * kinds below are dropped. The files rotate at 1 MB into remote.1.log and
- * remote.2.log.
+ * kinds below are dropped. Each UTC weekday has its own files: remote-mon.log
+ * rotates at 1 MB into remote-mon.1.log and remote-mon.2.log. The first write
+ * on a weekday whose file is over a day old (last week's) removes that day's
+ * files first, so the log keeps at most 7 days × 3 files, 21 MB.
  */
 
 export const DEVICE_LOG_MAX_BYTES = 1024 * 1024;
-/** How many files the log keeps: remote.log and its rotated older copies. */
+/** How many files the log keeps per day: remote-<day>.log and its rotated older copies. */
 export const DEVICE_LOG_FILES = 3;
-/** remote.log, then remote.1.log, remote.2.log, … (older) */
-export const deviceLogName = (i: number) => (i === 0 ? 'remote.log' : `remote.${i}.log`);
+/** The UTC weekdays as the file names spell them; Date.getUTCDay() indexes it. */
+const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** remote-mon.log, then remote-mon.1.log, remote-mon.2.log (older); `day` is the UTC weekday, 0 = Sunday. */
+export const deviceLogName = (day: number, i: number) => `remote-${DAYS[day]}${i === 0 ? '' : `.${i}`}.log`;
+/** Every name the log can use: 7 days × DEVICE_LOG_FILES. */
+export const deviceLogNames = (): string[] =>
+    DAYS.flatMap((_, day) => Array.from({ length: DEVICE_LOG_FILES }, (_, i) => deviceLogName(day, i)));
 const MAX_LINE_CHARS = 1000;
 /** A multi-line print (a stack, a config dump) is cut after this many lines. */
 const MAX_LINES_PER_CALL = 40;
@@ -99,13 +107,20 @@ export function cleanLine(line: string): string | null {
 }
 
 export interface DeviceLogOptions {
-    /** The folder for remote.log; ~/.desktop-commander-device by default. */
+    /** The folder for the log files; ~/.desktop-commander-device by default. */
     dir?: string;
+    /** The clock (ms), for the timestamps and the day; Date.now by default. Tests set it. */
+    now?: () => number;
+    /** The size at which a file rotates; DEVICE_LOG_MAX_BYTES by default. Tests set it. */
+    maxBytes?: number;
 }
 
 export class DeviceLog {
     private readonly dir: string;
-    private readonly file: string;
+    private readonly now: () => number;
+    private readonly maxBytes: number;
+    /** The UTC weekday being written; -1 before the first write. */
+    private day = -1;
     private size = -1;
     private failures = 0;
     /** The next printed line is the sign-in link or code. */
@@ -113,7 +128,12 @@ export class DeviceLog {
 
     constructor(options: DeviceLogOptions = {}) {
         this.dir = options.dir ?? getDeviceLogDir();
-        this.file = path.join(this.dir, deviceLogName(0));
+        this.now = options.now ?? Date.now;
+        this.maxBytes = options.maxBytes ?? DEVICE_LOG_MAX_BYTES;
+    }
+
+    private file(i: number): string {
+        return path.join(this.dir, deviceLogName(this.day, i));
     }
 
     /** One console call's arguments: each of its lines, cleaned. */
@@ -147,18 +167,21 @@ export class DeviceLog {
     /** Appends one line as is: callers pass text that is already masked. */
     write(text: string): void {
         if (this.failures >= MAX_WRITE_FAILURES) return;
-        const line = `${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}  ${text}\n`;
+        const now = this.now();
+        const line = `${new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z')}  ${text}\n`;
         const bytes = Buffer.byteLength(line);
         try {
+            const day = new Date(now).getUTCDay();
+            if (day !== this.day) this.startDay(day, now);
             if (this.size < 0) {
                 fs.mkdirSync(this.dir, { recursive: true });
-                this.size = fs.existsSync(this.file) ? fs.statSync(this.file).size : 0;
+                this.size = fs.existsSync(this.file(0)) ? fs.statSync(this.file(0)).size : 0;
             }
-            if (this.size > 0 && this.size + bytes > DEVICE_LOG_MAX_BYTES) {
+            if (this.size > 0 && this.size + bytes > this.maxBytes) {
                 this.rotate();
                 this.size = 0;
             }
-            fs.appendFileSync(this.file, line, { mode: 0o600 });
+            fs.appendFileSync(this.file(0), line, { mode: 0o600 });
             this.size += bytes;
             this.failures = 0;
         } catch {
@@ -168,12 +191,24 @@ export class DeviceLog {
         }
     }
 
-    /** Drops the oldest file and moves each other one a step older: remote.log becomes remote.1.log. */
+    /**
+     * The first write of a UTC weekday: if that weekday's file is over a day
+     * old, it is last week's, and its files go before today's lines start.
+     */
+    private startDay(day: number, now: number): void {
+        const today = path.join(this.dir, deviceLogName(day, 0));
+        if (fs.existsSync(today) && now - fs.statSync(today).mtimeMs > DAY_MS) {
+            for (let i = 0; i < DEVICE_LOG_FILES; i++) fs.rmSync(path.join(this.dir, deviceLogName(day, i)), { force: true });
+        }
+        this.day = day;
+        this.size = -1;
+    }
+
+    /** Drops the day's oldest file and moves each other one a step older: remote-mon.log becomes remote-mon.1.log. */
     private rotate(): void {
-        const file = (i: number) => path.join(this.dir, deviceLogName(i));
-        fs.rmSync(file(DEVICE_LOG_FILES - 1), { force: true });
+        fs.rmSync(this.file(DEVICE_LOG_FILES - 1), { force: true });
         for (let i = DEVICE_LOG_FILES - 2; i >= 0; i--) {
-            if (fs.existsSync(file(i))) fs.renameSync(file(i), file(i + 1));
+            if (fs.existsSync(this.file(i))) fs.renameSync(this.file(i), this.file(i + 1));
         }
     }
 }

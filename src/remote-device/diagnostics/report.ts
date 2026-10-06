@@ -9,7 +9,7 @@ import tls from 'tls';
 import { fileURLToPath } from 'url';
 import PizZip from 'pizzip';
 import { VERSION } from '../../version.js';
-import { DEVICE_LOG_FILES, deviceLogName, getDeviceLogDir, cleanLine } from './device-log.js';
+import { deviceLogNames, getDeviceLogDir, cleanLine } from './device-log.js';
 import { redact } from './redact.js';
 import { savedUserId, uploadReport } from './upload.js';
 
@@ -493,12 +493,24 @@ function readTail(file: string): string {
 
 const LOG_LINE = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ) {2}(.*)$/;
 
-/** The device log files, oldest first, each timestamped line cleaned and masked again. */
+/** A rotated file's number: remote-mon.2.log is 2, remote-mon.log 0. */
+const rotation = (name: string) => Number(name.match(/\.(\d+)\.log$/)?.[1] ?? 0);
+
+/**
+ * The device log files (the 21 fixed names that exist), oldest first by
+ * modification time, each timestamped line cleaned and masked again.
+ */
 function deviceLog(dir: string): { parts: LogPart[]; summary: DiagnosticsReport['deviceLog'] } {
     const parts: LogPart[] = [];
     const summary: DiagnosticsReport['deviceLog'] = { files: 0, lines: 0, first: null, last: null, lastText: null };
-    for (let i = DEVICE_LOG_FILES - 1; i >= 0; i--) {
-        const name = deviceLogName(i);
+    const files = deviceLogNames().flatMap((name) => {
+        try {
+            return [{ name, mtime: fs.statSync(path.join(dir, name)).mtimeMs }];
+        } catch {
+            return [];
+        }
+    }).sort((a, b) => a.mtime - b.mtime || rotation(b.name) - rotation(a.name));
+    for (const { name } of files) {
         let raw: string;
         try {
             raw = readTail(path.join(dir, name));

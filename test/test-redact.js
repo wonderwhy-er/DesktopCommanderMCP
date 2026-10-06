@@ -2,7 +2,7 @@
 
 /**
  * redact() is the one masker the remote diagnostics pass every line through:
- * the device log (remote.log) and `remote --report`. A planted secret of each
+ * the device log (remote-<day>.log) and `remote --report`. A planted secret of each
  * kind it covers must never come out of it, and a plain status line must come
  * out unchanged.
  *
