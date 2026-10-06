@@ -51,9 +51,13 @@ export function startDevice(env, args = []) {
   return device;
 }
 
-/** `desktop-commander remote --logout`, as the user runs it; resolves with its exit code and output */
-export function runLogout(env) {
-  const child = spawn(process.execPath, [path.join(PROJECT_ROOT, 'dist/index.js'), 'remote', '--logout'], {
+/**
+ * `desktop-commander remote <args>`, as the user runs it; resolves with its exit
+ * code and output. `execPath` is the Node that runs it (this one by default);
+ * `timeoutMs` kills it after that long (none by default).
+ */
+export function runRemote(env, args, { execPath = process.execPath, timeoutMs } = {}) {
+  const child = spawn(execPath, [path.join(PROJECT_ROOT, 'dist/index.js'), 'remote', ...args], {
     cwd: PROJECT_ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -62,8 +66,15 @@ export function runLogout(env) {
   let output = '';
   child.stdout.on('data', (data) => { output += data; });
   child.stderr.on('data', (data) => { output += data; });
-  return new Promise((resolve) => child.on('close', (code) => resolve({ code, output })));
+  const timer = timeoutMs === undefined ? null : setTimeout(() => child.kill(), timeoutMs);
+  return new Promise((resolve) => child.on('close', (code) => {
+    if (timer) clearTimeout(timer);
+    resolve({ code, output });
+  }));
 }
+
+/** `desktop-commander remote --logout`, as the user runs it; resolves with its exit code and output */
+export const runLogout = (env) => runRemote(env, ['--logout']);
 
 /** Waits until `predicate` holds or the device exits; returns the predicate's last value */
 export async function waitFor(device, predicate, timeoutMs) {

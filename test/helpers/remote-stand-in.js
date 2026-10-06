@@ -1,4 +1,5 @@
 import http from 'http';
+import { WebSocketServer } from 'ws';
 
 /**
  * A local stand-in for the services a remote device talks to, so a real
@@ -26,6 +27,16 @@ import http from 'http';
  *   mcp_remote_calls table, behind the access token.
  * - Realtime: the websocket is refused. The device then reports itself
  *   registered but not reachable, which is enough for the session under test.
+ *
+ * For `remote --report`, which only probes these services and uploads a zip,
+ * options that are all off by default:
+ * - serverAheadSec: every answer's Date header runs that many seconds ahead
+ * - diagnostics: /api/mcp-info names this stand-in's POST /diagnostics as the
+ *   upload address (diagnosticsUrl), and each upload there is kept in
+ *   `uploads` and answered with `reportId`, as the diagnostics Worker does
+ * - realtime: the websocket opens and phoenix heartbeats are answered
+ * A test can also point mcp-info at another Supabase (supabaseUrl) and set the
+ * REST root's status (restRootStatus). Every request is kept in `requests`.
  */
 
 const USER = {
@@ -40,9 +51,13 @@ const USER = {
 
 const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
-export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec = 0 } = {}) {
+export async function startRemoteStandIn({
+  accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false,
+} = {}) {
   const deviceId = 'b6f0a1c2-0000-4000-8000-000000000695';
   const anonKey = 'stand-in-anon-key';
+  /** Set by failUploads(): { count, status, message } */
+  let uploadFailure = null;
   /** session id -> { counter, tokens (by generation), revoked, lastRefreshedAt } */
   const sessions = new Map();
   /** refresh token -> { sessionId, generation } */
@@ -65,8 +80,23 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     deviceFlowRequests: 0,
     /** Requests this stand-in has no answer for */
     unexpected: [],
+    /** Every request, in order: { method, url, apikey }; a websocket upgrade has method UPGRADE */
+    requests: [],
     accessTtlSec,
     reuseIntervalSec,
+    serverAheadSec,
+    /** The Supabase address mcp-info names; null: this stand-in */
+    supabaseUrl: null,
+    /** The status the REST root (/rest/v1/) answers; null: as any table without a session, 401 */
+    restRootStatus: null,
+    /** The upload address mcp-info names (with `diagnostics`: this stand-in's /diagnostics); undefined: none */
+    diagnosticsUrl: undefined,
+    /** The report id an upload is answered with */
+    reportId: 'R7KQ2M4X',
+    /** Every upload to /diagnostics: { url, headers, body (a Buffer) } */
+    uploads: [],
+    /** Phoenix heartbeats answered on the realtime websocket */
+    heartbeatsAnswered: 0,
 
     /**
      * A session as a completed device authorization hands it over.
@@ -109,6 +139,14 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     },
 
     /**
+     * The next `count` uploads answer `status`, with the Worker's
+     * { code, message } when `message` is given and an empty object when not
+     */
+    failUploads(count, status, message = null) {
+      uploadFailure = { count, status, message };
+    },
+
+    /**
      * Device lookups get no answer until release(). A starting device looks its
      * saved device up after loading device.json and before saving it again, so
      * this holds it in between. `reached` resolves at the first held lookup.
@@ -135,6 +173,8 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     },
 
     close() {
+      for (const client of sockets?.clients ?? []) client.terminate();
+      sockets?.close();
       server.closeAllConnections?.();
       return new Promise((resolve) => server.close(() => resolve()));
     },
@@ -211,12 +251,33 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
     }];
   }
 
-  function handle(request, body) {
+  /** The diagnostics Worker: { id } for a stored report, or its error */
+  function upload(request, raw) {
+    standIn.uploads.push({ url: request.url, headers: request.headers, body: raw });
+    if (uploadFailure?.count > 0) {
+      uploadFailure.count--;
+      const { status, message } = uploadFailure;
+      return [status, message === null ? {} : { code: status, message }];
+    }
+    return [200, { id: standIn.reportId }];
+  }
+
+  function handle(request, body, raw) {
     const url = new URL(request.url, standIn.url);
     const route = `${request.method} ${url.pathname}`;
 
     if (route === 'GET /api/mcp-info') {
-      return [200, { supabaseUrl: standIn.url, supabasePublishableKey: anonKey }];
+      return [200, {
+        supabaseUrl: standIn.supabaseUrl ?? standIn.url,
+        supabasePublishableKey: anonKey,
+        diagnosticsUrl: standIn.diagnosticsUrl,
+      }];
+    }
+    if (diagnostics && route === 'POST /diagnostics') {
+      return upload(request, raw);
+    }
+    if (standIn.restRootStatus !== null && route === 'GET /rest/v1/') {
+      return [standIn.restRootStatus, {}];
     }
     if (route === 'POST /device/start' || route === 'POST /device/poll') {
       standIn.deviceFlowRequests++;
@@ -255,12 +316,16 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
   }
 
   const server = http.createServer((request, response) => {
-    let body = '';
-    request.setEncoding('utf8');
-    request.on('data', (chunk) => { body += chunk; });
+    standIn.requests.push({ method: request.method, url: request.url, apikey: request.headers.apikey });
+    const chunks = [];
+    request.on('data', (chunk) => { chunks.push(chunk); });
     request.on('end', () => {
+      const raw = Buffer.concat(chunks);
       const respond = () => {
-        const [status, payload] = handle(request, body);
+        const [status, payload] = handle(request, raw.toString('utf8'), raw);
+        if (standIn.serverAheadSec) {
+          response.setHeader('Date', new Date(Date.now() + standIn.serverAheadSec * 1000).toUTCString());
+        }
         response.writeHead(status, {
           'Content-Type': 'application/json',
           // Error bodies carry `code`, the shape auth-js reads from API version 2024-01-01 on
@@ -277,12 +342,28 @@ export async function startRemoteStandIn({ accessTtlSec = 3600, reuseIntervalSec
       respond();
     });
   });
-  // Realtime is out of scope: refuse the websocket instead of leaving it hanging
-  server.on('upgrade', (request, socket) => {
-    socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+  // Realtime is out of scope unless asked for: refuse the websocket instead of leaving it hanging
+  const sockets = realtime ? new WebSocketServer({ noServer: true }) : null;
+  server.on('upgrade', (request, socket, head) => {
+    standIn.requests.push({ method: 'UPGRADE', url: request.url, apikey: request.headers.apikey });
+    if (!sockets || new URL(request.url, standIn.url).pathname !== '/realtime/v1/websocket') {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    sockets.handleUpgrade(request, socket, head, (ws) => {
+      ws.on('message', (data) => {
+        let message;
+        try { message = JSON.parse(String(data)); } catch { return; }
+        if (message.topic === 'phoenix' && message.event === 'heartbeat') {
+          standIn.heartbeatsAnswered++;
+          ws.send(JSON.stringify({ topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref }));
+        }
+      });
+    });
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   standIn.url = `http://127.0.0.1:${server.address().port}`;
+  if (diagnostics) standIn.diagnosticsUrl = `${standIn.url}/diagnostics`;
   return standIn;
 }
