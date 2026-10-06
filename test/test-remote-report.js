@@ -492,6 +492,22 @@ async function runTests() {
             });
         });
 
+        // #692: Desktop Commander reads a config.json saved as "UTF-8 with BOM" (Notepad,
+        // PowerShell 5's Set-Content -Encoding UTF8); the report must read the same settings
+        await test('a config.json saved with a UTF-8 BOM gives its telemetry and client id, as Desktop Commander reads it', async () => {
+            await inOtherHome(async (other) => {
+                const configPath = path.join(other.home, '.claude-server-commander', 'config.json');
+                fs.mkdirSync(path.dirname(configPath), { recursive: true });
+                const saved = { telemetryEnabled: false, clientId: CLIENT_ID };
+                fs.writeFileSync(configPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(saved, null, 2))]));
+                const result = await runReport(other.env, ['--no-upload']);
+                assert.strictEqual(result.code, 0, result.output);
+                assert.deepStrictEqual(JSON.parse(zipFile(result, 'report.json')).settings, saved,
+                    'with config.json saved as UTF-8 with BOM, the report misses the settings Desktop Commander reads');
+                assert.match(zipFile(result, 'report.txt'), new RegExp(`\\nSettings +telemetry: off · client id: ${CLIENT_ID}`));
+            });
+        });
+
         await test('Desktop Commander MCP: counts processes running its dist/index.js, not `remote`, not another app', async () => {
             const dcScript = fakePackage(path.join(home, 'fake-dc'), '@wonderwhy-er/desktop-commander');
             const otherScript = fakePackage(path.join(home, 'other-app'), 'other-app');
