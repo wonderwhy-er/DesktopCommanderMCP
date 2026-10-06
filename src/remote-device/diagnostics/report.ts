@@ -536,11 +536,15 @@ function deviceLog(dir: string): { parts: LogPart[]; summary: DiagnosticsReport[
 
 // --- the report ---------------------------------------------------------------------------
 
-/** The diagnostics Worker's address from /api/mcp-info: only an https URL is used. */
-function httpsUrl(value: unknown): string | null {
+/** Hosts on this machine: an http address there never crosses the network (a local stand-in). */
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
+
+/** The diagnostics Worker's address from /api/mcp-info: https, or http on this machine only. */
+function uploadUrl(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     try {
-        return new URL(value).protocol === 'https:' ? value : null;
+        const url = new URL(value);
+        return url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.includes(url.hostname)) ? value : null;
     } catch {
         return null;
     }
@@ -598,7 +602,7 @@ export async function collectReport(): Promise<{ report: DiagnosticsReport; logP
         deviceLog: log.summary,
         desktopCommanderMcp: mcp,
     };
-    return { report, logParts: log.parts, diagnosticsUrl: httpsUrl(mcpInfo.info?.diagnosticsUrl) };
+    return { report, logParts: log.parts, diagnosticsUrl: uploadUrl(mcpInfo.info?.diagnosticsUrl) };
 }
 
 function networkOk(network: DiagnosticsReport['network']): boolean {

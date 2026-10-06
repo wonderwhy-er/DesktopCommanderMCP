@@ -5,19 +5,19 @@ import path from 'path';
  * Sends the diagnostics zip to Desktop Commander's diagnostics Worker, which
  * stores it for 7 days and answers with a report id the user gives support.
  *
- * The address: DC_DIAGNOSTICS_URL (tests), else the server's /api/mcp-info
- * `diagnosticsUrl`, so the Worker can move without a release, else the
- * default below.
+ * The address comes only from the server's /api/mcp-info `diagnosticsUrl`, so
+ * the Worker can move without a release. When the server names none, nothing
+ * is uploaded and the zip stays saved.
  * The ids only sort the upload into a folder: the user id is the saved access
  * token's `sub`, read locally like blocking-offline-update.js reads `exp`, and
  * the device id is device.json's. Nothing is refreshed, nothing signs in, and
  * device.json is only read.
  */
 
-/** Used when the server doesn't send an address. */
-export const DEFAULT_DIAGNOSTICS_URL = 'https://diagnostics.ds-c09.workers.dev';
 const UPLOAD_TIMEOUT_MS = 30_000;
 const ID_SHAPED = /^[A-Za-z0-9_-]{1,64}$/;
+/** The longest piece of the Worker's error message that is shown. */
+const MAX_MESSAGE_CHARS = 200;
 
 /** The signed-in user's id from ~/.desktop-commander-device/device.json, or null. */
 export function savedUserId(home: string): string | null {
@@ -33,18 +33,17 @@ export function savedUserId(home: string): string | null {
 }
 
 export interface UploadOptions {
-    /** From /api/mcp-info; null when the server names none. */
+    /** From /api/mcp-info; null when the server names none, and then nothing is uploaded. */
     diagnosticsUrl: string | null;
     userId: string | null;
     deviceId: string | null;
     timeoutMs?: number;
-    /** DEFAULT_DIAGNOSTICS_URL unless a test injects its own. */
-    defaultUrl?: string;
 }
 
 /** POSTs the zip and resolves the report id; rejects with a short reason. */
 export async function uploadReport(zip: Buffer, options: UploadOptions): Promise<string> {
-    const url = process.env.DC_DIAGNOSTICS_URL || options.diagnosticsUrl || (options.defaultUrl ?? DEFAULT_DIAGNOSTICS_URL);
+    const url = options.diagnosticsUrl;
+    if (!url) throw new Error('the server named no upload address');
     const headers: Record<string, string> = { 'Content-Type': 'application/zip' };
     if (options.userId) headers['X-DC-User-Id'] = options.userId;
     if (options.deviceId) headers['X-DC-Device-Id'] = options.deviceId;
@@ -54,8 +53,13 @@ export async function uploadReport(zip: Buffer, options: UploadOptions): Promise
         body: new Uint8Array(zip),
         signal: AbortSignal.timeout(options.timeoutMs ?? UPLOAD_TIMEOUT_MS),
     });
-    if (!response.ok) throw new Error(`the server answered ${response.status}`);
-    const id = (await response.json().catch(() => null))?.id;
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+        // The Worker answers errors as {code, message}: show its message, on one short line
+        const message = typeof body?.message === 'string' ? body.message.replace(/\s+/g, ' ').trim().slice(0, MAX_MESSAGE_CHARS) : '';
+        throw new Error(`the server answered ${response.status}${message ? `: ${message}` : ''}`);
+    }
+    const id = body?.id;
     if (typeof id !== 'string' || !ID_SHAPED.test(id)) throw new Error('the server gave no report id');
     return id;
 }

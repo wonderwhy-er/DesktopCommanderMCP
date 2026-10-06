@@ -23,12 +23,13 @@
  * key) must never appear anywhere in the zip, nor the user name. The device
  * id appears once, in the Device section; inside log lines it stays masked.
  *
- * After saving, the report uploads the zip (unless --no-upload) to
- * DC_DIAGNOSTICS_URL (the runs here point it at the stand-in), else to the
- * diagnosticsUrl that /api/mcp-info names (https only), else to the default
- * address. The upload carries the user id (the saved token's `sub`) and the
- * device id, and the terminal prints the report id; a failure keeps the zip
- * and says "Not sent".
+ * After saving, the report uploads the zip (unless --no-upload) to the
+ * diagnosticsUrl that /api/mcp-info names, and only there: https, or http on
+ * this machine (the stand-in here names its own /diagnostics). With none, it
+ * keeps the zip and says the server named no upload address. The upload
+ * carries the user id (the saved token's `sub`) and the device id, and the
+ * terminal prints the report id; a failure keeps the zip and says "Not sent",
+ * with the Worker's message when it sends one ({code, message}).
  *
  * The test sets its own temporary HOME / USERPROFILE for the command: main's
  * runner gives tests no temporary home. It never reads the real home folders.
@@ -120,12 +121,12 @@ const requests = [];
 // the report to a Supabase address nothing listens on (null: this stand-in).
 let restStatus = 401;
 let supabaseUrl = null;
-// mcp-info's diagnosticsUrl (undefined: left out); the runs post to this stand-in through DC_DIAGNOSTICS_URL. The
-// upload answers with uploadStatus and this report id.
-const DIAGNOSTICS_URL = 'https://diagnostics.example.invalid/';
+// mcp-info's diagnosticsUrl (undefined: left out): this stand-in's own /diagnostics once it listens (UPLOAD_URL). The
+// upload answers with uploadStatus: this report id, or uploadError as the Worker's {code, message} (null: no message).
 const REPORT_ID = 'R7KQ2M4X';
-let diagnosticsUrl = DIAGNOSTICS_URL;
+let diagnosticsUrl;
 let uploadStatus = 200;
+let uploadError = null;
 const uploads = [];
 const server = http.createServer((req, res) => {
     requests.push({ method: req.method, url: req.url, apikey: req.headers.apikey });
@@ -142,7 +143,7 @@ const server = http.createServer((req, res) => {
         req.on('end', () => {
             uploads.push({ url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
             res.statusCode = uploadStatus;
-            res.end(uploadStatus === 200 ? JSON.stringify({ id: REPORT_ID }) : '{"error":"stand-in failure"}');
+            res.end(JSON.stringify(uploadStatus === 200 ? { id: REPORT_ID } : uploadError ? { code: uploadStatus, message: uploadError } : {}));
         });
         return;
     }
@@ -174,10 +175,12 @@ server.on('upgrade', (req, socket, head) => {
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const baseUrl = `http://127.0.0.1:${server.address().port}`;
+const UPLOAD_URL = `${baseUrl}/diagnostics`;
+diagnosticsUrl = UPLOAD_URL;
 
 // --- the command -----------------------------------------------------------------
 
-/** `remote --report` with the planted home; `args` are added, `env` overrides (e.g. no DC_DIAGNOSTICS_URL). */
+/** `remote --report` with the planted home; `args` are added, `env` overrides. */
 function runReport(node = process.execPath, { args = [], env = {}, runHome = home } = {}) {
     return new Promise((resolve) => {
         const { FORCE_COLOR, ...inherited } = process.env;
@@ -188,7 +191,6 @@ function runReport(node = process.execPath, { args = [], env = {}, runHome = hom
                 HOME: runHome,
                 USERPROFILE: runHome,
                 MCP_SERVER_URL: baseUrl,
-                DC_DIAGNOSTICS_URL: `${baseUrl}/diagnostics`,
                 DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1',
                 DC_FLAG_URL: 'http://127.0.0.1:9/',
                 HTTPS_PROXY: '', https_proxy: '', HTTP_PROXY: '', http_proxy: '',
@@ -459,6 +461,16 @@ await test('a server error keeps the zip and says "Not sent"', async () => {
     assert(!result.output.includes('Report id'), result.output);
 });
 
+await test('a refused upload shows the Worker\'s message ({code, message})', async () => {
+    uploadStatus = 429;
+    uploadError = 'too many reports, try again in a minute';
+    const result = await runReport();
+    uploadStatus = 200;
+    uploadError = null;
+    assert.strictEqual(result.code, 0, result.output);
+    assert.match(result.output, /\nNot sent \(the server answered 429: too many reports, try again in a minute\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+});
+
 await test('an upload that never answers is aborted by its timeout', async () => {
     const { uploadReport } = await import('../dist/remote-device/diagnostics/upload.js');
     const silent = http.createServer(() => { /* never answers */ });
@@ -476,44 +488,53 @@ await test('an upload that never answers is aborted by its timeout', async () =>
     }
 });
 
-await test('the upload goes to the server\'s diagnosticsUrl, else to the default address', async () => {
-    const { uploadReport, DEFAULT_DIAGNOSTICS_URL } = await import('../dist/remote-device/diagnostics/upload.js');
-    assert.strictEqual(DEFAULT_DIAGNOSTICS_URL, 'https://diagnostics.ds-c09.workers.dev');
-    // The default injected as a second stand-in path, so nothing leaves this machine
-    const options = { userId: null, deviceId: null, defaultUrl: `${baseUrl}/diagnostics?to=default` };
-    await uploadReport(Buffer.from('PK'), { ...options, diagnosticsUrl: `${baseUrl}/diagnostics?to=server` });
-    assert.strictEqual(uploads.at(-1).url, '/diagnostics?to=server', 'the server\'s address wins');
-    await uploadReport(Buffer.from('PK'), { ...options, diagnosticsUrl: null });
-    assert.strictEqual(uploads.at(-1).url, '/diagnostics?to=default', 'no server address: the default');
+await test('the upload goes to the server\'s diagnosticsUrl only: no address, no upload', async () => {
+    const upload = await import('../dist/remote-device/diagnostics/upload.js');
+    assert(!('DEFAULT_DIAGNOSTICS_URL' in upload), 'no built-in address');
+    const options = { userId: null, deviceId: null };
+    await upload.uploadReport(Buffer.from('PK'), { ...options, diagnosticsUrl: `${UPLOAD_URL}?to=server` });
+    assert.strictEqual(uploads.at(-1).url, '/diagnostics?to=server', 'the server\'s address');
+    const before = uploads.length;
+    await assert.rejects(upload.uploadReport(Buffer.from('PK'), { ...options, diagnosticsUrl: null }), /^Error: the server named no upload address$/);
+    assert.strictEqual(uploads.length, before, 'nothing posted');
 });
 
-await test('only an https diagnosticsUrl from the server is used', async () => {
+await test('the server\'s diagnosticsUrl is used if https, or http on this machine; anything else is ignored', async () => {
     const { collectReport } = await import('../dist/remote-device/diagnostics/report.js');
     const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, MCP_SERVER_URL: process.env.MCP_SERVER_URL };
     // collectReport reads the home folder: the planted one, never the real one
     Object.assign(process.env, { HOME: home, USERPROFILE: home, MCP_SERVER_URL: baseUrl });
     try {
-        for (const [served, expected] of [[DIAGNOSTICS_URL, DIAGNOSTICS_URL], [`${baseUrl}/diagnostics`, null], [undefined, null]]) {
+        for (const [served, expected] of [
+            ['https://diagnostics.example.invalid/', 'https://diagnostics.example.invalid/'],
+            [UPLOAD_URL, UPLOAD_URL],
+            ['http://localhost:9/diagnostics', 'http://localhost:9/diagnostics'],
+            ['http://diagnostics.example.invalid/', null],
+            ['ftp://127.0.0.1/diagnostics', null],
+            [undefined, null],
+        ]) {
             diagnosticsUrl = served;
             assert.strictEqual((await collectReport()).diagnosticsUrl, expected, `served ${served}`);
         }
     } finally {
-        diagnosticsUrl = DIAGNOSTICS_URL;
+        diagnosticsUrl = UPLOAD_URL;
         for (const [key, value] of Object.entries(saved)) {
             if (value === undefined) delete process.env[key]; else process.env[key] = value;
         }
     }
 });
 
-await test('the server sends no diagnosticsUrl: the report is still sent, and "Not sent" means a real failure only', async () => {
+await test('the server names no diagnosticsUrl: nothing is sent, the zip is kept, and the terminal says why', async () => {
     const before = uploads.length;
     diagnosticsUrl = undefined;
     const result = await runReport();
-    diagnosticsUrl = DIAGNOSTICS_URL;
+    diagnosticsUrl = UPLOAD_URL;
     assert.strictEqual(result.code, 0, result.output);
-    assert.strictEqual(uploads.length, before + 1, 'posted');
-    assert.match(result.output, new RegExp(`Report id: ${REPORT_ID}`), result.output);
-    assert(!/Not sent|doesn't accept/.test(result.output), result.output);
+    assert.strictEqual(uploads.length, before, 'nothing posted');
+    const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
+    assert(saved && fs.existsSync(saved), 'the zip is kept');
+    assert.match(result.output, /\nNot sent \(the server named no upload address\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+    assert(!result.output.includes('Report id'), result.output);
 });
 
 await test('a session without tokens is not signed-in data', async () => {
