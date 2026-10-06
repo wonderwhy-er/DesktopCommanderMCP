@@ -84,7 +84,8 @@ export interface DiagnosticsReport {
         session: boolean;
         accessToken: boolean;
         refreshToken: boolean;
-        savedHoursAgo: number | null;
+        /** When device.json was last saved (its modification time), ISO in UTC. */
+        savedAt: string | null;
     };
     settings: { telemetryEnabled: boolean | null; clientId: string | null };
     deviceLog: { files: number; lines: number; first: string | null; last: string | null; lastText: string | null };
@@ -441,15 +442,15 @@ function proxySet(...names: string[]): boolean {
 
 // --- device state, settings, device log --------------------------------------------------
 
-function deviceState(home: string, now: number): DiagnosticsReport['device'] {
+function deviceState(home: string): DiagnosticsReport['device'] {
     const file = path.join(home, '.desktop-commander-device', 'device.json');
     const state: DiagnosticsReport['device'] = {
         deviceJson: false, parses: false, id: null, session: false,
-        accessToken: false, refreshToken: false, savedHoursAgo: null,
+        accessToken: false, refreshToken: false, savedAt: null,
     };
     let text: string;
     try {
-        state.savedHoursAgo = Math.round((now - fs.statSync(file).mtimeMs) / 360_000) / 10;
+        state.savedAt = new Date(fs.statSync(file).mtimeMs).toISOString();
         text = fs.readFileSync(file, 'utf8');
         state.deviceJson = true;
     } catch {
@@ -601,7 +602,7 @@ export async function collectReport(): Promise<{ report: DiagnosticsReport; logP
             supabase,
             proxy: { httpsProxy: proxySet('HTTPS_PROXY', 'https_proxy'), httpProxy: proxySet('HTTP_PROXY', 'http_proxy') },
         },
-        device: deviceState(home, now),
+        device: deviceState(home),
         settings: settings(home),
         deviceLog: log.summary,
         desktopCommanderMcp: mcp,
@@ -649,11 +650,8 @@ function localTimestamp(date: Date): string {
         `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} (${zone})`;
 }
 
-function age(hours: number): string {
-    if (hours < 1) return `${Math.round(hours * 60)} min ago`;
-    if (hours < 48) return `${Math.round(hours)} h ago`;
-    return `${Math.round(hours / 24)} days ago`;
-}
+/** An ISO time (UTC) to the minute: "2026-10-05 14:21". */
+const utcMinute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 
 /** "running (2 copies, since 14:02)": the time alone if it's today, else with the date. */
 function mcpText(mcp: DiagnosticsReport['desktopCommanderMcp']): string {
@@ -712,7 +710,7 @@ export function formatReport(report: DiagnosticsReport): string {
     }
     lines.push(`${indent}Proxy: HTTPS_PROXY ${proxy.httpsProxy ? 'set' : 'not set'} · HTTP_PROXY ${proxy.httpProxy ? 'set' : 'not set'}`);
 
-    const saved = device.savedHoursAgo === null ? '' : `, saved ${age(device.savedHoursAgo)}`;
+    const saved = device.savedAt === null ? '' : `, saved ${utcMinute(device.savedAt)} UTC`;
     lines.push(`${label('Device')}${!device.deviceJson ? 'signed-in data: no (no device.json)'
         : !device.parses ? `signed-in data: device.json does not parse${saved}`
             // Signed in means a token is really there, not just a session object
@@ -723,10 +721,9 @@ export function formatReport(report: DiagnosticsReport): string {
     lines.push(`${label('Settings')}telemetry: ${telemetry} · client id: ${config.clientId ?? 'none'}` +
         (config.clientId ? '  (lets us find this device\'s telemetry)' : ''));
 
-    const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
     lines.push(`${label('Device log')}${log.lines === 0
         ? (log.files ? `${log.files} file(s), no lines` : 'none yet (it is written while `remote` runs)')
-        : `${log.lines.toLocaleString('en-US')} lines from ${minute(log.first!)} to ${minute(log.last!)} UTC; last: "${log.lastText}"`}`);
+        : `${log.lines.toLocaleString('en-US')} lines from ${utcMinute(log.first!)} to ${utcMinute(log.last!)} UTC; last: "${log.lastText}"`}`);
 
     return lines.join('\n') + '\n';
 }

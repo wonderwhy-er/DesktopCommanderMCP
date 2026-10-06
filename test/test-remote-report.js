@@ -331,13 +331,16 @@ await test('the Supabase check: a 401 (no sign-in) reads "reachable", and report
     assert(!/REST|\(401\)/.test(reportTxt), 'the status code stays in report.json');
 });
 
-await test('device.json gives the device id and only yes/no facts and the age; config.json telemetry and the client id', () => {
+await test('device.json gives the device id, only yes/no facts and when it was saved; config.json telemetry and the client id', () => {
+    // When it was saved: device.json's modification time, as ISO in report.json and in UTC in report.txt
+    const savedIso = new Date(deviceJsonMtimeBefore).toISOString();
     assert.deepStrictEqual(reportJson?.device, {
         deviceJson: true, parses: true, id: DEVICE_ID, session: true,
-        accessToken: true, refreshToken: true, savedHoursAgo: 3,
+        accessToken: true, refreshToken: true, savedAt: savedIso,
     });
     assert.deepStrictEqual(reportJson?.settings, { telemetryEnabled: false, clientId: CLIENT_ID });
-    assert(reportTxt.includes(`\nDevice        id ${DEVICE_ID} · signed-in data: yes (access token: yes, refresh token: yes), saved 3 h ago\n`), reportTxt);
+    const savedUtc = `${savedIso.slice(0, 10)} ${savedIso.slice(11, 16)} UTC`;
+    assert(reportTxt.includes(`\nDevice        id ${DEVICE_ID} · signed-in data: yes (access token: yes, refresh token: yes), saved ${savedUtc}\n`), reportTxt);
     // Nothing on main creates device.json.lock: the planted one is not reported
     assert(!/lock left behind/i.test(reportTxt) && !(entries['report.json'] ?? '').includes('lockLeftBehind'), 'no lock in the report');
     assert.match(reportTxt, new RegExp(`\\nSettings +telemetry: off · client id: ${CLIENT_ID}`));
