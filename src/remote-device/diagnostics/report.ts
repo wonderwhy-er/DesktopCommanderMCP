@@ -41,7 +41,7 @@ const NOT_THE_SERVER = new Set(['remote', 'setup', 'remove']);
 /** A rotated log file is 1 MB at most; read no more than this of a larger one. */
 const MAX_LOG_READ_BYTES = 2 * 1024 * 1024;
 
-type NodeKind = 'nvm' | 'fnm' | 'Volta' | 'asdf' | 'mise' | 'Homebrew' | "Claude Desktop's bundled Node" | 'global install';
+type NodeKind = 'nvm' | 'fnm' | 'Volta' | 'asdf' | 'mise' | 'Homebrew' | "Claude Desktop's bundled Node" | 'global install' | 'unknown';
 
 interface HostTiming {
     host: string;
@@ -156,8 +156,11 @@ function runKind(): DiagnosticsReport['versions']['runKind'] {
     return 'unknown';
 }
 
-/** Which installer the Node executable comes from, read from its path. */
-function nodeKind(execPath: string): NodeKind {
+/**
+ * Which installer the Node executable comes from, read from its path. A path
+ * none of these match is "unknown": the report shows the path itself anyway.
+ */
+export function nodeKind(execPath: string): NodeKind {
     const p = execPath.replace(/\\/g, '/').toLowerCase();
     if (/\/(\.nvm|nvm|nvm4w)\//.test(p)) return 'nvm';
     if (/\/(\.fnm|fnm|fnm_multishells)\//.test(p)) return 'fnm';
@@ -166,7 +169,8 @@ function nodeKind(execPath: string): NodeKind {
     if (/\/mise\/installs\//.test(p)) return 'mise';
     if (/\/(claude\.app|anthropicclaude)\//.test(p)) return "Claude Desktop's bundled Node";
     if (/^\/(opt\/homebrew|usr\/local\/cellar|home\/linuxbrew)\//.test(p)) return 'Homebrew';
-    return 'global install';
+    if (p.includes('/program files/nodejs/') || /^\/usr\/(local\/)?bin\//.test(p)) return 'global install';
+    return 'unknown';
 }
 
 function npmVersion(): Promise<string | null> {

@@ -282,13 +282,30 @@ await test('versions include npm, and how Node runs shows both paths and their k
     assert.match(reportTxt, /\nVersions +Desktop Commander \d+\.\d+\.\d+ · Node \d+\.\d+\.\d+ · npm (\d+\.\d+\.\d+|not found) · \S/, reportTxt);
     assert.match(reportJson?.versions?.npm ?? '', /^\d+\.\d+\.\d+/, 'npm is on PATH here, so its version is known');
     const nodeLine = reportTxt.match(/\nNode +(.*)\n/)?.[1] ?? '';
-    assert.match(nodeLine, /node(\.exe)? \((global install|nvm|fnm|Volta|asdf|mise|Homebrew|Claude Desktop's bundled Node)\)$/, nodeLine);
+    assert.match(nodeLine, /node(\.exe)? \((global install|nvm|fnm|Volta|asdf|mise|Homebrew|Claude Desktop's bundled Node|unknown)\)$/, nodeLine);
     assert.strictEqual(reportJson?.versions?.nodePath, nodeLine.replace(/ \([^)]*\)$/, ''));
     // Run from this checkout: the entry script is dist/index.js, the kind a dev checkout
     const runningLine = reportTxt.match(/\nRunning +(.*)\n/)?.[1] ?? '';
     assert.match(runningLine, /[\\/]dist[\\/]index\.js \(dev checkout\)$/, runningLine);
     assert.strictEqual(reportJson?.versions?.entryPath, runningLine.replace(/ \([^)]*\)$/, ''));
     assert.strictEqual(reportJson?.versions?.runKind, 'dev checkout');
+});
+
+await test('the Node kind: known installers and global installs by path; anything else is "unknown"', async () => {
+    const { nodeKind } = await import('../dist/remote-device/diagnostics/report.js');
+    for (const [execPath, kind] of [
+        ['C:\\Program Files\\nodejs\\node.exe', 'global install'],
+        ['/usr/local/bin/node', 'global install'],
+        ['/usr/bin/node', 'global install'],
+        ['/Users/u/.nvm/versions/node/v20.11.0/bin/node', 'nvm'],
+        ['/opt/homebrew/Cellar/node/22.1.0/bin/node', 'Homebrew'],
+        ['/Applications/Claude.app/Contents/Resources/node', "Claude Desktop's bundled Node"],
+        // Paths none of the rules know, e.g. an app's own Node
+        ['C:\\Users\\u\\AppData\\Local\\SomeApp\\runtime\\node.exe', 'unknown'],
+        ['/opt/some-app/runtime/bin/node', 'unknown'],
+    ]) {
+        assert.strictEqual(nodeKind(execPath), kind, execPath);
+    }
 });
 
 await test('the clock skew comes from the server Date header: 90 s ahead means the device is 90 s behind', () => {
