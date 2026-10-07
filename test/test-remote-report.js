@@ -279,7 +279,7 @@ await test('report.txt says what it contains and what it does not', () => {
 });
 
 await test('versions include npm, and how Node runs shows both paths and their kinds', () => {
-    assert.match(reportTxt, /\nVersions +Desktop Commander \d+\.\d+\.\d+ · Node \d+\.\d+\.\d+ · npm (\d+\.\d+\.\d+|not found) · \S/, reportTxt);
+    assert.match(reportTxt, /\nVersions +Desktop Commander \d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)? · Node \d+\.\d+\.\d+ · npm (\d+\.\d+\.\d+|not found) · \S/, reportTxt);
     assert.match(reportJson?.versions?.npm ?? '', /^\d+\.\d+\.\d+/, 'npm is on PATH here, so its version is known');
     const nodeLine = reportTxt.match(/\nNode +(.*)\n/)?.[1] ?? '';
     assert.match(nodeLine, /node(\.exe)? \((global install|nvm|fnm|Volta|asdf|mise|Homebrew|Claude Desktop's bundled Node|unknown)\)$/, nodeLine);
