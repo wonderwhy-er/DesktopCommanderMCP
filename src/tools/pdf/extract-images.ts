@@ -122,9 +122,8 @@ export async function extractImagesFromPdf(
             }
         } catch (e) { /* Ignore cleanup errors */ }
         try {
-            if (typeof pdfDocument.destroy === 'function') {
-                await pdfDocument.destroy();
-            }
+            // The loading task owns the PDF worker and releases it after extraction completes.
+            await pdfDocument.loadingTask.destroy();
         } catch (e) { /* Ignore cleanup errors */ }
     }
 
