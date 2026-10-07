@@ -143,6 +143,19 @@ export function presenceRetryDelayMs(failedAttempt: number, random: () => number
 const rawDateNow = Date.now;
 let clockOffsetMs = 0;
 let clockPatched = false;
+// Server time minus this device's, from the last Date header; kept at any
+// size, unlike clockOffsetMs.
+let serverOffsetMs = 0;
+
+/**
+ * Server time, for the times this device writes to its rows. The server
+ * compares last_seen and completed_at with its own clock (a device is offline
+ * after 15 min, a finished call is deleted after 1 min); new Date() is never
+ * corrected, and Date.now only above 5 min.
+ */
+function serverNow(): Date {
+    return new Date(rawDateNow() + serverOffsetMs);
+}
 
 export function observeServerDate(dateHeader: string | null): void {
     if (!dateHeader) return;
@@ -150,6 +163,7 @@ export function observeServerDate(dateHeader: string | null): void {
     if (Number.isNaN(serverMs)) return;
 
     const offsetMs = serverMs - rawDateNow();
+    serverOffsetMs = offsetMs;
     if (Math.abs(offsetMs) <= CLOCK_SKEW_CORRECTION_THRESHOLD_MS) {
         if (clockPatched) {
             Date.now = rawDateNow;
@@ -529,7 +543,7 @@ export class RemoteChannel {
             // 'online'; presence writes the capability.
             const { error: registrationError } = await this.updateDevice(existingDevice.id, {
                 status: 'offline',
-                last_seen: new Date().toISOString(),
+                last_seen: serverNow().toISOString(),
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
             });
@@ -834,15 +848,11 @@ export class RemoteChannel {
     private async recoverPendingCalls(): Promise<void> {
         if (!this.client || !this.deviceId || !this.isReachable()) return;
 
-        // Date.now() is deliberately used here: this process may patch it from
-        // Supabase's Date header to correct a badly skewed device clock.
-        const now = new Date(Date.now()).toISOString();
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
             .select('id,device_id')
             .eq('device_id', this.deviceId)
             .eq('status', 'pending')
-            .gt('timeout_at', now)
             .order('created_at', { ascending: true })
             .limit(PENDING_RECOVERY_BATCH_SIZE);
 
@@ -907,7 +917,9 @@ export class RemoteChannel {
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
-        // so a hiccup must not cost a 5-minute timeout.
+        // so a hiccup must not cost a timeout. Do not compare timeout_at with
+        // client time here: the database reaper owns expiry, and a fast device
+        // clock can otherwise make a fresh pending row unclaimable.
         let row: any = null;
         let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
@@ -918,7 +930,6 @@ export class RemoteChannel {
                 .eq('id', callId)
                 .eq('device_id', this.deviceId)
                 .eq('status', 'pending')
-                .gt('timeout_at', new Date(Date.now()).toISOString())
                 .select('*');
             if (!error) {
                 row = data?.[0] ?? null;
@@ -956,13 +967,9 @@ export class RemoteChannel {
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
             return;
         }
-        if (
-            current?.status === 'pending'
-            && current.timeout_at
-            && new Date(current.timeout_at).getTime() > Date.now()
-        ) {
-            // No claim landed; device.ts claims it. Do not hand an expired
-            // side-effecting call to the executor while it races the reaper.
+        if (current?.status === 'pending') {
+            // No claim landed; device.ts claims it. Expiry is enforced by the
+            // server-side reaper, not by this device's potentially skewed clock.
             this.dispatchToolCall({ new: current });
         } else {
             // 'executing' reads the same whether our own claim committed with its
@@ -1208,7 +1215,8 @@ export class RemoteChannel {
      * Claim a call. True only when THIS update flipped the row pending ->
      * executing, which is what makes dual delivery safe across processes.
      * .eq('status','pending') makes it conditional; .select('id') makes the
-     * result observable. On a transient DB error it returns true (execute
+     * result observable. Expiry is left to the server-side reaper so client
+     * clock skew cannot suppress a valid claim. On a transient DB error it returns true (execute
      * anyway), matching prior behaviour — so device.ts's in-memory guard is what
      * actually guarantees exactly-once within a process.
      */
@@ -1219,7 +1227,6 @@ export class RemoteChannel {
             .update({ status: 'executing' })
             .eq('id', callId)
             .eq('status', 'pending')
-            .gt('timeout_at', new Date(Date.now()).toISOString())
             .select('id');
 
         if (error) {
@@ -1241,7 +1248,7 @@ export class RemoteChannel {
         if (!this.client) throw new Error('Client not initialized');
         const updateData: any = {
             status: status,
-            completed_at: new Date().toISOString()
+            completed_at: serverNow().toISOString()
         };
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
@@ -1382,7 +1389,7 @@ export class RemoteChannel {
 
             const { error } = await this.client
                 .from('mcp_devices')
-                .update({ last_seen: new Date().toISOString(), status: 'online' })
+                .update({ last_seen: serverNow().toISOString(), status: 'online' })
                 .eq('id', deviceId);
 
             if (error) {
@@ -1483,7 +1490,7 @@ export class RemoteChannel {
 
         const { error } = await this.client
             .from('mcp_devices')
-            .update({ status: status, last_seen: new Date().toISOString() })
+            .update({ status: status, last_seen: serverNow().toISOString() })
             .eq('id', deviceId);
 
         if (error) {
