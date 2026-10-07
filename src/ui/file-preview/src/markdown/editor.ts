@@ -90,6 +90,37 @@ const BOLD_AROUND_CODE_RE = /\*\*([^*\n]*?`[^`\n]+`[^*\n]*?)\*\*/g;
 //   - distinctive enough to never collide with real document content
 const PIPE_ESCAPE_TOKEN = 'TIPTAPPIPEESCX';
 
+// A URL whose RFC 3986 scheme contains a hyphen: `ms-settings:`,
+// `vscode-insiders://`, `x-devonthink-item://`, `x-callback-url://`.
+// Tiptap's Link validator (isAllowedUri) accepted these up to 3.26 through
+// a character-class quirk; 3.27 closed it, so the link mark is dropped on
+// parse and autosave writes the bare link text back to disk.
+const HYPHENATED_SCHEME_RE = /^[a-z][a-z0-9+.]*-[a-z0-9+.-]*:/i;
+
+// Same class as Tiptap 3.31's UNICODE_WHITESPACE_PATTERN, which its
+// validator strips from an href before matching the scheme.
+const LINK_WHITESPACE_RE = /[\0- \xA0\u1680\u180E\u2000-\u2029\u205F\u3000]/g;
+
+/**
+ * Link-extension `isAllowedUri` hook: Tiptap's own check, plus
+ * hyphenated schemes so they behave as they did on Tiptap 3.22.
+ *
+ * Everything else is left to `defaultValidate`. The regex is tested
+ * after the same whitespace / control-char stripping Tiptap applies, so
+ * `<a href=" ms-settings:display">` keeps its link as it did on 3.22.
+ * Even after stripping, no scheme a browser executes (`javascript:`,
+ * `vbscript:`, `data:`) or `file:` contains a hyphen.
+ *
+ * This deliberately goes beyond Tiptap 3.27+ defaults to keep 3.22
+ * behaviour, so OS-handler schemes such as `ms-settings:` and `ms-msdt:`
+ * stay live hrefs in the editor DOM. That is acceptable only because the
+ * Link extension runs with `openOnClick: false` and the 3.22 editor
+ * already allowed them; revisit this if either changes.
+ */
+function isAllowedLinkUri(url: string, ctx: { defaultValidate: (url: string) => boolean }): boolean {
+    return ctx.defaultValidate(url) || HYPHENATED_SCHEME_RE.test(url.replace(LINK_WHITESPACE_RE, ''));
+}
+
 /**
  * Decide whether a markdown inline link will be mangled by Tiptap, in
  * which case we should placeholder it during preprocess.
@@ -717,6 +748,9 @@ export function buildTiptapExtensions(): Extensions {
                 openOnClick: false,
                 autolink: true,
                 HTMLAttributes: { 'data-markdown-link': 'true' },
+                // Keep hyphenated custom schemes (`ms-settings:`) linked —
+                // see isAllowedLinkUri.
+                isAllowedUri: isAllowedLinkUri,
             },
             // Disable strikethrough — see comment above. The serializer
             // would otherwise treat `~` as a strike delimiter character
