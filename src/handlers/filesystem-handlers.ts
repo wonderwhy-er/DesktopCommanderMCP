@@ -32,6 +32,26 @@ import path from 'path';
 import os from 'os';
 import { resolvePreviewFileType } from '../ui/file-preview/shared/preview-file-types.js';
 
+// @modelcontextprotocol/sdk 1.30.0 defaults StdioClientTransport to a 10 MiB
+// read buffer and closes when a single message exceeds it. Reserve 5% (512 KiB)
+// for JSON-RPC framing plus the small prompts/warnings the dispatcher may append.
+const MCP_STDIO_DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const READ_MULTIPLE_FILES_HEADROOM_BYTES = MCP_STDIO_DEFAULT_MAX_BUFFER_BYTES * 0.05;
+export const READ_MULTIPLE_FILES_MAX_RESULT_BYTES =
+    MCP_STDIO_DEFAULT_MAX_BUFFER_BYTES - READ_MULTIPLE_FILES_HEADROOM_BYTES;
+
+export function enforceReadMultipleFilesResultBudget(result: ServerResult): ServerResult {
+    const serializedBytes = Buffer.byteLength(JSON.stringify(result), 'utf8');
+    if (serializedBytes <= READ_MULTIPLE_FILES_MAX_RESULT_BYTES) return result;
+
+    const responseMiB = (serializedBytes / (1024 * 1024)).toFixed(2);
+    const limitMiB = (READ_MULTIPLE_FILES_MAX_RESULT_BYTES / (1024 * 1024)).toFixed(2);
+    return createErrorResponse(
+        `Combined read_multiple_files response would be ${responseMiB} MiB, above the ` +
+        `${limitMiB} MiB safe aggregate limit. Read fewer files or PDF pages per request.`
+    );
+}
+
 /**
  * Expand home directory (~) in a file path
  */
@@ -296,7 +316,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
         }
     }
 
-    return { content: contentItems };
+    return enforceReadMultipleFilesResultBudget({ content: contentItems });
 }
 
 /**
