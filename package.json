@@ -152,7 +152,9 @@
     "md-to-pdf": {
       "chokidar": "^4.0.3",
       "gray-matter": {
-        "js-yaml": "^4.1.0"
+        "js-yaml": {
+          "argparse": "^2.0.1"
+        }
       }
     },
     "exceljs": {
