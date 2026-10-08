@@ -332,6 +332,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get Configuration",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -426,6 +427,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Read File or URL",
                     readOnlyHint: true,
                     openWorldHint: true,
+                    destructiveHint: false,
                 },
             },
             {
@@ -447,6 +449,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Read Multiple Files",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -599,6 +602,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "List Directory Contents",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -700,6 +704,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Start Search",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -731,6 +736,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get Search Results",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -769,6 +775,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "List Active Searches",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -794,6 +801,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get File Information",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             // Note: list_allowed_directories removed - use get_config to check allowedDirectories
@@ -953,6 +961,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Read Process Output",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -1033,6 +1042,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "List Terminal Sessions",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -1048,6 +1058,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "List Running Processes",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -1079,6 +1090,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get Usage Statistics",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -1103,6 +1115,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Get Recent Tool Calls",
                     readOnlyHint: true,
                     openWorldHint: false,
+                    destructiveHint: false,
                 },
             },
             {
@@ -1125,6 +1138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Give Feedback",
                     readOnlyHint: false,
                     openWorldHint: true,
+                    destructiveHint: false,
                 },
             },
         ];
