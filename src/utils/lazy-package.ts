@@ -9,8 +9,9 @@ import { logger } from './logger.js';
  * (preloadFileSupport() in utils/files/factory.ts), and until one is loaded the
  * calls that need it answer at once that it is still loading. preload() loads
  * it on a later turn of the event loop, so a call that starts it answers
- * first. `error` says why the last preload failed. Node keeps a failed
- * import() failed, so a package loaded with import() then `needsRestart`.
+ * first. `error` says why the last preload failed. Callers that load with
+ * import() can mark failures as requiring a restart, because Node caches a
+ * failed dynamic import.
  */
 export class LazyPackage<T> {
     loaded = false;
@@ -18,7 +19,12 @@ export class LazyPackage<T> {
     needsRestart = false;
     private running?: Promise<void>;
 
-    constructor(readonly name: string, readonly support: string, readonly load: () => T) {}
+    constructor(
+        readonly name: string,
+        readonly support: string,
+        readonly load: () => T,
+        readonly restartAfterFailure = false,
+    ) {}
 
     preload(): Promise<void> {
         this.running ??= new Promise((resolve) => setImmediate(resolve)).then(async () => {
@@ -30,7 +36,7 @@ export class LazyPackage<T> {
                 this.error = undefined;
             } catch (error) {
                 this.error = error instanceof Error ? error.message : String(error);
-                this.needsRestart = loading instanceof Promise;
+                this.needsRestart = this.restartAfterFailure;
                 logger.error(`Loading ${this.name} failed: ${this.error}`);
             } finally {
                 this.running = undefined;

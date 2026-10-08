@@ -30,7 +30,7 @@ export interface ImageCompressionOptions {
 }
 
 // import(): unpdf is an ES module only. If it fails, Node keeps it failed until a restart.
-export const unpdfPackage = new LazyPackage('unpdf', 'PDF reading support', () => import('unpdf'));
+export const unpdfPackage = new LazyPackage('unpdf', 'PDF reading support', () => import('unpdf'), true);
 
 /**
  * Optimized image extraction from PDF using unpdf's built-in extractImages method
