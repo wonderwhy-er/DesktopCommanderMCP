@@ -34,6 +34,7 @@ Options:
   --no-upload           With --report: only save the zip, don't send it
   --no-persist-session  Do not reuse or save authentication for this run
   --disable-no-sleep    Do not prevent sleep while the remote device is running
+  --no-sleep-ac-only    Prevent sleep only while connected to AC power (macOS)
   --debug                Enable verbose debug logging
   -h, --help             Show this help
 
@@ -75,6 +76,7 @@ Note:
         console.log('🔓 Session persistence disabled — re-authorization required on every start');
     }
     const disableNoSleep = process.argv.includes('--disable-no-sleep');
+    const acOnly = process.argv.includes('--no-sleep-ac-only');
     const verbose = process.argv.includes('--debug');
     console.debug('[DEBUG] Verbose mode: ', verbose);
     // Override console.debug based on verbose flag
@@ -99,8 +101,9 @@ Note:
         try {
             console.debug('[DEBUG] Start caffeinate', process.pid);
             const { default: caffeinate } = await import('caffeinate');
-            caffeinate({ pid: process.pid });
-            console.log('☕ No sleep mode enabled');
+            // options-to-args emits boolean keys verbatim, unlike numeric pid -> -w.
+            await caffeinate(acOnly ? { pid: process.pid, '-s': true } : { pid: process.pid });
+            console.log(acOnly ? '☕ No sleep mode enabled on AC power only' : '☕ No sleep mode enabled');
         } catch (error) {
             console.warn('⚠️ Failed to start caffeinate:', error);
         }
