@@ -57,7 +57,13 @@ export const ReadFileArgsSchema = z.object({
   path: z.string(),
   isUrl: z.boolean().optional().default(false),
   offset: z.number().optional().default(0),
-  length: z.number().optional().default(1000),
+  // No schema default: the handler applies the configured `fileReadLineLimit`
+  // when neither `length` nor its `limit` alias is supplied.
+  length: z.number().optional(),
+  // Alias for `length`. Some clients and models call the page size `limit`
+  // (Claude's Read tool naming); without this they are silently ignored and the
+  // whole file comes back. `length` wins when both are present.
+  limit: z.number().optional(),
   sheet: z.string().optional(),  // String only for MCP client compatibility (Cursor doesn't support union types in JSON Schema)
   range: z.string().optional(),
   options: z.record(z.any()).optional(),

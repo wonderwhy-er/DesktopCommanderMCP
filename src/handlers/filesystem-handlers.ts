@@ -101,7 +101,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
-            length: parsed.length ?? defaultLimit,
+            // `limit` is accepted as an alias for `length` (see ReadFileArgsSchema);
+            // the configured fileReadLineLimit applies when neither is given.
+            length: parsed.length ?? parsed.limit ?? defaultLimit,
             sheet: sheetParam,
             range: parsed.range
         };
