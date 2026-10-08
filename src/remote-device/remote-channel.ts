@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel, isAuthApiError, isAuthRetryableFetchError } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { VERSION } from '../version.js';
 
@@ -88,6 +88,11 @@ const HEARTBEAT_STALE_TIMEOUT_MS = 75000;
 // Fixed cadence for our own token refresh, independent of auth-js's internal
 // ticker (disabled in initialize()) — see the clock-skew comment below for why.
 const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
+const TOKEN_REFRESH_RETRY_MS = [5000, 15000, 60000, 300000];
+const TERMINAL_REFRESH_CODES = new Set([
+    'refresh_token_not_found', 'refresh_token_already_used',
+    'session_not_found', 'session_expired',
+]);
 // Below this, skew is noise — leave Date.now untouched. Above it, correct.
 const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
 // Failed recreates before withdrawing transport_broadcast_v1 — keeping it while
@@ -235,6 +240,11 @@ export class RemoteChannel {
     private heartbeatListenerRegistered = false;
     /** Our own fixed-cadence auth refresh timer — see TOKEN_REFRESH_INTERVAL_MS. */
     private tokenRefreshInterval: NodeJS.Timeout | null = null;
+    private tokenRefreshRetry: NodeJS.Timeout | null = null;
+    private tokenRefreshPromise: Promise<void> | null = null;
+    private tokenRefreshRetryAttempt = 0;
+    private tokenRefreshGeneration = 0;
+    private tokenRefreshRunning = false;
 
     private _user: User | null = null;
     get user(): User | null { return this._user; }
@@ -1413,30 +1423,73 @@ export class RemoteChannel {
         console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
     }
 
-    private async refreshTokenNow(): Promise<void> {
-        if (!this.client || this.shuttingDown) return;
+    private refreshTokenNow(): Promise<void> {
+        if (!this.client || !this.tokenRefreshRunning || this.shuttingDown || this.sessionLost) {
+            return Promise.resolve();
+        }
+        if (this.tokenRefreshPromise) return this.tokenRefreshPromise;
+        this.clearTokenRefreshRetry();
+        const pending = this.performTokenRefresh(this.tokenRefreshGeneration);
+        this.tokenRefreshPromise = pending;
+        void pending.finally(() => {
+            if (this.tokenRefreshPromise === pending) this.tokenRefreshPromise = null;
+        }).catch(() => { /* errors are handled below */ });
+        return pending;
+    }
+
+    private async performTokenRefresh(generation: number): Promise<void> {
+        let error: any;
         try {
-            const { error } = await this.client.auth.refreshSession();
-            if (error) {
-                console.error('[DEBUG] Manual token refresh failed:', error.message);
-                await captureRemote('remote_channel_token_refresh_error', { error });
-            } else {
-                console.debug('[DEBUG] Manual token refresh ok');
-            }
-        } catch (error: any) {
-            console.error('[DEBUG] Manual token refresh threw:', error?.message);
-            await captureRemote('remote_channel_token_refresh_error', { error });
+            ({ error } = await this.client!.auth.refreshSession());
+        } catch (thrown) {
+            error = thrown;
+        }
+        // A refresh can finish after shutdown/session-loss. It must not re-arm timers.
+        if (!this.tokenRefreshRunning || generation !== this.tokenRefreshGeneration
+            || this.shuttingDown || this.sessionLost) return;
+        if (!error) {
+            this.tokenRefreshRetryAttempt = 0;
+            this.clearTokenRefreshRetry();
+            console.debug('[DEBUG] Manual token refresh ok');
+            return;
+        }
+        console.error('[DEBUG] Manual token refresh failed:', error.message);
+        void captureRemote('remote_channel_token_refresh_error', { error }).catch(() => { });
+        if (isAuthRetryableFetchError(error)
+            || (isAuthApiError(error) && (error.status === 429 || error.status >= 500))) {
+            const delay = TOKEN_REFRESH_RETRY_MS[Math.min(this.tokenRefreshRetryAttempt++, TOKEN_REFRESH_RETRY_MS.length - 1)];
+            console.warn(`Remote auth refresh will retry in ${delay / 1000}s`);
+            this.tokenRefreshRetry = setTimeout(() => {
+                this.tokenRefreshRetry = null;
+                this.refreshTokenNow().catch(() => { /* logged inside */ });
+            }, delay);
+        } else if ((isAuthApiError(error) && TERMINAL_REFRESH_CODES.has(error.code ?? ''))
+            || error.name === 'AuthSessionMissingError') {
+            // Reuse the existing one-shot restore/offline path; never browser-auth in a daemon.
+            await this.handleSignedOut();
+        }
+    }
+
+    private clearTokenRefreshRetry(): void {
+        if (this.tokenRefreshRetry) {
+            clearTimeout(this.tokenRefreshRetry);
+            this.tokenRefreshRetry = null;
         }
     }
 
     private startTokenRefresh(): void {
         if (this.tokenRefreshInterval) return; // already running
+        this.tokenRefreshRunning = true;
         this.tokenRefreshInterval = setInterval(() => {
             this.refreshTokenNow().catch(() => { /* logged inside */ });
         }, TOKEN_REFRESH_INTERVAL_MS);
     }
 
     private stopTokenRefresh(): void {
+        this.tokenRefreshRunning = false;
+        this.tokenRefreshGeneration++;
+        this.tokenRefreshRetryAttempt = 0;
+        this.clearTokenRefreshRetry();
         if (this.tokenRefreshInterval) {
             clearInterval(this.tokenRefreshInterval);
             this.tokenRefreshInterval = null;
