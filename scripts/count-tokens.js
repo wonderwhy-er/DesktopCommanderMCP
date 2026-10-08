@@ -203,7 +203,7 @@ function categorize(results) {
     let cat;
     if (r.toolName.startsWith('macos_ax_')) cat = 'macOS AX';
     else if (r.toolName.startsWith('electron_debug_')) cat = 'Electron Debug';
-    else if (['read_file', 'read_multiple_files', 'write_file', 'write_pdf', 'edit_block', 'create_directory', 'move_file', 'list_directory', 'get_file_info'].includes(r.toolName)) cat = 'Filesystem';
+    else if (['read_file', 'read_multiple_files', 'write_file', 'write_pdf', 'edit_block', 'create_directory', 'move_file', 'copy_file_exclusive', 'list_directory', 'get_file_info'].includes(r.toolName)) cat = 'Filesystem';
     else if (['start_search', 'get_more_search_results', 'stop_search', 'list_searches'].includes(r.toolName)) cat = 'Search';
     else if (['start_process', 'interact_with_process', 'read_process_output', 'force_terminate', 'list_sessions'].includes(r.toolName)) cat = 'Process/Terminal';
     else if (['list_processes', 'kill_process'].includes(r.toolName)) cat = 'OS Processes';
@@ -218,3 +218,5 @@ main().catch((e) => {
   console.error(`${colors.red}❌ ${e.message}${colors.reset}`);
   process.exit(1);
 });
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]
