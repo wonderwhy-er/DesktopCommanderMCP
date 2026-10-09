@@ -1,0 +1,235 @@
+{
+  "diagnosticStatus": "BUG_REPRODUCED",
+  "harnessStatus": "EXPECTED_OBSERVATIONS_CONFIRMED",
+  "interpretation": "Exit 0 confirms the expected reproduction, including known defects. It does not mean the parser is fixed or safe.",
+  "nodeVersion": "24.19.0",
+  "upstreamRevision": "ea3ed35a7be9f2a3ea3e89185ff9bbb03fe5ab57",
+  "sourceSha256": "43d8badc0218b8da1ceb73de02ad99158bdce8cd1ae21d46ea1aef1af922f3ba",
+  "counts": {
+    "total": 16,
+    "literalFalsePositivesReproduced": 6,
+    "blockedControlsDenied": 6,
+    "ordinaryLiteralMatches": 2,
+    "legacyFalseAcceptsRecorded": 2
+  },
+  "fixtureExecution": "NONE",
+  "nativePowerShell": "UNRUN",
+  "fullPackageBuild": "UNRUN",
+  "securityCertification": false,
+  "isolation": {
+    "processAvailable": false,
+    "requireAvailable": false,
+    "fetchAvailable": false,
+    "stringCodeGenerationBlocked": true,
+    "wasmCodeGenerationBlocked": true,
+    "telemetryEvents": 0
+  },
+  "observations": [
+    {
+      "id": "L1",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "sudo",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "L2",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "format",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "L3",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "sudo",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "L4",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "format",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "L5",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "sudo",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "L6",
+      "kind": "literal_false_positive",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "format",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C1",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "sudo"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "sudo"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C2",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "format"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "format"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C3",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "write-output",
+        "sudo"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "write-output",
+        "sudo"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C4",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "format",
+        "write-output"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "format",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C5",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "sudo",
+        "write-output"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "sudo",
+        "write-output"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "C6",
+      "kind": "blocked_control",
+      "expectedPowerShellCommands": [
+        "write-output",
+        "format"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "write-output",
+        "format"
+      ],
+      "observedBaselineDenied": true
+    },
+    {
+      "id": "M1",
+      "kind": "literal_match",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "write-output"
+      ],
+      "observedBaselineDenied": false
+    },
+    {
+      "id": "M2",
+      "kind": "literal_match",
+      "expectedPowerShellCommands": [
+        "write-output"
+      ],
+      "expectedPowerShellDenied": false,
+      "observedBaselineCommands": [
+        "write-output"
+      ],
+      "observedBaselineDenied": false
+    },
+    {
+      "id": "G1",
+      "kind": "legacy_gap",
+      "expectedPowerShellCommands": [
+        "sudo"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "'sudo'"
+      ],
+      "observedBaselineDenied": false
+    },
+    {
+      "id": "G2",
+      "kind": "legacy_gap",
+      "expectedPowerShellCommands": [
+        "sudo"
+      ],
+      "expectedPowerShellDenied": true,
+      "observedBaselineCommands": [
+        "."
+      ],
+      "observedBaselineDenied": false
+    }
+  ]
+}
