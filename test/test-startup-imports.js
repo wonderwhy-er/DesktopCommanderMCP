@@ -152,6 +152,20 @@ async function testFailedLoadIsNotKept(server, file) {
   console.log(`✓ A failed load isn't kept: "${text(answer)}", and a later call loads it`);
 }
 
+/** unpdf failing in pdf2md's require() of it says to try again, and a later call reads the PDF */
+async function testFailedRequireTriesAgain(server, file) {
+  const deadline = Date.now() + LOAD_DEADLINE_MS;
+  while (!server.logs().some((line) => /Loading @opendocsg\/pdf2md failed/.test(line)) && Date.now() < deadline) await sleep(100);
+  const answer = await server.client.callTool({ name: 'read_file', arguments: { path: file } });
+  assert(answer.isError === true &&
+    /Can't read held\.pdf: Desktop Commander couldn't load its PDF reading support \(.*unpdf failed to load \(test\)\)\. It's loading it again/.test(text(answer)),
+    "when pdf2md's require() of unpdf failed, read_file of held.pdf should say it is loading PDF reading support again: " +
+    `a failed require() can be tried again; it answered: ${text(answer)}`);
+  assert((await callTool(server.client, 'read_file', { path: file })).trim().length > 0,
+    "after pdf2md's require() of unpdf failed once, a later read_file of held.pdf should load it again and return its text");
+  console.log(`✓ A failed require() says to try again, and a later call reads the PDF: ${text(answer)}`);
+}
+
 /** A package Node can't load again (an import() that failed) says to restart, not to try again */
 async function testFailedImportSaysRestart(server, file) {
   const deadline = Date.now() + LOAD_DEADLINE_MS;
@@ -230,12 +244,22 @@ export default async function runTests() {
       await failing.close();
     }
 
-    // PDF reading support (unpdf, loaded with import()) failing to load once
-    const failingImport = await startServerRecordingModules({ failPackageOnce: 'unpdf' });
+    // PDF reading support (unpdf, loaded with import()) failing to load once. Only the
+    // import() fails: @opendocsg/pdf2md 0.3.4 shares this unpdf and require()s it, and a
+    // failed require() can be tried again, so failing that one first rightly says "try again".
+    const failingImport = await startServerRecordingModules({ failPackageOnce: 'unpdf', failOnly: 'import' });
     try {
       await runCases(failures, [[testFailedImportSaysRestart, failingImport, heldPdf]]);
     } finally {
       await failingImport.close();
+    }
+
+    // The same unpdf failing once in pdf2md's require() of it: that can be tried again
+    const failingRequire = await startServerRecordingModules({ failPackageOnce: 'unpdf', failOnly: 'require' });
+    try {
+      await runCases(failures, [[testFailedRequireTriesAgain, failingRequire, heldPdf]]);
+    } finally {
+      await failingRequire.close();
     }
 
     // PDF writing failing to load once

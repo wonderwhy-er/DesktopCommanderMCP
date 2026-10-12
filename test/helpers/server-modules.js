@@ -64,7 +64,8 @@ function seedChromeCache() {
  * loading". While it is held, keep other module loads out of the test: the
  * held import can hold up the server's other imports.
  * With `failPackageOnce`, the first file of that package the server runs fails, as
- * a broken package does.
+ * a broken package does. `failOnly: 'import'` fails only an ES module of it (an
+ * import()), `failOnly: 'require'` only a CommonJS one (a require()).
  *
  * Returns:
  * - client: the connected MCP client
@@ -79,7 +80,7 @@ function seedChromeCache() {
  *
  * It writes to Desktop Commander's folder in the home, so it runs only in a test home.
  */
-export async function startServerRecordingModules({ holdPackage, failPackageOnce } = {}) {
+export async function startServerRecordingModules({ holdPackage, failPackageOnce, failOnly } = {}) {
   if (!isTestHome()) {
     throw new Error('startServerRecordingModules writes to the home: run it through the test or repro runner');
   }
@@ -94,7 +95,7 @@ export async function startServerRecordingModules({ holdPackage, failPackageOnce
     command: process.execPath,
     args: [
       ...(holdPackage || failPackageOnce ? hookArgs(PACKAGE_LOAD_HOOKS) : []),
-      ...(failPackageOnce ? ['--import', PACKAGE_LOAD_PRELOAD] : []),
+      ...(failPackageOnce && failOnly !== 'import' ? ['--import', PACKAGE_LOAD_PRELOAD] : []),
       ...hookArgs(HOOKS), '--import', PRELOAD, SERVER, '--no-onboarding',
     ],
     cwd: PROJECT_ROOT,
@@ -102,7 +103,7 @@ export async function startServerRecordingModules({ holdPackage, failPackageOnce
       ...process.env,
       DC_TEST_MODULE_LOG: logFile,
       ...(holdPackage ? { DC_TEST_HOLD_PACKAGE: holdPackage, DC_TEST_HOLD_RELEASE: releaseFile } : {}),
-      ...(failPackageOnce ? { DC_TEST_FAIL_PACKAGE_ONCE: failPackageOnce, DC_TEST_FAILED_MARKER: failedMarker } : {}),
+      ...(failPackageOnce ? { DC_TEST_FAIL_PACKAGE_ONCE: failPackageOnce, DC_TEST_FAILED_MARKER: failedMarker, DC_TEST_FAIL_ONLY: failOnly ?? '' } : {}),
     },
     stderr: 'pipe',
   });
