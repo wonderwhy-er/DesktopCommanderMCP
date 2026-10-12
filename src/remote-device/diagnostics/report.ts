@@ -8,6 +8,7 @@ import path from 'path';
 import tls from 'tls';
 import { fileURLToPath } from 'url';
 import PizZip from 'pizzip';
+import { parseConfig } from '../../config-manager.js';
 import { VERSION } from '../../version.js';
 import { deviceLogNames, getDeviceLogDir, cleanLine } from './device-log.js';
 import { redact } from './redact.js';
@@ -472,7 +473,8 @@ function deviceState(home: string): DiagnosticsReport['device'] {
 
 function settings(home: string): DiagnosticsReport['settings'] {
     try {
-        const config = JSON.parse(fs.readFileSync(path.join(home, '.claude-server-commander', 'config.json'), 'utf8'));
+        // As Desktop Commander reads it: a file saved with a UTF-8 BOM too
+        const config = parseConfig(fs.readFileSync(path.join(home, '.claude-server-commander', 'config.json'), 'utf8'));
         const clientId = typeof config?.clientId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(config.clientId) ? config.clientId : null;
         return {
             telemetryEnabled: typeof config?.telemetryEnabled === 'boolean' ? config.telemetryEnabled : null,

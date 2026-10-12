@@ -1,10 +1,17 @@
-import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
+import { resolveShellPath } from '../utils/shell.js';
+
+/** The device's environment, as the string map a child process gets */
+function deviceEnvironment(): Record<string, string> {
+    return Object.fromEntries(
+        Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)
+    );
+}
 
 // Restart pacing: grows with consecutive failures, caps, and jitters so a
 // fleet-wide fault does not stampede.
@@ -89,12 +96,17 @@ export class DesktopCommanderIntegration {
 
         try {
             console.debug('[DEBUG] Creating StdioClientTransport');
+            // The server gets the device's whole environment, as a Desktop
+            // Commander started directly would: what the user set for the
+            // device (telemetry opt-out, container variables, what commands
+            // need) must reach the tools. The SDK's default passes only a
+            // minimal set, meant for starting untrusted servers.
             // DC_REMOTE_DEVICE tells the spawned server it is serving remote
             // services, so it suppresses local-only behavior like opening the
             // welcome page in a browser the remote user would never see.
             this.mcpTransport = new StdioClientTransport({
                 ...config,
-                env: { ...getDefaultEnvironment(), ...config.env, DC_REMOTE_DEVICE: 'true' }
+                env: { ...deviceEnvironment(), ...config.env, DC_REMOTE_DEVICE: 'true' }
             });
 
             // Create MCP client
@@ -263,31 +275,17 @@ export class DesktopCommanderIntegration {
         // Option 2: Global Installation
         const commandName = 'desktop-commander';
         console.debug('[DEBUG] Checking for global command:', commandName);
-        try {
-            await new Promise<void>((resolve, reject) => {
-                // Use platform-appropriate command to check if the command exists in PATH
-                // We can't run it directly as it's an stdio MCP server that waits for input
-                const whichCommand = process.platform === 'win32' ? 'where' : 'which';
-                console.debug('[DEBUG] Using platform command:', whichCommand, 'on platform:', process.platform);
-                const check = spawn(whichCommand, [commandName], { windowsHide: true });  // Prevent visible console windows on Windows
-                check.on('error', (err) => {
-                    console.debug('[DEBUG] Spawn error for', whichCommand, ':', err.message);
-                    reject(err);
-                });
-                check.on('close', (code) => {
-                    console.debug('[DEBUG]', whichCommand, 'exited with code:', code);
-                    return code === 0 ? resolve() : reject(new Error('Command not found'));
-                });
-            });
-            console.debug(' - Found global desktop-commander CLI');
+        // Looked up in PATH's folders, never the working folder (which 'where'
+        // searched first on Windows), and started by that full path
+        const globalCommand = resolveShellPath(commandName);
+        if (globalCommand) {
+            console.debug(' - Found global desktop-commander CLI:', globalCommand);
             return {
-                command: commandName,
+                command: globalCommand,
                 args: []
             };
-        } catch (err) {
-            console.debug('[DEBUG] Global command not found:', err);
-            // Global command not found
         }
+        console.debug('[DEBUG] Global command not found on PATH');
 
         console.debug('[DEBUG] No MCP config resolved');
         return null;

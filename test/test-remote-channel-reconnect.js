@@ -30,6 +30,7 @@ import {
   realtimeReconnectDelayMs,
   presenceRetryDelayMs,
 } from '../dist/remote-device/remote-channel.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Keep telemetry from touching the network during the test.
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -263,9 +264,10 @@ class FakeClient {
     });
   }
 
-  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
+  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId).abortSignal(...)
   from() {
     const result = Promise.resolve({ error: null });
+    result.abortSignal = () => result;
     const chain = {
       update: () => chain,
       insert: () => chain,
@@ -755,7 +757,7 @@ async function main() {
   console.log(
     `\n${failures ? '🔴' : '✅'} remote-channel reconnect: ${failures} failing test(s).`
   );
-  process.exit(failures ? 1 : 0);
+  return !failures;
 }
 
-main();
+runIfMain(import.meta.url, main);

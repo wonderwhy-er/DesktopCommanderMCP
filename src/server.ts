@@ -69,7 +69,7 @@ import { toolHistory } from './utils/toolHistory.js';
 import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/welcome-onboarding.js';
 
 import { VERSION } from './version.js';
-import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
+import { addToolCallPaths, capture, capture_call_tool, runInUiOriginCallContext, runWithToolCallPaths } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
 import {
     buildUiToolMeta,
@@ -1201,6 +1201,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 import * as handlers from './handlers/index.js';
 import { ServerResult } from './types.js';
+import { withoutInternalFacts } from './utils/internal-facts.js';
+import { stillLoadingError, type FileAction } from './utils/files/index.js';
+
+/**
+ * A tool call on an Excel, DOCX or PDF file whose package is still loading
+ * after initialize answers at once with this error (utils/files/factory.ts)
+ * instead of loading it inside the call. Not sent to telemetry, unlike other
+ * errors: it names the file. read_multiple_files answers per file;
+ * get_file_info waits for the load, or loads it itself, and so does a search.
+ */
+function stillLoading(filePath: unknown, action: FileAction, options?: { isPdf?: boolean; isUrl?: boolean }): ServerResult | undefined {
+    const error = typeof filePath === 'string' ? stillLoadingError(filePath, action, options) : undefined;
+    return error === undefined ? undefined : { content: [{ type: 'text', text: `Error: ${error}` }], isError: true };
+}
 
 server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest): Promise<ServerResult> => {
     const args = request.params.arguments;
@@ -1211,11 +1225,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
     // (server_call_tool, server_read_file, server_edit_block, ...). Deliberate
     // UI interactions are tracked separately via mcp_ui_event.
     const isUiOriginCall = !!(args && typeof args === 'object' && (args as any).origin === 'ui');
-    if (isUiOriginCall) {
-        return runInUiOriginCallContext(() => handleCallToolRequest(request));
-    }
-    return handleCallToolRequest(request);
+    // Each call keeps the paths it works on, starting with its path arguments,
+    // so telemetry can replace them whole in any error text the call produces
+    return runWithToolCallPaths(() => {
+        addToolCallPaths(...pathArguments(args));
+        if (isUiOriginCall) {
+            return runInUiOriginCallContext(() => handleCallToolRequest(request));
+        }
+        return handleCallToolRequest(request);
+    });
 });
+
+/** The values of the tool arguments that hold paths (path, paths, file_path, outputPath, source, destination, shell, ...). */
+function pathArguments(args: unknown): unknown[] {
+    if (!args || typeof args !== 'object') return [];
+    return Object.entries(args)
+        .filter(([key]) => /path/i.test(key) || key === 'source' || key === 'destination' || key === 'shell')
+        .map(([, value]) => value);
+}
 
 async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;
@@ -1431,20 +1458,25 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             // Filesystem tools
             case "read_file":
-                result = await handlers.handleReadFile(args);
+                result = stillLoading(args?.path, 'read', { isUrl: args?.isUrl === true }) ?? await handlers.handleReadFile(args);
                 break;
 
             case "read_multiple_files":
-                result = await handlers.handleReadMultipleFiles(args);
+                result = await handlers.handleReadMultipleFiles(args, (filePath) => stillLoadingError(filePath, 'read'));
                 break;
 
             case "write_file":
-                result = await handlers.handleWriteFile(args);
+                result = stillLoading(args?.path, 'write') ?? await handlers.handleWriteFile(args);
                 break;
 
-            case "write_pdf":
-                result = await handlers.handleWritePdf(args);
+            case "write_pdf": {
+                // Markdown (a new PDF) or page edits, read as the tool reads them;
+                // arguments the tool refuses get its own error
+                const parsed = WritePdfArgsSchema.safeParse(args);
+                const action = parsed.success && typeof parsed.data.content === 'string' ? 'write' : 'edit';
+                result = (parsed.success ? stillLoading(parsed.data.path, action, { isPdf: true }) : undefined) ?? await handlers.handleWritePdf(args);
                 break;
+            }
 
             case "create_directory":
                 result = await handlers.handleCreateDirectory(args);
@@ -1479,7 +1511,7 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 break;
 
             case "edit_block":
-                result = await handlers.handleEditBlock(args);
+                result = stillLoading(args?.file_path, 'edit') ?? await handlers.handleEditBlock(args);
                 break;
 
             default:
@@ -1489,6 +1521,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                     isError: true,
                 };
         }
+
+        // What the client receives (and the history records): facts kept internal are dropped
+        result = withoutInternalFacts(name, result);
 
         // Add tool call to history (exclude only get_recent_tool_calls to prevent recursion)
         const duration = Date.now() - startTime;
