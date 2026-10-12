@@ -32,8 +32,10 @@ async function testConditionalTools() {
     const regularTools = await regularClient.listTools();
 
     const hasFeedbackRegular = regularTools.tools.some(t => t.name === 'give_feedback_to_desktop_commander');
+    const hasGetPromptsRegular = regularTools.tools.some(t => t.name === 'get_prompts');
     console.log(`   Tools count: ${regularTools.tools.length}`);
     console.log(`   Has give_feedback_to_desktop_commander: ${hasFeedbackRegular}`);
+    console.log(`   Has get_prompts: ${hasGetPromptsRegular}`);
 
     if (hasFeedbackRegular) {
         console.log('   ✅ PASS: Feedback tool is included for regular client');
@@ -43,13 +45,21 @@ async function testConditionalTools() {
         return;
     }
 
+    if (!hasGetPromptsRegular) {
+        console.log('   ✅ PASS: get_prompts is not exposed');
+    } else {
+        console.log('   ❌ FAIL: get_prompts should not be exposed');
+        exitProcess(1);
+        return;
+    }
+
     await regularClient.close();
 
     // Wait a bit between tests
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Test 2: desktop-commander-app client (should exclude feedback tool and get_prompts)
-    console.log('\nTest 2: Testing with desktop-commander-app client (should exclude feedback tool and get_prompts)...');
+    // Test 2: desktop-commander-app client (should exclude feedback and get_prompts)
+    console.log('\nTest 2: Testing with desktop-commander-app client (should exclude feedback tool)...');
     const dcClient = new Client(
         {
             name: "desktop-commander-app",
