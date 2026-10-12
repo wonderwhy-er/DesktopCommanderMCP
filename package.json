@@ -1,6 +1,6 @@
 {
   "name": "@wonderwhy-er/desktop-commander",
-  "version": "0.2.51",
+  "version": "0.2.52",
   "description": "MCP server for terminal operations and file editing",
   "mcpName": "io.github.wonderwhy-er/desktop-commander",
   "license": "MIT",
@@ -13,7 +13,7 @@
   "bugs": "https://github.com/wonderwhy-er/DesktopCommanderMCP/issues",
   "type": "module",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.12.0"
   },
   "bin": {
     "desktop-commander": "dist/index.js",
@@ -23,7 +23,8 @@
   "files": [
     "dist",
     "logo.png",
-    "testemonials"
+    "testemonials",
+    "vendor/telemetry-contract"
   ],
   "scripts": {
     "postinstall": "node dist/track-installation.js && node dist/npm-scripts/verify-ripgrep.js || node -e \"process.exit(0)\"",
@@ -46,6 +47,7 @@
     "clean": "shx rm -rf dist",
     "test": "npm run build && node test/run-all-tests.js",
     "test:integration": "npm run build && node test/integration/run-all-integration-tests.js",
+    "test:transport:telemetry": "npm run build && node test/test-transport-telemetry.js",
     "test:debug": "node --inspect test/run-all-tests.js",
     "validate:tools": "npm run build && node scripts/validate-tools-sync.js",
     "link:local": "npm run build && npm link",
@@ -88,22 +90,22 @@
     "file-operations"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.9.0",
-    "@opendocsg/pdf2md": "^0.2.2",
+    "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@opendocsg/pdf2md": "^0.3.4",
     "@supabase/supabase-js": "^2.89.0",
-    "@tiptap/core": "^3.22.3",
-    "@tiptap/extension-image": "^3.22.3",
-    "@tiptap/extension-table": "^3.22.4",
-    "@tiptap/extension-table-cell": "^3.22.4",
-    "@tiptap/extension-table-header": "^3.22.4",
-    "@tiptap/extension-table-row": "^3.22.4",
-    "@tiptap/pm": "^3.22.3",
-    "@tiptap/starter-kit": "^3.22.3",
+    "@tiptap/core": "^3.31.4",
+    "@tiptap/extension-image": "^3.31.4",
+    "@tiptap/extension-table": "^3.31.4",
+    "@tiptap/extension-table-cell": "^3.31.4",
+    "@tiptap/extension-table-header": "^3.31.4",
+    "@tiptap/extension-table-row": "^3.31.4",
+    "@tiptap/pm": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4",
     "@vscode/ripgrep": "^1.15.9",
     "cross-fetch": "^4.1.0",
     "exceljs": "^4.4.0",
     "fastest-levenshtein": "^1.0.16",
-    "file-type": "^21.1.1",
     "glob": "^10.3.10",
     "highlight.js": "^11.11.1",
     "isbinaryfile": "^5.0.4",
@@ -116,13 +118,16 @@
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
     "unpdf": "^1.4.0",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
+  "bundleDependencies": [
+    "@desktop-commander/telemetry-contract"
+  ],
   "optionalDependencies": {
     "caffeinate": "^1.0.1"
   },
@@ -140,6 +145,21 @@
     "shx": "^0.3.4",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "ws": "^8.18.3"
+  },
+  "overrides": {
+    "md-to-pdf": {
+      "chokidar": "^4.0.3",
+      "gray-matter": {
+        "js-yaml": {
+          "argparse": "^2.0.1"
+        }
+      }
+    },
+    "exceljs": {
+      "uuid": "^11.1.1"
+    },
+    "proxy-addr": "^2.0.8"
   }
 }

@@ -24,7 +24,13 @@
  * or standalone: `node test/test-remote-channel-reconnect.js`.
  */
 import assert from 'node:assert';
-import { RemoteChannel, observeServerDate } from '../dist/remote-device/remote-channel.js';
+import {
+  RemoteChannel,
+  observeServerDate,
+  realtimeReconnectDelayMs,
+  presenceRetryDelayMs,
+} from '../dist/remote-device/remote-channel.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Keep telemetry from touching the network during the test.
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -258,9 +264,10 @@ class FakeClient {
     });
   }
 
-  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
+  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId).abortSignal(...)
   from() {
     const result = Promise.resolve({ error: null });
+    result.abortSignal = () => result;
     const chain = {
       update: () => chain,
       insert: () => chain,
@@ -676,6 +683,22 @@ async function main() {
     assert.strictEqual(Date.now, trueNow, 'must not patch Date.now on unusable input');
   });
 
+  await test('Supabase realtime reconnect schedule is jittered around the SDK cadence', () => {
+    assert.strictEqual(realtimeReconnectDelayMs(1, () => 0), 500, 'attempt 1 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(1, () => 1), 1500, 'attempt 1 high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(2, () => 0), 1000, 'attempt 2 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(3, () => 1), 7500, 'attempt 3 high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(4, () => 0), 5000, 'attempt 4 low bound');
+    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 15000, 'fallback high bound');
+  });
+
+  await test('Presence retries keep their cadence but add jitter', () => {
+    assert.strictEqual(presenceRetryDelayMs(1, () => 0), 250, 'presence retry 1 low bound');
+    assert.strictEqual(presenceRetryDelayMs(1, () => 1), 750, 'presence retry 1 high bound');
+    assert.strictEqual(presenceRetryDelayMs(2, () => 0), 500, 'presence retry 2 low bound');
+    assert.strictEqual(presenceRetryDelayMs(2, () => 1), 1500, 'presence retry 2 high bound');
+  });
+
   // The jittered backoff exists so a fleet-wide event (server deploy, Supabase
   // blip) doesn't stampede every device into reconnecting at the same instant.
   // Assert the shape rather than exact values: it must GROW with consecutive
@@ -734,7 +757,7 @@ async function main() {
   console.log(
     `\n${failures ? '🔴' : '✅'} remote-channel reconnect: ${failures} failing test(s).`
   );
-  process.exit(failures ? 1 : 0);
+  return !failures;
 }
 
-main();
+runIfMain(import.meta.url, main);

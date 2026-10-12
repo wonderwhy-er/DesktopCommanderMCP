@@ -12,6 +12,7 @@ import {
     type MultiFileResult
 } from '../tools/filesystem.js';
 import type { ReadOptions } from '../utils/files/base.js';
+import { TextFileHandler } from '../utils/files/text.js';
 
 import { ServerResult } from '../types.js';
 import { withTimeout } from '../utils/withTimeout.js';
@@ -90,20 +91,23 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
             return createErrorResponse('Configuration not available');
         }
 
+        // The schema fills in `length: 1000` (the default tools/list shows), so
+        // whether the caller sent a length is read from the raw arguments: an
+        // omitted length follows the fileReadLineLimit setting, as documented.
         const defaultLimit = config.fileReadLineLimit ?? 1000;
+        const lengthGiven = (args as { length?: unknown }).length !== undefined;
 
-        // Convert sheet parameter: numeric strings become numbers for Excel index access
-        let sheetParam: string | number | undefined = parsed.sheet;
-        if (parsed.sheet !== undefined && /^\d+$/.test(parsed.sheet)) {
-            sheetParam = parseInt(parsed.sheet, 10);
-        }
-
+        // The sheet goes as given: the Excel handler knows the sheet names, so it
+        // decides whether "2024" is an index or a sheet named 2024
         const options: ReadOptions = {
             isUrl: parsed.isUrl,
             offset: parsed.offset ?? 0,
-            length: parsed.length ?? defaultLimit,
-            sheet: sheetParam,
-            range: parsed.range
+            length: lengthGiven ? parsed.length : defaultLimit,
+            sheet: parsed.sheet,
+            range: parsed.range,
+            // The preview widget draws an SVG as an image (ui/file-preview/src/image-preview.ts);
+            // everyone else reads it as the text it is
+            svgAsImage: parsed.origin === 'ui'
         };
 
         // Resolve to absolute path for local files (not URLs) so "Open in folder" works
@@ -239,9 +243,9 @@ export async function handleReadFile(args: unknown): Promise<ServerResult> {
 /**
  * Handle read_multiple_files command
  */
-export async function handleReadMultipleFiles(args: unknown): Promise<ServerResult> {
+export async function handleReadMultipleFiles(args: unknown, stillLoadingError?: (filePath: string) => string | undefined): Promise<ServerResult> {
     const parsed = ReadMultipleFilesArgsSchema.parse(args);
-    const fileResults = await readMultipleFiles(parsed.paths);
+    const fileResults = await readMultipleFiles(parsed.paths, stillLoadingError);
 
     // Create a text summary of all files
     const textSummary = fileResults.map(result => {
@@ -262,10 +266,13 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
     // Add the text summary
     contentItems.push({ type: "text", text: textSummary });
 
-    // Add each file content
+    // Add each file content after its path: several images, or a PDF's pages,
+    // can't be told apart by their order alone
     for (const result of fileResults) {
         if (!result.error && result.content !== undefined) {
+            const header = `\n--- ${result.path} contents: ---\n`;
             if (result.isPdf) {
+                contentItems.push({ type: "text", text: header });
                 result.payload?.pages.forEach((page, i) => {
                     page.images.forEach((image, i) => {
                         contentItems.push({
@@ -281,6 +288,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 });
             } else if (result.isImage && result.mimeType) {
                 // For image files, add an image content item
+                contentItems.push({ type: "text", text: header });
                 contentItems.push({
                     type: "image",
                     data: result.content,
@@ -290,7 +298,7 @@ export async function handleReadMultipleFiles(args: unknown): Promise<ServerResu
                 // For text files, add a text summary
                 contentItems.push({
                     type: "text",
-                    text: `\n--- ${result.path} contents: ---\n${result.content}`
+                    text: `${header}${result.content}`
                 });
             }
         }
@@ -335,9 +343,8 @@ export async function handleWriteFile(args: unknown): Promise<ServerResult> {
         const config = await configManager.getConfig();
         const MAX_LINES = config.fileWriteLineLimit ?? 50; // Default to 50 if not set
 
-        // Strictly enforce line count limit
-        const lines = parsed.content.split('\n');
-        const lineCount = lines.length;
+        // Lines as read_file counts them: a final line break doesn't start another line
+        const lineCount = TextFileHandler.countLines(parsed.content);
         let errorMessage = "";
         if (lineCount > MAX_LINES) {
             errorMessage = `✅ File written successfully! (${lineCount} lines)
@@ -486,10 +493,12 @@ export async function handleGetFileInfo(args: unknown): Promise<ServerResult> {
 export async function handleWritePdf(args: unknown): Promise<ServerResult> {
     try {
         const parsed = WritePdfArgsSchema.parse(args);
-        await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
+        const ignoredOptions = await writePdf(parsed.path, parsed.content, parsed.outputPath, parsed.options);
         const targetPath = parsed.outputPath || parsed.path;
         return {
             content: [{ type: "text", text: `Successfully wrote PDF to ${targetPath}${parsed.outputPath ? `\nOriginal file: ${parsed.path}` : ''}` }],
+            // Which options were ignored, and why: internal (tests), not sent to the client (see utils/internal-facts.ts)
+            ...(ignoredOptions.length > 0 ? { structuredContent: { ignoredOptions } } : {}),
         };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);

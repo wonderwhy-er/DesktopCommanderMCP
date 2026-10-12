@@ -15,6 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import assert from 'assert';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -106,6 +107,15 @@ async function readRawFile(filePath) {
 }
 
 /**
+ * The whole file must equal `expected` byte for byte: the edit landed, nothing
+ * else changed, and every line ending (including the edited lines') is right.
+ */
+async function assertFileContent(filePath, expected, message) {
+  const actual = await readRawFile(filePath);
+  assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected), message);
+}
+
+/**
  * Test edit_block with LF line endings
  */
 async function testLFLineEndings() {
@@ -126,11 +136,10 @@ async function testLFLineEndings() {
     // Check that the operation succeeded
     assertEditBlockSuccess(result, 'Should report success with the LF edit');
     
-    // Verify file still has LF line endings
-    const rawContent = await readRawFile(LF_FILE);
-    assert.ok(!rawContent.includes('\r\n'), 'File should not contain CRLF');
-    assert.ok(!rawContent.includes('\r'), 'File should not contain CR');
-    assert.ok(rawContent.includes('\n'), 'File should contain LF');
+    // Verify the edit landed and the file keeps LF line endings
+    await assertFileContent(LF_FILE,
+      'First line with LF\nSecond line with LF\nREPLACED LINE WITH LF\nFourth line with LF\nFifth line with LF',
+      'LF file should contain the replacement with LF line endings');
     
     console.log('✓ LF line endings test passed');
   } catch (error) {
@@ -157,9 +166,10 @@ async function testCRLFLineEndings() {
     // Check that the operation succeeded
     assertEditBlockSuccess(result, 'Should report success with the CRLF edit');
     
-    // Verify file still has CRLF line endings
-    const rawContent = await readRawFile(CRLF_FILE);
-    assert.ok(rawContent.includes('\r\n'), 'File should contain CRLF');
+    // Verify the edit landed and the file keeps CRLF line endings
+    await assertFileContent(CRLF_FILE,
+      'First line with CRLF\r\nSecond line with CRLF\r\nREPLACED LINE WITH CRLF\r\nFourth line with CRLF\r\nFifth line with CRLF\r\n',
+      'CRLF file should contain the replacement with CRLF line endings');
     
     // Test with multi-line replacement including line endings
     result = await handleEditBlock({
@@ -171,6 +181,10 @@ async function testCRLFLineEndings() {
     
     // Check that the operation succeeded
     assertEditBlockSuccess(result, 'Should report success with the multi-line CRLF edit');
+    // The LF-written replacement must be stored with the file's CRLF endings
+    await assertFileContent(CRLF_FILE,
+      'First line with CRLF\r\nNew second line\r\nAnother replacement\r\nFourth line with CRLF\r\nFifth line with CRLF\r\n',
+      'Multi-line replacement in a CRLF file should use CRLF line endings');
     
     console.log('✓ CRLF line endings test passed');
   } catch (error) {
@@ -197,11 +211,10 @@ async function testCRLineEndings() {
     // Check that the operation succeeded
     assertEditBlockSuccess(result, 'Should report success with the CR edit');
     
-    // Verify file still has CR line endings
-    const rawContent = await readRawFile(CR_FILE);
-    assert.ok(!rawContent.includes('\n'), 'File should not contain LF');
-    assert.ok(!rawContent.includes('\r\n'), 'File should not contain CRLF');
-    assert.ok(rawContent.includes('\r'), 'File should contain CR');
+    // Verify the edit landed and the file keeps CR line endings
+    await assertFileContent(CR_FILE,
+      'First line with CR\rSecond line with CR\rREPLACED LINE WITH CR\rFourth line with CR\rFifth line with CR\r',
+      'CR file should contain the replacement with CR line endings');
     
     console.log('✓ CR line endings test passed');
   } catch (error) {
@@ -228,11 +241,10 @@ async function testMixedLineEndings() {
     // Check that the operation succeeded
     assertEditBlockSuccess(result, 'Should report success with the mixed line ending edit');
     
-    // Verify file preserves mixed line endings
-    const rawContent = await readRawFile(MIXED_FILE);
-    assert.ok(rawContent.includes('\n'), 'File should contain LF');
-    assert.ok(rawContent.includes('\r\n'), 'File should contain CRLF');
-    assert.ok(rawContent.match(/\r[^\n]/), 'File should contain standalone CR');
+    // Verify the edit landed and every other line keeps its own ending
+    await assertFileContent(MIXED_FILE,
+      'First line with LF\nSecond line with CRLF\r\nREPLACED LINE IN MIXED FILE\nFourth line with CR\rFifth line with LF\n',
+      'Mixed file should contain the replacement and keep each line ending');
     
     console.log('✓ Mixed line endings test passed');
   } catch (error) {
@@ -261,6 +273,9 @@ async function testContextAwareReplacement() {
     });
     
     assertEditBlockSuccess(result, 'Should handle multi-line replacement in CRLF file');
+    await assertFileContent(CRLF_FILE,
+      'First line with CRLF\r\nMulti-line replacement\r\nWith new content\r\nFourth line with CRLF\r\nFifth line with CRLF\r\n',
+      'Multi-line replacement in a CRLF file should use CRLF line endings');
     
     // Re-create LF file (it was modified in previous tests)
     const lfContent = `First line with LF
@@ -279,6 +294,9 @@ Fifth line with LF`;
     });
     
     assertEditBlockSuccess(result, 'Should handle multi-line replacement in LF file');
+    await assertFileContent(LF_FILE,
+      'First line with LF\nAnother multi-line replacement\nWith LF endings\nFourth line with LF\nFifth line with LF',
+      'Multi-line replacement in an LF file should use LF line endings');
     
     console.log('✓ Context-aware replacement test passed');
   } catch (error) {
@@ -320,6 +338,9 @@ async function testLargeFilePerformance() {
     const timeLF = Date.now() - startLF;
     
     assertEditBlockSuccess(result, 'Should handle large LF file');
+    const expectedLF = [...lines];
+    expectedLF[400] = 'REPLACED TARGET LINE IN LF FILE\n';
+    await assertFileContent(LARGE_FILE_LF, expectedLF.join(''), 'Large LF file should change only line 401');
     
     // Test CRLF file
     const startCRLF = Date.now();
@@ -332,6 +353,9 @@ async function testLargeFilePerformance() {
     const timeCRLF = Date.now() - startCRLF;
     
     assertEditBlockSuccess(result, 'Should handle large CRLF file');
+    const expectedCRLF = [...crlfLines];
+    expectedCRLF[400] = 'REPLACED TARGET LINE IN CRLF FILE\r\n';
+    await assertFileContent(LARGE_FILE_CRLF, expectedCRLF.join(''), 'Large CRLF file should change only line 401');
     
     console.log(`✓ Performance test passed (LF: ${timeLF}ms, CRLF: ${timeCRLF}ms)`);
   } catch (error) {
@@ -368,6 +392,7 @@ async function testEdgeCases() {
       result.content[0].text.includes('Search content not found'),
       'Should handle empty file correctly'
     );
+    await assertFileContent(EMPTY_FILE, '', 'A failed edit should leave the empty file untouched');
     
     // Test single line file
     result = await handleEditBlock({
@@ -378,6 +403,7 @@ async function testEdgeCases() {
     });
     
     assertEditBlockSuccess(result, 'Should handle single line file');
+    await assertFileContent(SINGLE_LINE_FILE, 'Replaced single line', 'Single line should be replaced without adding a line ending');
     
     // Test file without trailing line ending
     result = await handleEditBlock({
@@ -388,6 +414,7 @@ async function testEdgeCases() {
     });
     
     assertEditBlockSuccess(result, 'Should handle file without trailing line ending');
+    await assertFileContent(NO_ENDING_FILE, 'Two lines\nWith replacement', 'The file should still have no trailing line ending');
     
     console.log('✓ Edge cases test passed');
   } catch (error) {
@@ -444,11 +471,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then(success => {
-    process.exit(success ? 0 : 1);
-  }).catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

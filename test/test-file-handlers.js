@@ -9,6 +9,7 @@
  * 5. Text file handler basic operations
  * 6. Image file handler detection
  * 7. Binary file handler fallback
+ * 8. PDF handler writes markdown as a PDF
  */
 
 import { configManager } from '../dist/config-manager.js';
@@ -20,6 +21,9 @@ import { readFile, writeFile, getFileInfo } from '../dist/tools/filesystem.js';
 import { getFileHandler } from '../dist/utils/files/factory.js';
 import { handleReadFile, handleWriteFile } from '../dist/handlers/filesystem-handlers.js';
 import { handleEditBlock } from '../dist/handlers/edit-search-handlers.js';
+import { parsePdfToMarkdown } from '../dist/tools/pdf/index.js';
+import { isNoChrome } from './helpers/pdf.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +37,7 @@ const MD_FILE = path.join(TEST_DIR, 'test.md');
 const HTML_FILE = path.join(TEST_DIR, 'test.html');
 const IMAGE_FILE = path.join(TEST_DIR, 'test.png');
 const SVG_FILE = path.join(TEST_DIR, 'test.svg');
+const PDF_FILE = path.join(TEST_DIR, 'test.pdf');
 
 /**
  * Helper function to clean up test directories
@@ -153,16 +158,16 @@ async function testReadOptionsInterface() {
 
   await fs.writeFile(TEXT_FILE, 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5');
 
+  // The file's lines in a read result (the status header is not a file line)
+  const fileLines = (result) => result.content.toString().split('\n').filter((line) => /^Line \d$/.test(line));
+
   // Test offset option
   const result1 = await readFile(TEXT_FILE, { offset: 2 });
-  const content1 = result1.content.toString();
-  assert.ok(content1.includes('Line 3'), 'Offset should skip to line 3');
+  assert.deepStrictEqual(fileLines(result1), ['Line 3', 'Line 4', 'Line 5'], 'Offset 2 should skip the first two lines');
 
   // Test length option
   const result2 = await readFile(TEXT_FILE, { offset: 0, length: 2 });
-  const content2 = result2.content.toString();
-  assert.ok(content2.includes('Line 1'), 'Should include Line 1');
-  assert.ok(content2.includes('Line 2'), 'Should include Line 2');
+  assert.deepStrictEqual(fileLines(result2), ['Line 1', 'Line 2'], 'Length 2 should return only the first two lines');
 
   console.log('✓ ReadOptions work correctly');
 }
@@ -475,6 +480,40 @@ async function testWriteModeGuard() {
 }
 
 /**
+ * Test 12: PDF handler writes markdown as a PDF
+ *
+ * write_file on a .pdf path hands the markdown to PdfFileHandler.write, which
+ * must render it and write the PDF to that path. The text must read back.
+ */
+async function testPdfWriteFromMarkdown() {
+  console.log('\n--- Test 12: PDF handler writes markdown ---');
+
+  const markdown = '# Quarterly Report\n\nRevenue grew in every region.\n\n- First item\n- Second item\n';
+
+  const handler = await getFileHandler(PDF_FILE);
+  assert.strictEqual(handler.constructor.name, 'PdfFileHandler', '.pdf should use PdfFileHandler');
+
+  try {
+    await writeFile(PDF_FILE, markdown);
+  } catch (error) {
+    if (isNoChrome(error)) return skip(`PDF handler writes markdown: no Chrome to render with (${error.message})`);
+    throw error;
+  }
+
+  const stats = await fs.stat(PDF_FILE).catch(() => null);
+  assert.ok(stats && stats.size > 0, 'Writing markdown to a .pdf path should create the PDF file');
+  const header = (await fs.readFile(PDF_FILE)).subarray(0, 5).toString('latin1');
+  assert.strictEqual(header, '%PDF-', 'Written file should be a PDF');
+
+  const text = (await parsePdfToMarkdown(PDF_FILE)).pages.map((page) => page.text).join('\n');
+  for (const expected of ['Quarterly Report', 'Revenue grew in every region.', 'First item', 'Second item']) {
+    assert.ok(text.includes(expected), `PDF text should include "${expected}", got: ${text}`);
+  }
+
+  console.log('✓ Markdown written through the PDF handler reads back from the PDF');
+}
+
+/**
  * Run all tests
  */
 async function runAllTests() {
@@ -491,8 +530,10 @@ async function runAllTests() {
   await testReadFilePreviewMetadata();
   await testMarkdownExactMatchSave();
   await testWriteModeGuard();
+  const pdfWrite = await testPdfWriteFromMarkdown();
 
-  console.log('\n✅ All file handler tests passed!');
+  // A skipped test neither passes nor fails
+  console.log(pdfWrite === SKIPPED ? '\n✅ File handler tests passed, 1 skipped' : '\n✅ All file handler tests passed!');
 }
 
 // Export the main test function
@@ -514,11 +555,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly, execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().then(success => {
-    process.exit(success ? 0 : 1);
-  }).catch(error => {
-    console.error('❌ Unhandled error:', error);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);
