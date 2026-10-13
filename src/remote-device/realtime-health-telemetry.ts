@@ -38,6 +38,7 @@ export class RealtimeHealthTelemetry {
     private generation = 0;
     private counts = this.emptyCounts();
     private windowStart = Date.now();
+    private windowStartMonotonic = performance.now();
     private socketState: string | null = null;
     private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -59,6 +60,7 @@ export class RealtimeHealthTelemetry {
         if (this.deviceDiagId === id) return;
         this.deviceDiagId = id;
         this.windowStart = Date.now();
+        this.windowStartMonotonic = performance.now();
         this.counts = this.emptyCounts();
     }
 
@@ -91,12 +93,15 @@ export class RealtimeHealthTelemetry {
         this.timer.unref?.();
     }
 
-    flush(now = Date.now()): RealtimeWindow | null {
-        const elapsed = Math.max(1, Math.round((now - this.windowStart) / 1000));
+    flush(now = Date.now(), monotonicNow = performance.now()): RealtimeWindow | null {
+        // Wall time may jump when observeServerDate() corrects clock skew.
+        // Use only monotonic time for durations; wall time still locates the window.
+        const elapsed = Math.max(1, Math.round((monotonicNow - this.windowStartMonotonic) / 1000));
         const counts = this.counts;
         const start = this.windowStart;
         this.counts = this.emptyCounts();
         this.windowStart = now;
+        this.windowStartMonotonic = monotonicNow;
         if (!this.deviceDiagId) return null;
         const degraded = DEGRADED.some((key) => counts[key] > 0);
         const sampleRate = degraded ? 0.05 : 0.01;

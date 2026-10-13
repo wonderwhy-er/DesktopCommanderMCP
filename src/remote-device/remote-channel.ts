@@ -1182,7 +1182,6 @@ export class RemoteChannel {
             return;
         }
         this.isRecreatingChannel = true;
-        this.realtimeHealth.record('watchdog_recreates');
         this.reconnectAttempt++;
 
         // Create fresh channel
@@ -1208,6 +1207,9 @@ export class RemoteChannel {
                 console.log(`✅ Channel self-healed during backoff — skipping recreate — ${this.connState()}`);
                 return; // finally-block below clears the re-entrancy guard
             }
+
+            // Count only watchdog recreations that continue past SDK self-heal.
+            this.realtimeHealth.record('watchdog_recreates');
 
             // Cap the whole recreate: a never-settling await (e.g. a subscribe that only
             // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
