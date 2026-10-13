@@ -46,10 +46,11 @@ function runScript(supabaseUrl) {
 async function run() {
   const updates = [];
   const server = http.createServer((request, response) => {
-    request.resume();
+    let body = '';
+    request.on('data', (chunk) => { body += chunk; });
     request.on('end', () => {
       if (request.method === 'PATCH' && request.url.startsWith('/rest/v1/mcp_devices')) {
-        updates.push(request.url);
+        updates.push({ url: request.url, values: JSON.parse(body) });
         response.writeHead(204).end();
       } else {
         response.writeHead(404, { 'Content-Type': 'application/json' }).end('{"message":"not found"}');
@@ -62,7 +63,10 @@ async function run() {
     assert.strictEqual(code, 0,
       `run from a source checkout without type stripping, the offline update should mark the device offline (exit 0), got exit ${code}:\n${output.trim()}`);
     assert.strictEqual(updates.length, 1, `the stand-in should get one device update, got ${updates.length}`);
-    console.log(`✓ source checkout, no type stripping: device marked offline (exit 0)`);
+    assert.strictEqual(updates[0].values.status, 'offline');
+    assert.strictEqual(updates[0].values.last_seen, 'now',
+      'shutdown helper must use PostgreSQL time, not its local clock');
+    console.log(`✓ source checkout, no type stripping: offline write uses database time (exit 0)`);
   } finally {
     server.close();
   }

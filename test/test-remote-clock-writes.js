@@ -1,39 +1,25 @@
 #!/usr/bin/env node
 
 /**
- * The times a device writes to its rows must be server time.
+ * Device-written database timestamps must be evaluated by PostgreSQL, not
+ * estimated from the device clock or from an observed Supabase Date header.
  *
- * The server compares two of them with its own clock:
- *   - mcp_devices.last_seen: a device is marked offline when it is older than
- *     15 min (checked every 60 s);
- *   - mcp_remote_calls.completed_at: finished calls whose completed_at is older
- *     than 1 min are deleted (every 30 s).
+ * mcp_devices.last_seen uses the PostgREST timestamp literal 'now', which
+ * PostgreSQL casts to timestamptz when applying the PATCH. The DB terminal
+ * status trigger independently stamps mcp_remote_calls.completed_at = now().
+ * These assertions exercise every remote-channel write path with no network.
  *
- * The device wrote both with new Date(), its own clock. A device whose clock is
- * behind kept being marked offline while connected, and a result could be
- * deleted before the server read it. observeServerDate() corrects Date.now()
- * only, and only above 5 min; new Date() is never corrected.
- *
- * Here the server's Date header is 2 min and 20 min ahead of this machine (the
- * device is behind). Fake Supabase client; no network.
- *
- * Runs as part of `npm test`, or standalone:
- *   npm run build && node test/test-remote-clock-writes.js
+ * Run: npm run build && node test/test-remote-clock-writes.js
  */
 
-import assert from 'node:assert';
+import assert from 'node:assert/strict';
 import { RemoteChannel, observeServerDate } from '../dist/remote-device/remote-channel.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
 const DEVICE_ID = 'device-1';
+const realNow = Date.now.bind(Date);
 
-/** The Date header has whole seconds; this leaves room for that and the writes themselves. */
-const TOLERANCE_MS = 2000;
-
-const realNow = Date.now.bind(Date); // captured before anything patches Date.now
-
-/** A Supabase client that records every update and answers like the real one. */
 function makeClient(writes) {
   function from(table) {
     let update = null;
@@ -42,10 +28,7 @@ function makeClient(writes) {
       eq() { return builder; },
       maybeSingle() { return builder; },
       abortSignal() { return builder; },
-      update(values) {
-        update = values;
-        return builder;
-      },
+      update(values) { update = values; return builder; },
       then(resolve, reject) {
         if (update) writes.push({ table, values: update });
         const data = update ? [{ id: DEVICE_ID }] : { id: DEVICE_ID, device_name: 'test-device' };
@@ -57,7 +40,6 @@ function makeClient(writes) {
   return { from };
 }
 
-/** Registers a device, then sends a heartbeat, a status and a call result; returns the times written. */
 async function deviceWrites() {
   const rc = new RemoteChannel();
   const writes = [];
@@ -66,7 +48,7 @@ async function deviceWrites() {
   rc.channel = { state: 'joined' };
   rc.presenceTracked = true;
   rc.localExecutorProbe = () => true;
-  rc.createChannel = async () => {}; // the registration's row write only, no realtime
+  rc.createChannel = async () => {};
 
   await rc.registerDevice({}, DEVICE_ID, 'test-device', () => {});
   await rc.updateHeartbeat(DEVICE_ID);
@@ -74,47 +56,28 @@ async function deviceWrites() {
   await rc.updateCallResult('call-1', 'completed', { content: [] });
 
   assert.deepEqual(writes.map(({ table }) => table),
-    ['mcp_devices', 'mcp_devices', 'mcp_devices', 'mcp_remote_calls'], 'precondition: four row writes');
-  return [
-    ['the registration\'s last_seen', writes[0].values.last_seen],
-    ['the heartbeat\'s last_seen', writes[1].values.last_seen],
-    ['the status write\'s last_seen', writes[2].values.last_seen],
-    ['the call result\'s completed_at', writes[3].values.completed_at],
-  ];
+    ['mcp_devices', 'mcp_devices', 'mcp_devices', 'mcp_remote_calls']);
+  for (const { values } of writes.slice(0, 3)) {
+    assert.equal(values.last_seen, 'now', 'database must stamp last_seen');
+  }
+  assert.equal(writes[3].values.status, 'completed');
+  assert.equal(Object.hasOwn(writes[3].values, 'completed_at'), false,
+    'terminal status trigger, not the device, must stamp completed_at');
 }
 
-/** Undo any correction a previous case left in place. */
-function resetClock() {
-  observeServerDate(new Date(realNow()).toUTCString());
-}
+// Also verify the first write works without ever observing a server Date header.
+await deviceWrites();
+console.log('✅ Database-time payloads work before the first Date header');
 
-let failures = 0;
-async function test(name, fn) {
+for (const skewMinutes of [-20, 2, 20]) {
   try {
-    resetClock();
-    await fn();
-    console.log(`✅ PASS  ${name}`);
-  } catch (error) {
-    failures++;
-    console.error(`🔴 FAIL  ${name}\n     ${error.message}`);
+    observeServerDate(new Date(realNow() + skewMinutes * 60_000).toUTCString());
+    await deviceWrites();
+    console.log(`✅ Database-time payloads independent of ${skewMinutes}m server/device skew`);
   } finally {
-    resetClock();
+    // Keep Date.now monkey-patching isolated from other tests.
+    observeServerDate(new Date(realNow()).toUTCString());
   }
 }
 
-for (const minutes of [2, 20]) {
-  const serverAheadMs = minutes * 60_000;
-  await test(`a device clock ${minutes} min behind the server writes server time`, async () => {
-    observeServerDate(new Date(realNow() + serverAheadMs).toUTCString());
-    const written = await deviceWrites();
-    const serverTime = realNow() + serverAheadMs;
-
-    const wrong = written
-      .filter(([, value]) => !(Math.abs(Date.parse(value) - serverTime) <= TOLERANCE_MS))
-      .map(([field, value]) => `${field} ${Math.round((serverTime - Date.parse(value)) / 1000)} s behind`);
-    assert.equal(wrong.length, 0, `written on the device's clock, not the server's: ${wrong.join('; ')}`);
-  });
-}
-
-console.log(`\n${failures ? '🔴' : '✅'} remote clock writes: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+console.log('✅ Remote database-owned timestamp tests passed');
