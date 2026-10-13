@@ -139,6 +139,11 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
       return { data: row, error: null };
     };
     p.eq = () => result();
+    p.gt = (col, value) => {
+      assert(col === 'timeout_at', 'fallback must filter timeout_at');
+      assert(value === 'now', 'fallback read must compare against database time');
+      return result();
+    };
     p.select = () => result();
     return p;
   };
