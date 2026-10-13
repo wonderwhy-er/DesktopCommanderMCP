@@ -13,8 +13,9 @@
  * ("user@Mac project % ") at its end, and the prompts real Windows shells print
  * (fixtures/windows-shell-prompts.js: powershell.exe, pwsh, cmd.exe, captured from
  * real sessions; only the working directory in them was replaced with a neutral
- * one). Then interact_with_process in a real PowerShell session returns at its
- * prompt.
+ * one). Then interact_with_process in a real shell session returns at its
+ * prompt: PowerShell on Windows, bash on macOS and Linux (the pwsh preinstalled
+ * on GitHub's Ubuntu runner wraps its prompt in terminal codes).
  *
  * Node 24's continuation prompt, "| " (fixtures/node-repl-prompts.js, captured
  * from node -i on Windows and macOS), is a prompt too, the way #196 counts a
@@ -25,14 +26,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { analyzeProcessState } from '../dist/utils/process-detection.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { PYTEST_COLLECTING, PYTEST_PROGRESS_LINE } from './fixtures/pytest-196.js';
 import { WINDOWS_SHELL_PROMPTS } from './fixtures/windows-shell-prompts.js';
 import { NODE_24_SESSIONS } from './fixtures/node-repl-prompts.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // node -i's captured output: its session at the continuation prompt after "function f() {", and the lines of the
 // markdown table it printed (each as the last line, before its newline)
@@ -42,7 +42,7 @@ const TABLE_LINES = NODE_24_SESSIONS[0][2][4][1].split('\n').slice(0, 3);
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'pytest-196.js');
 const SPLIT_LINE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'split-line.js');
-// PowerShell answers "echo hi" within a second or two; missing its prompt runs to the timeout
+// The shell answers "echo hi" within a second or two; missing its prompt runs to the timeout
 const INTERACT_TIMEOUT_MS = 20_000;
 const PROMPT_WITHIN_MS = 5_000;
 
@@ -146,30 +146,25 @@ async function testStartProcessOnAPieceOfALine() {
   }
 }
 
-async function testInteractWithPowerShell() {
-  console.log('\n--- interact_with_process: a real PowerShell session ---');
-  const hasPwsh = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['pwsh'], { encoding: 'utf8' }).status === 0;
-  const command = process.platform === 'win32' ? 'powershell -NoLogo' : (hasPwsh ? 'pwsh -NoLogo' : null);
-  if (!command) {
-    skip('interact_with_process in a PowerShell session: pwsh is not installed on this machine');
-    return;
-  }
+async function testInteractWithShell() {
+  const [name, command] = process.platform === 'win32' ? ['PowerShell', 'powershell -NoLogo'] : ['bash', 'bash --norc --noprofile -i'];
+  console.log(`\n--- interact_with_process: a real ${name} session ---`);
   const started = await startProcess({ command, timeout_ms: 10_000 });
   const pid = started.structuredContent?.pid;
   try {
     check(started.structuredContent?.status === 'waiting_for_input',
-      `start_process should report PowerShell waiting at its prompt, got ${started.structuredContent?.status}: ${started.content[0].text.slice(-160)}`);
+      `start_process should report ${name} waiting at its prompt, got ${started.structuredContent?.status}: ${started.content[0].text.slice(-160)}`);
     const startedAt = Date.now();
     const answer = await interactWithProcess({ pid, input: 'echo hi', timeout_ms: INTERACT_TIMEOUT_MS });
     const ms = Date.now() - startedAt;
     const text = answer.content[0].text;
     check(ms < PROMPT_WITHIN_MS,
-      `interact_with_process should return at PowerShell's prompt, took ${ms}ms (timeout ${INTERACT_TIMEOUT_MS}ms): ${text.slice(-160)}`);
+      `interact_with_process should return at ${name}'s prompt, took ${ms}ms (timeout ${INTERACT_TIMEOUT_MS}ms): ${text.slice(-160)}`);
     check(answer.structuredContent?.status === 'waiting_for_input', `status should be waiting_for_input, got ${answer.structuredContent?.status}`);
-    check(text.includes('hi'), `PowerShell's answer should be returned, got: ${text.slice(-160)}`);
+    check(text.includes('hi'), `${name}'s answer should be returned, got: ${text.slice(-160)}`);
   } finally {
     if (pid > 0) {
-      // "exit" ends the PowerShell session; force_terminate then ends whatever is left
+      // "exit" ends the shell session; force_terminate then ends whatever is left
       await interactWithProcess({ pid, input: 'exit', wait_for_prompt: false });
       await forceTerminate({ pid });
     }
@@ -202,7 +197,7 @@ async function runTests() {
   await testStartProcess();
   await testStartProcessOnAPieceOfALine();
   await testInteractAtNodeContinuation();
-  await testInteractWithPowerShell();
+  await testInteractWithShell();
   console.log(failures.length === 0
     ? '\n✅ prompt detection tests passed'
     : `\n❌ ${failures.length} prompt detection checks failed`);

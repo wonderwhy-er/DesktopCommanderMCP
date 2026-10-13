@@ -15,9 +15,10 @@
  * Only ESRCH counted as "gone", so the EPERM escaped a finally block and ended
  * the whole test file.
  *
- * The zombie-only group is made without timing luck: sh with job control
+ * The zombie-only group is made without timing luck: bash with job control
  * (set -m) starts a job in a process group of its own, then execs sleep, which
- * never reaps the job when it exits.
+ * never reaps the job when it exits. bash, not sh: Ubuntu's sh (dash) without a
+ * terminal, as on the GitHub runner, leaves the job in the shell's own group.
  *
  * Runs as part of `npm test`, or standalone:
  *   node test/run-all-tests.js test/test-signal-process-group.js
@@ -40,7 +41,7 @@ function stateOf(pid) {
 
 /** A process group holding one zombie: its PGID, and how to end the process that keeps it a zombie */
 async function startZombieGroup() {
-  const keeper = spawn('sh', ['-c', 'set -m; sleep 1 & echo $!; exec sleep 60'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const keeper = spawn('bash', ['-c', 'set -m; sleep 1 & echo $!; exec sleep 60'], { stdio: ['ignore', 'pipe', 'ignore'] });
   const pid = await new Promise((resolve, reject) => {
     keeper.stdout.once('data', (data) => resolve(Number(String(data).trim())));
     keeper.once('error', reject);
