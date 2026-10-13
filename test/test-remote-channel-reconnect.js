@@ -29,6 +29,7 @@ import {
   observeServerDate,
   realtimeReconnectDelayMs,
   presenceRetryDelayMs,
+  presenceRecoveryDelayMs,
 } from '../dist/remote-device/remote-channel.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
@@ -52,6 +53,9 @@ class FakeChannel {
   }
   subscribe(cb) {
     this.joinedOnce = true;
+    // Kept so tests can replay what realtime-js does on its own rejoin timer:
+    // the SAME callback fires again with CHANNEL_ERROR / SUBSCRIBED.
+    this.subscribeCb = cb;
     // realtime invokes the subscribe callback asynchronously
     Promise.resolve().then(() => {
       if (this.client.realtime.socketDead) {
@@ -71,8 +75,14 @@ class FakeChannel {
   // RESOLVES these with a status string ('ok' | 'error' | 'timed out') rather
   // than rejecting, so the fakes mirror that contract.
   track() {
-    this.tracked = true;
-    return Promise.resolve('ok');
+    this.client.trackCalls = (this.client.trackCalls ?? 0) + 1;
+    // `client.trackResult` models a Presence incident ('timed out'); default ok.
+    const result = this.client.trackResult ?? 'ok';
+    this.tracked = result === 'ok';
+    // Optional hook: what realtime-js does to the channel while track() is in
+    // flight (e.g. the 2026-10-13 incident errored the channel right after).
+    this.client.onTrack?.(this);
+    return Promise.resolve(result);
   }
   untrack() {
     this.tracked = false;
@@ -462,6 +472,34 @@ async function withQuietLogs(fn) {
   }
 }
 
+/**
+ * Simulated monotonic clock (performance.now — what every retry deadline reads)
+ * plus Math.random pinned to 1, so every jittered delay sits at its upper bound
+ * and the assertions below are deterministic. Always restored.
+ */
+async function withSimulatedClock(fn) {
+  const realPerfNow = performance.now;
+  const realRandom = Math.random;
+  let t = realPerfNow.call(performance);
+  performance.now = () => t;
+  Math.random = () => 1;
+  try {
+    return await fn({ advance: (ms) => { t += ms; }, now: () => t });
+  } finally {
+    performance.now = realPerfNow;
+    Math.random = realRandom;
+  }
+}
+
+/** Replay a realtime-js status callback on the SAME channel object, the way
+ * its internal rejoinTimer does, and let the async Presence work settle. */
+async function sdkStatus(ch, status, err) {
+  ch.state = status === 'SUBSCRIBED' ? 'joined' : 'errored';
+  ch.subscribeCb(status, err);
+  await flush();
+  await flush();
+}
+
 let failures = 0;
 async function test(name, fn) {
   try {
@@ -724,7 +762,11 @@ async function main() {
     assert.strictEqual(realtimeReconnectDelayMs(2, () => 0), 1000, 'attempt 2 low bound');
     assert.strictEqual(realtimeReconnectDelayMs(3, () => 1), 7500, 'attempt 3 high bound');
     assert.strictEqual(realtimeReconnectDelayMs(4, () => 0), 5000, 'attempt 4 low bound');
-    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 15000, 'fallback high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(5, () => 1), 20000, 'attempt 5 sustained backoff max');
+    assert.strictEqual(realtimeReconnectDelayMs(6, () => 1), 40000, 'attempt 6 sustained backoff max');
+    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 120000, 'fallback high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(20, () => 0), 1000, 'full-jitter lower bound');
+    assert.strictEqual(realtimeReconnectDelayMs(20, () => 0.5), 60000, 'long outage retry spread');
   });
 
   await test('Presence retries keep their cadence but add jitter', () => {
@@ -761,21 +803,21 @@ async function main() {
     });
 
     assert.ok(rc.sleptMs.length >= 6, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
-    // Formula: min(30_000, 1000 * 2**min(attempt,5)) * (0.5 + random())
-    // -> hard ceiling is 30_000 * 1.5 = 45_000 ms.
+    // Formula: min(120_000, 1000 * 2**min(attempt,7)) * (0.5 + random())
+    // -> hard ceiling is 120_000 * 1.5 = 180_000 ms.
     assert.ok(
-      rc.sleptMs.every((ms) => ms > 0 && ms <= 45_000),
-      `every backoff must be positive and <= 45s: ${JSON.stringify(rc.sleptMs)}`
+      rc.sleptMs.every((ms) => ms > 0 && ms <= 180_000),
+      `every backoff must be positive and <= 180s: ${JSON.stringify(rc.sleptMs)}`
     );
     // With the counter climbing, late attempts draw from a strictly higher
-    // range than the first: attempt 1 tops out at 3_000, attempt 5+ starts at
-    // 15_000 — so this cannot flake on jitter.
+    // range than the first: attempt 1 tops out at 3_000, attempt 7+ starts at
+    // 60_000 — so this cannot flake on jitter.
     assert.ok(
       rc.sleptMs[0] <= 3_000,
       `first backoff should be the attempt-1 range: ${rc.sleptMs[0]}`
     );
     assert.ok(
-      Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
+      Math.max(...rc.sleptMs.slice(-2)) >= 32_000,
       `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
   });
@@ -787,6 +829,262 @@ async function main() {
     );
     assert.strictEqual(rc.user?.id, FakeAuth.USER.id, 'user must come from setSession()');
     assert.strictEqual(client.auth.getUserCalls, 0, 'setSession() must not call getUser()');
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #844: retry storm during the 2026-10-13 Supabase Realtime incident.
+  // Log, repeated many times on one device:
+  //   ✅ Channel subscribed
+  //   ❌ Presence track not acknowledged (timed out)
+  //   ❌ Channel error: unknown — socket=open(-) ch=errored attempt=0
+  // realtime-js resets its rejoinTimer on every join 'ok', so each CHANNEL_ERROR
+  // asked reconnectAfterMs(1) again: ~1s retries forever, plus a Presence
+  // publish on every join.
+  // -------------------------------------------------------------------------
+
+  await test('Presence recovery cooldown grows, is capped, and fully jittered', () => {
+    assert.strictEqual(presenceRecoveryDelayMs(1, () => 1), 5_000);
+    assert.strictEqual(presenceRecoveryDelayMs(2, () => 1), 10_000);
+    assert.strictEqual(presenceRecoveryDelayMs(5, () => 1), 80_000);
+    assert.strictEqual(presenceRecoveryDelayMs(6, () => 1), 120_000, 'cap');
+    assert.strictEqual(presenceRecoveryDelayMs(50, () => 1), 120_000, 'stays capped');
+    assert.strictEqual(presenceRecoveryDelayMs(50, () => 0), 1_000, 'floor, never a tight loop');
+    assert.strictEqual(presenceRecoveryDelayMs(6, () => 0.5), 60_000, 'full jitter spreads the fleet');
+  });
+
+  // Scenario 1: repeated incomplete recovery.
+  await test('incident loop (SUBSCRIBED -> Presence timeout -> CHANNEL_ERROR) backs off across cycles', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.trackResult = 'timed out';
+    // As in the incident: the channel errors while track() is still pending,
+    // so the in-batch retry loop exits early on state !== 'joined'.
+    client.onTrack = (ch) => { ch.state = 'errored'; };
+    const sdkDelays = [];
+    const joins = 8;
+    await withQuietLogs(() => withSimulatedClock(async ({ advance }) => {
+      await rc.createChannel().catch(() => { /* not ready: expected */ });
+      const ch = rc.channel;
+      for (let cycle = 1; cycle <= joins; cycle++) {
+        if (cycle > 1) await sdkStatus(ch, 'SUBSCRIBED');
+        await sdkStatus(ch, 'CHANNEL_ERROR', { message: 'unknown' });
+        // realtime-js: joinPush 'ok' -> rejoinTimer.reset(); _onError ->
+        // rejoinTimer.scheduleTimeout() -> reconnectAfterMs(tries + 1 = 1).
+        const delay = rc.reconnectDelayMs(1);
+        sdkDelays.push(delay);
+        advance(delay);
+      }
+    }));
+    // Pre-fix every entry was realtimeReconnectDelayMs(1) = <=1500ms.
+    for (let i = 1; i < 5; i++) {
+      assert.ok(sdkDelays[i] > sdkDelays[i - 1],
+        `SDK retry delay must grow across incomplete recoveries: ${JSON.stringify(sdkDelays)}`);
+    }
+    assert.ok(sdkDelays.slice(1).every((d) => d > 1_500),
+      `no later cycle may restart near 1s: ${JSON.stringify(sdkDelays)}`);
+    assert.ok(sdkDelays.at(-1) >= 80_000, `sustained incident reaches the long tier: ${JSON.stringify(sdkDelays)}`);
+    assert.ok(rc.consecutivePresenceFailures >= 2, 'mid-batch channel errors must count as Presence failures');
+    assert.ok(client.trackCalls < joins,
+      `Presence must not publish on every join (cooldown): ${client.trackCalls} publishes for ${joins} joins`);
+  });
+
+  // Scenario 2 (+ part of D): Presence cooldown on the 10s health tick, and a
+  // stable broadcast channel stops inflating reconnect backoff.
+  await test('Presence retries on the health tick back off instead of firing every 10s', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.trackResult = 'timed out';
+    const attemptTimes = [];
+    let ticks = 0;
+    await withQuietLogs(() => withSimulatedClock(async ({ advance, now }) => {
+      client.onTrack = () => attemptTimes.push(now());
+      await rc.createChannel().catch(() => { /* not ready: expected */ });
+      const initialBatch = attemptTimes.length;
+      attemptTimes.splice(0, initialBatch);
+      for (; ticks < 60; ticks++) { // 10 simulated minutes
+        advance(10_000);
+        rc.lastHeartbeatOkAt = now(); // broadcast heartbeats keep confirming
+        rc.checkConnectionHealth();
+        await flush();
+        await flush();
+      }
+    }));
+    assert.ok(attemptTimes.length <= 10,
+      `expected a handful of Presence retries in ${ticks} ticks, got ${attemptTimes.length}`);
+    const gaps = attemptTimes.slice(1).map((t, i) => t - attemptTimes[i]);
+    for (let i = 1; i < gaps.length; i++) {
+      assert.ok(gaps[i] >= gaps[i - 1], `gaps must not shrink: ${JSON.stringify(gaps)}`);
+    }
+    assert.ok(gaps.at(-1) >= 100_000, `cooldown must reach the ~2min tier: ${JSON.stringify(gaps)}`);
+    assert.ok(rc.consecutivePresenceFailures >= 5, 'Presence failures stay counted');
+    assert.strictEqual(rc.consecutiveUnreadyJoins, 0,
+      'a broadcast channel joined & heartbeating for >2min must not keep inflating reconnect backoff');
+    assert.strictEqual(client.realtime.rebuilds, 0, 'no socket rebuild for Presence-only failure');
+  });
+
+  // Scenario 3: full readiness clears both counters; next blip is fast again.
+  await test('successful Presence + readiness writes clear both persistent counters', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.trackResult = 'timed out';
+    client.onTrack = (ch) => { ch.state = 'errored'; };
+    await withQuietLogs(() => withSimulatedClock(async ({ advance }) => {
+      await rc.createChannel().catch(() => {});
+      const ch = rc.channel;
+      for (let i = 0; i < 6; i++) {
+        await sdkStatus(ch, 'CHANNEL_ERROR', { message: 'unknown' });
+        advance(rc.reconnectDelayMs(1));
+        await sdkStatus(ch, 'SUBSCRIBED');
+      }
+      assert.ok(rc.consecutiveUnreadyJoins >= 5, 'precondition: incident budget built up');
+      assert.ok(rc.consecutivePresenceFailures >= 1, 'precondition: Presence cooldown armed');
+
+      // Supabase recovers.
+      client.trackResult = 'ok';
+      client.onTrack = null;
+      await sdkStatus(ch, 'CHANNEL_ERROR', { message: 'unknown' });
+      advance(130_000); // past any cooldown
+      await sdkStatus(ch, 'SUBSCRIBED');
+      if (!rc.presenceTracked) { // SUBSCRIBED landed inside cooldown: the health tick finishes it
+        rc.lastHeartbeatOkAt = performance.now();
+        rc.checkConnectionHealth();
+        await flush();
+        await flush();
+      }
+    }));
+    assert.strictEqual(rc.presenceTracked, true, 'device must become fully ready again on its own');
+    assert.strictEqual(rc.consecutiveUnreadyJoins, 0);
+    assert.strictEqual(rc.consecutivePresenceFailures, 0);
+    assert.strictEqual(rc.nextPresenceAttemptAt, 0);
+    assert.ok(rc.reconnectDelayMs(1, () => 1) <= 1_500, 'after recovery a blip retries fast again');
+  });
+
+  // Scenario 4: Presence cooldown must not cost a healthy broadcast channel.
+  await test('a joined channel is not recreated because Presence is in cooldown', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.trackResult = 'timed out';
+    await withQuietLogs(() => withSimulatedClock(async ({ advance, now }) => {
+      await rc.createChannel().catch(() => {});
+      // Recreate path: the old channel errored, recreate joins a NEW channel
+      // while Presence is cooling down -> createChannel() rejects, but the
+      // joined channel must stay.
+      rc.channel.state = 'errored';
+      const callsBefore = client.trackCalls;
+      await rc.recreateChannel();
+      const joined = rc.channel;
+      assert.strictEqual(joined.state, 'joined', 'recreate must still produce a joined channel');
+      assert.strictEqual(client.trackCalls, callsBefore, 'no Presence publish during cooldown');
+      const rebuildsAfterRecreate = client.realtime.rebuilds;
+
+      // SDK re-delivers SUBSCRIBED inside the cooldown: still no publish.
+      await sdkStatus(joined, 'SUBSCRIBED');
+      assert.strictEqual(client.trackCalls, callsBefore, 'SUBSCRIBED must not bypass the cooldown');
+
+      for (let i = 0; i < 30; i++) { // 5 minutes of health ticks
+        advance(10_000);
+        rc.lastHeartbeatOkAt = now();
+        rc.checkConnectionHealth();
+        await flush();
+        await flush();
+      }
+      assert.strictEqual(rc.channel, joined, 'joined channel must be kept');
+      assert.strictEqual(joined.state, 'joined');
+      assert.strictEqual(client.channels.length, 1, 'no extra channels created');
+      assert.strictEqual(client.realtime.rebuilds, rebuildsAfterRecreate, 'no forced socket rebuild');
+      assert.strictEqual(rc.reconnectAttempt, 0, 'no watchdog recreate attempts');
+    }));
+  });
+
+  // Scenario 5 (F): the original half-open recovery still works with a large
+  // incident budget, and its delay stays bounded.
+  await test('half-open socket is still force-recreated after an incident built up the budget', async () => {
+    const { rc, client } = makeRemoteChannel();
+    const recovered = await withQuietLogs(async () => {
+      client.trackResult = 'timed out';
+      client.onTrack = (ch) => { ch.state = 'errored'; };
+      await rc.createChannel().catch(() => {});
+      for (let i = 0; i < 10; i++) {
+        await sdkStatus(rc.channel, 'CHANNEL_ERROR', { message: 'unknown' });
+        await sdkStatus(rc.channel, 'SUBSCRIBED');
+      }
+      assert.ok(rc.consecutiveUnreadyJoins >= 8, 'precondition: long-tier budget');
+      client.onTrack = null;
+      rc.sleptMs.length = 0;
+      client.realtime.socketDead = true; // half-open; channel keeps reading 'joined'
+      return driveHealthChecksStuckJoined(rc, client, 12);
+    });
+    assert.strictEqual(recovered, true, 'stale-heartbeat watchdog must still rebuild the socket');
+    const backoff = rc.sleptMs.find((ms) => ms >= 1_000);
+    assert.ok(backoff !== undefined && backoff <= 180_000,
+      `recreate backoff must be bounded: ${JSON.stringify(rc.sleptMs)}`);
+  });
+
+  // Scenario 6: ordinary short blips keep ~1s recovery.
+  await test('short disconnections of a ready device still recover fast', async () => {
+    const { rc, client } = makeRemoteChannel();
+    const delays = [];
+    await withQuietLogs(() => withSimulatedClock(async ({ advance }) => {
+      await rc.createChannel();
+      assert.strictEqual(rc.presenceTracked, true, 'precondition: ready');
+      const ch = rc.channel;
+      for (let i = 0; i < 5; i++) {
+        await sdkStatus(ch, 'CHANNEL_ERROR', { message: 'network blip' });
+        const d = rc.reconnectDelayMs(1);
+        delays.push(d);
+        advance(d);
+        await sdkStatus(ch, 'SUBSCRIBED');
+        assert.strictEqual(rc.presenceTracked, true, `blip ${i + 1}: Presence must republish immediately`);
+      }
+    }));
+    assert.ok(delays.every((d) => d <= 1_500), `every blip should retry in the ~1s tier: ${JSON.stringify(delays)}`);
+    assert.strictEqual(client.trackCalls, 6, 'one Presence publish per join, no cooldown when healthy');
+  });
+
+  // Scenario 7: deadlines are monotonic, immune to the Date.now skew correction.
+  await test('Presence cooldown ignores Date.now jumps from clock-skew correction', async () => {
+    const { rc, client } = makeRemoteChannel();
+    client.trackResult = 'timed out';
+    const realDateNow = Date.now;
+    await withQuietLogs(() => withSimulatedClock(async ({ advance, now }) => {
+      try {
+        await rc.createChannel().catch(() => {}); // arms a 5s cooldown
+        const calls = client.trackCalls;
+        for (const skew of [6 * 3600_000, -6 * 3600_000]) {
+          Date.now = () => realDateNow() + skew;
+          rc.lastHeartbeatOkAt = now();
+          rc.checkConnectionHealth();
+          await flush();
+          await flush();
+          assert.strictEqual(client.trackCalls, calls, `a ${skew > 0 ? 'forward' : 'backward'} Date.now jump must not end the cooldown`);
+        }
+        advance(5_001); // only monotonic time ends it
+        rc.lastHeartbeatOkAt = now();
+        rc.checkConnectionHealth();
+        await flush();
+        await flush();
+        assert.strictEqual(client.trackCalls, calls + 1, 'cooldown ends on monotonic time even with Date.now skewed');
+      } finally {
+        Date.now = realDateNow;
+      }
+    }));
+  });
+
+  // E: a late Presence result from a replaced channel must not move retry state.
+  await test('a stale Presence result from a replaced channel does not touch retry state', async () => {
+    const { rc, client } = makeRemoteChannel();
+    await withQuietLogs(async () => {
+      await rc.createChannel(); // ready
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      const oldChannel = rc.channel;
+      oldChannel.track = () => gate.then(() => 'timed out');
+      rc.presenceTracked = false;
+      const pending = rc.trackPresenceWithRetry(0, 1);
+      // Meanwhile a newer channel replaces it.
+      rc.channel = client.channel('user:user-1');
+      rc.channel.state = 'joined';
+      release();
+      await pending;
+      assert.strictEqual(rc.consecutivePresenceFailures, 0, 'stale failure must not arm the cooldown');
+      assert.strictEqual(rc.nextPresenceAttemptAt, 0);
+    });
   });
 
   console.log(

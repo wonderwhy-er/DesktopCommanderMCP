@@ -66,12 +66,12 @@ interface DeviceData {
 // capable -> 15 min, unflagged -> 45s.
 const CAPABLE_HEARTBEAT_INTERVAL = 5 * 60 * 1000;
 const LEGACY_HEARTBEAT_INTERVAL = 15 * 1000;
-// Keep Supabase's retry cadence, but jitter every device independently so one
-// Realtime disconnect cannot synchronize the whole fleet onto 1s/2s/5s/10s
-// reconnect waves. ±50% keeps recovery latency close to the SDK default while
-// spreading load across the recovery window.
-const REALTIME_RECONNECT_BASE_MS = [1000, 2000, 5000, 10000] as const;
-const REALTIME_RECONNECT_FALLBACK_MS = 10000;
+// Fast recovery for short Wi-Fi blips, but never retry every 10 seconds forever.
+// Prolonged provider incidents must not keep the entire device fleet joining.
+// Independent jitter spreads retry work; full jitter applies at attempt >= 5.
+const REALTIME_RECONNECT_BASE_MS = [1000, 2000, 5000, 10000, 20000, 40000, 80000, 120000] as const;
+const REALTIME_RECONNECT_FALLBACK_MS = 120000;
+const WATCHDOG_RECREATE_MAX_BACKOFF_MS = 120000;
 // Presence-only failures do not mean broadcast delivery is down: a joined
 // channel can still receive doorbells while Presence's DB-backed work is
 // degraded. Keep a previously-proven capability for one normal heartbeat
@@ -81,6 +81,15 @@ const PRESENCE_WITHDRAW_GRACE_MS = 5 * 60 * 1000;
 // Cap on a recreate's rebuild step so a hung await can't disable the watchdog.
 // Must exceed createChannel()'s worst case (~32.25s of jittered presence retries).
 const RECREATE_TIMEOUT_MS = 45000;
+// Upper bound on the persistent unready-join budget. Anything >= 8 already
+// selects the 120s SDK tier; the cap only keeps the counter meaningful.
+const MAX_UNREADY_JOIN_BUDGET = 16;
+// A channel that has stayed joined this long, with a heartbeat confirmed after
+// the join, is a working broadcast path even if Presence is still degraded.
+// Its join no longer counts toward reconnect backoff (Presence keeps its own
+// cooldown). Comfortably longer than the incident's join->error cycle (~10-30s)
+// and covers at least four 25s heartbeats.
+const STABLE_BROADCAST_RESET_MS = 120_000;
 // Max continuous time in 'joining' before forcing a recreate — a half-open
 // socket parks the channel there forever, and a genuine join settles in ~10s.
 const JOINING_WEDGE_TIMEOUT_MS = 30000;
@@ -122,17 +131,34 @@ function jitterAround(baseMs: number, random: () => number): number {
     return Math.max(1, Math.round(baseMs * (0.5 + sample)));
 }
 
-/** Jittered version of realtime-js's default 1s/2s/5s/10s stepped backoff. */
+/** Exponential-ish SDK backoff. Attempts 1-4 preserve short recovery latency. */
 export function realtimeReconnectDelayMs(tries: number, random: () => number = Math.random): number {
     const attempt = Math.max(1, Math.floor(tries || 1));
     const baseMs = REALTIME_RECONNECT_BASE_MS[attempt - 1] ?? REALTIME_RECONNECT_FALLBACK_MS;
+    if (attempt <= 4) return jitterAround(baseMs, random);
+    // Full jitter is deliberately independent per device; floor avoids an immediate tight retry.
+    return Math.max(1000, Math.round(baseMs * Math.max(0, Math.min(1, random()))));
+}
+
+/** Watchdog must not defeat the SDK's slower persistent-failure backoff. */
+export function watchdogRecreateDelayMs(tries: number, random: () => number = Math.random): number {
+    const attempt = Math.max(1, Math.floor(tries || 1));
+    const baseMs = Math.min(WATCHDOG_RECREATE_MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempt, 7));
     return jitterAround(baseMs, random);
 }
 
-/** Preserve Presence's existing 500ms-per-attempt retry shape, but desynchronize it. */
+/** Preserve short in-batch Presence retries, independently jittered. */
 export function presenceRetryDelayMs(failedAttempt: number, random: () => number = Math.random): number {
     const attempt = Math.max(1, Math.floor(failedAttempt || 1));
     return jitterAround(500 * attempt, random);
+}
+
+/** Delay new Presence batches after repeated failed batches, even across SDK rejoins.
+ * This is intentionally independent of the Phoenix channel/socket reconnect timer. */
+export function presenceRecoveryDelayMs(failures: number, random: () => number = Math.random): number {
+    const attempt = Math.max(1, Math.floor(failures || 1));
+    const baseMs = Math.min(120_000, 5_000 * 2 ** Math.min(attempt - 1, 5));
+    return Math.max(1_000, Math.round(baseMs * Math.max(0, Math.min(1, random()))));
 }
 
 // auth-js compares token expiry against this device's own Date.now(), with no
@@ -226,6 +252,20 @@ export class RemoteChannel {
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
+    // The SDK resets its rejoin timer on *every* SUBSCRIBED, even if Presence
+    // immediately times out. Count such joins across SDK/channel recreation.
+    // Reset only after Presence AND durable readiness writes succeed.
+    private consecutiveUnreadyJoins = 0;
+    private consecutivePresenceFailures = 0;
+    private nextPresenceAttemptAt = 0; // monotonic; independent of Date.now skew correction
+    /** performance.now() of the latest SUBSCRIBED; null while not joined. */
+    private joinedAt: number | null = null;
+
+    /** SDK channel and socket timers share reconnectAfterMs. The persistent
+     * unready-join budget prevents a series of partial successes restarting at 1s. */
+    private reconnectDelayMs(tries: number, random: () => number = Math.random): number {
+        return realtimeReconnectDelayMs(Math.max(tries, this.consecutiveUnreadyJoins), random);
+    }
     private readonly realtimeHealth = new RealtimeHealthTelemetry((window) => {
         captureRemote('remote_realtime_health_window', window).catch(() => {});
     });
@@ -261,7 +301,7 @@ export class RemoteChannel {
             auth: { autoRefreshToken: false },
             global: { fetch: clockAwareFetch },
             realtime: {
-                reconnectAfterMs: realtimeReconnectDelayMs,
+                reconnectAfterMs: (tries: number) => this.reconnectDelayMs(tries),
                 // supabase-js's resolver ends in `?? supabaseKey`, so after SIGNED_OUT
                 // the socket silently re-pins to the anon key and every private-channel
                 // join is refused. Overriding under `realtime` (not the top-level
@@ -590,6 +630,9 @@ export class RemoteChannel {
      */
     private async trackPresenceWithRetry(recovered: number, attempts = 3): Promise<void> {
         if (this.isTrackingPresence) return; // never stack pushes on a wedged socket
+        // SDK may deliver SUBSCRIBED again before Presence's separate cooldown
+        // expires. Do not let each successful join bypass that cooldown.
+        if (this.presenceInCooldown()) return;
         this.isTrackingPresence = true;
         try {
             await this.trackPresenceInner(recovered, attempts);
@@ -598,18 +641,43 @@ export class RemoteChannel {
         }
     }
 
+    /** One failed Presence batch: grow the Presence-only cooldown. Deadlines are
+     * monotonic so a Date.now skew correction cannot shorten or extend them. */
+    private recordPresenceBatchFailure(): void {
+        this.consecutivePresenceFailures++;
+        this.nextPresenceAttemptAt = performance.now() +
+            presenceRecoveryDelayMs(this.consecutivePresenceFailures);
+    }
+
+    /** Presence is withheld by its cooldown right now. */
+    private presenceInCooldown(): boolean {
+        return performance.now() < this.nextPresenceAttemptAt;
+    }
+
     private async trackPresenceInner(recovered: number, attempts: number): Promise<void> {
         // A fresh attempt starts from "not proven", so a leftover true from an
         // earlier join cannot keep the device counting as reachable while this
         // one is still deciding.
         this.presenceTracked = false;
+        // Every await below can outlive this channel (recreateChannel() swaps
+        // it). A late result must not touch retry state the newer channel owns.
+        const channel = this.channel;
+        let failedAttempts = 0;
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
-            if (!this.channel || this.channel.state !== 'joined') return;
+            if (this.channel !== channel) return;
+            if (!channel || channel.state !== 'joined') {
+                // Production sequence (2026-10-13): track() times out, then the
+                // channel errors before the next in-batch attempt. That batch
+                // failed too; without recording it the next SUBSCRIBED would
+                // publish again with no cooldown at all.
+                if (failedAttempts > 0) this.recordPresenceBatchFailure();
+                return;
+            }
             let status: string;
             this.realtimeHealth.record('presence_attempts');
             try {
-                status = await this.channel.track({
+                status = await channel.track({
                     device_id: this.deviceId,
                     device_name: this.deviceName,
                     app_version: VERSION,
@@ -618,6 +686,7 @@ export class RemoteChannel {
             } catch (trackErr: any) {
                 status = `threw: ${trackErr?.message}`;
             }
+            if (this.channel !== channel) return; // stale ack/timeout from a replaced channel
 
             if (status === 'ok') {
                 this.realtimeHealth.record('presence_successes');
@@ -658,8 +727,16 @@ export class RemoteChannel {
                     }).catch(() => { });
                     return;
                 }
+                // Writes can take up to DEVICE_ROW_WRITE_TIMEOUT_MS each; if the
+                // channel was replaced meanwhile, its own join decides readiness.
+                if (this.channel !== channel) return;
 
                 this.presenceTracked = true;
+                // A joined socket is only a partial recovery. Clear backoff
+                // after Presence and both readiness writes have succeeded.
+                this.consecutiveUnreadyJoins = 0;
+                this.consecutivePresenceFailures = 0;
+                this.nextPresenceAttemptAt = 0;
                 this.presenceFailureStartedAt = null;
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
                 // Reconnect attempts preceding this join (0 on a first join).
@@ -679,12 +756,15 @@ export class RemoteChannel {
                 return;
             }
 
+            failedAttempts++;
             console.error(`❌ Presence track not acknowledged (${status}) — attempt ${attempt}/${attempts}`);
             this.realtimeHealth.record('presence_failures');
             if (attempt < attempts) await this.sleep(presenceRetryDelayMs(attempt));
         }
+        if (this.channel !== channel) return;
 
         this.presenceTracked = false;
+        this.recordPresenceBatchFailure();
         captureRemote('remote_channel_presence_track_error', { attempts }).catch(() => { });
 
         // Presence is an observer signal, not the delivery path. If this device
@@ -829,9 +909,19 @@ export class RemoteChannel {
 
                     if (status === 'SUBSCRIBED') {
                         this.realtimeHealth.record('join_successes');
+                        // The SDK resets its rejoinTimer here regardless of Presence.
+                        // Carry failure budget across successful-but-unready joins.
+                        // reconnectAttempt is different: it counts watchdog
+                        // recreations (and gates capability withdrawal), and a
+                        // join does end that particular failure mode.
+                        this.consecutiveUnreadyJoins = Math.min(
+                            MAX_UNREADY_JOIN_BUDGET, this.consecutiveUnreadyJoins + 1
+                        );
                         const recovered = this.reconnectAttempt;
-                        this.reconnectAttempt = 0;
-                        this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
+                        this.reconnectAttempt = 0; // watchdog attempts only, not recovery proof
+                        const joinedAt = performance.now();
+                        this.joinedAt = joinedAt;
+                        this.lastHeartbeatOkAt = joinedAt; // a fresh join is proof of life too
                         console.log(`✅ Channel subscribed${recovered > 0 ? ` (recovered after ${recovered} attempt${recovered === 1 ? '' : 's'})` : ''}`);
                         // A join is only half of what dispatch needs. The other
                         // half is presence, which writes the capability the
@@ -843,19 +933,28 @@ export class RemoteChannel {
                         // `status` is written on the same event as the
                         // capability, in trackPresenceInner, so the two can
                         // never disagree.
+                        //
+                        // During a Presence cooldown no publish is attempted.
+                        // The promise still rejects (the device is not ready),
+                        // but the joined channel itself is left in place: the
+                        // health check treats 'joined' as healthy and only
+                        // retries Presence once the cooldown expires.
+                        const deferred = this.presenceInCooldown();
                         this.trackPresenceWithRetry(recovered)
                             .catch(() => { /* logged inside */ })
                             .finally(() =>
                                 this.presenceTracked
                                     ? resolve()
-                                    : reject(new ChannelUnreachableError(
-                                        'channel joined but presence was never acknowledged, so no command can be delivered'
+                                    : reject(new ChannelUnreachableError(deferred
+                                        ? 'channel joined; presence deferred by cooldown after repeated failures'
+                                        : 'channel joined but presence was never acknowledged, so no command can be delivered'
                                     ))
                             );
                     } else if (status === 'CHANNEL_ERROR') {
                         this.realtimeHealth.record('join_errors');
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
+                        this.joinedAt = null;
                         this.presenceTracked = false;
                         this.syncReachabilityStatus();
                         // Fires on ordinary network faults too — filter on the
@@ -1082,12 +1181,25 @@ export class RemoteChannel {
                 }
             }
 
+            // Broadcast has outlived the incident's join->error cycle with a
+            // heartbeat confirmed after the join: the socket/channel path is
+            // working even if Presence is not. Stop charging this join to the
+            // reconnect budget, so a later ordinary blip gets fast recovery.
+            // Presence keeps its own cooldown; full readiness still needs it.
+            if (this.consecutiveUnreadyJoins > 0 && this.joinedAt !== null &&
+                this.lastHeartbeatOkAt !== null && this.lastHeartbeatOkAt > this.joinedAt &&
+                performance.now() - this.joinedAt >= STABLE_BROADCAST_RESET_MS) {
+                console.debug(`[DEBUG] Broadcast channel stable for ${Math.round((performance.now() - this.joinedAt) / 1000)}s — clearing reconnect backoff budget (presence ${this.presenceTracked ? 'ready' : 'still pending'})`);
+                this.consecutiveUnreadyJoins = 0;
+            }
+
             // Self-heal a failed presence publish: the channel is up, so nothing
             // else will ever retry (SUBSCRIBED won't fire again). Until it
             // lands the dashboard shows this device offline, and if track()
             // already failed its retries the capability is withdrawn too, so
             // the server fails every dispatch to it fast.
-            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
+            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence &&
+                !this.presenceInCooldown()) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
             }
@@ -1140,8 +1252,9 @@ export class RemoteChannel {
             await this.sleep(SOCKET_SETTLE_MAX_MS);
             return;
         }
-        const deadline = Date.now() + SOCKET_SETTLE_MAX_MS;
-        while (realtime.isDisconnecting() && Date.now() < deadline) {
+        // Monotonic: Date.now may be patched by the clock-skew correction.
+        const deadline = performance.now() + SOCKET_SETTLE_MAX_MS;
+        while (realtime.isDisconnecting() && performance.now() < deadline) {
             await this.sleep(SOCKET_SETTLE_POLL_MS);
         }
     }
@@ -1183,9 +1296,12 @@ export class RemoteChannel {
         console.log(`🔄 Recreating channel... (attempt ${this.reconnectAttempt}) — ${this.connState()}`);
 
         try {
-            // Jittered backoff so a fleet-wide event doesn't stampede every
-            // device into reconnecting at once. ~1-3s rising to ~15-45s.
-            const backoffMs = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempt, 5)) * (0.5 + Math.random());
+            // Our force-recreate fallback shares the extended sustained-failure
+            // budget with the SDK. A 10s watchdog tick cannot cancel this wait
+            // because isRecreatingChannel guards its whole duration.
+            const backoffMs = watchdogRecreateDelayMs(
+                Math.max(this.reconnectAttempt, this.consecutiveUnreadyJoins)
+            );
             console.debug(`[DEBUG] Reconnect backoff: ${Math.round(backoffMs)}ms`);
             await this.sleep(backoffMs);
 
