@@ -729,6 +729,55 @@ await test('a status write nothing answers cannot keep presence from being publi
     + `presence tracked ${rc.presenceTracked}. The health check retries presence only once that publish returns.`);
 });
 
+// Presence publication must be independent from the durable readiness DB writes.
+// An ACKed Presence must not be published again just because PostgREST timed out.
+await test('Presence ACK survives a failed readiness write without duplicate track()', async () => {
+  const { rc } = makeRemoteChannel();
+  let published = 0;
+  let writeAttempts = 0;
+  rc.channel = { state: 'joined', track: async () => { published++; return 'ok'; } };
+  rc.setTransportCapable = async () => (++writeAttempts > 1);
+  rc.queueStatusWrite = async () => true;
+  rc.localExecutorProbe = () => true;
+  rc.recoverPendingCalls = async () => {};
+  await rc.trackPresenceInner(0, 1);
+  assert(!rc.presenceTracked, 'a failed DB write must keep readiness false');
+  assert(published === 1, 'first call must publish Presence once');
+  assert(rc.nextReadinessRetryAt > performance.now(), 'readiness retry must back off');
+  await rc.trackPresenceInner(0, 1);
+  assert(rc.presenceTracked, 'DB-only retry should recover readiness');
+  assert(published === 1, 'DB-only retry must not publish Presence again');
+});
+
+await test('a new joined channel must publish a fresh Presence', async () => {
+  const { rc } = makeRemoteChannel();
+  let published = 0;
+  rc.setTransportCapable = async () => true;
+  rc.queueStatusWrite = async () => true;
+  rc.localExecutorProbe = () => true;
+  rc.recoverPendingCalls = async () => {};
+  rc.channel = { state: 'joined', track: async () => { published++; return 'ok'; } };
+  await rc.trackPresenceInner(0, 1);
+  rc.channel = { state: 'joined', track: async () => { published++; return 'ok'; } };
+  rc.joinEpoch++;
+  await rc.trackPresenceInner(0, 1);
+  assert(published === 2 && rc.presenceTracked, 'new channel must republish Presence');
+});
+
+await test('stale Presence ACK cannot certify a superseded channel', async () => {
+  const { rc } = makeRemoteChannel();
+  let releaseAck;
+  rc.channel = { state: 'joined', track: () => new Promise(r => { releaseAck = r; }) };
+  rc.setTransportCapable = async () => true;
+  rc.queueStatusWrite = async () => true;
+  const pending = rc.trackPresenceInner(0, 1);
+  rc.channel = { state: 'joined', track: async () => 'ok' };
+  rc.joinEpoch++;
+  releaseAck('ok');
+  await pending;
+  assert(!rc.presenceTracked, 'old join must not mark new channel reachable');
+});
+
 // --- 7. Shutdown ------------------------------------------------------------
 // setOffline()'s durable write is the final word on status, so nothing may race
 // or outlast it — device.ts force-exits 5s after the signal.
