@@ -55,9 +55,11 @@ async function markDeviceOffline() {
     const auth = { persistSession: false, autoRefreshToken: false };
     const fetchBeforeDeadline = (input, init) => fetch(input, { ...init, signal: deadline.signal });
 
-    // Update device status to offline, stamping the exact shutdown moment so
-    // "last seen X ago" is precise for clean shutdowns (the periodic
-    // bookkeeping write only runs on the slow capable cadence).
+    // Let Postgres stamp last_seen at update time, rather than trusting the
+    // device's potentially skewed wall clock. This records shutdown when the
+    // DB processes the request, not the precise local shutdown instant.
+    // A successful write keeps "last seen X ago" accurate even though the
+    // periodic bookkeeping write only runs on the slow capable cadence.
     // The token goes straight to PostgREST as a Bearer header: setSession()
     // would first spend a GoTrue round trip of the budget re-validating it.
     const markOffline = (token) => createClient(supabaseUrl, supabaseKey, {
@@ -65,7 +67,7 @@ async function markDeviceOffline() {
         global: { headers: { Authorization: `Bearer ${token}` }, fetch: fetchBeforeDeadline }
     })
         .from('mcp_devices')
-        .update({ status: 'offline', last_seen: new Date().toISOString() })
+        .update({ status: 'offline', last_seen: 'now' })
         .eq('id', deviceId);
 
     function tokenLooksLive(token) {
