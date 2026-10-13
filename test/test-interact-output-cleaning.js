@@ -28,12 +28,11 @@
  * prints stays as printed.
  */
 import assert from 'assert';
-import { spawnSync } from 'child_process';
 import { cleanProcessOutput } from '../dist/utils/process-detection.js';
 import { startProcess, interactWithProcess, forceTerminate } from '../dist/tools/improved-process-tools.js';
 import { WINDOWS_SHELL_PROMPTS } from './fixtures/windows-shell-prompts.js';
 import { NODE_24_SESSIONS } from './fixtures/node-repl-prompts.js';
-import { runIfMain, skip } from './helpers/run-if-main.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const captured = (what) => WINDOWS_SHELL_PROMPTS.find(([name]) => name === what)[1];
 // The output since "echo hi" was sent at the prompt: from the echo on
@@ -129,25 +128,25 @@ async function testNoPrompt() {
   }
 }
 
-async function testPowerShell() {
-  console.log('\n--- interact_with_process in a real PowerShell session: two lines ---');
-  const hasPwsh = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['pwsh'], { encoding: 'utf8' }).status === 0;
-  const command = process.platform === 'win32' ? 'powershell -NoLogo' : (hasPwsh ? 'pwsh -NoLogo' : null);
-  if (!command) {
-    skip('interact_with_process in a PowerShell session: pwsh is not installed on this machine');
-    return;
-  }
+// A real shell session: PowerShell on Windows, bash on macOS and Linux (the pwsh preinstalled on GitHub's Ubuntu
+// runner wraps its prompt in terminal codes). Its output for "echo a" and "echo b", up to the next prompt; bash
+// writes its prompt to stderr, so the prompt it read "echo b" at arrives before or after "a".
+async function testShell() {
+  const [name, command, answer] = process.platform === 'win32'
+    ? ['PowerShell', 'powershell -NoLogo', /📤 Output:\na\r?\n(b\r?\n)?PS /]
+    : ['bash', 'bash --norc --noprofile -i', /📤 Output:\n(bash-[\d.]+\$ )?a\n((bash-[\d.]+\$ )?b\n)?/];
+  console.log(`\n--- interact_with_process in a real ${name} session: two lines ---`);
   const started = await startProcess({ command, timeout_ms: 10_000 });
   const pid = started.structuredContent?.pid;
   try {
     // It may answer at the prompt after the first line, before the second is read
     const result = await interactWithProcess({ pid, input: 'echo a\necho b', timeout_ms: 20_000 });
     const text = result.content[0].text;
-    check(/📤 Output:\na\r?\n(b\r?\n)?PS /.test(text) && !text.includes('echo '),
+    check(answer.test(text) && !text.includes('echo '),
       `interact_with_process "echo a\\necho b" should return a (and b) without the echoed commands, got: ${JSON.stringify(text)}`);
   } finally {
     if (pid > 0) {
-      // "exit" ends the PowerShell session; force_terminate then ends whatever is left
+      // "exit" ends the shell session; force_terminate then ends whatever is left
       await interactWithProcess({ pid, input: 'exit', wait_for_prompt: false });
       await forceTerminate({ pid });
     }
@@ -158,7 +157,7 @@ async function runTests() {
   testCleaning();
   await testNodeRepl();
   await testNoPrompt();
-  await testPowerShell();
+  await testShell();
   console.log(failures.length === 0
     ? '\n✅ output cleaning tests passed'
     : `\n❌ ${failures.length} output cleaning checks failed`);
