@@ -99,10 +99,10 @@ export class MCPDevice {
 
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
-        this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
+        this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl, profilePath: this.configPath });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
         // refresh-token families get replayed, trip GoTrue's reuse detection, and
