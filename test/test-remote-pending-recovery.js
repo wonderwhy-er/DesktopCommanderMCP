@@ -25,7 +25,10 @@ function makeClient(rows) {
       if (row[key] !== value) return false;
     }
     for (const [key, value] of Object.entries(gtFilters)) {
-      if (!(row[key] > value)) return false;
+      // Simulate PostgreSQL's special timestamptz literal 'now', using the
+      // database's clock rather than potentially patched device Date.now().
+      const serverValue = value === 'now' ? new Date(now).toISOString() : value;
+      if (!(row[key] > serverValue)) return false;
     }
     return true;
   }
@@ -146,9 +149,11 @@ async function runTests() {
       baseRow('other-device', { device_id: OTHER_DEVICE_ID }),
       baseRow('completed', { status: 'completed' }),
     ];
-    const { rc, delivered } = makeRemoteChannel(rows);
+    const { rc, delivered, client } = makeRemoteChannel(rows);
 
     await rc.recoverPendingCalls();
+    assert.equal(client.calls[0].gtFilters.timeout_at, 'now',
+      'recovery scan must filter using PostgreSQL time');
 
     assert.deepEqual(
       delivered.map((payload) => payload.new.id),
@@ -168,6 +173,37 @@ async function runTests() {
 
     assert.equal(delivered.length, 0, 'the atomic claim must reject an already-expired call');
     assert.equal(rows[0].status, 'pending');
+  }
+
+  // Device time can be far ahead or behind PostgreSQL time. The claim must
+  // remain based on the same database-time filter in both cases.
+  for (const clockSkewMs of [10 * 60_000, -20 * 60_000]) {
+    const rows = [
+      baseRow('still-live', { timeout_at: iso(60_000) }),
+      baseRow('already-expired', { timeout_at: iso(-60_000) }),
+    ];
+    const { rc, delivered, client } = makeRemoteChannel(rows);
+    const realNow = Date.now;
+    try {
+      Date.now = () => now + clockSkewMs;
+      await rc.onDoorbell({ call_id: 'still-live', device_id: DEVICE_ID });
+      await rc.onDoorbell({ call_id: 'already-expired', device_id: DEVICE_ID });
+    } finally {
+      Date.now = realNow;
+    }
+
+    assert.deepEqual(delivered.map((payload) => payload.new.id), ['still-live'],
+      'only the unexpired row can be claimed, regardless of client clock skew');
+    assert.equal(rows[0].status, 'executing');
+    assert.equal(rows[1].status, 'pending');
+    const claims = client.calls.filter((call) => call.mode === 'update');
+    assert(claims.every((call) => call.gtFilters.timeout_at === 'now'),
+      'each atomic claim must use the literal PostgreSQL timestamp now');
+
+    // The legacy direct claim path must also use the same database-time guard.
+    assert.equal(await rc.markCallExecuting('already-expired'), false);
+    assert.equal(rows[1].status, 'pending');
+    assert.equal(client.calls.at(-1).gtFilters.timeout_at, 'now');
   }
 
   {

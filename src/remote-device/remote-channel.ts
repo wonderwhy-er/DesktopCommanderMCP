@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
+import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { VERSION } from '../version.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -175,7 +176,6 @@ export function presenceRecoveryDelayMs(failures: number, random: () => number =
 const rawDateNow = Date.now;
 let clockOffsetMs = 0;
 let clockPatched = false;
-
 export function observeServerDate(dateHeader: string | null): void {
     if (!dateHeader) return;
     const serverMs = Date.parse(dateHeader);
@@ -266,6 +266,9 @@ export class RemoteChannel {
     private reconnectDelayMs(tries: number, random: () => number = Math.random): number {
         return realtimeReconnectDelayMs(Math.max(tries, this.consecutiveUnreadyJoins), random);
     }
+    private readonly realtimeHealth = new RealtimeHealthTelemetry((window) => {
+        captureRemote('remote_realtime_health_window', window).catch(() => {});
+    });
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -579,7 +582,7 @@ export class RemoteChannel {
             // 'online'; presence writes the capability.
             const { error: registrationError } = await this.updateDevice(existingDevice.id, {
                 status: 'offline',
-                last_seen: new Date().toISOString(),
+                last_seen: 'now',
                 capabilities: this.capabilitiesPayload(false),
                 device_name: deviceName
             });
@@ -596,6 +599,7 @@ export class RemoteChannel {
 
             // Store parameters for channel recreation
             this.deviceId = existingDevice.id;
+            this.realtimeHealth.setDevice(existingDevice.id);
             this.deviceName = deviceName;
             this.onToolCall = onToolCall;
 
@@ -671,6 +675,7 @@ export class RemoteChannel {
                 return;
             }
             let status: string;
+            this.realtimeHealth.record('presence_attempts');
             try {
                 status = await channel.track({
                     device_id: this.deviceId,
@@ -684,6 +689,7 @@ export class RemoteChannel {
             if (this.channel !== channel) return; // stale ack/timeout from a replaced channel
 
             if (status === 'ok') {
+                this.realtimeHealth.record('presence_successes');
                 // `presenceTracked` is not "track() said ok" — isReachable()
                 // reads it as "this device receives commands", and the heartbeat
                 // consults isReachable() directly rather than waiting for the
@@ -715,6 +721,7 @@ export class RemoteChannel {
                     : false;
                 if (!capabilityWritten || !statusWritten) {
                     console.error('❌ Presence published but the device row could not be updated — not ready');
+                    this.realtimeHealth.record('readiness_write_failures');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
                     }).catch(() => { });
@@ -751,6 +758,7 @@ export class RemoteChannel {
 
             failedAttempts++;
             console.error(`❌ Presence track not acknowledged (${status}) — attempt ${attempt}/${attempts}`);
+            this.realtimeHealth.record('presence_failures');
             if (attempt < attempts) await this.sleep(presenceRetryDelayMs(attempt));
         }
         if (this.channel !== channel) return;
@@ -874,6 +882,7 @@ export class RemoteChannel {
             // Presence, keyed by device id.
             const channelName = `user:${this.user.id}`;
             console.debug(`[DEBUG] Creating channel: ${channelName}`);
+            this.realtimeHealth.newChannel();
             this.channel = this.client.channel(channelName, {
                 config: {
                     private: true,
@@ -899,6 +908,7 @@ export class RemoteChannel {
                     console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + (err?.message || err) + ')' : ''} — ${this.connState()}`);
 
                     if (status === 'SUBSCRIBED') {
+                        this.realtimeHealth.record('join_successes');
                         // The SDK resets its rejoinTimer here regardless of Presence.
                         // Carry failure budget across successful-but-unready joins.
                         // reconnectAttempt is different: it counts watchdog
@@ -941,6 +951,7 @@ export class RemoteChannel {
                                     ))
                             );
                     } else if (status === 'CHANNEL_ERROR') {
+                        this.realtimeHealth.record('join_errors');
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
                         this.joinedAt = null;
@@ -951,11 +962,13 @@ export class RemoteChannel {
                         captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
                         reject(new ChannelUnreachableError(err?.message || 'failed to subscribe to the tool call channel'));
                     } else if (status === 'TIMED_OUT') {
+                        this.realtimeHealth.record('join_timeouts');
                         console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
                         this.syncReachabilityStatus();
                         captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
                         reject(new ChannelUnreachableError('tool call channel subscription timed out'));
                     } else if (status === 'CLOSED') {
+                        this.realtimeHealth.record('join_closures');
                         // Settle the promise so an in-flight recreateChannel() can't await
                         // forever (which would wedge the re-entrancy guard / watchdog).
                         console.warn(`⚠️ Channel closed — ${this.connState()}`);
@@ -977,15 +990,12 @@ export class RemoteChannel {
     private async recoverPendingCalls(): Promise<void> {
         if (!this.client || !this.deviceId || !this.isReachable()) return;
 
-        // Date.now() is deliberately used here: this process may patch it from
-        // Supabase's Date header to correct a badly skewed device clock.
-        const now = new Date(Date.now()).toISOString();
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
             .select('id,device_id')
             .eq('device_id', this.deviceId)
             .eq('status', 'pending')
-            .gt('timeout_at', now)
+            .gt('timeout_at', 'now')
             .order('created_at', { ascending: true })
             .limit(PENDING_RECOVERY_BATCH_SIZE);
 
@@ -1050,7 +1060,9 @@ export class RemoteChannel {
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
-        // so a hiccup must not cost a 5-minute timeout.
+        // so a hiccup must not cost a timeout. PostgREST interprets the
+        // special timestamptz input 'now' in PostgreSQL, not on the device;
+        // this atomically excludes expired rows despite client clock skew.
         let row: any = null;
         let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
@@ -1061,7 +1073,7 @@ export class RemoteChannel {
                 .eq('id', callId)
                 .eq('device_id', this.deviceId)
                 .eq('status', 'pending')
-                .gt('timeout_at', new Date(Date.now()).toISOString())
+                .gt('timeout_at', 'now')
                 .select('*');
             if (!error) {
                 row = data?.[0] ?? null;
@@ -1093,19 +1105,16 @@ export class RemoteChannel {
             .select('*')
             .eq('id', callId)
             .eq('device_id', this.deviceId)
+            .gt('timeout_at', 'now')
             .maybeSingle();
         if (error) {
             console.error(`[DEBUG] Doorbell row fetch failed for ${callId} after claim errors:`, error.message);
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
             return;
         }
-        if (
-            current?.status === 'pending'
-            && current.timeout_at
-            && new Date(current.timeout_at).getTime() > Date.now()
-        ) {
-            // No claim landed; device.ts claims it. Do not hand an expired
-            // side-effecting call to the executor while it races the reaper.
+        if (current?.status === 'pending') {
+            // No claim landed; device.ts claims it. Read-back already excludes
+            // expired rows using PostgreSQL time; its own claim does likewise.
             this.dispatchToolCall({ new: current });
         } else {
             // 'executing' reads the same whether our own claim committed with its
@@ -1145,11 +1154,15 @@ export class RemoteChannel {
         }
 
         const state = this.channel.state;
+        this.realtimeHealth.observeSocketState(String((this.client as any)?.realtime?.connectionState?.() ?? 'unknown'));
 
         // Debug: Log current channel state (only if changed)
         if (!this.lastChannelState || this.lastChannelState !== state) {
             console.debug(`[DEBUG] channel state: ${state} — ${this.connState()}`);
             this.lastChannelState = state;
+            if (state !== 'joined' && state !== 'joining') {
+                captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt }).catch(() => {});
+            }
         }
 
         // 'joined' = healthy. Clear the joining-overstay timer.
@@ -1212,7 +1225,6 @@ export class RemoteChannel {
 
         // Unhealthy: closed, errored, leaving — recreate
         this.joiningSince = null;
-        captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt });
         console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating... — ${this.connState()}`);
         this.recreateChannel();
     }
@@ -1307,6 +1319,9 @@ export class RemoteChannel {
                 return; // finally-block below clears the re-entrancy guard
             }
 
+            // Count only watchdog recreations that continue past SDK self-heal.
+            this.realtimeHealth.record('watchdog_recreates');
+
             // Cap the whole recreate: a never-settling await (e.g. a subscribe that only
             // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
             // the 10s watchdog. On timeout we reject -> catch -> finally clears the guard.
@@ -1369,8 +1384,9 @@ export class RemoteChannel {
      * Claim a call. True only when THIS update flipped the row pending ->
      * executing, which is what makes dual delivery safe across processes.
      * .eq('status','pending') makes it conditional; .select('id') makes the
-     * result observable. On a transient DB error it returns true (execute
-     * anyway), matching prior behaviour — so device.ts's in-memory guard is what
+     * result observable. Expiry is checked using Postgres time, not the
+     * device clock. On a transient DB error it returns true (execute anyway),
+     * matching prior behaviour — so device.ts's in-memory guard is what
      * actually guarantees exactly-once within a process.
      */
     async markCallExecuting(callId: string): Promise<boolean> {
@@ -1380,7 +1396,7 @@ export class RemoteChannel {
             .update({ status: 'executing' })
             .eq('id', callId)
             .eq('status', 'pending')
-            .gt('timeout_at', new Date(Date.now()).toISOString())
+            .gt('timeout_at', 'now')
             .select('id');
 
         if (error) {
@@ -1400,10 +1416,9 @@ export class RemoteChannel {
 
     async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
-        const updateData: any = {
-            status: status,
-            completed_at: new Date().toISOString()
-        };
+        // The DB terminal-status trigger stamps completed_at using PostgreSQL
+        // time. Do not send a device-generated timestamp.
+        const updateData: any = { status };
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
         // jsonb cannot store  and rejects the whole write (Postgres 22P05),
@@ -1543,7 +1558,7 @@ export class RemoteChannel {
 
             const { error } = await this.client
                 .from('mcp_devices')
-                .update({ last_seen: new Date().toISOString(), status: 'online' })
+                .update({ last_seen: 'now', status: 'online' })
                 .eq('id', deviceId);
 
             if (error) {
@@ -1561,6 +1576,8 @@ export class RemoteChannel {
     startHeartbeat(deviceId: string) {
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.heartbeatDeviceId = deviceId;
+        this.realtimeHealth.setDevice(deviceId);
+        this.realtimeHealth.start();
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
         }, 10000);
@@ -1644,7 +1661,7 @@ export class RemoteChannel {
 
         const { error } = await this.client
             .from('mcp_devices')
-            .update({ status: status, last_seen: new Date().toISOString() })
+            .update({ status: status, last_seen: 'now' })
             .eq('id', deviceId)
             .abortSignal(this.deviceRowWriteSignal());
 
@@ -1767,6 +1784,7 @@ export class RemoteChannel {
     }
 
     async unsubscribe() {
+        this.realtimeHealth.stop();
         // setOffline()'s durable write is the final word on `status` from here,
         // so stop the heartbeat and the channel callbacks from racing it. The
         // races that matter: a heartbeat tick firing as the signal arrives, and
