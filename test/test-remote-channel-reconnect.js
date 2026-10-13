@@ -689,7 +689,11 @@ async function main() {
     assert.strictEqual(realtimeReconnectDelayMs(2, () => 0), 1000, 'attempt 2 low bound');
     assert.strictEqual(realtimeReconnectDelayMs(3, () => 1), 7500, 'attempt 3 high bound');
     assert.strictEqual(realtimeReconnectDelayMs(4, () => 0), 5000, 'attempt 4 low bound');
-    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 15000, 'fallback high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(5, () => 1), 20000, 'attempt 5 sustained backoff max');
+    assert.strictEqual(realtimeReconnectDelayMs(6, () => 1), 40000, 'attempt 6 sustained backoff max');
+    assert.strictEqual(realtimeReconnectDelayMs(8, () => 1), 120000, 'fallback high bound');
+    assert.strictEqual(realtimeReconnectDelayMs(20, () => 0), 1000, 'full-jitter lower bound');
+    assert.strictEqual(realtimeReconnectDelayMs(20, () => 0.5), 60000, 'long outage retry spread');
   });
 
   await test('Presence retries keep their cadence but add jitter', () => {
@@ -726,21 +730,21 @@ async function main() {
     });
 
     assert.ok(rc.sleptMs.length >= 6, `expected several backoff sleeps, got ${rc.sleptMs.length}`);
-    // Formula: min(30_000, 1000 * 2**min(attempt,5)) * (0.5 + random())
-    // -> hard ceiling is 30_000 * 1.5 = 45_000 ms.
+    // Formula: min(120_000, 1000 * 2**min(attempt,7)) * (0.5 + random())
+    // -> hard ceiling is 120_000 * 1.5 = 180_000 ms.
     assert.ok(
-      rc.sleptMs.every((ms) => ms > 0 && ms <= 45_000),
-      `every backoff must be positive and <= 45s: ${JSON.stringify(rc.sleptMs)}`
+      rc.sleptMs.every((ms) => ms > 0 && ms <= 180_000),
+      `every backoff must be positive and <= 180s: ${JSON.stringify(rc.sleptMs)}`
     );
     // With the counter climbing, late attempts draw from a strictly higher
-    // range than the first: attempt 1 tops out at 3_000, attempt 5+ starts at
-    // 15_000 — so this cannot flake on jitter.
+    // range than the first: attempt 1 tops out at 3_000, attempt 7+ starts at
+    // 60_000 — so this cannot flake on jitter.
     assert.ok(
       rc.sleptMs[0] <= 3_000,
       `first backoff should be the attempt-1 range: ${rc.sleptMs[0]}`
     );
     assert.ok(
-      Math.max(...rc.sleptMs.slice(-2)) >= 15_000,
+      Math.max(...rc.sleptMs.slice(-2)) >= 32_000,
       `late backoffs should reach the capped range: ${JSON.stringify(rc.sleptMs)}`
     );
   });

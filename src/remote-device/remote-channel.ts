@@ -65,12 +65,12 @@ interface DeviceData {
 // capable -> 15 min, unflagged -> 45s.
 const CAPABLE_HEARTBEAT_INTERVAL = 5 * 60 * 1000;
 const LEGACY_HEARTBEAT_INTERVAL = 15 * 1000;
-// Keep Supabase's retry cadence, but jitter every device independently so one
-// Realtime disconnect cannot synchronize the whole fleet onto 1s/2s/5s/10s
-// reconnect waves. ±50% keeps recovery latency close to the SDK default while
-// spreading load across the recovery window.
-const REALTIME_RECONNECT_BASE_MS = [1000, 2000, 5000, 10000] as const;
-const REALTIME_RECONNECT_FALLBACK_MS = 10000;
+// Fast recovery for short Wi-Fi blips, but never retry every 10 seconds forever.
+// Prolonged provider incidents must not keep the entire device fleet joining.
+// Independent jitter spreads retry work; full jitter applies at attempt >= 5.
+const REALTIME_RECONNECT_BASE_MS = [1000, 2000, 5000, 10000, 20000, 40000, 80000, 120000] as const;
+const REALTIME_RECONNECT_FALLBACK_MS = 120000;
+const WATCHDOG_RECREATE_MAX_BACKOFF_MS = 120000;
 // Presence-only failures do not mean broadcast delivery is down: a joined
 // channel can still receive doorbells while Presence's DB-backed work is
 // degraded. Keep a previously-proven capability for one normal heartbeat
@@ -121,10 +121,19 @@ function jitterAround(baseMs: number, random: () => number): number {
     return Math.max(1, Math.round(baseMs * (0.5 + sample)));
 }
 
-/** Jittered version of realtime-js's default 1s/2s/5s/10s stepped backoff. */
+/** Exponential-ish SDK backoff. Attempts 1-4 preserve short recovery latency. */
 export function realtimeReconnectDelayMs(tries: number, random: () => number = Math.random): number {
     const attempt = Math.max(1, Math.floor(tries || 1));
     const baseMs = REALTIME_RECONNECT_BASE_MS[attempt - 1] ?? REALTIME_RECONNECT_FALLBACK_MS;
+    if (attempt <= 4) return jitterAround(baseMs, random);
+    // Full jitter is deliberately independent per device; floor avoids an immediate tight retry.
+    return Math.max(1000, Math.round(baseMs * Math.max(0, Math.min(1, random()))));
+}
+
+/** Watchdog must not defeat the SDK's slower persistent-failure backoff. */
+export function watchdogRecreateDelayMs(tries: number, random: () => number = Math.random): number {
+    const attempt = Math.max(1, Math.floor(tries || 1));
+    const baseMs = Math.min(WATCHDOG_RECREATE_MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempt, 7));
     return jitterAround(baseMs, random);
 }
 
@@ -1171,9 +1180,10 @@ export class RemoteChannel {
         console.log(`🔄 Recreating channel... (attempt ${this.reconnectAttempt}) — ${this.connState()}`);
 
         try {
-            // Jittered backoff so a fleet-wide event doesn't stampede every
-            // device into reconnecting at once. ~1-3s rising to ~15-45s.
-            const backoffMs = Math.min(30_000, 1000 * 2 ** Math.min(this.reconnectAttempt, 5)) * (0.5 + Math.random());
+            // Our force-recreate fallback shares the extended sustained-failure
+            // budget with the SDK. A 10s watchdog tick cannot cancel this wait
+            // because isRecreatingChannel guards its whole duration.
+            const backoffMs = watchdogRecreateDelayMs(this.reconnectAttempt);
             console.debug(`[DEBUG] Reconnect backoff: ${Math.round(backoffMs)}ms`);
             await this.sleep(backoffMs);
 
