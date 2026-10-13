@@ -181,8 +181,8 @@ async function runTests() {
             assert.strictEqual(upload.headers['content-type'], 'application/zip');
             assert.strictEqual(upload.headers['x-dc-user-id'], standIn.userId, 'the user id is the saved token\'s sub');
             assert.strictEqual(upload.headers['x-dc-device-id'], standIn.deviceId);
-            assert.match(run.output, new RegExp(`\\nSent to Desktop Commander support\\. Report id: ${standIn.reportId}\\n`), run.output);
-            assert.match(run.output, /\nGive this id to support\. We keep it for 7 days, then delete it\.\n/);
+            assert.match(run.output, new RegExp(`\\n\\[\\d{2}:\\d{2}:\\d{2}\\] Sent to Desktop Commander support\\. Report id: ${standIn.reportId}\\n`), run.output);
+            assert.match(run.output, /\n\[\d{2}:\d{2}:\d{2}\] Give this id to support\. We keep it for 7 days, then delete it\.\n/);
             assert(!run.output.includes('Reply to your support conversation'), 'sent: no "attach it yourself" line');
         });
 
@@ -385,7 +385,7 @@ async function runTests() {
             const result = await runReport(env, ['--no-upload']);
             assert.strictEqual(result.code, 0, result.output);
             assert.strictEqual(standIn.uploads.length, before, 'no upload');
-            assert.match(result.output, /\nReply to your support conversation with this file attached\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Reply to your support conversation with this file attached\.\n/, result.output);
             assert(!/Sent to|Not sent/.test(result.output), result.output);
         });
 
@@ -407,7 +407,7 @@ async function runTests() {
             assert.strictEqual(result.code, 0, result.output);
             const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
             assert(saved && fs.existsSync(saved), 'the zip is kept');
-            assert.match(result.output, /\nNot sent \(the server answered 500\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server answered 500\)\. Attach the zip to your support conversation instead\.\n/, result.output);
             assert(!result.output.includes('Report id'), result.output);
         });
 
@@ -415,7 +415,7 @@ async function runTests() {
             standIn.failUploads(1, 429, 'too many reports, try again in a minute');
             const result = await runReport(env);
             assert.strictEqual(result.code, 0, result.output);
-            assert.match(result.output, /\nNot sent \(the server answered 429: too many reports, try again in a minute\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server answered 429: too many reports, try again in a minute\)\. Attach the zip to your support conversation instead\.\n/, result.output);
         });
 
         await test('an upload that never answers is aborted by its timeout', async () => {
@@ -478,7 +478,7 @@ async function runTests() {
             assert.strictEqual(standIn.uploads.length, before, 'nothing posted');
             const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
             assert(saved && fs.existsSync(saved), 'the zip is kept');
-            assert.match(result.output, /\nNot sent \(the server named no upload address\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server named no upload address\)\. Attach the zip to your support conversation instead\.\n/, result.output);
             assert(!result.output.includes('Report id'), result.output);
         });
 
