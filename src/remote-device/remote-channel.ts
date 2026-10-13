@@ -226,6 +226,12 @@ export class RemoteChannel {
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
+    /** Presence ACK belongs to one joined channel and epoch, not to a DB readiness write. */
+    private presenceAcknowledgedChannel: RealtimeChannel | null = null;
+    private presenceAcknowledgedJoinEpoch = -1;
+    private joinEpoch = 0;
+    private readinessRetryAttempt = 0;
+    private nextReadinessRetryAt = 0;
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -602,9 +608,16 @@ export class RemoteChannel {
 
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
+            const joinedChannel = this.channel;
+            const epoch = this.joinEpoch;
             let status: string;
+            if (this.presenceAcknowledgedChannel === joinedChannel &&
+                this.presenceAcknowledgedJoinEpoch === epoch) {
+                // Retry only the failed DB readiness writes; never republish an ACKed Presence.
+                status = 'ok';
+            } else {
             try {
-                status = await this.channel.track({
+                status = await joinedChannel.track({
                     device_id: this.deviceId,
                     device_name: this.deviceName,
                     app_version: VERSION,
@@ -613,8 +626,13 @@ export class RemoteChannel {
             } catch (trackErr: any) {
                 status = `threw: ${trackErr?.message}`;
             }
+            }
+            // An ACK from a superseded channel/rejoin cannot certify a new join.
+            if (this.channel !== joinedChannel || this.joinEpoch !== epoch || joinedChannel.state !== 'joined') return;
 
             if (status === 'ok') {
+                this.presenceAcknowledgedChannel = joinedChannel;
+                this.presenceAcknowledgedJoinEpoch = epoch;
                 // `presenceTracked` is not "track() said ok" — isReachable()
                 // reads it as "this device receives commands", and the heartbeat
                 // consults isReachable() directly rather than waiting for the
@@ -649,10 +667,19 @@ export class RemoteChannel {
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
                     }).catch(() => { });
+                    // Separate exponential DB retry budget from Presence tracking.
+                    this.readinessRetryAttempt++;
+                    this.nextReadinessRetryAt = performance.now() +
+                        Math.min(120_000, 5_000 * 2 ** Math.min(this.readinessRetryAttempt - 1, 5))
+                        * (0.5 + Math.random());
                     return;
                 }
 
+                // A delayed readiness completion cannot claim reachability for a superseded join.
+                if (this.channel !== joinedChannel || this.joinEpoch !== epoch || this.shuttingDown) return;
                 this.presenceTracked = true;
+                this.readinessRetryAttempt = 0;
+                this.nextReadinessRetryAt = 0;
                 this.presenceFailureStartedAt = null;
                 console.log(`👋 Presence tracked (device ${this.deviceId} visible as online)`);
                 // Reconnect attempts preceding this join (0 on a first join).
@@ -819,6 +846,13 @@ export class RemoteChannel {
                     console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + (err?.message || err) + ')' : ''} — ${this.connState()}`);
 
                     if (status === 'SUBSCRIBED') {
+                        // The SDK can rejoin the same channel object on a new socket.
+                        // An ACK from the prior join is no longer valid.
+                        this.joinEpoch++;
+                        this.presenceAcknowledgedChannel = null;
+                        this.presenceAcknowledgedJoinEpoch = -1;
+                        this.readinessRetryAttempt = 0;
+                        this.nextReadinessRetryAt = 0;
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
                         this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
@@ -1074,7 +1108,8 @@ export class RemoteChannel {
             // lands the dashboard shows this device offline, and if track()
             // already failed its retries the capability is withdrawn too, so
             // the server fails every dispatch to it fast.
-            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence) {
+            if (!this.presenceTracked && this.deviceId && !this.isTrackingPresence &&
+                performance.now() >= this.nextReadinessRetryAt) {
                 console.debug('[DEBUG] Channel joined but presence not tracked — retrying track()');
                 this.trackPresenceWithRetry(0, 1).catch(() => { /* logged inside */ });
             }
