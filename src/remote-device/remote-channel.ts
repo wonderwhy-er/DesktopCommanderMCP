@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
+import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { VERSION } from '../version.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -226,6 +227,9 @@ export class RemoteChannel {
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
+    private readonly realtimeHealth = new RealtimeHealthTelemetry((window) => {
+        captureRemote('remote_realtime_health_window', window).catch(() => {});
+    });
 
     // Track last device status to prevent duplicate log messages
     private lastDeviceStatus: 'online' | 'offline' = 'offline';
@@ -556,6 +560,7 @@ export class RemoteChannel {
 
             // Store parameters for channel recreation
             this.deviceId = existingDevice.id;
+            this.realtimeHealth.setDevice(existingDevice.id);
             this.deviceName = deviceName;
             this.onToolCall = onToolCall;
 
@@ -603,6 +608,7 @@ export class RemoteChannel {
         for (let attempt = 1; attempt <= attempts; attempt++) {
             if (!this.channel || this.channel.state !== 'joined') return;
             let status: string;
+            this.realtimeHealth.record('presence_attempts');
             try {
                 status = await this.channel.track({
                     device_id: this.deviceId,
@@ -615,6 +621,7 @@ export class RemoteChannel {
             }
 
             if (status === 'ok') {
+                this.realtimeHealth.record('presence_successes');
                 // `presenceTracked` is not "track() said ok" — isReachable()
                 // reads it as "this device receives commands", and the heartbeat
                 // consults isReachable() directly rather than waiting for the
@@ -646,6 +653,7 @@ export class RemoteChannel {
                     : false;
                 if (!capabilityWritten || !statusWritten) {
                     console.error('❌ Presence published but the device row could not be updated — not ready');
+                    this.realtimeHealth.record('readiness_write_failures');
                     captureRemote('remote_channel_readiness_write_failed', {
                         capabilityWritten, statusWritten
                     }).catch(() => { });
@@ -673,6 +681,7 @@ export class RemoteChannel {
             }
 
             console.error(`❌ Presence track not acknowledged (${status}) — attempt ${attempt}/${attempts}`);
+            this.realtimeHealth.record('presence_failures');
             if (attempt < attempts) await this.sleep(presenceRetryDelayMs(attempt));
         }
 
@@ -794,6 +803,7 @@ export class RemoteChannel {
             // Presence, keyed by device id.
             const channelName = `user:${this.user.id}`;
             console.debug(`[DEBUG] Creating channel: ${channelName}`);
+            this.realtimeHealth.newChannel();
             this.channel = this.client.channel(channelName, {
                 config: {
                     private: true,
@@ -819,6 +829,7 @@ export class RemoteChannel {
                     console.debug(`[DEBUG] Channel subscription status: ${status}${err ? ' (error: ' + (err?.message || err) + ')' : ''} — ${this.connState()}`);
 
                     if (status === 'SUBSCRIBED') {
+                        this.realtimeHealth.record('join_successes');
                         const recovered = this.reconnectAttempt;
                         this.reconnectAttempt = 0;
                         this.lastHeartbeatOkAt = performance.now(); // a fresh join is proof of life too
@@ -843,6 +854,7 @@ export class RemoteChannel {
                                     ))
                             );
                     } else if (status === 'CHANNEL_ERROR') {
+                        this.realtimeHealth.record('join_errors');
                         // CHANNEL_ERROR is the only status carrying a real error message.
                         console.error(`❌ Channel error: ${err?.message || 'unknown'} — ${this.connState()}`);
                         this.presenceTracked = false;
@@ -852,11 +864,13 @@ export class RemoteChannel {
                         captureRemote('remote_channel_subscription_error', { error: err?.message || 'Channel error' }).catch(() => { });
                         reject(new ChannelUnreachableError(err?.message || 'failed to subscribe to the tool call channel'));
                     } else if (status === 'TIMED_OUT') {
+                        this.realtimeHealth.record('join_timeouts');
                         console.error(`⏱️ Channel subscription timed out, Reconnecting... — ${this.connState()}`);
                         this.syncReachabilityStatus();
                         captureRemote('remote_channel_subscription_timeout', { attempt: this.reconnectAttempt }).catch(() => { });
                         reject(new ChannelUnreachableError('tool call channel subscription timed out'));
                     } else if (status === 'CLOSED') {
+                        this.realtimeHealth.record('join_closures');
                         // Settle the promise so an in-flight recreateChannel() can't await
                         // forever (which would wedge the re-entrancy guard / watchdog).
                         console.warn(`⚠️ Channel closed — ${this.connState()}`);
@@ -1046,11 +1060,15 @@ export class RemoteChannel {
         }
 
         const state = this.channel.state;
+        this.realtimeHealth.observeSocketState(String((this.client as any)?.realtime?.connectionState?.() ?? 'unknown'));
 
         // Debug: Log current channel state (only if changed)
         if (!this.lastChannelState || this.lastChannelState !== state) {
             console.debug(`[DEBUG] channel state: ${state} — ${this.connState()}`);
             this.lastChannelState = state;
+            if (state !== 'joined' && state !== 'joining') {
+                captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt }).catch(() => {});
+            }
         }
 
         // 'joined' = healthy. Clear the joining-overstay timer.
@@ -1100,7 +1118,6 @@ export class RemoteChannel {
 
         // Unhealthy: closed, errored, leaving — recreate
         this.joiningSince = null;
-        captureRemote('remote_channel_state_health', { state, attempt: this.reconnectAttempt });
         console.debug(`[DEBUG] ⚠️ Channel in unhealthy state '${state}' - recreating... — ${this.connState()}`);
         this.recreateChannel();
     }
@@ -1190,6 +1207,9 @@ export class RemoteChannel {
                 console.log(`✅ Channel self-healed during backoff — skipping recreate — ${this.connState()}`);
                 return; // finally-block below clears the re-entrancy guard
             }
+
+            // Count only watchdog recreations that continue past SDK self-heal.
+            this.realtimeHealth.record('watchdog_recreates');
 
             // Cap the whole recreate: a never-settling await (e.g. a subscribe that only
             // ever emits CLOSED) must not pin isRecreatingChannel=true and silently disable
@@ -1445,6 +1465,8 @@ export class RemoteChannel {
     startHeartbeat(deviceId: string) {
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.heartbeatDeviceId = deviceId;
+        this.realtimeHealth.setDevice(deviceId);
+        this.realtimeHealth.start();
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
         }, 10000);
@@ -1651,6 +1673,7 @@ export class RemoteChannel {
     }
 
     async unsubscribe() {
+        this.realtimeHealth.stop();
         // setOffline()'s durable write is the final word on `status` from here,
         // so stop the heartbeat and the channel callbacks from racing it. The
         // races that matter: a heartbeat tick firing as the signal arrives, and
