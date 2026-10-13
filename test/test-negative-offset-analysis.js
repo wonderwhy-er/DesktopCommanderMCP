@@ -1,36 +1,64 @@
 /**
- * Test Results: Negative Offset Analysis for read_file
- * 
- * FINDINGS:
- * ❌ Negative offsets DO NOT work correctly in the current implementation
- * ❌ They return empty content due to invalid slice() range calculations
- * ⚠️  The implementation has a bug when handling negative offsets
- * 
- * CURRENT BEHAVIOR:
- * - offset: -2, length: 5 → slice(-2, 3) → returns empty []
- * - offset: -100, length: undefined → slice(-100, undefined) → works by accident
- * 
- * RECOMMENDATION: 
- * Either fix the implementation to properly support negative offsets,
- * or add validation to reject them with a clear error message.
+ * Negative Offset Analysis for read_file
+ *
+ * Originally recorded a bug: with a negative offset and a length, the read
+ * range was computed as slice(offset, Math.min(offset, totalLines) + length),
+ * e.g. offset: -2, length: 5 on a 6-line file → slice(-2, 3) → empty result,
+ * while offset: -100 without a length only worked by accident.
+ *
+ * This test checks those exact cases against read_file on a file with known
+ * content and reports what actually happens: ✅ if negative offsets return the
+ * last lines, ❌ (and exit 1) if the bug is back.
  */
 
-console.log("🔍 NEGATIVE OFFSET BEHAVIOR ANALYSIS");
-console.log("====================================");
-console.log("");
-console.log("❌ CONCLUSION: Negative offsets are BROKEN in current implementation");
-console.log("");
-console.log("🐛 BUG DETAILS:");
-console.log("   Current code: Math.min(offset, totalLines) creates invalid ranges");
-console.log("   Example: offset=-2, totalLines=6 → slice(-2, 3) → empty result");
-console.log("");
-console.log("✅ ACCIDENTAL SUCCESS:");
-console.log("   My original attempt worked because length was undefined");
-console.log("   slice(-100, undefined) → slice(-100) → works correctly");
-console.log("");
-console.log("🔧 NEEDS FIX:");
-console.log("   Either implement proper negative offset support or reject them");
+import { configManager } from '../dist/config-manager.js';
+import { readFile } from '../dist/tools/filesystem.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import assert from 'assert';
+import { runIfMain } from './helpers/run-if-main.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_FILE = path.join(__dirname, 'test-negative-offset-analysis.txt');
+const FILE_LINES = ['line1', 'line2', 'line3', 'line4', 'line5', 'line6'];
+
+// The case from the original bug report, and the one that "worked by accident"
+const CASES = [
+  { offset: -2, length: 5, expected: ['line5', 'line6'] },
+  { offset: -100, length: undefined, expected: FILE_LINES },
+];
+
+/** The file's lines in a read_file result (the status header is not a file line) */
+async function readLines(options) {
+  const result = await readFile(TEST_FILE, options);
+  return String(result.content).split('\n').filter((line) => FILE_LINES.includes(line));
+}
 
 export default async function runTests() {
-  return false; // Test documents that negative offsets are broken
+  console.log('🔍 NEGATIVE OFFSET BEHAVIOR ANALYSIS');
+  console.log('====================================');
+
+  const originalConfig = await configManager.getConfig();
+  await configManager.setValue('allowedDirectories', [__dirname]);
+  await fs.writeFile(TEST_FILE, FILE_LINES.join('\n') + '\n');
+
+  try {
+    for (const { offset, length, expected } of CASES) {
+      const actual = await readLines({ offset, length });
+      assert.deepStrictEqual(actual, expected,
+        `offset: ${offset}, length: ${length} should return [${expected}], got [${actual}]`);
+      console.log(`✓ offset: ${offset}, length: ${length} → [${actual.join(', ')}]`);
+    }
+    console.log('\n✅ CONCLUSION: Negative offsets work in the current implementation');
+    return true;
+  } catch (error) {
+    console.log(`\n❌ CONCLUSION: Negative offsets are BROKEN: ${error.message}`);
+    return false;
+  } finally {
+    await fs.rm(TEST_FILE, { force: true });
+    await configManager.updateConfig(originalConfig);
+  }
 }
+
+runIfMain(import.meta.url, runTests);

@@ -13,6 +13,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runIfMain } from './helpers/run-if-main.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_INDEX = path.join(__dirname, '..', 'dist', 'index.js');
@@ -116,17 +117,21 @@ async function runScenario(name, config, featureFlags) {
   }
 }
 
-await runScenario(
-  'Legacy Claude Code config does not retain pending welcome onboarding',
-  { telemetryEnabled: false, pendingWelcomeOnboarding: true },
-);
-await runScenario(
-  'Disabled welcome-page feature flag consumes pending onboarding',
-  { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
-  { welcome_page_enabled: false },
-);
-await runScenario(
-  'Configured Claude Code exclusion matches case-insensitively',
-  { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
-  { welcome_page_enabled: true, welcome_page_excluded_clients: ['CLAUDE-CODE'] },
-);
+async function runScenarios() {
+  await runScenario(
+    'Legacy Claude Code config does not retain pending welcome onboarding',
+    { telemetryEnabled: false, pendingWelcomeOnboarding: true },
+  );
+  await runScenario(
+    'Disabled welcome-page feature flag consumes pending onboarding',
+    { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
+    { welcome_page_enabled: false },
+  );
+  await runScenario(
+    'Configured Claude Code exclusion matches case-insensitively',
+    { telemetryEnabled: false, welcomeOnboardingEligible: true, pendingWelcomeOnboarding: true },
+    { welcome_page_enabled: true, welcome_page_excluded_clients: ['CLAUDE-CODE'] },
+  );
+}
+
+runIfMain(import.meta.url, runScenarios);

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { configManager } from '../dist/config-manager.js';
 import { terminalManager } from '../dist/terminal-manager.js';
+import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
+import { pythonCommand } from './helpers/python.js';
 
 // Get directory name
 const __filename = fileURLToPath(import.meta.url);
@@ -68,9 +70,11 @@ async function testPythonREPL() {
   console.log(`${colors.cyan}Running Python REPL interaction test...${colors.reset}`);
   
   try {
-    // Setup Python test
-    // Find Python executable
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    // Use the Python the server itself detected
+    const pythonCmd = pythonCommand();
+    if (!pythonCmd) {
+      return skip('Python REPL interaction test: Python 3 is not installed');
+    }
     
     // Start a Python REPL process
     const result = await terminalManager.executeCommand(pythonCmd + ' -i', 5000);
@@ -220,13 +224,16 @@ export default async function runTests() {
     const pythonTestResult = await testPythonREPL();
     const nodeTestResult = await testNodeREPL();
     
-    // Overall test result
-    const allPassed = pythonTestResult && nodeTestResult;
+    // Overall test result: a skipped test neither passes nor fails
+    const results = [pythonTestResult, nodeTestResult];
+    const allPassed = results.every((result) => result === true || result === SKIPPED);
+    const skippedCount = results.filter((result) => result === SKIPPED).length;
+    const status = (result) => result === SKIPPED ? colors.yellow + 'SKIPPED' : result ? colors.green + 'PASSED' : colors.red + 'FAILED';
     
     console.log(`\n${colors.cyan}===== REPL Interaction Test Summary =====\n${colors.reset}`);
-    console.log(`Python REPL test: ${pythonTestResult ? colors.green + 'PASSED' : colors.red + 'FAILED'}${colors.reset}`);
-    console.log(`Node.js REPL test: ${nodeTestResult ? colors.green + 'PASSED' : colors.red + 'FAILED'}${colors.reset}`);
-    console.log(`\nOverall result: ${allPassed ? colors.green + 'ALL TESTS PASSED! 🎉' : colors.red + 'SOME TESTS FAILED!'}${colors.reset}`);
+    console.log(`Python REPL test: ${status(pythonTestResult)}${colors.reset}`);
+    console.log(`Node.js REPL test: ${status(nodeTestResult)}${colors.reset}`);
+    console.log(`\nOverall result: ${!allPassed ? colors.red + 'SOME TESTS FAILED!' : skippedCount > 0 ? colors.yellow + `NO TEST FAILED, ${skippedCount} SKIPPED` : colors.green + 'ALL TESTS PASSED! 🎉'}${colors.reset}`);
     
     return allPassed;
   } catch (error) {
@@ -240,9 +247,4 @@ export default async function runTests() {
 }
 
 // If this file is run directly (not imported), execute the test
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runTests().catch(error => {
-    console.error(`${colors.red}✗ Unhandled error: ${error}${colors.reset}`);
-    process.exit(1);
-  });
-}
+runIfMain(import.meta.url, runTests);

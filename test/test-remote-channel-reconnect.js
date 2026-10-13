@@ -30,6 +30,7 @@ import {
   realtimeReconnectDelayMs,
   presenceRetryDelayMs,
 } from '../dist/remote-device/remote-channel.js';
+import { runIfMain } from './helpers/run-if-main.js';
 
 // Keep telemetry from touching the network during the test.
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -263,9 +264,10 @@ class FakeClient {
     });
   }
 
-  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId)
+  // setOnlineStatus(): from('mcp_devices').update({...}).eq('id', deviceId).abortSignal(...)
   from() {
     const result = Promise.resolve({ error: null });
+    result.abortSignal = () => result;
     const chain = {
       update: () => chain,
       insert: () => chain,
@@ -528,6 +530,41 @@ async function main() {
     });
   });
 
+  // A watchdog can start recovering a channel but realtime-js may rejoin on its
+  // own during the delay. This is NOT a forced recreation and must not be counted.
+  await test('watchdog does not count SDK self-heal as a forced recreation', async () => {
+    const { rc, client } = makeRemoteChannel();
+    const recorded = [];
+    rc.realtimeHealth.record = (key) => recorded.push(key);
+    await withQuietLogs(async () => {
+      await rc.createChannel();
+      rc.channel.state = 'errored';
+      rc.sleep = async (delayMs) => {
+        rc.sleptMs.push(delayMs);
+        rc.channel.state = 'joined';
+        rc.lastHeartbeatOkAt = performance.now();
+      };
+      await rc.recreateChannel();
+    });
+    assert.equal(recorded.filter(k => k === 'watchdog_recreates').length, 0);
+    assert.equal(client.realtime.rebuilds, 0, 'SDK recovery must not destroy the socket');
+    assert.equal(rc.channel.state, 'joined');
+  });
+
+  await test('watchdog counts one forced recreation when SDK does not self-heal', async () => {
+    const { rc, client } = makeRemoteChannel();
+    const recorded = [];
+    rc.realtimeHealth.record = (key) => recorded.push(key);
+    await withQuietLogs(async () => {
+      await rc.createChannel();
+      rc.channel.state = 'errored';
+      await rc.recreateChannel();
+    });
+    assert.equal(recorded.filter(k => k === 'watchdog_recreates').length, 1);
+    assert.ok(client.realtime.rebuilds > 0, 'forced recovery must replace the socket');
+    assert.equal(rc.channel.state, 'joined');
+  });
+
   // REGRESSION REPRO (open bug 2026-06-27): a half-open socket can leave the channel
   // parked in 'joining' instead of 'errored'. The previous test proves single-tick
   // 'joining' must NOT recreate; THIS test proves 'joining' must not be healthy
@@ -755,7 +792,7 @@ async function main() {
   console.log(
     `\n${failures ? '🔴' : '✅'} remote-channel reconnect: ${failures} failing test(s).`
   );
-  process.exit(failures ? 1 : 0);
+  return !failures;
 }
 
-main();
+runIfMain(import.meta.url, main);

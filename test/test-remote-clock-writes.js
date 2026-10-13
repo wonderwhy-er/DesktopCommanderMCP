@@ -41,6 +41,7 @@ function makeClient(writes) {
       select() { return builder; },
       eq() { return builder; },
       maybeSingle() { return builder; },
+      abortSignal() { return builder; },
       update(values) {
         update = values;
         return builder;

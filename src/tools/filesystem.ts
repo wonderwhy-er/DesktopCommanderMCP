@@ -4,14 +4,15 @@ import os from 'os';
 import fetch from 'cross-fetch';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { capture } from '../utils/capture.js';
+import { addToolCallPaths, capture } from '../utils/capture.js';
 import { withTimeout, runWithAbortableTimeout } from '../utils/withTimeout.js';
 import { configManager } from '../config-manager.js';
-import { getFileHandler, TextFileHandler } from '../utils/files/index.js';
-import type { ReadOptions, FileResult, PdfPageItem } from '../utils/files/base.js';
+import { getFileHandler, TextFileHandler, isImageAnswer } from '../utils/files/index.js';
+import type { ReadOptions, FileResult, FileInfo, PdfPageItem } from '../utils/files/base.js';
 import { isPdfFile } from "./mime-types.js";
-import { parsePdfToMarkdown, editPdf, PdfOperations, PdfMetadata, parseMarkdownToPdf } from './pdf/index.js';
+import { parsePdfToMarkdown, editPdf, insertRenderOptions, PdfOperations, PdfMetadata, parseMarkdownToPdf, resolveRender, IgnoredRenderOption } from './pdf/index.js';
 import { isBinaryFile } from 'isbinaryfile';
+import { movePath } from '../utils/rename.js';
 
 // CONSTANTS SECTION - Consolidate all timeouts and thresholds
 const FILE_OPERATION_TIMEOUTS = {
@@ -168,6 +169,118 @@ async function validateParentDirectories(directoryPath: string): Promise<boolean
     }
 }
 
+// Most links followed while resolving one path before it counts as a loop (Linux's limit)
+const MAX_LINKS_FOLLOWED = 40;
+
+/**
+ * Resolves a path to where file operations on it land, like fs.realpath, but
+ * also for paths that don't exist yet (e.g. a file about to be written).
+ *
+ * Missing names are kept under their resolved parent. A dangling link (a
+ * symlink or Windows junction - Node reports both as symlinks - whose target
+ * doesn't exist) is followed to its target, because writing through it creates
+ * the target. Relative targets resolve against the link's real directory,
+ * chains are followed link by link, and loops fail with ELOOP.
+ *
+ * @param absolutePath Absolute path to resolve
+ * @returns Promise<string> The real path, or where the path would be created
+ * @throws Filesystem errors other than ENOENT, or ELOOP for a link loop
+ */
+async function resolveRealPath(absolutePath: string): Promise<string> {
+    let linksFollowed = 0;
+
+    const resolveFrom = async (currentPath: string): Promise<string> => {
+        try {
+            return await fs.realpath(currentPath, { encoding: 'utf8' });
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+
+        const parent = path.dirname(currentPath);
+        if (parent === currentPath) {
+            return currentPath; // a root that doesn't exist, e.g. an unmapped drive
+        }
+
+        // Resolve the parent first so links along the way are followed, and a
+        // relative link target is read against the link's real directory
+        const resolvedParent = await resolveFrom(parent);
+        const candidate = path.join(resolvedParent, path.basename(currentPath));
+
+        let isLink: boolean;
+        try {
+            isLink = (await fs.lstat(candidate)).isSymbolicLink();
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            return candidate; // doesn't exist yet: this is where it would be created
+        }
+        if (!isLink) {
+            return candidate;
+        }
+
+        // Dangling link: a write through it lands on its target, so resolve that instead
+        if (++linksFollowed > MAX_LINKS_FOLLOWED) {
+            throw Object.assign(
+                new Error(`ELOOP: too many symbolic links encountered, resolving '${absolutePath}'`),
+                { code: 'ELOOP' }
+            );
+        }
+        const target = await fs.readlink(candidate, { encoding: 'utf8' });
+        return resolveFrom(path.resolve(resolvedParent, target));
+    };
+
+    return resolveFrom(absolutePath);
+}
+
+/**
+ * Resolves the folder an entry is in, like resolveRealPath, and keeps the
+ * entry's own name as written: the entry itself (a link, not what it points
+ * to), in the letter case given.
+ */
+async function resolveEntryPath(absolutePath: string): Promise<string> {
+    const parent = path.dirname(absolutePath);
+    if (parent === absolutePath) {
+        return resolveRealPath(absolutePath); // a root has no folder above it
+    }
+    return path.join(await resolveRealPath(parent), path.basename(absolutePath));
+}
+
+/**
+ * An allowed directory's real path, or null when it can't be read. validatePath
+ * checks real paths, so an allowed directory reached through a symlink or
+ * junction (macOS: /var -> /private/var) must match by its real path too.
+ * When the real path can't be read, only the written form matches, which can
+ * only deny, never widen, access.
+ */
+async function getAllowedDirRealPath(allowedDir: string): Promise<string | null> {
+    try {
+        return await fs.realpath(expandHome(allowedDir));
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Whether a normalized path is an allowed directory or inside it
+ */
+function isWithinAllowedDir(normalizedPathToCheck: string, allowedDir: string): boolean {
+    let normalizedAllowedDir = normalizePath(allowedDir);
+    if (normalizedAllowedDir.slice(-1) === path.sep) {
+        normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
+    }
+
+    // Check if path is exactly the allowed directory
+    if (normalizedPathToCheck === normalizedAllowedDir) {
+        return true;
+    }
+
+    // Check if path is a subdirectory of the allowed directory
+    // Make sure to add a separator to prevent partial directory name matches
+    // e.g. /home/user vs /home/username
+    // An allowed drive root (D:\, normalized to d:) allows its whole drive this
+    // way, whatever the letter: the paths checked here are always absolute (d:\...)
+    return normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
+}
+
 /**
  * Checks if a path is within any of the allowed directories
  *
@@ -186,47 +299,45 @@ async function isPathAllowed(pathToCheck: string): Promise<boolean> {
         normalizedPathToCheck = normalizedPathToCheck.slice(0, -1);
     }
 
-    // Check if the path is within any allowed directory
-    const isAllowed = allowedDirectories.some(allowedDir => {
-        let normalizedAllowedDir = normalizePath(allowedDir);
-        if (normalizedAllowedDir.slice(-1) === path.sep) {
-            normalizedAllowedDir = normalizedAllowedDir.slice(0, -1);
-        }
+    // As written first: no filesystem call, so an allowed directory on an
+    // unresponsive mount can't hold up a path inside another one
+    if (allowedDirectories.some((allowedDir) => isWithinAllowedDir(normalizedPathToCheck, allowedDir))) {
+        return true;
+    }
 
-        // Check if path is exactly the allowed directory
-        if (normalizedPathToCheck === normalizedAllowedDir) {
-            return true;
+    // Then by real path: the first match answers, so a real path that never
+    // resolves only holds up a path that no other allowed directory contains
+    return new Promise<boolean>((resolve) => {
+        let pending = allowedDirectories.length;
+        for (const allowedDir of allowedDirectories) {
+            void getAllowedDirRealPath(allowedDir).then((realPath) => {
+                if (realPath !== null && isWithinAllowedDir(normalizedPathToCheck, realPath)) {
+                    resolve(true);
+                }
+                if (--pending === 0) {
+                    resolve(false);
+                }
+            });
         }
-
-        // Check if path is a subdirectory of the allowed directory
-        // Make sure to add a separator to prevent partial directory name matches
-        // e.g. /home/user vs /home/username
-        const subdirCheck = normalizedPathToCheck.startsWith(normalizedAllowedDir + path.sep);
-        if (subdirCheck) {
-            return true;
-        }
-
-        // If allowed directory is the root (C:\ on Windows), allow access to the entire drive
-        if (normalizedAllowedDir === 'c:' && process.platform === 'win32') {
-            return normalizedPathToCheck.startsWith('c:');
-        }
-
-        return false;
     });
-
-    return isAllowed;
 }
 
 /**
  * Validates a path to ensure it can be accessed or created.
  * For existing paths, returns the real path (resolving symlinks).
- * For non-existent paths, validates parent directories to ensure they exist.
+ * For non-existent paths, returns where they would be created (resolving the
+ * existing ancestors and any dangling link), and validates parent directories.
+ *
+ * With `entry`, the path names an entry to rename (move_file): links are
+ * followed up to its folder, and its own name is kept as written, so a link
+ * is renamed as a link and a change of letter case is kept. A rename only
+ * ever touches that entry, never what a link at that name points to.
  *
  * @param requestedPath The path to validate
  * @returns Promise<string> The validated path
  * @throws Error if the path or its parent directories don't exist or if the path is not allowed
  */
-export async function validatePath(requestedPath: string): Promise<string> {
+export async function validatePath(requestedPath: string, { entry = false }: { entry?: boolean } = {}): Promise<string> {
     const validationOperation = async (): Promise<string> => {
         // Expand home directory if present
         const expandedPath = expandHome(requestedPath);
@@ -235,58 +346,29 @@ export async function validatePath(requestedPath: string): Promise<string> {
         const absoluteOriginal = path.isAbsolute(expandedPath)
             ? path.resolve(expandedPath)
             : path.resolve(process.cwd(), expandedPath);
+        // Every form of this path an error text may name, so telemetry replaces it whole
+        addToolCallPaths(requestedPath, expandedPath, absoluteOriginal);
 
-        // Attempt to resolve symlinks to get the real path
-        // This will succeed if the path exists and all symlinks in the chain are valid
-        // It will fail with ENOENT if:
-        //   - The path itself doesn't exist, OR
-        //   - A symlink exists but points to a non-existent target (broken symlink)
-        let resolvedRealPath: string | null = null;
+        // SECURITY: Resolve symlinks (and Windows junctions) to where file operations
+        // on this path actually land, and check that location. This covers paths that
+        // don't exist yet (a new file under a linked directory) and dangling links:
+        // otherwise a link inside an allowed directory pointing to a missing file
+        // elsewhere would let a write create that file outside the allowed directories.
+        let pathForNextCheck: string;
         try {
-            resolvedRealPath = await fs.realpath(absoluteOriginal, { encoding: 'utf8' });
+            pathForNextCheck = entry
+                ? await resolveEntryPath(absoluteOriginal)
+                : await resolveRealPath(absoluteOriginal);
         } catch (error) {
+            // Permission denied, I/O errors, link loops, ...
             const err = error as NodeJS.ErrnoException;
-            // Only throw for non-ENOENT errors (e.g., permission denied, I/O errors)
-            if (!err.code || err.code !== 'ENOENT') {
-                capture('server_path_realpath_error', {
-                    error: err.message,
-                    path: absoluteOriginal
-                });
-                throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
-            }
-
-            // SECURITY FIX: When the full path doesn't exist (e.g., writing a new file),
-            // resolve the parent directory to detect symlinks in the path chain.
-            // Without this, an attacker could create a symlink inside an allowed directory
-            // pointing to a restricted location, then write to a non-existent file through
-            // that symlink — bypassing the directory restriction check.
-            try {
-                const parentDir = path.dirname(absoluteOriginal);
-                const resolvedParent = await fs.realpath(parentDir, { encoding: 'utf8' });
-                const basename = path.basename(absoluteOriginal);
-                resolvedRealPath = path.join(resolvedParent, basename);
-            } catch {
-                // Parent also doesn't exist — walk up the tree to find
-                // the deepest existing ancestor and resolve it
-                let current = absoluteOriginal;
-                let remaining: string[] = [];
-                while (true) {
-                    const parent = path.dirname(current);
-                    if (parent === current) break; // reached filesystem root
-                    remaining.unshift(path.basename(current));
-                    current = parent;
-                    try {
-                        const resolvedAncestor = await fs.realpath(current, { encoding: 'utf8' });
-                        resolvedRealPath = path.join(resolvedAncestor, ...remaining);
-                        break;
-                    } catch {
-                        // keep walking up
-                    }
-                }
-            }
+            capture('server_path_realpath_error', {
+                error: err.message,
+                path: absoluteOriginal
+            });
+            throw new Error(`Failed to resolve symlink for path: ${absoluteOriginal}. Error: ${err.message}`);
         }
-
-        const pathForNextCheck = resolvedRealPath ?? absoluteOriginal;
+        addToolCallPaths(pathForNextCheck);
 
         // Check if path is allowed
         if (!(await isPathAllowed(pathForNextCheck))) {
@@ -301,7 +383,7 @@ export async function validatePath(requestedPath: string): Promise<string> {
         // SECURITY: Always return the resolved path (with symlinks resolved) so that
         // all subsequent file operations (read, write, mkdir, etc.) operate on the
         // canonical target, not on a symlink that could point outside allowed directories.
-        // pathForNextCheck already holds resolvedRealPath ?? absoluteOriginal from above.
+        // pathForNextCheck already holds that resolved path from above.
 
         // Check if path exists
         try {
@@ -353,12 +435,10 @@ type FileResultPayloads = PdfPayload;
 /**
  * Read file content from a URL
  * @param url URL to fetch content from
+ * @param svgAsImage An SVG is answered as an image, for the file preview widget; otherwise as text
  * @returns File content or file result with metadata
  */
-export async function readFileFromUrl(url: string): Promise<FileResult> {
-    // Import the MIME type utilities
-    const { isImageFile } = await import('./mime-types.js');
-
+export async function readFileFromUrl(url: string, svgAsImage = false): Promise<FileResult> {
     // Set up fetch with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FILE_OPERATION_TIMEOUTS.URL_FETCH);
@@ -377,7 +457,7 @@ export async function readFileFromUrl(url: string): Promise<FileResult> {
 
         // Get MIME type from Content-Type header or infer from URL
         const contentType = response.headers.get('content-type') || 'text/plain';
-        const isImage = isImageFile(contentType);
+        const isImage = isImageAnswer(contentType, svgAsImage);
         const isPdf = isPdfFile(contentType) || url.toLowerCase().endsWith('.pdf');
 
         // NEW: Add PDF handling before image check
@@ -433,7 +513,7 @@ export async function readFileFromDisk(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { offset = 0, sheet, range } = options ?? {};
+    const { offset = 0, sheet, range, svgAsImage } = options ?? {};
     let { length } = options ?? {};
 
     // Add validation for required parameters
@@ -507,7 +587,7 @@ export async function readFileFromDisk(
     // (fd/thread freed) rather than leaked until the OS call returns.
     const readOperation = async (signal: AbortSignal) => {
         // Get appropriate handler for this file type (async - includes binary detection)
-        const handler = await getFileHandler(validPath);
+        const handler = await getFileHandler(validPath, { svgAsImage });
 
         // Use handler to read the file
         const result = await handler.read(validPath, {
@@ -575,10 +655,10 @@ export async function readFile(
     filePath: string,
     options?: ReadOptions
 ): Promise<FileResult> {
-    const { isUrl, offset, length, sheet, range } = options ?? {};
+    const { isUrl, offset, length, sheet, range, svgAsImage } = options ?? {};
     return isUrl
-        ? readFileFromUrl(filePath)
-        : readFileFromDisk(filePath, { offset, length, sheet, range });
+        ? readFileFromUrl(filePath, svgAsImage)
+        : readFileFromDisk(filePath, { offset, length, sheet, range, svgAsImage });
 }
 
 /**
@@ -670,9 +750,18 @@ export interface MultiFileResult {
     payload?: FileResultPayloads;
 }
 
-export async function readMultipleFiles(paths: string[]): Promise<MultiFileResult[]> {
+/**
+ * Reads each file; a failure is that file's `error`. `stillLoadingError` (the
+ * server's) gives the error for a file whose package is still loading, which
+ * is then not read (utils/files/factory.ts).
+ */
+export async function readMultipleFiles(paths: string[], stillLoadingError?: (filePath: string) => string | undefined): Promise<MultiFileResult[]> {
     return Promise.all(
         paths.map(async (filePath: string) => {
+            const stillLoading = stillLoadingError?.(filePath);
+            if (stillLoading) {
+                return { path: filePath, error: stillLoading };
+            }
             try {
                 const validPath = await validatePath(filePath);
                 const fileResult = await readFile(validPath);
@@ -757,15 +846,21 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
             const fullPath = path.join(currentPath, entry.name);
             const displayPath = relativePath ? path.join(relativePath, entry.name) : entry.name;
 
+            // A link (a junction on Windows) to a folder is a folder. A link whose
+            // target can't be read stays a [FILE], as every link was before.
+            const isDirectory = entry.isDirectory()
+                || (entry.isSymbolicLink() && await fs.stat(fullPath).then((stats) => stats.isDirectory(), () => false));
+
             // Add this entry to results
-            results.push(`${entry.isDirectory() ? "[DIR]" : "[FILE]"} ${displayPath}`);
+            results.push(`${isDirectory ? "[DIR]" : "[FILE]"} ${displayPath}`);
 
             // If it's a directory and we have depth remaining, recurse
-            if (entry.isDirectory() && currentDepth > 1) {
+            if (isDirectory && currentDepth > 1) {
                 try {
-                    // Validate the path before recursing
-                    await validatePath(fullPath);
-                    await listRecursive(fullPath, currentDepth - 1, displayPath, false);
+                    // Validate the path before recursing, and list the folder that was
+                    // checked: a link can be retargeted between the check and the read
+                    const validatedPath = await validatePath(fullPath);
+                    await listRecursive(validatedPath, currentDepth - 1, displayPath, false);
                 } catch (error) {
                     // If validation fails or we can't access it, it will be marked as denied
                     // when we try to read it in the recursive call
@@ -781,14 +876,24 @@ export async function listDirectory(dirPath: string, depth: number = 2): Promise
         }
     }
 
+    // A path that is a file lists as that file. Any other path goes on to the
+    // listing, which reports why it can't be read ([NOT_FOUND], [DENIED]).
+    const stats = await fs.stat(validPath).catch(() => undefined);
+    if (stats?.isFile()) {
+        return [`[FILE] ${path.basename(validPath)}`];
+    }
+
     await listRecursive(validPath, depth, '', true);
     return results;
 }
 
 export async function moveFile(sourcePath: string, destinationPath: string): Promise<void> {
-    const validSourcePath = await validatePath(sourcePath);
-    const validDestPath = await validatePath(destinationPath);
-    await fs.rename(validSourcePath, validDestPath);
+    // The entries themselves: a link moves as a link, and a rename that only
+    // changes letter case keeps the new case
+    const validSourcePath = await validatePath(sourcePath, { entry: true });
+    const validDestPath = await validatePath(destinationPath, { entry: true });
+    // Across volumes, a copy and then removing the source
+    await movePath(validSourcePath, validDestPath);
 }
 
 export async function searchFiles(rootPath: string, pattern: string): Promise<string[]> {
@@ -797,7 +902,7 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
     const { searchManager } = await import('../search-manager.js');
 
     try {
-        const result = await searchManager.startSearch({
+        const { sessionId } = await searchManager.startSearch({
             rootPath,
             pattern,
             searchType: 'files',
@@ -806,39 +911,15 @@ export async function searchFiles(rootPath: string, pattern: string): Promise<st
             earlyTermination: true, // Use early termination for better performance
         });
 
-        const sessionId = result.sessionId;
+        // Every result of the session once it is complete - each exactly once.
+        // Stop a search still running after 30 seconds; it then completes with what it found
+        const stopTimer = setTimeout(() => searchManager.terminateSearch(sessionId), 30000);
+        const results = await searchManager.waitForCompletion(sessionId)
+            .finally(() => clearTimeout(stopTimer));
 
-        // Poll for results until complete
-        let allResults: string[] = [];
-        let isComplete = result.isComplete;
-        let startTime = Date.now();
-
-        // Add initial results
-        for (const searchResult of result.results) {
-            if (searchResult.type === 'file') {
-                allResults.push(searchResult.file);
-            }
-        }
-
-        while (!isComplete) {
-            await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
-
-            const results = searchManager.readSearchResults(sessionId);
-            isComplete = results.isComplete;
-
-            // Add new file paths to results
-            for (const searchResult of results.results) {
-                if (searchResult.file !== '__LAST_READ_MARKER__' && searchResult.type === 'file') {
-                    allResults.push(searchResult.file);
-                }
-            }
-
-            // Safety check to prevent infinite loops (30 second timeout)
-            if (Date.now() - startTime > 30000) {
-                searchManager.terminateSearch(sessionId);
-                break;
-            }
-        }
+        const allResults = results
+            .filter(searchResult => searchResult.type === 'file')
+            .map(searchResult => searchResult.file);
 
         // Log only the count of found files, not their paths
         capture('server_search_files_complete', {
@@ -928,17 +1009,18 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         isDirectory: stats.isDirectory(),
         isFile: stats.isFile(),
         permissions: stats.mode.toString(8).slice(-3),
-        fileType: 'text' as const,
+        fileType: (stats.isDirectory() ? 'directory' : 'text') as FileInfo['fileType'],
         metadata: undefined as Record<string, any> | undefined,
     };
 
-    // Get appropriate handler for this file type (async - includes binary detection)
-    const handler = await getFileHandler(validPath);
+    // Get appropriate handler for this file type (async - includes binary detection).
+    // A folder has none: one chosen by its name or content would call it text, or an image.
+    const handler = stats.isDirectory() ? null : await getFileHandler(validPath);
 
     // Use handler to get file info, with fallback
     let fileInfo;
     try {
-        fileInfo = await handler.getInfo(validPath);
+        fileInfo = handler ? await handler.getInfo(validPath) : fallbackInfo;
     } catch (error) {
         // If handler fails, use fallback stats
         fileInfo = fallbackInfo;
@@ -989,11 +1071,43 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
         if (fileInfo.metadata.isBinary) {
             info.isBinary = true;
         }
+
+        // A file its handler couldn't read (e.g. a workbook Excel can't open): say why
+        if (fileInfo.metadata.error && fileInfo.metadata.errorMessage) {
+            info.errorMessage = fileInfo.metadata.errorMessage;
+        }
     }
 
     return info;
 }
 
+
+/**
+ * Validate the paths a PDF's page operations use besides the PDF itself: the
+ * output path and each inserted PDF. write_pdf and edit_block both modify PDFs,
+ * so both check here. An inserted PDF's path is replaced by its validated path.
+ *
+ * @param validPath The PDF the operations apply to, already validated
+ * @returns Where to write the result: outputPath if provided, otherwise the PDF itself
+ */
+export async function validatePdfOperationPaths(
+    validPath: string,
+    operations: PdfOperations[],
+    outputPath?: string
+): Promise<string> {
+    // Use outputPath if provided, otherwise overwrite input file
+    const targetPath = outputPath ? await validatePath(outputPath) : validPath;
+
+    // Validate paths in operations
+    for (const o of operations) {
+        if (o.type === 'insert') {
+            if (o.sourcePdfPath) {
+                o.sourcePdfPath = await validatePath(o.sourcePdfPath);
+            }
+        }
+    }
+    return targetPath;
+}
 
 /**
  * Write content to a PDF file.
@@ -1002,13 +1116,14 @@ export async function getFileInfo(filePath: string): Promise<Record<string, any>
  * @param filePath Path to the output PDF file
  * @param content Markdown string (for creation) or array of operations (for modification)
  * @param options Options for PDF generation or modification. For modification, can include `sourcePdf`.
+ * @returns The render options Desktop Commander ignored (see resolveRender), so the caller can report them.
  */
 export async function writePdf(
     filePath: string,
     content: string | PdfOperations[],
     outputPath?: string,
     options: any = {}
-): Promise<void> {
+): Promise<IgnoredRenderOption[]> {
     const validPath = await validatePath(filePath);
     const fileExtension = getFileExtension(validPath);
 
@@ -1024,22 +1139,12 @@ export async function writePdf(
         // Use outputPath if provided, otherwise overwrite input file
         const targetPath = outputPath ? await validatePath(outputPath) : validPath;
         await fs.writeFile(targetPath, pdfBuffer);
+        // The render succeeded; report which of the caller's/front matter's options were ignored
+        return resolveRender(content, options).ignoredOptions;
     } else if (Array.isArray(content)) {
 
-        // Use outputPath if provided, otherwise overwrite input file
-        const targetPath = outputPath ? await validatePath(outputPath) : validPath;
-
-        const operations: PdfOperations[] = [];
-
-        // Validate paths in operations
-        for (const o of content) {
-            if (o.type === 'insert') {
-                if (o.sourcePdfPath) {
-                    o.sourcePdfPath = await validatePath(o.sourcePdfPath);
-                }
-            }
-            operations.push(o);
-        }
+        const targetPath = await validatePdfOperationPaths(validPath, content, outputPath);
+        const operations: PdfOperations[] = [...content];
 
         capture('server_write_pdf', {
             fileExtension: fileExtension,
@@ -1049,11 +1154,22 @@ export async function writePdf(
             insertCount: operations.filter(op => op.type === 'insert').length
         });
 
-        // Perform the PDF editing
-        const modifiedPdfBuffer = await editPdf(validPath, operations);
+        // Perform the PDF editing (options render the inserted markdown pages)
+        const modifiedPdfBuffer = await editPdf(validPath, operations, options);
 
         // Write the modified PDF to the output path
         await fs.writeFile(targetPath, modifiedPdfBuffer);
+
+        // Report the options ignored in any inserted page's render options or front matter (once per option)
+        const ignored = new Map<string, IgnoredRenderOption>();
+        for (const op of operations) {
+            if (op.type === 'insert' && op.markdown !== undefined) {
+                for (const ignoredOption of resolveRender(op.markdown, insertRenderOptions(op, options)).ignoredOptions) {
+                    ignored.set(ignoredOption.option, ignoredOption);
+                }
+            }
+        }
+        return [...ignored.values()];
     } else {
         throw new Error('Invalid content type for writePdf. Expected string (markdown) or array of operations.');
     }

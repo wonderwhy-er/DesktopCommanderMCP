@@ -1,114 +1,57 @@
-// Test script to verify improved search result behavior using new streaming API
-import { handleStartSearch, handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+// Test that long matching lines are shortened in search output so responses stay small
+import assert from 'assert';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { configManager } from '../dist/config-manager.js';
+import { handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
+import { startSearchAndWait } from './helpers/search.js';
 
-/**
- * Helper function to wait for search completion and get all results
- */
-async function searchAndWaitForCompletion(searchArgs, timeout = 30000) {
-  const result = await handleStartSearch(searchArgs);
-  
-  // Extract session ID from result with tighter regex
-  const sessionIdMatch = result.content[0].text.match(/Started .* session:\s*([a-zA-Z0-9_-]+)/);
-  if (!sessionIdMatch) {
-    throw new Error('Could not extract session ID from search result');
-  }
-  const sessionId = sessionIdMatch[1];
-  
-  try {
-    // Wait for completion by polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeout) {
-      const moreResults = await handleGetMoreSearchResults({ sessionId });
-      
-      if (moreResults.content[0].text.includes('✅ Search completed')) {
-        return { initialResult: result, finalResult: moreResults, sessionId };
-      }
-      
-      if (moreResults.content[0].text.includes('❌ ERROR')) {
-        throw new Error(`Search failed: ${moreResults.content[0].text}`);
-      }
-      
-      // Wait a bit before polling again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    throw new Error('Search timed out');
-  } finally {
-    // Always stop the search session to prevent hanging
-    try {
-      await handleStopSearch({ sessionId });
-    } catch (e) {
-      // Ignore errors when stopping - session might already be completed
-    }
-  }
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_DIR = path.join(__dirname, 'improved-search-truncation-test');
+const MATCH_PREVIEW_CHARS = 100; // search output shows at most this much of each matching line
+const LONG_LINE = 'needle' + 'x'.repeat(5000);
 
 async function testImprovedSearchTruncation() {
-    try {
-        console.log('Testing improved search result behavior with streaming API...');
-        
-        // Test search that will produce many results to trigger potential limits
-        const searchArgs = {
-            path: '.',
-            pattern: '.',  // Match almost every line - this should be a lot of results
-            searchType: 'content',
-            maxResults: 50000,  // Very high limit to get lots of results, but may be capped
-            ignoreCase: true
-        };
-        
-        console.log('Searching for "." to get maximum results...');
-        const start = Date.now();
-        const { initialResult, finalResult } = await searchAndWaitForCompletion(searchArgs);
-        const end = Date.now();
-        
-        console.log(`Search completed in ${end - start}ms`);
-        console.log('Initial result type:', typeof initialResult.content[0].text);
-        console.log('Initial result length:', initialResult.content[0].text.length);
-        console.log('Final result type:', typeof finalResult.content[0].text);
-        console.log('Final result length:', finalResult.content[0].text.length);
-        
-        const totalLength = initialResult.content[0].text.length + finalResult.content[0].text.length;
-        const apiLimit = 1048576; // 1 MiB - use consistent constant
-        
-        // Check if we're within the safe limits using single source of truth
-        if (totalLength > apiLimit) {
-            console.log('❌ Results still quite large - over 1MB combined');
-        } else if (totalLength > Math.floor(0.8 * apiLimit)) {
-            console.log('⚠️  Results approaching limits but acceptable');
-        } else {
-            console.log('✅ Results well within safe limits');
-        }
-        
-        if (finalResult.content[0].text.includes('Results truncated')) {
-            console.log('✅ Results properly truncated with warning message');
-            const truncationIndex = finalResult.content[0].text.indexOf('Results truncated');
-            console.log('Truncation message:', finalResult.content[0].text.substring(truncationIndex, truncationIndex + 150));
-        } else {
-            console.log('ℹ️  Results complete, no truncation needed with new streaming API');
-        }
-        
-        console.log('First 200 characters of final result:');
-        console.log(finalResult.content[0].text.substring(0, 200));
-        
-        // Check character length safety
-        const safetyMargin = apiLimit - totalLength;
-        console.log(`\n📊 Safety Analysis:`);
-        console.log(`   Initial response: ${initialResult.content[0].text.length.toLocaleString()} characters`);
-        console.log(`   Final response: ${finalResult.content[0].text.length.toLocaleString()} characters`);
-        console.log(`   Combined size: ${totalLength.toLocaleString()} characters`);
-        console.log(`   API limit: ${apiLimit.toLocaleString()} characters`);
-        console.log(`   Safety margin: ${safetyMargin.toLocaleString()} characters`);
-        console.log(`   Utilization: ${((totalLength / apiLimit) * 100).toFixed(1)}%`);
-        
-    } catch (error) {
-        console.error('Test failed:', error);
-    }
+  console.log('Testing that long matching lines are shortened in search output...');
+
+  await fs.writeFile(path.join(TEST_DIR, 'long-line.txt'), `short line\n${LONG_LINE}\n`);
+
+  // Results show the matched text, so match the whole long line to get a long match
+  const sessionId = await startSearchAndWait({
+    path: TEST_DIR,
+    pattern: 'needlex+',
+    searchType: 'content'
+  }, 30000);
+
+  try {
+    const page = await handleGetMoreSearchResults({ sessionId });
+    assert.strictEqual(page.structuredContent.totalMatches, 1, 'Should find the one long line');
+
+    const text = page.content[0].text;
+    const preview = `${LONG_LINE.substring(0, MATCH_PREVIEW_CHARS)}...`;
+    assert(text.includes(`long-line.txt:2 - ${preview}`), `Match should be cut to ${MATCH_PREVIEW_CHARS} characters plus "...", got: ${text.slice(0, 500)}`);
+    assert(!text.includes(LONG_LINE.substring(0, MATCH_PREVIEW_CHARS + 1)), 'Output should not contain the rest of the long line');
+    assert(text.length < LONG_LINE.length, `Response (${text.length} chars) should be smaller than the matching line (${LONG_LINE.length} chars)`);
+    console.log(`✓ ${LONG_LINE.length}-character line shown as ${MATCH_PREVIEW_CHARS} characters + "..." (response ${text.length} chars)`);
+  } finally {
+    await handleStopSearch({ sessionId });
+  }
+
+  console.log('✅ Long matching lines are shortened in search output');
 }
 
-testImprovedSearchTruncation().then(() => {
-    console.log('Improved search truncation test completed successfully.');
-    process.exit(0);
-}).catch(error => {
-    console.error('Test failed:', error);
-    process.exit(1);
-});
+export default async function runTests() {
+  const originalConfig = await configManager.getConfig();
+  await fs.mkdir(TEST_DIR, { recursive: true });
+  await configManager.setValue('allowedDirectories', [TEST_DIR]);
+  try {
+    await testImprovedSearchTruncation();
+  } finally {
+    await configManager.updateConfig(originalConfig);
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+  }
+}
+
+runIfMain(import.meta.url, runTests);

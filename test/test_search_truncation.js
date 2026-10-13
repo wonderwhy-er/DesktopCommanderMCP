@@ -1,101 +1,67 @@
-// Test script to verify search result behavior using new streaming API
-import { handleStartSearch, handleGetMoreSearchResults } from '../dist/handlers/search-handlers.js';
+// Test that large search result sets are returned in bounded pages (streaming API)
+import assert from 'assert';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { configManager } from '../dist/config-manager.js';
+import { handleGetMoreSearchResults, handleStopSearch } from '../dist/handlers/search-handlers.js';
+import { runIfMain } from './helpers/run-if-main.js';
+import { startSearchAndWait } from './helpers/search.js';
 
-/**
- * Helper function to wait for search completion and get all results
- */
-async function searchAndWaitForCompletion(searchArgs, timeout = 30000) {
-  const result = await handleStartSearch(searchArgs);
-  
-  // Extract session ID from result with tighter regex
-  const sessionIdMatch = result.content[0].text.match(/Started .* session:\s*([a-zA-Z0-9_-]+)/);
-  if (!sessionIdMatch) {
-    throw new Error('Could not extract session ID from search result');
-  }
-  const sessionId = sessionIdMatch[1];
-  
-  try {
-    // Wait for completion by polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeout) {
-      const moreResults = await handleGetMoreSearchResults({ sessionId });
-      
-      if (moreResults.content[0].text.includes('✅ Search completed')) {
-        return { initialResult: result, finalResult: moreResults, sessionId };
-      }
-      
-      if (moreResults.content[0].text.includes('❌ ERROR')) {
-        throw new Error(`Search failed: ${moreResults.content[0].text}`);
-      }
-      
-      // Wait a bit before polling again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    throw new Error('Search timed out');
-  } finally {
-    // Always stop the search session to prevent hanging
-    try {
-      await handleStopSearch({ sessionId });
-    } catch (e) {
-      // Ignore errors when stopping - session might already be completed
-    }
-  }
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TEST_DIR = path.join(__dirname, 'search-truncation-test');
+const MATCHING_LINES = 250;
+const PAGE_SIZE = 100; // get_more_search_results default length
 
 async function testSearchTruncation() {
-    try {
-        console.log('Testing search result behavior with new streaming API...');
-        
-        // Test search that will produce many results
-        const searchArgs = {
-            path: '.',
-            pattern: 'function|const|let|var',  // This should match many lines
-            searchType: 'content',
-            maxResults: 50000,  // Very high limit to get lots of results
-            ignoreCase: true
-        };
-        
-        console.log('Searching for common JavaScript patterns...');
-        const { initialResult, finalResult } = await searchAndWaitForCompletion(searchArgs);
-        
-        console.log('Initial result type:', typeof initialResult.content[0].text);
-        console.log('Initial result length:', initialResult.content[0].text.length);
-        console.log('Final result type:', typeof finalResult.content[0].text);
-        console.log('Final result length:', finalResult.content[0].text.length);
-        
-        const combinedLength = initialResult.content[0].text.length + finalResult.content[0].text.length;
-        
-        // Use consistent API limit constant
-        const apiLimit = 1048576; // 1 MiB
-        if (combinedLength > apiLimit) {
-            console.log('⚠️  Combined results quite large - may need truncation handling');
-        } else if (finalResult.content[0].text.includes('Results truncated')) {
-            console.log('✅ Results properly truncated with warning message');
-            const truncationIndex = finalResult.content[0].text.indexOf('Results truncated');
-            console.log('Truncation message:', finalResult.content[0].text.substring(truncationIndex, truncationIndex + 100));
-        } else {
-            console.log('✅ Results manageable size, no truncation needed');
-        }
-        
-        console.log('First 200 characters of final result:');
-        console.log(finalResult.content[0].text.substring(0, 200));
-        
-        // Character length analysis
-        console.log(`\n📊 Response Analysis:`);
-        console.log(`   Initial response: ${initialResult.content[0].text.length.toLocaleString()} characters`);
-        console.log(`   Final response: ${finalResult.content[0].text.length.toLocaleString()} characters`);
-        console.log(`   Combined: ${combinedLength.toLocaleString()} characters`);
-        
-    } catch (error) {
-        console.error('Test failed:', error);
+  console.log('Testing that large search results are paged...');
+
+  const lines = Array.from({ length: MATCHING_LINES }, (_, i) => `match line ${i}`);
+  await fs.writeFile(path.join(TEST_DIR, 'many-matches.txt'), lines.join('\n') + '\n');
+
+  const sessionId = await startSearchAndWait({
+    path: TEST_DIR,
+    pattern: 'match line',
+    searchType: 'content',
+    maxResults: 50000
+  }, 30000);
+
+  try {
+    // Pages of PAGE_SIZE until the remainder: 100, 100, 50
+    const expectedPages = [
+      { offset: 0, returnedCount: 100, hasMoreResults: true },
+      { offset: 100, returnedCount: 100, hasMoreResults: true },
+      { offset: 200, returnedCount: 50, hasMoreResults: false },
+    ];
+    for (const expected of expectedPages) {
+      const page = await handleGetMoreSearchResults({ sessionId, offset: expected.offset });
+      const data = page.structuredContent;
+      assert.strictEqual(data.totalMatches, MATCHING_LINES, 'Should count every matching line');
+      assert.strictEqual(data.returnedCount, expected.returnedCount, `Page at offset ${expected.offset} should hold ${expected.returnedCount} results`);
+      assert.strictEqual(data.hasMoreResults, expected.hasMoreResults, `Page at offset ${expected.offset} hasMoreResults`);
+      if (expected.hasMoreResults) {
+        assert(page.content[0].text.includes(`offset: ${expected.offset + PAGE_SIZE}`),
+          'Should tell the caller which offset to request next');
+      }
+      console.log(`✓ offset ${expected.offset}: ${data.returnedCount} of ${data.totalMatches} results, more: ${data.hasMoreResults}`);
     }
+  } finally {
+    await handleStopSearch({ sessionId });
+  }
+
+  console.log('✅ Large search results are returned in bounded pages');
 }
 
-testSearchTruncation().then(() => {
-    console.log('Search truncation test completed successfully.');
-    process.exit(0);
-}).catch(error => {
-    console.error('Test failed:', error);
-    process.exit(1);
-});
+export default async function runTests() {
+  const originalConfig = await configManager.getConfig();
+  await fs.mkdir(TEST_DIR, { recursive: true });
+  await configManager.setValue('allowedDirectories', [TEST_DIR]);
+  try {
+    await testSearchTruncation();
+  } finally {
+    await configManager.updateConfig(originalConfig);
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+  }
+}
+
+runIfMain(import.meta.url, runTests);
