@@ -1,0 +1,33 @@
+{
+  "schema": "setup22.public-diagnostic-verification/1",
+  "verified_on": "2026-10-09",
+  "node_version": "24.19.0",
+  "platform": "linux",
+  "upstream_revision": "ea3ed35a7be9f2a3ea3e89185ff9bbb03fe5ab57",
+  "source_sha256": "43d8badc0218b8da1ceb73de02ad99158bdce8cd1ae21d46ea1aef1af922f3ba",
+  "source_byte_identical_to_pinned_baseline": true,
+  "diagnostic": {
+    "exit_code": 0,
+    "status": "BUG_REPRODUCED",
+    "counts": {
+      "total": 16,
+      "literalFalsePositivesReproduced": 6,
+      "blockedControlsDenied": 6,
+      "ordinaryLiteralMatches": 2,
+      "legacyFalseAcceptsRecorded": 2
+    }
+  },
+  "launcher_checks": {
+    "command": "node --test --test-isolation=none test/launcher.test.mjs",
+    "exit_code": 0,
+    "tests": 10,
+    "passed": 10,
+    "failed": 0
+  },
+  "fresh_copy_cli": {
+    "command": "node verify.mjs",
+    "exit_code": 0,
+    "observations_identical": true
+  },
+  "scope": "Fixture text is data only. No fixture execution. No native PowerShell, full package build, or installed connector validation."
+}
