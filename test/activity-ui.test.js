@@ -61,3 +61,11 @@ test('parallel call descriptions remain attached to their own call IDs', () => {
     assert.equal(snapshot[0].state, 'done');
     assert.equal(snapshot[1].state, 'done');
 });
+
+test('last explanation follows real tool calls', () => {
+    const output = [];
+    const view = new ActivityView({ isTTY: true, columns: 100, write: text => output.push(text) });
+    view.started('new-call', 'list_directory', 'Proje dizini denetleniyor');
+    view.finished('new-call');
+    assert.match(output.at(-1), /Son açıklama: Proje dizini denetleniyor/);
+});
