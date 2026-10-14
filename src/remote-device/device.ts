@@ -14,6 +14,7 @@ import { exitProcess } from '../utils/exit-process.js';
 import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
+import { rolloutManager } from './rollouts.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -264,6 +265,14 @@ export class MCPDevice {
 
             // Force save the current session immediately to ensure it's persisted
             await this.savePersistedConfig();
+
+            // Which rollouts are on for this user, known before it registers:
+            // asked now and again every 30 minutes, each time with the
+            // session's current token. setSession() may have refreshed the one
+            // device.json held, and the session keeps refreshing while it runs.
+            await rolloutManager.load(this.baseServerUrl,
+                async () => (await this.remoteChannel.getSession()).data.session?.access_token ?? '');
+            rolloutManager.startRefresh();
 
             const deviceName = os.hostname();
 
@@ -713,6 +722,7 @@ export class MCPDevice {
             console.debug('[DEBUG] Calling stopHeartbeat()');
             this.remoteChannel.stopHeartbeat();
             console.log('  ✓ Heartbeat stopped');
+            rolloutManager.stopRefresh();
 
             // Unsubscribe from channel
             console.log('  → Unsubscribing from channel...');

@@ -26,12 +26,25 @@
  * A local HTTP server stands in for the Remote MCP server's /device/rollouts,
  * and setInterval is replaced, so the 30-minute refresh runs when a test says.
  *
+ * The last cases start a real device process (dist/remote-device/device.js)
+ * against the remote stand-in (helpers/remote-stand-in.js), as
+ * integration/remote-device-restart.js does: it must ask after sign-in and
+ * before it registers, take the rollouts of a call row it claims, and ask again
+ * with the session's current token (helpers/fast-intervals.js runs its
+ * 30-minute and 45-minute refreshes in seconds).
+ *
  * Runs as part of `npm test`, or standalone:
  *   node test/run-all-tests.js test/test-device-rollouts.js
  */
 import assert from 'node:assert';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MCPDevice } from '../dist/remote-device/device.js';
 import { rolloutManager } from '../dist/remote-device/rollouts.js';
+import { STARTED, startDevice, stopHard, tail, waitFor, writeDeviceConfig } from './helpers/remote-device.js';
+import { startRemoteStandIn } from './helpers/remote-stand-in.js';
+import { createTestEnv } from './helpers/test-env.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 /** The session's access token at start, and the one it holds after auth-js refreshed it */
@@ -40,6 +53,11 @@ const LATER_TOKEN = 'access-token-after-a-refresh';
 /** The device waits 3 s for an answer; a request still running after this long hangs the device */
 const REQUEST_DEADLINE_MS = 30_000;
 const MINUTE = 60_000;
+/** A device start (local MCP child, session, registration) takes seconds; this is far above */
+const START_DEADLINE_MS = 60_000;
+/** A claimed call or a fast refresh lands within seconds of the start; this is far above */
+const RUN_DEADLINE_MS = 30_000;
+const FAST_INTERVALS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'helpers', 'fast-intervals.js');
 
 const json = (body) => JSON.stringify(body);
 
@@ -131,6 +149,36 @@ function installClock() {
     },
   };
 }
+
+/**
+ * A real device process against a fresh remote stand-in. `prepare(standIn)`
+ * sets the stand-in up and returns the session device.json holds;
+ * `check(standIn, device)` runs once the device got through its start.
+ */
+async function withDevice({ standInOptions, nodeArgs, prepare }, check) {
+  const standIn = await startRemoteStandIn(standInOptions);
+  const testEnv = createTestEnv();
+  let device;
+  try {
+    writeDeviceConfig(testEnv.home, { deviceId: standIn.deviceId, session: prepare(standIn) });
+    device = startDevice({ ...testEnv.env, MCP_SERVER_URL: standIn.url }, [], { nodeArgs });
+    await waitFor(device, () => STARTED.test(device.output), START_DEADLINE_MS);
+    assert.ok(STARTED.test(device.output),
+      `the device ${device.exited ? `exited (code ${device.code})` : 'did not get through its start'}.\n    Its output:\n${tail(device.output)}`);
+    await check(standIn, device);
+  } finally {
+    if (device) await stopHard(device);
+    await standIn.close();
+    try {
+      testEnv.cleanup();
+    } catch (error) {
+      console.log(`   (could not remove ${testEnv.home}: ${error.message})`);
+    }
+  }
+}
+
+/** The "Rollouts: …" lines a device process printed */
+const rolloutLinesOf = (device) => device.output.match(/^Rollouts: .*$/gm) ?? [];
 
 async function runTests() {
   const failures = [];
@@ -354,6 +402,106 @@ async function runTests() {
 
     assert.deepStrictEqual(rolloutLines, [{ check: true }, { check: false }, { check: true }, {}],
       `the device logged ${json(rolloutLines)}; the changes were { check: true }, { check: false }, { check: true }, {}`);
+  });
+
+  // A real device
+
+  await test('a starting device asks for its rollouts after sign-in and before it registers, and logs them', () => withDevice({
+    prepare(standIn) {
+      standIn.rollouts = { check: true };
+      // Saved by a run that ended longer ago than its access token lives, so
+      // sign-in refreshes it. The stand-in refuses the saved token: only the
+      // session's current one gets the rollouts.
+      return standIn.login({ accessExpiresInSec: -60 });
+    },
+  }, async (standIn, device) => {
+    const order = standIn.requests.map((r) => `${r.method} ${new URL(r.url, standIn.url).pathname}`);
+    const signIn = order.findIndex((r) => r.includes(' /auth/v1/'));
+    const asked = order.indexOf('GET /device/rollouts');
+    const registered = order.indexOf('PATCH /rest/v1/mcp_devices');
+    const logged = rolloutLinesOf(device)[0];
+    const problems = [];
+    if (asked === -1) {
+      problems.push('it never asked GET /device/rollouts');
+    } else {
+      if (order.filter((r) => r === 'GET /device/rollouts').length > 1) problems.push('it asked more than once');
+      if (!(signIn !== -1 && signIn < asked)) problems.push('it asked before signing in');
+      if (!(registered === -1 || asked < registered)) problems.push('it asked after registering');
+    }
+    if (logged !== 'Rollouts: { check: true }') {
+      problems.push(`it logged ${logged ? `"${logged}"` : 'no "Rollouts:" line'} where the server had check on for its user`);
+    }
+    assert.ok(problems.length === 0,
+      `a starting device did not get its rollouts from the server, so a rollout could never reach it: ${problems.join('; ')}.\n`
+      + `    Requests: ${order.join(', ')}\n    Its output:\n${tail(device.output)}`);
+  }));
+
+  await test('a call row the device claims with { check: false } turns check off', () => withDevice({
+    standInOptions: { channel: true },
+    prepare(standIn) {
+      standIn.rollouts = { check: true };
+      standIn.calls.push({
+        id: 'c0a1b2c3-0000-4000-8000-000000000695',
+        user_id: standIn.userId,
+        device_id: standIn.deviceId,
+        status: 'pending',
+        tool_name: 'ping',
+        tool_args: {},
+        metadata: { transport: 'broadcast_v1', rollouts: { check: false } },
+        created_at: new Date().toISOString(),
+        timeout_at: new Date(Date.now() + 5 * MINUTE).toISOString(),
+      });
+      return standIn.login();
+    },
+  }, async (standIn, device) => {
+    const [call] = standIn.calls;
+    await waitFor(device, () => call.status === 'completed', RUN_DEADLINE_MS);
+    const logged = rolloutLinesOf(device);
+    const problems = [];
+    if (call.status !== 'completed') problems.push(`it did not run the pending call (its row is ${call.status})`);
+    if (json(logged) !== json(['Rollouts: { check: true }', 'Rollouts: { check: false }'])) {
+      problems.push(`it logged ${json(logged)} where the start answer had check on and the call row had it off`);
+    }
+    assert.ok(problems.length === 0,
+      `a call row's rollouts did not reach the device, so a change would wait for its next start: ${problems.join('; ')}.\n`
+      + `    Its output:\n${tail(device.output)}`);
+  }));
+
+  await test('a running device asks again with the session\'s current token, and uses the answer', () => withDevice({
+    standInOptions: { channel: true },
+    nodeArgs: ['--import', pathToFileURL(FAST_INTERVALS).href],
+    prepare(standIn) {
+      standIn.rollouts = { check: true };
+      return standIn.login();
+    },
+  }, async (standIn, device) => {
+    // Its session refreshes (every 45 minutes, here every 4 s), and then the server's answer changes
+    await waitFor(device, () => standIn.rotations() > 0, RUN_DEADLINE_MS);
+    standIn.rollouts = { check: false };
+    const askedWithCurrentToken = () => standIn.rolloutRequests.some((r) => r.rotations > 0 && r.currentToken);
+    const loggedChange = () => rolloutLinesOf(device).includes('Rollouts: { check: false }');
+    await waitFor(device, () => askedWithCurrentToken() && loggedChange(), RUN_DEADLINE_MS);
+    const problems = [];
+    if (standIn.rotations() === 0) problems.push('its session never refreshed, so this test cannot tell which token it sends');
+    else if (!askedWithCurrentToken()) problems.push('after its session refreshed, it never asked with the session\'s current token');
+    if (!loggedChange()) problems.push(`it logged ${json(rolloutLinesOf(device))}, never the later answer { check: false }`);
+    assert.ok(problems.length === 0,
+      `a running device did not keep its rollouts current: ${problems.join('; ')}.\n`
+      + `    Requests for rollouts: ${json(standIn.rolloutRequests)}\n    Its output:\n${tail(device.output)}`);
+  }));
+
+  await test('a device that shuts down stops the 30-minute refresh', async ({ start, useClock }) => {
+    const clock = useClock();
+    const server = await start(() => [200, json({ rollouts: { check: true } })]);
+    await load(server);
+    rolloutManager.startRefresh();
+    const device = new MCPDevice();
+    device.remoteChannel = { stopHeartbeat() {}, unsubscribe: async () => {}, setOffline: async () => {} };
+    device.desktop = { shutdown: async () => {} };
+    await device.shutdown();
+    await clock.advance(30 * MINUTE);
+    assert.strictEqual(server.requests.length, 1,
+      `the device asked for its rollouts ${server.requests.length - 1} time(s) after it shut down`);
   });
 
   console.debug = consoleDebug;

@@ -30,9 +30,12 @@ export function writeDeviceConfig(home, config) {
   fs.writeFileSync(deviceConfigPath(home), JSON.stringify(config, null, 2));
 }
 
-/** Starts a device process: `desktop-commander remote` as a service runs it */
-export function startDevice(env, args = []) {
-  const child = spawn(process.execPath, [DEVICE, ...args], {
+/**
+ * Starts a device process: `desktop-commander remote` as a service runs it.
+ * `nodeArgs` go to Node before the script, e.g. --import of a preload.
+ */
+export function startDevice(env, args = [], { nodeArgs = [] } = {}) {
+  const child = spawn(process.execPath, [...nodeArgs, DEVICE, ...args], {
     cwd: PROJECT_ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
