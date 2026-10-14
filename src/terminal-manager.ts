@@ -214,6 +214,7 @@ export class TerminalManager {
     // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
     if (process.platform === 'win32' && spawnOptions.env) {
       spawnOptions.env.PATHEXT = getRepairedPathExt();
+      spawnOptions.env.ProgramData ||= `${spawnOptions.env.SystemDrive || 'C:'}\\ProgramData`;
     }
 
     // On Windows, when we invoke cmd.exe directly and pass the user's command as a
