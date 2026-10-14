@@ -654,8 +654,10 @@ export class RemoteChannel {
         const capabilityWritten = await this.setTransportCapable(true);
         // Strictly after, never alongside: `online` may be claimed only where
         // the capability is already advertised. A dead local executor is
-        // written as offline even on a healthy channel.
-        const statusWritten = capabilityWritten
+        // written as offline even on a healthy channel. Checked again here:
+        // a drop during the capability write has already queued its 'offline'.
+        const stillJoined = this.channel === channel && channel.state === 'joined';
+        const statusWritten = capabilityWritten && stillJoined
             ? await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline')
             : false;
         // A replaced channel, or one that dropped meanwhile, decides for itself;
@@ -664,6 +666,9 @@ export class RemoteChannel {
 
         if (!capabilityWritten || !statusWritten) {
             console.error('❌ Channel joined but the device row could not be updated — not ready');
+            // Status writes land in order, so this result is newer than any
+            // earlier join's success: the row may say offline now.
+            this.channelReady = false;
             this.realtimeHealth.record('readiness_write_failures');
             this.consecutiveReadinessFailures++;
             this.nextReadinessAttemptAt = performance.now() +

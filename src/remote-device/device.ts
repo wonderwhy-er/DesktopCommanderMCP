@@ -303,7 +303,7 @@ export class MCPDevice {
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
             if (!reachable) {
-                console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
+                console.log('   - Retrying in the background; commands start working once you see "✅ Device ready".');
             } else {
                 console.log('');
                 console.log('✅ Desktop Commander Remote is connected');

@@ -72,6 +72,11 @@ class FakeClient {
   onTrack = null;
   /** While set, a status write lands only once this promise settles. */
   holdStatusWrite = null;
+  /** Same, for a capability write. */
+  holdCapabilityWrite = null;
+  /** The 1-based 'online' status write to refuse; 0 refuses none. */
+  refuseOnlineAt = 0;
+  onlineWrites = 0;
 
   channel() {
     const ch = new FakeChannel(this);
@@ -92,8 +97,10 @@ class FakeClient {
     const chain = new Proxy({}, {
       get(_, prop) {
         if (prop === 'then') {
-          const hold = payload && 'status' in payload && client.holdStatusWrite;
+          const hold = payload && ('status' in payload ? client.holdStatusWrite : client.holdCapabilityWrite);
+          const refused = payload?.status === 'online' && ++client.onlineWrites === client.refuseOnlineAt;
           const settled = Promise.resolve(hold).then(() => {
+            if (refused) return { data: null, error: { message: 'refused' } };
             if (payload) client.writes.push({ table, payload });
             return { data: [], error: null };
           });
@@ -291,6 +298,51 @@ async function main() {
     assert.strictEqual(rc.channel.state, 'joined', 'precondition: the channel rejoined');
     assert.strictEqual(lastStatus(client), 'online',
       `the row says ${lastStatus(client)} for a rejoined channel, so the server sends it no calls`);
+  });
+
+  await test('a rejoin whose own online write fails still ends with the row online', async () => {
+    const { rc, client } = makeRemoteChannel();
+    let release;
+    client.holdStatusWrite = new Promise((r) => { release = r; });
+    client.refuseOnlineAt = 2; // the rejoin's own 'online'
+
+    await withClock(async (clock) => {
+      const joined = join(rc);
+      await flush();
+      await flush();
+      // The channel drops and comes back before the first 'online' lands.
+      await rejoin(rc.channel, clock);
+      client.holdStatusWrite = null;
+      release();
+      await joined;
+      await rc.statusWriteChain;
+      for (let i = 0; i < 12; i++) await tick(rc, clock);   // two minutes of health checks
+    });
+    await rc.statusWriteChain;
+
+    assert.strictEqual(rc.channel.state, 'joined', 'precondition: the channel rejoined');
+    assert.strictEqual(lastStatus(client), 'online',
+      `the row says ${lastStatus(client)} for a rejoined channel, so the server sends it no calls`);
+  });
+
+  await test('a drop during the capability write leaves the row offline', async () => {
+    const { rc, client } = makeRemoteChannel();
+    let release;
+    client.holdCapabilityWrite = new Promise((r) => { release = r; });
+
+    const joined = join(rc);
+    await flush();
+    await flush();
+    await sdkStatus(rc.channel, 'CHANNEL_ERROR', { message: 'unknown' });
+    client.holdCapabilityWrite = null;
+    release();
+    await joined;
+    await rc.statusWriteChain;
+    await flush();
+    await rc.statusWriteChain;
+
+    assert.strictEqual(lastStatus(client), 'offline',
+      `the row says ${lastStatus(client)} for a channel that is down, so the server sends it calls it cannot receive`);
   });
 
   console.log(`\n${failures ? '🔴' : '✅'} remote presence best effort: ${failures} failing test(s).`);
