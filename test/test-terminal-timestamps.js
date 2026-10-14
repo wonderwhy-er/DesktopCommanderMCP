@@ -39,7 +39,7 @@ export function runTests() {
         assert.match(stdout[5].replace(/\x1b\[[0-9;]*m/g, ''), /^\[03:04:05\] \{ answer: 42 \}\n$/);
         assert.equal(stdout[6], '[00:00:01] after midnight\n');
         assert.deepEqual(stderr.slice(0, 2), ['[03:04:05] warn 42\n', '[03:04:05] error 42\n']);
-        assert.equal(stderr[2], error.stack.split('\n').map((line) => `[03:04:05] ${line}`).join('\n') + '\n');
+        assert.equal(stderr[2].replace(/\x1b\[[0-9;]*m/g, ''), error.stack.split('\n').map((line) => `[03:04:05] ${line}`).join('\n') + '\n');
 
         process.stdout.write('{"jsonrpc":"2.0","id":1,"result":{}}\n');
         assert.equal(stdout.at(-1), '{"jsonrpc":"2.0","id":1,"result":{}}\n', 'protocol writes stay untouched');

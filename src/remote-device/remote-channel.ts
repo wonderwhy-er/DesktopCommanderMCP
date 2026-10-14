@@ -2,6 +2,7 @@ import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChan
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
+import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -306,17 +307,7 @@ export class RemoteChannel {
                 // the socket silently re-pins to the anon key and every private-channel
                 // join is refused. Overriding under `realtime` (not the top-level
                 // `accessToken`, which turns client.auth into a throwing Proxy).
-                // getSession() may refresh on-demand when the token reads expired —
-                // that check is clock-skew-safe now (see clockAwareFetch above).
-                accessToken: async (): Promise<string | null> => {
-                    try {
-                        const { data } = await this.client!.auth.getSession();
-                        if (data.session?.access_token) return data.session.access_token;
-                    } catch {
-                        /* fall through to the cached token */
-                    }
-                    return this.lastKnownSession?.access_token ?? null;
-                },
+                accessToken: () => this.getAccessToken(),
             },
         });
         if (!this.heartbeatListenerRegistered) {
@@ -472,6 +463,8 @@ export class RemoteChannel {
             });
 
             this.stopHeartbeat();
+            // Without a session the 30-minute rollouts request can only be refused
+            rolloutManager.stopRefresh();
 
             // Tear realtime down entirely, same as recreateChannel() does: sessionLost
             // only gates OUR health loop, while realtime-js keeps its own per-channel
@@ -505,6 +498,23 @@ export class RemoteChannel {
     async getSession(): Promise<{ data: { session: Session | null }; error: any }> {
         if (!this.client) throw new Error('Client not initialized');
         return await this.client.auth.getSession();
+    }
+
+    /**
+     * The session's current access token, for the realtime socket and the
+     * device's own requests. getSession() may refresh on-demand when the token
+     * reads expired — that check is clock-skew-safe now (see clockAwareFetch
+     * above). Without a session it falls back to the last token known, and
+     * without that it is null, never the anon key.
+     */
+    async getAccessToken(): Promise<string | null> {
+        try {
+            const { data } = await this.client!.auth.getSession();
+            if (data.session?.access_token) return data.session.access_token;
+        } catch {
+            /* fall through to the cached token */
+        }
+        return this.lastKnownSession?.access_token ?? null;
     }
 
     async findDevice(deviceId: string) {
@@ -1086,6 +1096,9 @@ export class RemoteChannel {
         }
 
         if (row) {
+            // The server writes the user's rollouts into every call row; a row
+            // without them (an older server) keeps what the device has.
+            rolloutManager.update(row.metadata?.rollouts);
             this.dispatchToolCall({ new: row, claimed: true });
             return;
         }
