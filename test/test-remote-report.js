@@ -125,7 +125,7 @@ async function runTests() {
         // A log as an older or hand-edited version might have left it: raw secrets in kept lines. One file per UTC weekday:
         // Thursday 1 Oct, then Monday 5 Oct, with modification times in that order
         fs.writeFileSync(path.join(deviceDir, 'remote-thu.log'), [
-            '2026-10-01T09:12:00Z  Starting MCP Device...',
+            `2026-10-01T09:12:00Z  Starting MCP Device on ${os.hostname()}...`,
             `2026-10-01T09:12:05Z  Channel error: refresh failed for ${EMAIL} token ${session.access_token} — socket=closed(3) ch=errored attempt=1`,
             `2026-10-01T09:12:06Z  Persisted session invalid: ENOENT ${path.join(home, 'secret-project', 'plan.txt')}`,
             `2026-10-01T09:12:07Z  Channel error: device ${standIn.deviceId} not joined — socket=open(1) ch=errored attempt=2`,
@@ -337,11 +337,18 @@ async function runTests() {
                 'the home folder': home,
                 'the home folder (forward slashes)': home.replace(/\\/g, '/'),
                 'the home folder (JSON-escaped)': JSON.stringify(home).slice(1, -1),
-                'the host name': os.hostname(),
             };
             for (const [what, secret] of Object.entries(planted)) {
                 assert(!everything.toLowerCase().includes(secret.toLowerCase()), `${what} is in the zip`);
             }
+        });
+
+        await test('the host name is masked, without mistaking macOS for a host named Mac', () => {
+            const host = os.hostname();
+            if (host.length < 3) return skip('the host name is under 3 characters, which redact() leaves alone');
+            const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            assert.doesNotMatch(everything, new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'i'));
+            assert.match(entries['device-log/remote-thu.log'] ?? '', /Starting MCP Device on <host>\.\.\./);
         });
 
         // redact() leaves a name under 3 characters alone (redact.ts), so such a name can't be checked
@@ -546,21 +553,26 @@ async function runTests() {
         });
 
         await test('the home folder is shown as ~ in a path under it', async () => {
-            // node linked into the home stands for ~/.nvm/…/node
-            const nvmBin = path.join(home, '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin');
-            fs.mkdirSync(nvmBin, { recursive: true });
-            const nodeLink = path.join(nvmBin, path.basename(process.execPath));
+            const { collectReport, formatReport } = await import('../dist/remote-device/diagnostics/report.js');
+            const execPath = process.execPath;
+            const serverUrl = process.env.MCP_SERVER_URL;
+            const nodePath = path.join(home, '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin', path.basename(execPath));
+            // Homebrew Node needs shared libraries beside it; only its reported path matters here.
+            process.execPath = nodePath;
+            process.env.MCP_SERVER_URL = standIn.url;
             try {
-                fs.linkSync(process.execPath, nodeLink);
-            } catch {
-                fs.copyFileSync(process.execPath, nodeLink); // another volume: a copy
+                const { report } = await collectReport();
+                const txt = formatReport(report);
+                const expected = path.join('~', path.relative(home, nodePath));
+                assert.strictEqual(report.versions.nodePath, expected);
+                assert.strictEqual(report.versions.nodeKind, 'nvm');
+                assert(txt.includes(`\nNode          ${expected} (nvm)\n`), txt);
+                assert(!txt.includes(home), 'the home folder itself is not in the report');
+            } finally {
+                process.execPath = execPath;
+                if (serverUrl === undefined) delete process.env.MCP_SERVER_URL;
+                else process.env.MCP_SERVER_URL = serverUrl;
             }
-            const again = await runReport(env, [], { execPath: nodeLink });
-            assert.strictEqual(again.code, 0, again.output);
-            const txt = zipFile(again, 'report.txt');
-            const expected = ['~', '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin', path.basename(process.execPath)].join(path.sep);
-            assert(txt.includes(`\nNode          ${expected} (nvm)\n`), txt);
-            assert(!txt.includes(home), 'the home folder itself is not in the report');
         });
 
         await test('after all the runs and uploads: still no sign-in or token refresh, and device.json unchanged', () => {
