@@ -3,8 +3,8 @@ import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { VERSION } from '../version.js';
-import { MqttDoorbellReceiver, type MqttConfig, type MqttDoorbell } from './mqtt-transport.js';
-import { enrollMqttDevice } from './mqtt-enrollment.js';
+import { MqttDoorbellReceiver, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
+import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
 import { randomUUID } from 'node:crypto';
 
 const NUL_CHAR = String.fromCharCode(0);

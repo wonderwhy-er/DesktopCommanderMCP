@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { getMqttBrokerUrl } from '../dist/remote-device/config.js';
-import { createMqttConfig } from '../dist/remote-device/mqtt-transport.js';
+import { getMqttBrokerUrl } from '../dist/remote-device/mqtt/config.js';
+import { createMqttConfig } from '../dist/remote-device/mqtt/mqtt-transport.js';
 
 const defaultBroker = 'mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883';
 const originalBroker = process.env.MQTT_BROKER_URL;

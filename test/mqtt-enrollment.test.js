@@ -9,7 +9,7 @@ import path from 'node:path';
 import forge from 'node-forge';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
-const { enrollMqttDevice } = await import('../dist/remote-device/mqtt-enrollment.js');
+const { enrollMqttDevice } = await import('../dist/remote-device/mqtt/mqtt-enrollment.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
