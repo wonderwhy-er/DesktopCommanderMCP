@@ -463,6 +463,8 @@ export class RemoteChannel {
             });
 
             this.stopHeartbeat();
+            // Without a session the 30-minute rollouts request can only be refused
+            rolloutManager.stopRefresh();
 
             // Tear realtime down entirely, same as recreateChannel() does: sessionLost
             // only gates OUR health loop, while realtime-js keeps its own per-channel
