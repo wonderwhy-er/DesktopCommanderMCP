@@ -15,8 +15,9 @@
 
 import fs from "fs/promises";
 import path from "path";
+import { once } from 'events';
 import { createReadStream } from 'fs';
-import { createInterface } from 'readline';
+import { createInterface, Interface } from 'readline';
 import {
     FileHandler,
     ReadOptions,
@@ -352,6 +353,35 @@ export class TextFileHandler implements FileHandler {
     }
 
     /**
+     * Run `readLines` on a readline over `filePath`, then close the file before
+     * returning, whether the read finished, stopped early or failed. rl.close()
+     * alone closes the line reader, not the file stream under it, so a read
+     * that stopped early kept the file open until the process exited.
+     */
+    private async withLineReader(
+        filePath: string,
+        options: { signal?: AbortSignal; encoding?: BufferEncoding; start?: number },
+        readLines: (rl: Interface) => Promise<void>
+    ): Promise<void> {
+        const input = createReadStream(filePath, options);
+        // Settles once the file is closed: on 'close', or on 'error', which a
+        // file stream emits after closing its file
+        const closed = once(input, 'close').catch(() => {});
+        const rl = createInterface({
+            input,
+            crlfDelay: Infinity
+        });
+
+        try {
+            await readLines(rl);
+        } finally {
+            rl.close();
+            input.destroy();
+            await closed;
+        }
+    }
+
+    /**
      * Read from end using readline with circular buffer
      */
     private async readFromEndWithReadline(
@@ -364,22 +394,17 @@ export class TextFileHandler implements FileHandler {
         encoding?: BufferEncoding,
         start?: number
     ): Promise<FileResult> {
-        const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
-            crlfDelay: Infinity
-        });
-
         const buffer: string[] = new Array(requestedLines);
         let bufferIndex = 0;
         let totalLines = 0;
 
-        for await (const line of rl) {
-            buffer[bufferIndex] = line;
-            bufferIndex = (bufferIndex + 1) % requestedLines;
-            totalLines++;
-        }
-
-        rl.close();
+        await this.withLineReader(filePath, { signal, encoding, start }, async (rl) => {
+            for await (const line of rl) {
+                buffer[bufferIndex] = line;
+                bufferIndex = (bufferIndex + 1) % requestedLines;
+                totalLines++;
+            }
+        });
 
         let result: string[];
         if (totalLines >= requestedLines) {
@@ -414,23 +439,18 @@ export class TextFileHandler implements FileHandler {
         start?: number,
         startLine: number = 0
     ): Promise<FileResult> {
-        const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
-            crlfDelay: Infinity
-        });
-
         const result: string[] = [];
         let lineNumber = startLine;
 
-        for await (const line of rl) {
-            if (lineNumber >= offset && result.length < length) {
-                result.push(line);
+        await this.withLineReader(filePath, { signal, encoding, start }, async (rl) => {
+            for await (const line of rl) {
+                if (lineNumber >= offset && result.length < length) {
+                    result.push(line);
+                }
+                if (result.length >= length) break;
+                lineNumber++;
             }
-            if (result.length >= length) break;
-            lineNumber++;
-        }
-
-        rl.close();
+        });
 
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
