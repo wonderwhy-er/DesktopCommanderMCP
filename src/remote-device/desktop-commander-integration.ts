@@ -2,6 +2,8 @@ import path from 'path';
 import fs from 'fs/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { ActivityAnnouncement } from '../activity/activity.js';
 import { fileURLToPath } from 'url';
 import { captureRemote } from '../utils/capture.js';
 import { resolveShellPath } from '../utils/shell.js';
@@ -39,6 +41,8 @@ interface McpConfig {
 }
 
 export class DesktopCommanderIntegration {
+    private activityCallback?: (value: ActivityAnnouncement) => void;
+    onActivity(callback: (value: ActivityAnnouncement) => void) { this.activityCallback = callback; }
     private mcpClient: Client | null = null;
     private mcpTransport: StdioClientTransport | null = null;
     private isReady: boolean = false;
@@ -132,6 +136,14 @@ export class DesktopCommanderIntegration {
 
             await this.mcpClient.connect(this.mcpTransport);
             this.abortIfShuttingDown();
+
+            this.mcpClient.setNotificationHandler(LoggingMessageNotificationSchema, async (notification) => {
+                if (notification.params.logger !== 'desktop-commander.activity') return;
+                const data = notification.params.data as Partial<ActivityAnnouncement> | null;
+                if (!data || typeof data.message !== 'string' ||
+                    !['plan', 'progress', 'done', 'warning', 'error'].includes(String(data.phase))) return;
+                this.activityCallback?.({ phase: data.phase as ActivityAnnouncement['phase'], message: data.message });
+            });
 
             // Supervise the local half. Without these, a child crash is silent:
             // the SDK clears its transport and every subsequent call throws

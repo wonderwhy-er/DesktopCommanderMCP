@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// AI-authored, presentation-only progress updates. No shell command or file content accepted.
+export const ReportActivityArgsSchema = z.object({
+  phase: z.enum(['plan', 'progress', 'done', 'warning', 'error']),
+  message: z.string().trim().min(1).max(180),
+});
+
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
   // 'ui' marks calls the config-editor widget fires programmatically; they are
@@ -249,6 +255,7 @@ export const TrackUiEventArgsSchema = z.object({
  * with the tool definitions in server.ts.
  */
 export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
+  report_activity: ReportActivityArgsSchema,
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,

@@ -29,9 +29,12 @@ const SERVER_INSTRUCTIONS = `Desktop Commander provides tools for working with t
 - Terminal process tools support shell commands, REPLs, and long-running processes. start_process creates a process session; interact_with_process sends input; read_process_output reads later output; force_terminate ends a session.
 - Search tools are session-based. start_search creates a search session; get_more_search_results reads its results; stop_search ends it early.
 - Absolute paths are generally the most reliable because relative paths depend on the active working directory.
-- allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.`;
+- allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.
+- Before each meaningful device operation, call report_activity with phase=plan and a short user-language message describing your intended action. Describe only what you actually intend to do; don't claim success in advance. Call report_activity with phase=done, warning, or error for important findings or outcomes. This is a display-only annotation, not an authorization mechanism. Never include credentials, tokens, private file contents, or hidden reasoning in activity messages.
+- This is default MCP guidance: the user does not have to repeat it in chat. Follow host/client approval requirements even when providing progress messages.`;
 
 import {
+    ReportActivityArgsSchema,
     StartProcessArgsSchema,
     ReadProcessOutputArgsSchema,
     InteractWithProcessArgsSchema,
@@ -310,6 +313,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
+            {
+                name: 'report_activity',
+                description: 'Publish a concise, AI-written activity update to the device terminal. Before running a meaningful command, search, file read, or edit, call this tool with phase=plan to tell the user in their language what you are about to do. After important outcomes, use done/warning/error. Keep the message factual and short (max 180 chars); never include credentials or hidden reasoning. The tool only changes the status display; it never executes an operation.',
+                inputSchema: zodToJsonSchema(ReportActivityArgsSchema),
+                annotations: { title: 'Report Activity', readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+            },
             // Configuration tools
             {
                 name: "get_config",
@@ -1254,6 +1263,21 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // (result is declared above so the finally block can read execution status)
 
         switch (name) {
+            // Display-only, AI-authored activity update. Never executes a command.
+            // MCP logging notifications are forwarded to our Remote Device TUI.
+            case "report_activity": {
+                const validated = ReportActivityArgsSchema.safeParse(args);
+                if (!validated.success) {
+                    result = { content: [{ type: 'text', text: 'Invalid activity update' }], isError: true };
+                } else {
+                    await server.sendLoggingMessage({
+                        level: 'info', logger: 'desktop-commander.activity',
+                        data: validated.data,
+                    }).catch(() => { /* Clients may not subscribe to MCP logs. */ });
+                    result = { content: [{ type: 'text', text: 'Activity update accepted' }] };
+                }
+                break;
+            }
             // Config tools
             case "get_config":
                 try {

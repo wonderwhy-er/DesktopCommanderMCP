@@ -14,6 +14,7 @@ import { exitProcess } from '../utils/exit-process.js';
 import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
+import { ActivityView } from '../activity/activity.js';
 import { rolloutManager } from './rollouts.js';
 
 export interface MCPDeviceOptions {
@@ -82,6 +83,7 @@ export class MCPDevice {
     private configPath: string;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
+    private readonly activityView = new ActivityView();
     /**
      * Serialises config writes. Rotations are 45 minutes apart in normal
      * running, but a save that stalls must not land after a newer one and
@@ -120,6 +122,7 @@ export class MCPDevice {
 
         // Initialize desktop integration
         this.desktop = new DesktopCommanderIntegration();
+        this.desktop.onActivity((update) => this.activityView.announce(update));
 
         // Readiness is a claim about executing, so it has to consult the local
         // executor too. Read through a probe rather than a cached flag: there
@@ -614,7 +617,7 @@ export class MCPDevice {
         // Count every targeted delivery, including duplicates, before the local claim.
         observeTransport({ stage: 'device_call_received', ...observation });
         
-        console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
+        // Structured activity replaces unbounded tool_args and metadata dumps.
 
         // LOCAL claim first — this is the authoritative guard against executing
         // a call twice. During the transition both transports deliver every call
@@ -643,6 +646,8 @@ export class MCPDevice {
                 return;
             }
 
+            if (tool_name !== 'report_activity') this.activityView.started(call_id, tool_name);
+
             // Handle 'ping' tool specially
             if (tool_name === 'ping') {
                 result = {
@@ -670,13 +675,14 @@ export class MCPDevice {
                 result = await this.desktop.callClientTool(tool_name, tool_args, metadata);
             }
         } catch (error: any) {
-            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            this.activityView.finished(call_id, true);
+            console.error('❌ MCP tool failed:', tool_name);
             observeTransport({ stage: 'tool_call_failed', ...observation });
             await this.reportToolCallFailure(call_id, tool_name, error);
             return;
         }
 
-        console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
+        if (tool_name !== 'report_activity') this.activityView.finished(call_id, !!result?.isError);
 
         // The tool ran. A result that can't be saved is reported and written as
         // failed, as before, but its telemetry stays "tool_call_completed"
@@ -687,7 +693,8 @@ export class MCPDevice {
                 observeTransport({ stage: 'tool_call_completed', ...observation});
             }
         } catch (error: any) {
-            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            this.activityView.finished(call_id, true);
+            console.error('❌ MCP tool failed:', tool_name);
             await this.reportToolCallFailure(call_id, tool_name, error);
         }
     }
