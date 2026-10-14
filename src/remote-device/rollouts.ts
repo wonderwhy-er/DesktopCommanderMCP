@@ -18,20 +18,23 @@ type Rollouts = Record<string, boolean>;
  * - a call row without rollouts (an older server) keeps what the device has
  * - a 30-minute answer that fails keeps what the device has
  *
+ * With no session token the device sends no request: that counts as a
+ * failed answer.
+ *
  * Each change logs a debug line, "Rollouts: …".
  */
 class RolloutManager {
     private rollouts: Rollouts = {};
     private serverUrl = '';
-    private getToken: () => Promise<string> = async () => '';
+    private getToken: () => Promise<string | null> = async () => null;
     private refreshInterval: NodeJS.Timeout | null = null;
 
     /**
      * GET {serverUrl}/device/rollouts with the session's access token, which
-     * getToken() is asked for on every request. A failed answer leaves every
-     * rollout off.
+     * getToken() is asked for on every request (null: no session, no request).
+     * A failed answer leaves every rollout off.
      */
-    async load(serverUrl: string, getToken: () => Promise<string>): Promise<void> {
+    async load(serverUrl: string, getToken: () => Promise<string | null>): Promise<void> {
         this.serverUrl = serverUrl;
         this.getToken = getToken;
         this.replace((await this.request()) ?? {});
@@ -75,8 +78,10 @@ class RolloutManager {
     }
 
     private async fetchRollouts(): Promise<Rollouts> {
+        const token = await this.getToken();
+        if (!token) throw new Error('No session token');
         const response = await fetch(`${this.serverUrl}/device/rollouts`, {
-            headers: { Authorization: `Bearer ${await this.getToken()}` },
+            headers: { Authorization: `Bearer ${token}` },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const { rollouts } = await response.json();

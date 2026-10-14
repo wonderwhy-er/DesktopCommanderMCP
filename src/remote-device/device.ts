@@ -270,8 +270,7 @@ export class MCPDevice {
             // asked now and again every 30 minutes, each time with the
             // session's current token. setSession() may have refreshed the one
             // device.json held, and the session keeps refreshing while it runs.
-            await rolloutManager.load(this.baseServerUrl,
-                async () => (await this.remoteChannel.getSession()).data.session?.access_token ?? '');
+            await rolloutManager.load(this.baseServerUrl, () => this.remoteChannel.getAccessToken());
             rolloutManager.startRefresh();
 
             const deviceName = os.hostname();

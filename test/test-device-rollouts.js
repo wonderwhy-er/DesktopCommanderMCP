@@ -21,7 +21,8 @@
  *   30-minute answer arrives                             -> replace with it
  *   30-minute answer fails                               -> keep what it has
  *
- * and each change logs a debug line, "Rollouts: …".
+ * and each change logs a debug line, "Rollouts: …". With no session token the
+ * device sends no request, and that counts as a failed answer.
  *
  * A local HTTP server stands in for the Remote MCP server's /device/rollouts,
  * and setInterval is replaced, so the 30-minute refresh runs when a test says.
@@ -283,6 +284,17 @@ async function runTests() {
   await test('no start answer within 3 s leaves every rollout off', ({ start }) =>
     expectAllOff(start, () => null, 'a server that never answers'));
 
+  await test('with no session token, a start sends no request and leaves every rollout off', async ({ start }) => {
+    await load(await start(() => [200, json({ rollouts: { check: true } })]));
+    const server = await start(() => [200, json({ rollouts: { check: true } })]);
+    sessionToken = null;
+    await load(server);
+    assert.deepStrictEqual(server.requests, [],
+      `with no session token the device asked anyway: ${json(server.requests)}. A request without a token can only be refused`);
+    assert.deepStrictEqual(rolloutManager.getAll(), {},
+      `with no session token at start, the device has ${json(rolloutManager.getAll())}: it must run with every rollout off`);
+  });
+
   // Call rows
 
   await test('a call row with rollouts replaces what the device has; it does not merge into it', async ({ start }) => {
@@ -334,12 +346,12 @@ async function runTests() {
     assert.strictEqual(server.requests.length, 3, 'the device did not ask again another 30 minutes later');
   });
 
-  await test('a pending 30-minute refresh does not keep the process running (unref)', async ({ start, useClock }) => {
+  await test('a pending 30-minute refresh does not keep the process running', async ({ start, useClock }) => {
     const clock = useClock();
     await load(await start(() => [200, json({ rollouts: {} })]));
     rolloutManager.startRefresh();
     assert.ok(clock.intervals.length === 1 && clock.intervals[0].unrefed,
-      'the 30-minute refresh is not unref\'d: a process that is otherwise done would wait for it');
+      'the 30-minute refresh keeps a finished process waiting');
   });
 
   await test('stopRefresh() ends the 30-minute refresh', async ({ start, useClock }) => {
@@ -380,6 +392,20 @@ async function runTests() {
 
   await test('no 30-minute answer within 3 s keeps what the device has', ({ start, useClock }) =>
     expectKept(start, useClock, () => null, 'a server that never answers'));
+
+  await test('with no session token, the 30-minute refresh sends no request and keeps what the device has', async ({ start, useClock }) => {
+    const clock = useClock();
+    const server = await start(() => [200, json({ rollouts: { check: true } })]);
+    await load(server);
+    rolloutManager.startRefresh();
+    server.answer = () => [200, json({ rollouts: {} })];
+    sessionToken = null;
+    await clock.advance(30 * MINUTE);
+    assert.deepStrictEqual(server.requests.slice(1), [],
+      `with no session token the 30-minute refresh asked anyway: ${json(server.requests.slice(1))}`);
+    assert.deepStrictEqual(rolloutManager.getAll(), { check: true },
+      `with no session token at the 30-minute refresh, the device has ${json(rolloutManager.getAll())}: it must keep { check: true }`);
+  });
 
   // The debug line
 
