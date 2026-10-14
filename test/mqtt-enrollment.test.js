@@ -15,6 +15,8 @@ const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
 const originalFlag = process.env.MQTT_EXECUTION_ENABLED;
 process.env.MQTT_EXECUTION_ENABLED = 'true';
+const originalBroker = process.env.MQTT_BROKER_URL;
+delete process.env.MQTT_BROKER_URL;
 const workspace = await mkdtemp(path.join(tmpdir(), 'mqtt-enrollment-device-'));
 const caPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const caKey = forge.pki.privateKeyFromPem(caPair.privateKey.export({ format: 'pem', type: 'pkcs1' }));
@@ -43,7 +45,7 @@ function issue(csrPem, patch = {}) {
   if (patch.expired) certificate.validity.notAfter = new Date(Date.now() - 1_000);
   if (patch.future) certificate.validity.notBefore = new Date(Date.now() + 60_000);
   certificate.sign(caKey, forge.md.sha256.create());
-  return { certificate_pem: forge.pki.certificateToPem(certificate), certificate_id: certificateNumber.toString(16).padStart(64, '0'), broker_url: 'mqtts://a1vw7p0stdnykd-ats.iot.eu-west-3.amazonaws.com:8883' };
+  return { certificate_pem: forge.pki.certificateToPem(certificate), certificate_id: certificateNumber.toString(16).padStart(64, '0'), broker_url: 'mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883' };
 }
 
 /** Scope the global fetch seam even when a deliberately invalid request fails. */
@@ -95,6 +97,20 @@ try {
       assert.equal(first.options.rejectUnauthorized, true);
       assert.equal(first.url, saved.certificate.broker_url);
     });
+  });
+
+  await check('broker override works with a custom HTTPS backend', async () => {
+    process.env.MQTT_BROKER_URL = 'mqtts://custom.example.test:8883';
+    try {
+      await withFetch(async (_url, request) => Response.json({
+        ...issue(JSON.parse(request.body).csr), broker_url: process.env.MQTT_BROKER_URL,
+      }), async () => {
+        const config = await enrollMqttDevice(options({ serverUrl: 'https://custom-mcp.example.test' }));
+        assert.equal(config.url, process.env.MQTT_BROKER_URL);
+      });
+    } finally {
+      delete process.env.MQTT_BROKER_URL;
+    }
   });
 
   await check('network refusal and HTTP errors make exactly one attempt and never cache a certificate', async () => {
@@ -244,4 +260,6 @@ try {
   await rm(workspace, { recursive: true, force: true });
   if (originalFlag === undefined) delete process.env.MQTT_EXECUTION_ENABLED;
   else process.env.MQTT_EXECUTION_ENABLED = originalFlag;
+  if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;
+  else process.env.MQTT_BROKER_URL = originalBroker;
 }

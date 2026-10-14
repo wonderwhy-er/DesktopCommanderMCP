@@ -89,7 +89,7 @@ export async function enrollMqttDevice(
         backend.search || backend.hash || (backend.pathname && backend.pathname !== '/')) {
         throw new Error('MQTT enrollment requires an HTTPS backend without credentials, paths, or query parameters');
     }
-    const brokerUrl = getMqttBrokerUrl(serverUrl);
+    const brokerUrl = getMqttBrokerUrl();
     options.assertCurrent?.();
     const folder = `${path.resolve(profilePath)}.mqtt`;
     await mkdir(folder, { recursive: true, mode: 0o700 });

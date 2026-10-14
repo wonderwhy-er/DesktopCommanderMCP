@@ -33,10 +33,10 @@ the device. Credentials are bound to backend/user/device; invalid caches are not
 silently. Initial enrollment is attempted once; fix configuration and restart on failure.
 Established MQTT connections reconnect automatically. Renewal is separate work.
 
-Broker URLs are selected by the authenticated backend in `src/remote-device/config.ts`.
-Staging is configured; production's separate endpoint is currently unset and must be supplied
-before production MQTT can connect. It never falls back to staging. Broker and certificate
-verification remain mandatory. MQTT shadow failure does not affect Broadcast readiness.
+The broker defaults to `mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883`.
+Set `MQTT_BROKER_URL` to override it; unset or empty values use the default for every backend.
+Backend and device must use the same broker. Cached certificates for another broker are rejected.
+Broker and certificate verification remain mandatory. MQTT shadow failure does not affect Broadcast readiness.
 Supabase Presence remains part of device availability; execution mode also requires MQTT readiness.
 
 Run `npm run test:mqtt` for mutual TLS, mode isolation, automatic nonblocking startup,

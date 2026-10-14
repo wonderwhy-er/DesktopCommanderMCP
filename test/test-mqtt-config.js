@@ -1,26 +1,23 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { getMqttBrokerUrl, MQTT_BROKER_URLS } from '../dist/remote-device/config.js';
+import { getMqttBrokerUrl } from '../dist/remote-device/config.js';
 import { createMqttConfig } from '../dist/remote-device/mqtt-transport.js';
 
-assert.equal(getMqttBrokerUrl('https://staging-mcp.desktopcommander.app'), MQTT_BROKER_URLS.staging);
-assert.throws(() => getMqttBrokerUrl('https://mcp.desktopcommander.app'), /Production MQTT broker URL is not configured/);
-for (const server of ['https://unknown.example.test', 'https://staging-mcp.desktopcommander.app.example.test',
-    'https://localhost:3007', 'https://mcp.localhost.localdomain:3007', 'https://127.0.0.1:3007', 'https://[::1]:3007']) {
-    assert.throws(() => getMqttBrokerUrl(server), /not configured/);
-}
-
-// Exercise production selection with a test-only endpoint until its real value is supplied.
-const production = MQTT_BROKER_URLS.production;
+const defaultBroker = 'mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883';
+const originalBroker = process.env.MQTT_BROKER_URL;
 try {
-    MQTT_BROKER_URLS.production = 'mqtts://production-test.iot.eu-west-1.amazonaws.com:8883';
-    assert.equal(getMqttBrokerUrl('https://mcp.desktopcommander.app'), MQTT_BROKER_URLS.production);
-    assert.equal(getMqttBrokerUrl('https://staging-mcp.desktopcommander.app'), MQTT_BROKER_URLS.staging);
+    delete process.env.MQTT_BROKER_URL;
+    assert.equal(getMqttBrokerUrl(), defaultBroker);
+    process.env.MQTT_BROKER_URL = '';
+    assert.equal(getMqttBrokerUrl(), defaultBroker);
+    process.env.MQTT_BROKER_URL = 'mqtts://custom.example.test:8883';
+    assert.equal(getMqttBrokerUrl(), process.env.MQTT_BROKER_URL);
 } finally {
-    MQTT_BROKER_URLS.production = production;
+    if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;
+    else process.env.MQTT_BROKER_URL = originalBroker;
 }
 
-const credentials = { url: MQTT_BROKER_URLS.staging, cert: 'fixture-cert', key: 'fixture-key' };
+const credentials = { url: defaultBroker, cert: 'fixture-cert', key: 'fixture-key' };
 const config = createMqttConfig(credentials);
 assert.equal(config.url, credentials.url);
 assert.equal(config.options.cert, credentials.cert);
@@ -37,4 +34,4 @@ for (const url of ['invalid', 'mqtts://user:secret@example.test', 'mqtts://examp
 for (const patch of [{ cert: '' }, { key: '' }]) {
     assert.throws(() => createMqttConfig({ ...credentials, ...patch }), /enrolled device/);
 }
-console.log('PASS MQTT config: staging/production selection, unknown hosts, mandatory TLS and enrolled credentials');
+console.log('PASS MQTT config: default broker, environment override, mandatory TLS and enrolled credentials');
