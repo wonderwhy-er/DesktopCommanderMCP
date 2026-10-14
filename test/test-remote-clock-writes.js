@@ -46,7 +46,7 @@ async function deviceWrites() {
   rc.client = makeClient(writes);
   rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.channel = { state: 'joined' };
-  rc.presenceTracked = true;
+  rc.channelReady = true;
   rc.localExecutorProbe = () => true;
   rc.createChannel = async () => {};
 

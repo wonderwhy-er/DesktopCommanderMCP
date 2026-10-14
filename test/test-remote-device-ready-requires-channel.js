@@ -23,7 +23,7 @@
  *   - it swallows a createChannel() rejection into console.debug, so device.ts
  *     prints "Device ready" over a device that cannot receive anything
  *
- * createChannel() already resolves only once presence lands, and says why:
+ * createChannel() already resolves only once the row advertises the channel, and says why:
  * "otherwise registerDevice() reports Device ready while still undispatchable".
  * The last mile is missing — the rejection never reaches the caller.
  *
@@ -297,38 +297,26 @@ await test('registration does not claim the device is online before the channel 
     );
 });
 
-// The join is only half of what dispatch needs: the server refuses the call
-// without the capability, and the capability is written only once presence is
-// published. A join whose presence is never acknowledged therefore produces
-// exactly the state measured in production — the row online, the capability
-// explicitly withdrawn — and it is the likelier of the two, because it happens
-// AFTER a successful join rather than instead of one.
-await test('a joined channel whose presence is never acknowledged is not ready', async () => {
+// Presence only feeds the dashboard: doorbells arrive over the joined channel,
+// and dispatch reads the row. A join whose presence is never acknowledged is
+// therefore ready — on 2026-10-13 that state took tool calls down fleet-wide.
+await test('a joined channel whose presence is never acknowledged is still ready', async () => {
     const { rc, client } = makeRemoteChannel(true, { presenceAcks: false });
 
-    await assert.rejects(
-        () => register(rc),
-        'registerDevice() resolved after presence failed. The channel is joined but the device ' +
-            'never published itself, so the capability is withdrawn and the hosted service ' +
-            'refuses every call — while the user is told the device is ready.'
-    );
+    await register(rc);
     await flush(10);
 
-    assert.ok(
-        !client.statusWrites.includes('online'),
-        `the row claimed ${JSON.stringify(client.statusWrites)} although presence never landed; ` +
-            'dispatch selects by `status`, so this is the row that gets the undeliverable calls'
-    );
-    assert.ok(
-        !client.advertisedBroadcast(),
-        'precondition: the capability must stay withdrawn when presence fails'
-    );
+    assert.strictEqual(client.statusWrites.at(-1), 'online',
+        `the row ended ${JSON.stringify(client.statusWrites)}, so the server never picks a device ` +
+            'whose only failure is the dashboard signal');
+    assert.ok(client.advertisedBroadcast(),
+        'the capability must be advertised whether or not presence lands');
 });
 
-// Presence landing is not the end of it: it only matters because it writes the
-// capability, and Supabase reports a refused write in the result rather than by
-// throwing. A device that publishes presence but cannot record it is in the same
-// place as one that never published — the server will not dispatch to it.
+// The join is not the end of it: it only matters once the row records it, and
+// Supabase reports a refused write in the result rather than by throwing. A
+// device that joined but cannot record it is in the same place as one that
+// never joined — the server will not dispatch to it.
 await test('a device whose readiness write is refused is not ready', async () => {
     const { rc, client } = makeRemoteChannel(true, { failCapabilityWrite: true });
 
@@ -341,8 +329,8 @@ await test('a device whose readiness write is refused is not ready', async () =>
             );
             return true;
         },
-        'registerDevice() resolved although the capability write was refused. Presence was ' +
-            'published, so the device believes it is ready, while the row carries neither the ' +
+        'registerDevice() resolved although the capability write was refused. The channel ' +
+            'joined, so the device believes it is ready, while the row carries neither the ' +
             'capability nor online — and the server refuses every call to it.'
     );
     await flush(10);

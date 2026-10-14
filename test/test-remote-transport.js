@@ -502,24 +502,25 @@ await test('heartbeat stays silent when no transport is joined', async () => {
 });
 
 // Joined is only half of it. The capability the server checks before it will
-// dispatch is written when presence is published, so a joined channel whose
-// presence never landed is undispatchable — and a heartbeat there would keep
-// the row young and online, which is the one thing that stops the server's
-// sweep from correcting it. Reachability is now both.
-await test('heartbeat stays silent when joined but presence was never published', async () => {
+// dispatch is written once the channel joins, so a joined channel whose
+// readiness writes never landed is undispatchable — and a heartbeat there would
+// keep the row young and online, which is the one thing that stops the
+// server's sweep from correcting it. Reachability is both.
+await test('heartbeat stays silent when joined but the row was never marked ready', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.presenceTracked = false;
+  rc.channelReady = false;
   await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 0, 'no presence = no delivery path = let the row age out');
+  assert(client.writes.length === 0, 'no readiness writes = no delivery path = let the row age out');
 });
 
-await test('heartbeat writes when the channel is joined and presence is published', async () => {
+await test('heartbeat writes when the channel is joined and ready, with or without presence', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.presenceTracked = true;
+  rc.channelReady = true;
+  rc.presenceTracked = false; // Presence only feeds the dashboard
   await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 1, 'joined + presence published = reachable');
+  assert(client.writes.length === 1, 'joined + ready = reachable');
 });
 
 await test('status goes offline when the private channel is not joined', async () => {
@@ -558,53 +559,19 @@ await test('concurrent status writes stay ordered', async () => {
 });
 
 // --- 6. Capability withdrawal -----------------------------------------------
-// Presence is dashboard-authoritative, but server dispatch uses DB status +
-// transport_broadcast_v1. A joined broadcast channel therefore stays a valid
-// delivery path through a short Presence-only failure. Genuine channel failure
-// still withdraws after repeated recreate failures.
+// Server dispatch uses DB status + transport_broadcast_v1; Presence only feeds
+// the dashboard, so a Presence failure never touches the capability. Genuine
+// channel failure still withdraws after repeated recreate failures.
 
-await test('transient Presence failure keeps a previously proven capability', async () => {
+await test('a Presence failure never writes the capability', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.transportCapableWritten = true;
   rc.channel = { state: 'joined', track: async () => 'timed out' };
 
-  await rc.trackPresenceInner(0, 1);
+  await rc.trackPresence(0);
 
-  assert(rc.transportCapableWritten === true, 'short Presence outage must keep broadcast capability');
-  assert(rc.presenceFailureStartedAt !== null, 'Presence grace timer should start');
-  assert(
-    !client.writes.some((w) => w.capabilities && w.capabilities.transport_broadcast_v1 === undefined),
-    'grace period must not write a withdrawn capability'
-  );
-});
-
-await test('sustained Presence failure withdraws after the grace period', async () => {
-  const { rc, client } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.channel = { state: 'joined', track: async () => 'timed out' };
-  rc.presenceFailureStartedAt = performance.now() - (6 * 60 * 1000);
-
-  await rc.trackPresenceInner(0, 1);
-
-  assert(rc.transportCapableWritten === false, 'sustained Presence outage must eventually withdraw');
-  const capWrite = client.writes.find((w) => w.capabilities);
-  assert(capWrite, 'withdrawal should write capabilities');
-  assert(
-    capWrite.capabilities.transport_broadcast_v1 === undefined,
-    'withdrawn payload must remove broadcast capability'
-  );
-});
-
-await test('Presence recovery clears the withdrawal grace timer', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.presenceFailureStartedAt = performance.now() - 30_000;
-  rc.channel = { state: 'joined', track: async () => 'ok' };
-
-  await rc.trackPresenceInner(0, 1);
-
-  assert(rc.presenceTracked === true, 'Presence should recover');
-  assert(rc.presenceFailureStartedAt === null, 'successful Presence must reset hysteresis');
+  assert(rc.transportCapableWritten === true, 'Presence failure must keep broadcast capability');
+  assert(!client.writes.some((w) => w.capabilities), 'Presence must not write the capability at all');
 });
 
 await test('sustained recreate failure withdraws the transport capability', async () => {
@@ -652,10 +619,10 @@ await test('a hanging capability withdrawal cannot pin the recreate guard', asyn
 });
 
 // The recreate stops waiting for a slow withdrawal, but the write still lands.
-// If realtime-js rejoins in the meantime, re-publishing presence must not be
-// skipped as redundant: the withdrawal would land after it and leave a device
-// that heartbeats 'online' without the flag the server dispatches on.
-await test('a re-publish during a slow capability withdrawal still leaves the flag on the row', async () => {
+// If realtime-js rejoins in the meantime, re-advertising the capability must
+// not be skipped as redundant: the withdrawal would land after it and leave a
+// device that heartbeats 'online' without the flag the server dispatches on.
+await test('a rejoin during a slow capability withdrawal still leaves the flag on the row', async () => {
   const hasFlag = (w) => w.capabilities?.transport_broadcast_v1 === true;
   const isWithdrawal = (w) => w.capabilities && !hasFlag(w);
   const { rc, client } = makeRemoteChannel({ writeLatencies: [200] }); // the withdrawal's PATCH
@@ -670,9 +637,9 @@ await test('a re-publish during a slow capability withdrawal still leaves the fl
   assert(client.writes.some(isWithdrawal) && !client.completions.some(isWithdrawal),
     'setup: the withdrawal should be issued and still in flight');
 
-  // realtime-js rejoins on its own, and the subscribed callback re-publishes presence
-  rc.channel = { state: 'joined', track: async () => 'ok' };
-  await rc.trackPresenceInner(0, 1);
+  // realtime-js rejoins on its own, and the subscribed callback re-advertises the row
+  rc.channel = { state: 'joined' };
+  await rc.markChannelReady();
   const deadline = Date.now() + 2000;
   while (!client.completions.some(isWithdrawal) && Date.now() < deadline) {
     await new Promise((r) => realSetTimeout(r, 5));
@@ -680,8 +647,8 @@ await test('a re-publish during a slow capability withdrawal still leaves the fl
 
   const landed = client.completions.filter((w) => w.capabilities);
   assert(!rc.isReachable() || hasFlag(landed[landed.length - 1] ?? {}),
-    'the device kept claiming it is online (presence tracked, so the heartbeat writes \'online\') while the withdrawal '
-    + 'landed after the re-publish and took transport_broadcast_v1 off its row: the server refuses every call as not '
+    'the device kept claiming it is online (ready, so the heartbeat writes \'online\') while the withdrawal '
+    + 'landed after the re-advertisement and took transport_broadcast_v1 off its row: the server refuses every call as not '
     + `broadcast-capable. Capability writes landed: ${landed.map((w) => (hasFlag(w) ? 'flag' : 'withdrawn')).join(', ')}`);
 });
 
@@ -692,10 +659,10 @@ const settlesWithin = (promise, ms) => Promise.race([
 ]);
 
 // A withdrawal sent down a half-open connection is never answered. The
-// capability queue must not wait for it: the re-publish after it has to land,
-// or presence never counts as tracked, and the health check, which skips while
-// a publish is in progress, never retries it.
-await test('a capability withdrawal nothing answers cannot hold back the re-publish', async () => {
+// capability queue must not wait for it: the re-advertisement after it has to
+// land, or the device never becomes ready, and the health check cannot retry
+// readiness while that attempt is in flight.
+await test('a capability withdrawal nothing answers cannot hold back the re-advertisement', async () => {
   const hasFlag = (w) => w.capabilities?.transport_broadcast_v1 === true;
   const { rc, client } = makeRemoteChannel({ writeLatencies: ['never'] }); // the withdrawal's PATCH
   rc.transportCapableWritten = true; // previously proven
@@ -707,31 +674,31 @@ await test('a capability withdrawal nothing answers cannot hold back the re-publ
   rc.deviceRowWriteSignal = () => AbortSignal.timeout(50); // the product's bound on a row write, shortened
 
   for (let i = 0; i < 3; i++) await rc.recreateChannel();
-  rc.channel = { state: 'joined', track: async () => 'ok' };
-  const published = await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
+  rc.channel = { state: 'joined' };
+  const published = await settlesWithin(rc.markChannelReady(), 2000);
 
   const landed = client.completions.filter((w) => w.capabilities);
   assert(published && rc.isReachable() && hasFlag(landed[landed.length - 1] ?? {}),
-    'after a capability withdrawal that was never answered, re-publishing presence '
-    + `${published ? 'finished' : 'was still waiting behind it after 2 s'}: presence tracked ${rc.presenceTracked}, `
+    'after a capability withdrawal that was never answered, re-advertising the row '
+    + `${published ? 'finished' : 'was still waiting behind it after 2 s'}: ready ${rc.channelReady}, `
     + `capability writes landed: ${landed.map((w) => (hasFlag(w) ? 'flag' : 'withdrawn')).join(', ') || 'none'}. `
-    + 'The device stays unreachable, and the health check never retries presence while that publish is in progress.');
+    + 'The device stays unreachable, and the health check cannot retry readiness while that attempt is in flight.');
 });
 
 // The same for the status write that follows the capability write: a status
-// PATCH nothing answers must not keep presence from being published again.
-await test('a status write nothing answers cannot keep presence from being published again', async () => {
+// PATCH nothing answers must not keep readiness from being retried.
+await test('a status write nothing answers cannot keep readiness from being retried', async () => {
   const { rc } = makeRemoteChannel({ writeLatencies: ['never'] }); // the first status write
   rc.transportCapableWritten = true; // the capability write is skipped: the status write comes first
   rc.deviceRowWriteSignal = () => AbortSignal.timeout(50);
-  rc.channel = { state: 'joined', track: async () => 'ok' };
+  rc.channel = { state: 'joined' };
 
-  const firstReturned = await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
-  const retried = firstReturned && await settlesWithin(rc.trackPresenceInner(0, 1), 2000);
-  assert(firstReturned && retried && rc.presenceTracked,
-    `a status write that was never answered ${firstReturned ? 'failed in time' : 'kept presence publishing waiting for 2 s'}`
+  const firstReturned = await settlesWithin(rc.markChannelReady(), 2000);
+  const retried = firstReturned && await settlesWithin(rc.markChannelReady(), 2000);
+  assert(firstReturned && retried && rc.channelReady,
+    `a status write that was never answered ${firstReturned ? 'failed in time' : 'kept the readiness attempt waiting for 2 s'}`
     + `${firstReturned ? `, and the retry after it ${retried ? 'finished' : 'waited behind it for 2 s'}` : ''}: `
-    + `presence tracked ${rc.presenceTracked}. The health check retries presence only once that publish returns.`);
+    + `ready ${rc.channelReady}. The health check retries readiness only once that attempt returns.`);
 });
 
 // --- 7. Shutdown ------------------------------------------------------------
