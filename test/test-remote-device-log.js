@@ -33,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createTempDir } from './helpers/test-env.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { startTerminalTimestamps } from '../dist/utils/terminal-timestamps.js';
 
 const MB = 1024 * 1024;
 const TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ {2}/;
@@ -341,14 +342,16 @@ async function runTests() {
             for (const name of files) assert.doesNotMatch(readLog(dir, name), /day [0-6] line/, `${name} still holds the first week`);
         });
 
-        await test('startDeviceLog: the terminal is unchanged, and silenced debug lines still reach the log', () => {
+        await test('startDeviceLog: terminal timestamps preserve redaction and silenced debug lines still reach the log', () => {
             const dir = freshDir();
             const saved = { log: console.log, debug: console.debug, warn: console.warn, error: console.error, info: console.info };
             const printed = [];
             const realWrite = process.stdout.write;
             const realErrWrite = process.stderr.write;
             let stop;
+            let stopTimestamps;
             try {
+                stopTimestamps = startTerminalTimestamps();
                 // What `remote` does without --debug, before it starts the log
                 console.debug = () => { };
                 process.stdout.write = (chunk, ...rest) => { printed.push(String(chunk)); return true; };
@@ -361,15 +364,17 @@ async function runTests() {
                 console.error('❌ Presence track not acknowledged (timed out) — attempt 1/3');
             } finally {
                 stop?.();
+                stopTimestamps?.();
                 process.stdout.write = realWrite;
                 process.stderr.write = realErrWrite;
                 Object.assign(console, saved);
             }
-            assert.deepStrictEqual(printed, [
+            for (const line of printed) assert.match(line, /^\[\d{2}:\d{2}:\d{2}\] /);
+            assert.deepStrictEqual(printed.map((line) => line.replace(/^\[\d{2}:\d{2}:\d{2}\] /, '')), [
                 '✅ Channel subscribed\n',
                 `🔧 Received tool call c-2: list_directory {"path":"/secret"} metadata: {}\n`,
                 '❌ Presence track not acknowledged (timed out) — attempt 1/3\n',
-            ], 'the terminal shows exactly what it showed before');
+            ], 'only the terminal gets the time prefix');
             const text = readLog(dir);
             assert.match(text, /Z {2}Channel subscribed\n/);
             assert.match(text, /Z {2}Channel reads 'joined' but no confirmed heartbeat in 81s/);

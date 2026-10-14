@@ -125,7 +125,7 @@ async function runTests() {
         // A log as an older or hand-edited version might have left it: raw secrets in kept lines. One file per UTC weekday:
         // Thursday 1 Oct, then Monday 5 Oct, with modification times in that order
         fs.writeFileSync(path.join(deviceDir, 'remote-thu.log'), [
-            '2026-10-01T09:12:00Z  Starting MCP Device...',
+            `2026-10-01T09:12:00Z  Starting MCP Device on ${os.hostname()}...`,
             `2026-10-01T09:12:05Z  Channel error: refresh failed for ${EMAIL} token ${session.access_token} — socket=closed(3) ch=errored attempt=1`,
             `2026-10-01T09:12:06Z  Persisted session invalid: ENOENT ${path.join(home, 'secret-project', 'plan.txt')}`,
             `2026-10-01T09:12:07Z  Channel error: device ${standIn.deviceId} not joined — socket=open(1) ch=errored attempt=2`,
@@ -181,8 +181,8 @@ async function runTests() {
             assert.strictEqual(upload.headers['content-type'], 'application/zip');
             assert.strictEqual(upload.headers['x-dc-user-id'], standIn.userId, 'the user id is the saved token\'s sub');
             assert.strictEqual(upload.headers['x-dc-device-id'], standIn.deviceId);
-            assert.match(run.output, new RegExp(`\\nSent to Desktop Commander support\\. Report id: ${standIn.reportId}\\n`), run.output);
-            assert.match(run.output, /\nGive this id to support\. We keep it for 7 days, then delete it\.\n/);
+            assert.match(run.output, new RegExp(`\\n\\[\\d{2}:\\d{2}:\\d{2}\\] Sent to Desktop Commander support\\. Report id: ${standIn.reportId}\\n`), run.output);
+            assert.match(run.output, /\n\[\d{2}:\d{2}:\d{2}\] Give this id to support\. We keep it for 7 days, then delete it\.\n/);
             assert(!run.output.includes('Reply to your support conversation'), 'sent: no "attach it yourself" line');
         });
 
@@ -337,11 +337,18 @@ async function runTests() {
                 'the home folder': home,
                 'the home folder (forward slashes)': home.replace(/\\/g, '/'),
                 'the home folder (JSON-escaped)': JSON.stringify(home).slice(1, -1),
-                'the host name': os.hostname(),
             };
             for (const [what, secret] of Object.entries(planted)) {
                 assert(!everything.toLowerCase().includes(secret.toLowerCase()), `${what} is in the zip`);
             }
+        });
+
+        await test('the host name is masked, without mistaking macOS for a host named Mac', () => {
+            const host = os.hostname();
+            if (host.length < 3) return skip('the host name is under 3 characters, which redact() leaves alone');
+            const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            assert.doesNotMatch(everything, new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, 'i'));
+            assert.match(entries['device-log/remote-thu.log'] ?? '', /Starting MCP Device on <host>\.\.\./);
         });
 
         // redact() leaves a name under 3 characters alone (redact.ts), so such a name can't be checked
@@ -385,7 +392,7 @@ async function runTests() {
             const result = await runReport(env, ['--no-upload']);
             assert.strictEqual(result.code, 0, result.output);
             assert.strictEqual(standIn.uploads.length, before, 'no upload');
-            assert.match(result.output, /\nReply to your support conversation with this file attached\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Reply to your support conversation with this file attached\.\n/, result.output);
             assert(!/Sent to|Not sent/.test(result.output), result.output);
         });
 
@@ -407,7 +414,7 @@ async function runTests() {
             assert.strictEqual(result.code, 0, result.output);
             const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
             assert(saved && fs.existsSync(saved), 'the zip is kept');
-            assert.match(result.output, /\nNot sent \(the server answered 500\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server answered 500\)\. Attach the zip to your support conversation instead\.\n/, result.output);
             assert(!result.output.includes('Report id'), result.output);
         });
 
@@ -415,7 +422,7 @@ async function runTests() {
             standIn.failUploads(1, 429, 'too many reports, try again in a minute');
             const result = await runReport(env);
             assert.strictEqual(result.code, 0, result.output);
-            assert.match(result.output, /\nNot sent \(the server answered 429: too many reports, try again in a minute\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server answered 429: too many reports, try again in a minute\)\. Attach the zip to your support conversation instead\.\n/, result.output);
         });
 
         await test('an upload that never answers is aborted by its timeout', async () => {
@@ -478,7 +485,7 @@ async function runTests() {
             assert.strictEqual(standIn.uploads.length, before, 'nothing posted');
             const saved = result.output.match(/Saved: (.+\.zip) \(/)?.[1];
             assert(saved && fs.existsSync(saved), 'the zip is kept');
-            assert.match(result.output, /\nNot sent \(the server named no upload address\)\. Attach the zip to your support conversation instead\.\n/, result.output);
+            assert.match(result.output, /\n\[\d{2}:\d{2}:\d{2}\] Not sent \(the server named no upload address\)\. Attach the zip to your support conversation instead\.\n/, result.output);
             assert(!result.output.includes('Report id'), result.output);
         });
 
@@ -546,21 +553,26 @@ async function runTests() {
         });
 
         await test('the home folder is shown as ~ in a path under it', async () => {
-            // node linked into the home stands for ~/.nvm/…/node
-            const nvmBin = path.join(home, '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin');
-            fs.mkdirSync(nvmBin, { recursive: true });
-            const nodeLink = path.join(nvmBin, path.basename(process.execPath));
+            const { collectReport, formatReport } = await import('../dist/remote-device/diagnostics/report.js');
+            const execPath = process.execPath;
+            const serverUrl = process.env.MCP_SERVER_URL;
+            const nodePath = path.join(home, '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin', path.basename(execPath));
+            // Homebrew Node needs shared libraries beside it; only its reported path matters here.
+            process.execPath = nodePath;
+            process.env.MCP_SERVER_URL = standIn.url;
             try {
-                fs.linkSync(process.execPath, nodeLink);
-            } catch {
-                fs.copyFileSync(process.execPath, nodeLink); // another volume: a copy
+                const { report } = await collectReport();
+                const txt = formatReport(report);
+                const expected = path.join('~', path.relative(home, nodePath));
+                assert.strictEqual(report.versions.nodePath, expected);
+                assert.strictEqual(report.versions.nodeKind, 'nvm');
+                assert(txt.includes(`\nNode          ${expected} (nvm)\n`), txt);
+                assert(!txt.includes(home), 'the home folder itself is not in the report');
+            } finally {
+                process.execPath = execPath;
+                if (serverUrl === undefined) delete process.env.MCP_SERVER_URL;
+                else process.env.MCP_SERVER_URL = serverUrl;
             }
-            const again = await runReport(env, [], { execPath: nodeLink });
-            assert.strictEqual(again.code, 0, again.output);
-            const txt = zipFile(again, 'report.txt');
-            const expected = ['~', '.nvm', 'versions', 'node', `v${process.versions.node}`, 'bin', path.basename(process.execPath)].join(path.sep);
-            assert(txt.includes(`\nNode          ${expected} (nvm)\n`), txt);
-            assert(!txt.includes(home), 'the home folder itself is not in the report');
         });
 
         await test('after all the runs and uploads: still no sign-in or token refresh, and device.json unchanged', () => {

@@ -12,6 +12,7 @@ import { captureRemote } from '../utils/capture.js';
 import { writeFileAtomic } from '../utils/atomic-write.js';
 import { exitProcess } from '../utils/exit-process.js';
 import { observeTransport } from './transport-telemetry.js';
+import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 
 export interface MCPDeviceOptions {
@@ -756,6 +757,7 @@ const isMainModule = process.argv[1] && (
 );
 
 if (isMainModule) {
+    startTerminalTimestamps();
     // Parse command-line arguments
     const args = process.argv.slice(2);
     const options = {
