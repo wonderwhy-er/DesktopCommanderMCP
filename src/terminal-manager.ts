@@ -6,6 +6,7 @@ import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
 import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
+import { repairWindowsProgramData } from './utils/windows-env.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -214,6 +215,9 @@ export class TerminalManager {
     // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
     if (process.platform === 'win32' && spawnOptions.env) {
       spawnOptions.env.PATHEXT = getRepairedPathExt();
+      // MCP stdio transports may filter ProgramData, making native Windows
+      // OpenSSH exit 255 without output. Repair only this spawned child.
+      repairWindowsProgramData(spawnOptions.env);
     }
 
     // On Windows, when we invoke cmd.exe directly and pass the user's command as a
