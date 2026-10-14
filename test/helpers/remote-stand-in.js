@@ -10,10 +10,7 @@ import { WebSocketServer } from 'ws';
  *   as its Supabase; /device/start refuses, so a device that falls back to the
  *   device-code flow fails at once instead of opening a browser. Each such
  *   request is counted: it is the flow a headless host cannot complete.
- *   /device/rollouts answers `rollouts` to a live access token, 401 otherwise,
- *   and keeps each request in `rolloutRequests`: whether it carried the
- *   session's current access token (the one issued last), and how many
- *   refreshes had rotated a token by then.
+ *   /device/rollouts answers `rollouts` to a live access token, 401 otherwise.
  * - GoTrue (/auth/v1): refresh tokens rotate on every refresh and are checked
  *   the way GoTrue checks them (supabase/auth, internal/tokens/service.go,
  *   RefreshTokenGrant):
@@ -29,8 +26,8 @@ import { WebSocketServer } from 'ws';
  *   Access tokens are JWTs that live `accessTtlSec` seconds.
  * - PostgREST (/rest/v1): the device's mcp_devices row and the mcp_remote_calls
  *   rows in `calls` (none unless a test adds them), behind the access token. A
- *   claim moves a pending row to executing and answers it whole; a result
- *   write is kept on the row.
+ *   claim or a result write is kept on the row, and a claim is answered with
+ *   the whole row.
  * - Realtime: the websocket is refused. The device then reports itself
  *   registered but not reachable, which is enough for the session under test.
  *   With `channel`, the websocket opens and every channel message (the join,
@@ -67,7 +64,7 @@ export async function startRemoteStandIn({
   const anonKey = 'stand-in-anon-key';
   /** Set by failUploads(): { count, status, message } */
   let uploadFailure = null;
-  /** session id -> { counter, tokens (by generation), accessToken (the one issued last), revoked, lastRefreshedAt } */
+  /** session id -> { counter, tokens (by generation), revoked, lastRefreshedAt } */
   const sessions = new Map();
   /** refresh token -> { sessionId, generation } */
   const refreshTokens = new Map();
@@ -104,8 +101,6 @@ export async function startRemoteStandIn({
     reportId: 'R7KQ2M4X',
     /** What /device/rollouts answers for the signed-in user: { name: on/off } */
     rollouts: {},
-    /** Every request to /device/rollouts: { currentToken, rotations } */
-    rolloutRequests: [],
     /** The mcp_remote_calls rows, as the server writes them */
     calls: [],
     /** Every upload to /diagnostics: { url, headers, body (a Buffer) } */
@@ -204,13 +199,11 @@ export async function startRemoteStandIn({
 
   function issueAccessToken(sessionId, expiresInSec = standIn.accessTtlSec) {
     const iat = Math.floor(Date.now() / 1000);
-    const token = [
+    return [
       base64url({ alg: 'HS256', typ: 'JWT' }),
       base64url({ sub: USER.id, email: USER.email, aud: 'authenticated', role: 'authenticated', session_id: sessionId, iat, exp: iat + expiresInSec }),
       Buffer.from('stand-in-signature').toString('base64url'),
     ].join('.');
-    sessions.get(sessionId).accessToken = token;
-    return token;
   }
 
   /** The session of a live access token from an Authorization header, or null */
@@ -301,12 +294,7 @@ export async function startRemoteStandIn({
       return [503, { error_description: 'stand-in: the device-code flow needs a person at a browser' }];
     }
     if (route === 'GET /device/rollouts') {
-      const session = sessionOfBearer(request);
-      standIn.rolloutRequests.push({
-        currentToken: !!session && request.headers.authorization === `Bearer ${session.accessToken}`,
-        rotations: standIn.rotations(),
-      });
-      return session ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
+      return sessionOfBearer(request) ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
     }
     if (route === 'POST /auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       return refresh(JSON.parse(body || '{}').refresh_token);
@@ -338,11 +326,9 @@ export async function startRemoteStandIn({
       }
       if (table === 'mcp_remote_calls' && request.method === 'PATCH') {
         const call = standIn.calls.find((candidate) => url.searchParams.get('id') === `eq.${candidate.id}`);
-        // The claim names status=eq.pending: a row that isn't pending is left alone
-        const matches = call && (url.searchParams.get('status') !== 'eq.pending' || call.status === 'pending');
-        if (matches) Object.assign(call, JSON.parse(body || '{}'));
+        if (call) Object.assign(call, JSON.parse(body || '{}'));
         const representation = /return=representation/.test(request.headers.prefer || '');
-        return representation ? [200, matches ? [{ ...call }] : []] : [204, null];
+        return representation ? [200, call ? [{ ...call }] : []] : [204, null];
       }
     }
     standIn.unexpected.push(route);
