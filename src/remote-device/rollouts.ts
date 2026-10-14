@@ -17,6 +17,8 @@ type Rollouts = Record<string, boolean>;
  *   answer, no answer within 3 s) leaves every rollout off
  * - a call row without rollouts (an older server) keeps what the device has
  * - a 30-minute answer that fails keeps what the device has
+ * - a 30-minute answer that arrives after a call row it was waiting behind is
+ *   dropped: the call row's rollouts are newer
  *
  * With no session token the device sends no request: that counts as a
  * failed answer.
@@ -28,6 +30,8 @@ class RolloutManager {
     private serverUrl = '';
     private getToken: () => Promise<string | null> = async () => null;
     private refreshInterval: NodeJS.Timeout | null = null;
+    /** How many call rows brought rollouts; a 30-minute answer compares it to tell whether one came meanwhile */
+    private callRowUpdates = 0;
 
     /**
      * GET {serverUrl}/device/rollouts with the session's access token, which
@@ -42,7 +46,9 @@ class RolloutManager {
 
     /** A call row's rollouts (metadata.rollouts); a row without them keeps what the device has */
     update(rollouts: unknown): void {
-        if (isRolloutMap(rollouts)) this.replace(rollouts);
+        if (!isRolloutMap(rollouts)) return;
+        this.callRowUpdates++;
+        this.replace(rollouts);
     }
 
     /** Asks again every 30 minutes, after load(); a failed answer keeps what the device has */
@@ -68,8 +74,10 @@ class RolloutManager {
     }
 
     private async refresh(): Promise<void> {
+        const callRowUpdatesBefore = this.callRowUpdates;
         const rollouts = await this.request();
-        if (rollouts) this.replace(rollouts);
+        // A call row that came while this request waited is newer than its answer
+        if (rollouts && this.callRowUpdates === callRowUpdatesBefore) this.replace(rollouts);
     }
 
     /** The server's answer, or undefined when it failed or took longer than 3 s */

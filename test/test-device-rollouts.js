@@ -68,13 +68,16 @@ const RULES = [
   { event: '30 minutes', token: null, answer: rollouts({}), has: ON, name: '30 minutes later: with no session token nothing is asked, and the device keeps what it has' },
 ];
 
-/** Replaces fetch with a server that answers `server.answer`; each request is kept as "url token" */
+/**
+ * Replaces fetch with a server that answers `server.answer` (or, when that is a
+ * promise, what it resolves to, once it does); each request is kept as "url token"
+ */
 function fakeServer(answer) {
   const server = { answer, requests: [] };
   mock.method(globalThis, 'fetch', async (url, { headers }) => {
     server.requests.push(`${url} ${headers.Authorization}`);
     if (server.answer === NO_ANSWER) return new Promise(() => {});
-    const { status: code, body: text } = server.answer;
+    const { status: code, body: text } = await server.answer;
     return { ok: code === 200, status: code, json: async () => JSON.parse(text) };
   });
   return server;
@@ -198,6 +201,22 @@ async function runTests() {
     asked.push(server.requests.length);
     assert.deepStrictEqual(asked, [1, 2, 3, 3],
       `requests so far after 29 minutes, 30, 60, and an hour after the refresh stopped: ${json(asked)}`);
+  });
+
+  await test('a call row that arrives while the 30-minute request waits wins over its answer', async () => {
+    mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+    const server = fakeServer(rollouts(ON));
+    await rolloutManager.load(SERVER, async () => 'token');
+    rolloutManager.startRefresh();
+    let answer;
+    server.answer = new Promise((resolve) => { answer = resolve; });
+    await wait(30 * MINUTE); // the device asks; the answer is not there yet
+    rolloutManager.update({ check: false, beta: true }); // a call row, newer than that request
+    answer(rollouts(ON)); // the 30-minute answer arrives, with the older values
+    await settle();
+    assert.deepStrictEqual({ asked: server.requests.length, has: rolloutManager.getAll() }, { asked: 2, has: { check: false, beta: true } },
+      `after the call row's { check: false, beta: true } and the late 30-minute answer { check: true }, the device has `
+      + `${json(rolloutManager.getAll())} (it asked ${server.requests.length} time(s))`);
   });
 
   await test('a rollout the server did not name is off, unless the caller says otherwise', async () => {
