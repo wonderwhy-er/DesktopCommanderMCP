@@ -3,13 +3,14 @@
 MQTT starts automatically in the background while Broadcast connects. No flag is needed
 for shadow observation. Enrollment or MQTT failure leaves Broadcast working.
 
-| `IS_MQTT_EXECUTION_ENABLED` | Notifications and handling |
+| `IS_MQTT_EXECUTION_ENABLED` rollout | Notifications and handling |
 | --- | --- |
-| Unset / false | Broadcast executes; MQTT command/result notifications are observation only |
-| Exactly `true` | MQTT executes and publishes results; Broadcast handlers do not process commands |
+| Missing / false | Broadcast executes; MQTT command/result notifications are observation only |
+| `true` | MQTT executes and publishes results; Broadcast handlers do not process commands |
 
-Set the same execution flag on backend and device, drain active calls and restart when
-changing modes. `MQTT_TRANSPORT_ENABLED` is retired and ignored. In execution mode,
+Keep the device execution rollout aligned with the backend's `IS_MQTT_EXECUTION_ENABLED`
+environment setting. Drain active calls when changing modes; backend environment changes require
+a restart. `MQTT_TRANSPORT_ENABLED` is retired and ignored on the device. In execution mode,
 MQTT startup must succeed before the device is ready; there is no Broadcast fallback.
 The backend's execution migration suppresses command/result Broadcast for MQTT call rows.
 
@@ -22,9 +23,10 @@ cannot establish exact one-way latency.
 
 After a successful terminal database write, the device publishes `{ call_id }`
 on `dc/mqtt/v1/users/{userId}/devices/{deviceId}/result-{origin_instance}` by default.
-Set `IS_MQTT_RESULT_PAYLOAD_ENABLED=true` on the device to send `{ call_id, data: { status, result?, error_message? } }`.
-Unset, false or any other value sends only `call_id` without serializing the result data.
-Both flags are read once at startup from `mqtt/config.ts`; restart the device after changing them.
+Enable the `IS_MQTT_RESULT_PAYLOAD_ENABLED` rollout to send `{ call_id, data: { status, result?, error_message? } }`.
+Missing or false sends only `call_id` without serializing the result data.
+Both device flags use `rolloutManager.get(name, false)` at each decision. Rollouts load before registration,
+update from call rows and refresh every 30 minutes. Environment variables with these names are ignored on the device.
 The result and error are the same sanitized values saved to the database. If the JSON exceeds AWS IoT's
 128 KiB payload limit, only `{ call_id }` is sent. The backend currently reads only `call_id`, ignores `data`
 and fetches the saved result. Deploy that tolerant backend receiver before enabling result payloads. The origin comes

@@ -1,5 +1,5 @@
 import { connect, type IClientOptions, type MqttClient } from "mqtt";
-import { IS_MQTT_RESULT_PAYLOAD_ENABLED } from "./config.js";
+import { rolloutManager } from "../rollouts.js";
 
 // Ids become literal topic segments; reject separators and MQTT wildcards.
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -287,7 +287,7 @@ export class MqttTransport {
 		const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
 		// Buffer identity keeps concurrent publishes of the same call separate locally.
 		let payload = Buffer.from(JSON.stringify({ call_id: callId }));
-		if (IS_MQTT_RESULT_PAYLOAD_ENABLED) {
+		if (rolloutManager.get("IS_MQTT_RESULT_PAYLOAD_ENABLED", false)) {
 			const payloadWithData = Buffer.from(JSON.stringify({ call_id: callId, data: updateData }));
 			// AWS IoT caps payloads at 128 KiB; larger results remain available in the database.
 			if (payloadWithData.length <= MAX_RESULT_PAYLOAD_BYTES) {

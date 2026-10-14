@@ -11,8 +11,8 @@ import forge from 'node-forge';
 
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
-process.env.IS_MQTT_EXECUTION_ENABLED = 'true';
-process.env.IS_MQTT_RESULT_PAYLOAD_ENABLED = 'true';
+const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
+rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true, IS_MQTT_RESULT_PAYLOAD_ENABLED: true });
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { MCPDevice } = await import('../dist/remote-device/device.js');
 const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');

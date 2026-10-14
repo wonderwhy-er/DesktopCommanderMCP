@@ -5,7 +5,6 @@ import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
 import { MqttTransport, type MqttConfig, type MqttDoorbell, type MqttResultUpdate } from './mqtt/mqtt-transport.js';
-import { IS_MQTT_EXECUTION_ENABLED } from './mqtt/config.js';
 import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -639,7 +638,7 @@ export class RemoteChannel {
                 }
             };
             const mqttStartup = this.startMqtt(assertCurrent);
-            if (IS_MQTT_EXECUTION_ENABLED) {
+            if (rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false)) {
                 await mqttStartup;
             } else {
                 void mqttStartup.catch(() => console.warn('[MQTT] Shadow transport unavailable; Broadcast continues'));
@@ -715,7 +714,7 @@ export class RemoteChannel {
         const written = await write;
         if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
         if (!written && ready) throw new Error('MQTT capability could not be saved');
-        if (ready && IS_MQTT_EXECUTION_ENABLED) {
+        if (ready && rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false)) {
             // Clean MQTT sessions do not replay notifications missed while disconnected.
             this.recoverPendingCalls().catch(() => console.error('[MQTT] Pending call recovery failed'));
         }
@@ -727,7 +726,7 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'mqtt' });
-        if (!IS_MQTT_EXECUTION_ENABLED) {
+        if (!rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false)) {
             return;
         }
         if (!this.mqttReady || payload.user_id !== this.user?.id || Date.parse(payload.expires_at) <= Date.now()) {
@@ -742,7 +741,7 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'broadcast' });
-        if (IS_MQTT_EXECUTION_ENABLED) {
+        if (rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false)) {
             return;
         }
         await this.onDoorbell(payload);
@@ -841,7 +840,7 @@ export class RemoteChannel {
                 // acknowledged. The only open question is the local executor, so ask
                 // that directly - a joined, present device whose executor is dead must
                 // not be advertised either.
-                const mqttAvailable = !IS_MQTT_EXECUTION_ENABLED || this.mqttReady;
+                const mqttAvailable = !rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false) || this.mqttReady;
                 const statusWritten = capabilityWritten
                     ? await this.queueStatusWrite(this.localExecutorProbe() && mqttAvailable ? 'online' : 'offline')
                     : false;
@@ -1634,7 +1633,7 @@ export class RemoteChannel {
     private isReachable(): boolean {
         return this.channel?.state === 'joined'
             && this.presenceTracked
-            && (!IS_MQTT_EXECUTION_ENABLED || this.mqttReady)
+            && (!rolloutManager.get('IS_MQTT_EXECUTION_ENABLED', false) || this.mqttReady)
             && this.localExecutorProbe();
     }
 

@@ -1,23 +1,13 @@
 #!/usr/bin/env node
 // Shadow startup and result failure isolation through production handlers, with no network calls.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { fileURLToPath } from 'node:url';
-
-// Each mode gets fresh startup constants and module state.
-if (!process.argv[2]) {
-    for (const mode of ['shadow', 'execution']) {
-        const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), mode], { stdio: 'inherit' });
-        assert.equal(child.status, 0, `${mode} checks failed`);
-    }
-    process.exit(0);
-}
-const execution = process.argv[2] === 'execution';
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
-process.env.IS_MQTT_EXECUTION_ENABLED = String(execution);
-process.env.IS_MQTT_RESULT_PAYLOAD_ENABLED = String(execution);
+// Old environment flags must not override the user's rollout values.
+process.env.IS_MQTT_EXECUTION_ENABLED = 'true';
+process.env.IS_MQTT_RESULT_PAYLOAD_ENABLED = 'true';
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
+const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { MqttTransport } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { observeTransport } = await import('../dist/remote-device/transport-telemetry.js');
@@ -33,7 +23,8 @@ function fixture() {
     return { channel, broadcasts: () => broadcasts };
 }
 // Start MQTT once in either mode; only execution mode waits for readiness.
-{
+for (const execution of [false, true]) {
+    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: execution });
     const f = fixture();
     let release;
     let enrollments = 0;
@@ -55,67 +46,67 @@ function fixture() {
     assert.equal(enrollments, 1);
     assert.equal(f.broadcasts(), 1);
 }
-if (!execution) {
-    // A transient initial Broadcast join failure must not permanently skip shadow startup.
-    {
-        const f = fixture();
-        let mqtt = 0;
-        f.channel.createChannel = async () => { throw Error('initial Broadcast join failed'); };
-        f.channel.prepareMqttConfig = async () => ({});
-        f.channel.startMqttTransport = async () => { mqtt++; };
-        await assert.rejects(f.channel.registerDevice({}, 'device', 'fixture', () => {}), /Broadcast join failed/);
-        await settle();
-        assert.equal(mqtt, 1);
-    }
-    for (const failAt of ['enrollment', 'broker']) {
-        const f = fixture();
-        f.channel.prepareMqttConfig = async () => { if (failAt === 'enrollment') throw Error('unavailable'); return {}; };
-        f.channel.startMqttTransport = async () => { throw Error('unavailable'); };
-        await f.channel.registerDevice({}, 'device', 'fixture', () => {});
-        await settle();
-        assert.equal(f.broadcasts(), 1);
-    }
-    // A failed MQTT capability write must not withdraw healthy Broadcast on cleanup.
-    {
-        const f = fixture();
-        const writes = [];
-        let failWrite = false;
-        f.channel.client = { from: () => ({ update: value => ({ eq: () => ({ abortSignal: async () => {
-            if (value.capabilities) writes.push(value.capabilities);
-            return { error: failWrite ? { message: 'temporary capability write failure' } : null };
-        } }) }) }) };
-        assert.equal(await f.channel.setTransportCapable(true), true);
-        failWrite = true;
-        await assert.rejects(f.channel.setMqttReady(true), /capability could not be saved/);
-        failWrite = false;
-        await f.channel.setMqttReady(false);
-        assert.equal(writes.at(-1).transport_broadcast_v1, true);
-        assert.equal(writes.at(-1).transport_mqtt_v1, undefined);
-        assert.equal(f.channel.transportCapableWritten, true);
-    }
-    // Failed overlapping writes must not leave a queued marker that suppresses recovery.
-    {
-        const f = fixture();
-        let failWrite = true;
-        let writes = 0;
-        f.channel.syncReachabilityStatus = () => {};
-        f.channel.client = { from: () => ({ update: () => ({ eq: () => ({ abortSignal: async () => {
-            writes++;
-            return { error: failWrite ? { message: 'temporary database outage' } : null };
-        } }) }) }) };
-        const broadcast = f.channel.setTransportCapable(true);
-        const mqtt = f.channel.setMqttReady(true);
-        await assert.rejects(mqtt, /capability could not be saved/);
-        assert.equal(await broadcast, false);
-        await f.channel.setMqttReady(false);
-        assert.equal(writes, 3);
-        failWrite = false;
-        assert.equal(await f.channel.setTransportCapable(true), true);
-        assert.equal(writes, 4);
-        assert.equal(f.channel.transportCapableQueued, null);
-    }
-}
+rolloutManager.update({});
+// A transient initial Broadcast join failure must not permanently skip shadow startup.
 {
+    const f = fixture();
+    let mqtt = 0;
+    f.channel.createChannel = async () => { throw Error('initial Broadcast join failed'); };
+    f.channel.prepareMqttConfig = async () => ({});
+    f.channel.startMqttTransport = async () => { mqtt++; };
+    await assert.rejects(f.channel.registerDevice({}, 'device', 'fixture', () => {}), /Broadcast join failed/);
+    await settle();
+    assert.equal(mqtt, 1);
+}
+for (const failAt of ['enrollment', 'broker']) {
+    const f = fixture();
+    f.channel.prepareMqttConfig = async () => { if (failAt === 'enrollment') throw Error('unavailable'); return {}; };
+    f.channel.startMqttTransport = async () => { throw Error('unavailable'); };
+    await f.channel.registerDevice({}, 'device', 'fixture', () => {});
+    await settle();
+    assert.equal(f.broadcasts(), 1);
+}
+// A failed MQTT capability write must not withdraw healthy Broadcast on cleanup.
+{
+    const f = fixture();
+    const writes = [];
+    let failWrite = false;
+    f.channel.client = { from: () => ({ update: value => ({ eq: () => ({ abortSignal: async () => {
+        if (value.capabilities) writes.push(value.capabilities);
+        return { error: failWrite ? { message: 'temporary capability write failure' } : null };
+    } }) }) }) };
+    assert.equal(await f.channel.setTransportCapable(true), true);
+    failWrite = true;
+    await assert.rejects(f.channel.setMqttReady(true), /capability could not be saved/);
+    failWrite = false;
+    await f.channel.setMqttReady(false);
+    assert.equal(writes.at(-1).transport_broadcast_v1, true);
+    assert.equal(writes.at(-1).transport_mqtt_v1, undefined);
+    assert.equal(f.channel.transportCapableWritten, true);
+}
+// Failed overlapping writes must not leave a queued marker that suppresses recovery.
+{
+    const f = fixture();
+    let failWrite = true;
+    let writes = 0;
+    f.channel.syncReachabilityStatus = () => {};
+    f.channel.client = { from: () => ({ update: () => ({ eq: () => ({ abortSignal: async () => {
+        writes++;
+        return { error: failWrite ? { message: 'temporary database outage' } : null };
+    } }) }) }) };
+    const broadcast = f.channel.setTransportCapable(true);
+    const mqtt = f.channel.setMqttReady(true);
+    await assert.rejects(mqtt, /capability could not be saved/);
+    assert.equal(await broadcast, false);
+    await f.channel.setMqttReady(false);
+    assert.equal(writes, 3);
+    failWrite = false;
+    assert.equal(await f.channel.setTransportCapable(true), true);
+    assert.equal(writes, 4);
+    assert.equal(f.channel.transportCapableQueued, null);
+}
+for (const execution of [undefined, false, true, false]) {
+    rolloutManager.update(execution === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: execution });
     const f = fixture();
     f.channel.mqttReady = true;
     let claims = 0;
@@ -157,11 +148,15 @@ if (!execution) {
         publish(_topic, payload, _options, done) { published = JSON.parse(payload.toString()); done(); },
     });
     transport.ready = true;
-    const updateData = {
-        status: 'completed',
-        result: execution ? {} : { toJSON() { throw new Error('Disabled result data must not be serialized'); } },
-    };
-    await transport.publishResult('call', 'origin', updateData);
-    assert.deepEqual(published, execution ? { call_id: 'call', data: updateData } : { call_id: 'call' });
+    for (const enabled of [undefined, false, true, false]) {
+        rolloutManager.update(enabled === undefined ? {} : { IS_MQTT_RESULT_PAYLOAD_ENABLED: enabled });
+        const updateData = {
+            status: 'completed',
+            result: enabled ? {} : { toJSON() { throw new Error('Disabled result data must not be serialized'); } },
+        };
+        await transport.publishResult('call', 'origin', updateData);
+        assert.deepEqual(published, enabled ? { call_id: 'call', data: updateData } : { call_id: 'call' });
+    }
 }
-console.log(`PASS MQTT ${execution ? 'execution' : 'shadow'}: startup, failure isolation, exclusive handlers, UTC observations, bounded result retries and optional payloads`);
+rolloutManager.update({});
+console.log('PASS MQTT rollouts: live execution/payload switches, default-off behavior, startup, failure isolation, UTC observations and bounded retries');
