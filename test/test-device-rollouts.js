@@ -16,6 +16,10 @@
  * within 3 s.
  *
  * A local HTTP server stands in for the Remote MCP server's /device/rollouts.
+ * The last case starts a real device process (dist/remote-device/device.js)
+ * against the remote stand-in (helpers/remote-stand-in.js), as
+ * integration/remote-device-restart.js does: it must ask after sign-in, before
+ * it registers, and log what it got.
  *
  * Runs as part of `npm test`, or standalone:
  *   node test/run-all-tests.js test/test-device-rollouts.js
@@ -23,11 +27,16 @@
 import assert from 'node:assert';
 import http from 'node:http';
 import { rolloutManager } from '../dist/remote-device/rollouts.js';
+import { STARTED, startDevice, stopHard, tail, waitFor, writeDeviceConfig } from './helpers/remote-device.js';
+import { startRemoteStandIn } from './helpers/remote-stand-in.js';
+import { createTestEnv } from './helpers/test-env.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 const TOKEN = 'access-token-of-the-signed-in-user';
 /** The device waits 3 s for an answer; a load still running after this long hangs the start */
 const LOAD_DEADLINE_MS = 30_000;
+/** A device start (local MCP child, session, registration) takes seconds; this is far above */
+const START_DEADLINE_MS = 60_000;
 
 const json = (body) => JSON.stringify(body);
 
@@ -150,6 +159,52 @@ async function runTests() {
 
   await test('no answer within 3 s leaves every rollout off', (start) =>
     expectAllOff(start, () => null, 'a server that never answers'));
+
+  await test('a starting device asks for its rollouts after sign-in and before it registers, and logs them', async () => {
+    const standIn = await startRemoteStandIn();
+    const testEnv = createTestEnv();
+    let device;
+    try {
+      standIn.rollouts = { check: true };
+      // Saved by a run that ended longer ago than its access token lives, so
+      // sign-in refreshes it. The stand-in refuses the saved token: only the
+      // session's current one gets the rollouts.
+      writeDeviceConfig(testEnv.home, { deviceId: standIn.deviceId, session: standIn.login({ accessExpiresInSec: -60 }) });
+      device = startDevice({ ...testEnv.env, MCP_SERVER_URL: standIn.url });
+      await waitFor(device, () => STARTED.test(device.output), START_DEADLINE_MS);
+
+      const order = standIn.requests.map((r) => `${r.method} ${new URL(r.url, standIn.url).pathname}`);
+      const signIn = order.findIndex((r) => r.includes(' /auth/v1/'));
+      const asked = order.indexOf('GET /device/rollouts');
+      const registered = order.indexOf('PATCH /rest/v1/mcp_devices');
+      const logged = device.output.match(/^Rollouts: .*$/m)?.[0];
+      const problems = [];
+      if (!STARTED.test(device.output)) {
+        problems.push(device.exited ? `it exited (code ${device.code})` : 'it did not get through its start');
+      }
+      if (asked === -1) {
+        problems.push('it never asked GET /device/rollouts');
+      } else {
+        if (order.filter((r) => r === 'GET /device/rollouts').length > 1) problems.push('it asked more than once');
+        if (!(signIn !== -1 && signIn < asked)) problems.push('it asked before signing in');
+        if (!(registered === -1 || asked < registered)) problems.push('it asked after registering');
+      }
+      if (logged !== 'Rollouts: { check: true }') {
+        problems.push(`it logged ${logged ? `"${logged}"` : 'no "Rollouts:" line'} where the server had check on for its user`);
+      }
+      assert.ok(problems.length === 0,
+        `a starting device did not get its rollouts from the server, so a rollout could never reach it: ${problems.join('; ')}.\n`
+        + `    Requests: ${order.join(', ')}\n    Its output:\n${tail(device.output)}`);
+    } finally {
+      if (device) await stopHard(device);
+      await standIn.close();
+      try {
+        testEnv.cleanup();
+      } catch (error) {
+        console.log(`   (could not remove ${testEnv.home}: ${error.message})`);
+      }
+    }
+  });
 
   console.log(`\n${failures.length ? '🔴' : '✅'} device rollouts: ${failures.length} failing test(s).`);
   return failures.length === 0;

@@ -12,6 +12,7 @@ import { captureRemote } from '../utils/capture.js';
 import { writeFileAtomic } from '../utils/atomic-write.js';
 import { exitProcess } from '../utils/exit-process.js';
 import { observeTransport } from './transport-telemetry.js';
+import { rolloutManager } from './rollouts.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -262,6 +263,13 @@ export class MCPDevice {
 
             // Force save the current session immediately to ensure it's persisted
             await this.savePersistedConfig();
+
+            // Which rollouts are on for this user, asked once per run with the
+            // session's current token: setSession() may have refreshed the one
+            // device.json held.
+            const { data: { session: signedIn } } = await this.remoteChannel.getSession();
+            await rolloutManager.load(this.baseServerUrl, signedIn?.access_token ?? '');
+            console.debug('Rollouts:', rolloutManager.getAll());
 
             const deviceName = os.hostname();
 

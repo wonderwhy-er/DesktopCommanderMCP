@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
  *   as its Supabase; /device/start refuses, so a device that falls back to the
  *   device-code flow fails at once instead of opening a browser. Each such
  *   request is counted: it is the flow a headless host cannot complete.
+ *   /device/rollouts answers `rollouts` to a live access token, 401 otherwise.
  * - GoTrue (/auth/v1): refresh tokens rotate on every refresh and are checked
  *   the way GoTrue checks them (supabase/auth, internal/tokens/service.go,
  *   RefreshTokenGrant):
@@ -93,6 +94,8 @@ export async function startRemoteStandIn({
     diagnosticsUrl: undefined,
     /** The report id an upload is answered with */
     reportId: 'R7KQ2M4X',
+    /** What /device/rollouts answers for the signed-in user: { name: on/off } */
+    rollouts: {},
     /** Every upload to /diagnostics: { url, headers, body (a Buffer) } */
     uploads: [],
     /** Phoenix heartbeats answered on the realtime websocket */
@@ -282,6 +285,9 @@ export async function startRemoteStandIn({
     if (route === 'POST /device/start' || route === 'POST /device/poll') {
       standIn.deviceFlowRequests++;
       return [503, { error_description: 'stand-in: the device-code flow needs a person at a browser' }];
+    }
+    if (route === 'GET /device/rollouts') {
+      return sessionOfBearer(request) ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
     }
     if (route === 'POST /auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       return refresh(JSON.parse(body || '{}').refresh_token);
