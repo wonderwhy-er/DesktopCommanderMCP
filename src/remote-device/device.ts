@@ -13,6 +13,7 @@ import { writeFileAtomic } from '../utils/atomic-write.js';
 import { exitProcess } from '../utils/exit-process.js';
 import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
+import { VERSION } from '../version.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -303,6 +304,7 @@ export class MCPDevice {
             console.log(`   - User:         ${this.remoteChannel.user!.email}`);
             console.log(`   - Device ID:    ${this.deviceId}`);
             console.log(`   - Device Name:  ${deviceName}`);
+            console.log(`   - Version:      ${VERSION}`);
             if (!reachable) {
                 console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
             } else {
