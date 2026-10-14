@@ -121,7 +121,11 @@ for (const execution of [false, true]) {
     let failWrite = false;
     f.channel.client = { from: () => ({ update: () => ({ eq: async () => { writes++; return { error: failWrite ? { message: 'write failure' } : null }; } }) }) };
     f.channel.sleep = async () => {};
-    f.channel.mqttReceiver = { publishResult: async () => { attempts++; throw Error('publish failure'); } };
+    f.channel.mqttReceiver = { publishResult: async (...args) => {
+        assert.deepEqual(args, ['result', 'origin']);
+        attempts++;
+        throw Error('publish failure');
+    } };
     await f.channel.updateCallResult('result', 'completed', {}, null, 'origin');
     await settle();
     assert.equal(writes, 1);

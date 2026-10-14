@@ -5,7 +5,6 @@ import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { VERSION } from '../version.js';
 import { MqttDoorbellReceiver, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
 import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
-import { randomUUID } from 'node:crypto';
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -1588,11 +1587,10 @@ export class RemoteChannel {
         const generation = this.authGeneration;
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (generation !== this.authGeneration || receiver !== this.mqttReceiver || this.shuttingDown || this.sessionLost) return;
-            const notificationId = randomUUID();
             const observation = { callId, deviceId: this.deviceId, transport: 'mqtt' as const };
             observeTransport({ ...observation, stage: 'mqtt_result_send_attempt' });
             try {
-                await receiver.publishResult(callId, originInstance, notificationId, attempt);
+                await receiver.publishResult(callId, originInstance);
                 observeTransport({ ...observation, stage: 'mqtt_result_publish' });
                 return;
             } catch {

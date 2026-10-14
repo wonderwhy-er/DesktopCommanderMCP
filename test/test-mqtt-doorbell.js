@@ -176,8 +176,15 @@ try {
     publisher = await connectAsync(url, tlsOptions);
     const topic = mqttDoorbellTopic('owner', 'device');
     const send = (payload, options = {}) => publisher.publishAsync(topic, typeof payload === 'string' ? payload : JSON.stringify(payload), { qos: 1, ...options });
+    const resultTopic = 'dc/mqtt/v1/users/owner/devices/device/result-backend';
+    const resultPackets = [];
+    publisher.on('message', (topic, bytes, packet) => {
+        if (topic === resultTopic) resultPackets.push({ body: JSON.parse(bytes.toString()), qos: packet.qos, retain: packet.retain });
+    });
+    await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
     f.add('mqtt-execution');
+    f.rows.get('mqtt-execution').metadata.origin_instance = 'backend';
     const before = f.operations.length;
     await f.channel.onBroadcastDoorbell(bell('mqtt-execution'));
     assert.equal(f.operations.length, before, 'Broadcast observes but never claims in MQTT mode');
@@ -189,6 +196,8 @@ try {
     assert.equal(f.executed.length, executionsBefore + 1, 'duplicate MQTT packets execute once');
     const claims = f.operations.filter(op => op.update?.status === 'executing' && op.filters.id === 'mqtt-execution');
     assert.ok(claims.length >= 1);
+    await until(() => resultPackets.length === 1);
+    assert.deepEqual(resultPackets[0], { body: { call_id: 'mqtt-execution' }, qos: 1, retain: false });
 
     f.add('expired');
     const expired = bell('expired');
@@ -211,8 +220,25 @@ try {
     receiver.client.emit('message', topic, Buffer.from(JSON.stringify(valid)), { retain: true });
     assert.equal(malformed, invalid.length + 1);
 
+    // Two identical result payloads must each discard their own packet on disconnect.
+    const brokerClient = broker.clients[receiver.client.options.clientId];
+    const originalWrite = brokerClient.conn.write;
+    brokerClient.conn.write = () => true;
     receiver.client.options.reconnectPeriod = 20;
-    receiver.client.stream.destroy();
+    try {
+        await Promise.all([
+            assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
+            assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
+            (async () => {
+                await until(() => resultPackets.filter(packet => packet.body.call_id === 'same-call').length === 2);
+                receiver.client.stream.destroy();
+            })(),
+        ]);
+        assert.deepEqual(Object.keys(receiver.client.outgoing), [], 'no unacknowledged result is replayed after reconnect');
+        assert.equal(receiver.resultPublishes, 0);
+    } finally {
+        brokerClient.conn.write = originalWrite;
+    }
     await until(() => !f.channel.mqttReady);
     assert.equal(f.channel.isReachable(), false, 'MQTT execution is not online while its subscription is down');
     f.add('missed-while-disconnected');
@@ -255,7 +281,7 @@ try {
     await stopped;
 
     assert.throws(() => mqttDoorbellTopic('owner/foreign', 'device'), /identity/);
-    console.log('PASS MQTT doorbells: automatic shadow and execution flag, mutual TLS, receipt telemetry, atomic execution, duplicates, validation, reconnect and shutdown');
+    console.log('PASS MQTT doorbells: execution, call-only results, concurrent result cleanup, mutual TLS, telemetry, duplicates, validation, reconnect and shutdown');
 } finally {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
     for (const channel of channels) await channel.stopMqttTransport();
