@@ -57,6 +57,7 @@ const mqtt = observeTransport({ stage: 'execution_start', callId: 'call-1', devi
     toolName: 'read_file', transport: 'mqtt' });
 assert.equal(mqtt.transport, 'mqtt');
 assert.equal('notification_id' in mqtt, false);
+assert.equal('attempt_number' in mqtt, false);
 assert.equal('duration_ms' in end, false);
 assert.equal('outcome' in end, false);
 assert.equal('tool_name' in observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1',

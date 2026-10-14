@@ -62,6 +62,7 @@ export function mqttDoorbellTopic(userId: string, deviceId: string): string {
 /** A per-device subscription; payload validation precedes all database access. */
 export class MqttDoorbellReceiver {
   private client: MqttClient | null = null;
+  private resultPublishes = 0;
   private stopped = false;
   private ready = false;
   private cancelStart: (() => void) | null = null;
@@ -93,6 +94,7 @@ export class MqttDoorbellReceiver {
       clientId: `dc-device-${this.deviceId}`,
     });
     this.client = client;
+    client.setMaxListeners(140); // its a listener warning threshold on one MQTT client inside one device process. It does not limit connected devices.
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       // Startup has several competing exits; settle once and always cancel its timer.
@@ -175,6 +177,49 @@ export class MqttDoorbellReceiver {
         void this.onDoorbell(payload).catch(() => {});
       });
     });
+  }
+
+  /** Publish one bounded result attempt without queuing it for a later connection. */
+  async publishResult(callId: string, originInstance: string, notificationId: string, attempt: number): Promise<void> {
+    if (![callId, originInstance, notificationId].every(value => typeof value === 'string' && ID.test(value)) ||
+        !Number.isSafeInteger(attempt) || attempt < 1 || attempt > 100) throw new Error('Invalid MQTT result identity');
+    const client = this.client;
+    if (this.stopped || !this.ready || !client?.connected || this.resultPublishes >= 64) throw new Error('MQTT result transport unavailable');
+    const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
+    const payload = JSON.stringify({ call_id: callId, notification_id: notificationId, attempt_number: attempt });
+    this.resultPublishes++;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let messageId: number | undefined;
+        const finish = (error?: Error) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          client.off('close', onClose);
+          client.off('packetsend', onPacket);
+          if (error) {
+            // Only the application retries, with a fresh observation ID for each attempt.
+            if (messageId !== undefined) client.removeOutgoingMessage(messageId);
+            reject(error);
+          } else resolve();
+        };
+        const onClose = () => finish(new Error('MQTT disconnected before result acknowledgement'));
+        const onPacket = (packet: { cmd: string; topic?: string; payload?: string | Buffer; messageId?: number }) => {
+          if (packet.cmd === 'publish' && packet.topic === topic && packet.payload?.toString() === payload) messageId = packet.messageId;
+        };
+        const timer = setTimeout(() => finish(new Error('MQTT result acknowledgement timed out')), 5_000);
+        client.once('close', onClose);
+        client.on('packetsend', onPacket);
+        try {
+          client.publish(topic, payload, { qos: 1, retain: false }, error => finish(error ? new Error('MQTT result publish failed') : undefined));
+        } catch {
+          finish(new Error('MQTT result publish failed'));
+        }
+      });
+    } finally {
+      this.resultPublishes--;
+    }
   }
 
   /** Stop reconnects, reject pending startup and withdraw readiness on sign-out/shutdown. */

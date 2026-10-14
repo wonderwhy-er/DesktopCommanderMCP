@@ -150,11 +150,11 @@ function fixture() {
 
 try {
     for (const flag of [undefined, 'false', 'TRUE']) {
-        if (flag === undefined) delete process.env.MQTT_TRANSPORT_ENABLED;
-        else process.env.MQTT_TRANSPORT_ENABLED = flag;
+        if (flag === undefined) delete process.env.MQTT_EXECUTION_ENABLED;
+        else process.env.MQTT_EXECUTION_ENABLED = flag;
         const legacy = fixture();
         const id = `disabled-${flag ?? 'unset'}`;
-        assert.equal(await legacy.channel.prepareMqttConfig(() => {}), null);
+
         assert.equal(legacy.channel.isReachable(), true);
         legacy.add(id);
         await legacy.channel.onMqttDoorbell(bell(id));
@@ -164,8 +164,9 @@ try {
         assert.equal(legacy.executed.length, 1);
     }
 
-    process.env.MQTT_TRANSPORT_ENABLED = 'true';
+    process.env.MQTT_EXECUTION_ENABLED = 'true';
     const f = fixture();
+    await f.channel.setTransportCapable(true);
     assert.equal(f.channel.isReachable(), false, 'MQTT must subscribe before advertising online');
     await f.channel.startMqttTransport(config);
     assert.equal(f.channel.isReachable(), true);
@@ -254,7 +255,7 @@ try {
     await stopped;
 
     assert.throws(() => mqttDoorbellTopic('owner/foreign', 'device'), /identity/);
-    console.log('PASS MQTT doorbells: single transport flag, mutual TLS, receipt telemetry, atomic execution, duplicates, validation, reconnect and shutdown');
+    console.log('PASS MQTT doorbells: automatic shadow and execution flag, mutual TLS, receipt telemetry, atomic execution, duplicates, validation, reconnect and shutdown');
 } finally {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
     for (const channel of channels) await channel.stopMqttTransport();

@@ -13,8 +13,8 @@ const { enrollMqttDevice } = await import('../dist/remote-device/mqtt-enrollment
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
-const originalFlag = process.env.MQTT_TRANSPORT_ENABLED;
-process.env.MQTT_TRANSPORT_ENABLED = 'true';
+const originalFlag = process.env.MQTT_EXECUTION_ENABLED;
+process.env.MQTT_EXECUTION_ENABLED = 'true';
 const workspace = await mkdtemp(path.join(tmpdir(), 'mqtt-enrollment-device-'));
 const caPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const caKey = forge.pki.privateKeyFromPem(caPair.privateKey.export({ format: 'pem', type: 'pkcs1' }));
@@ -188,34 +188,6 @@ try {
     assert.equal(requests, 1);
   });
 
-  await check('disabled MQTT skips enrollment; enabled MQTT enrollment failure stops startup', async () => {
-    for (const flag of [undefined, 'false', 'TRUE', 'true']) {
-      if (flag === undefined) delete process.env.MQTT_TRANSPORT_ENABLED;
-      else process.env.MQTT_TRANSPORT_ENABLED = flag;
-      const profile = options();
-      const channel = new RemoteChannel(profile);
-      let broadcastStarts = 0;
-      let requests = 0;
-      Object.assign(channel, {
-        _user: { id: USER_ID }, client: {},
-        findDevice: async () => ({ id: DEVICE_ID }), updateDevice: async () => ({ error: null }),
-        getSession: async () => ({ data: { session: { access_token: profile.accessToken } }, error: null }),
-        createChannel: async () => { broadcastStarts++; },
-      });
-      await withFetch(async () => {
-        requests++;
-        throw new Error('synthetic outage');
-      }, async () => {
-        const startup = channel.registerDevice({}, DEVICE_ID, 'test', () => {});
-        if (flag === 'true') await assert.rejects(startup, /request failed/);
-        else await startup;
-      });
-      assert.equal(requests, flag === 'true' ? 1 : 0);
-      assert.equal(broadcastStarts, flag === 'true' ? 0 : 1);
-      assert.equal(channel.mqttReceiver, null);
-    }
-  });
-
   await check('MQTT connection failure stops startup and cleans up the receiver', async () => {
     const channel = new RemoteChannel(options());
     let stopped = 0;
@@ -270,6 +242,6 @@ try {
   console.log(`MQTT enrollment device: ${passed} checks passed`);
 } finally {
   await rm(workspace, { recursive: true, force: true });
-  if (originalFlag === undefined) delete process.env.MQTT_TRANSPORT_ENABLED;
-  else process.env.MQTT_TRANSPORT_ENABLED = originalFlag;
+  if (originalFlag === undefined) delete process.env.MQTT_EXECUTION_ENABLED;
+  else process.env.MQTT_EXECUTION_ENABLED = originalFlag;
 }

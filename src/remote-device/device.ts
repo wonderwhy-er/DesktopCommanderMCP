@@ -661,7 +661,7 @@ export class MCPDevice {
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
             observeTransport({ stage: 'tool_call_failed', ...observation });
-            await this.reportToolCallFailure(call_id, tool_name, error);
+            await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance);
             return;
         }
 
@@ -671,24 +671,24 @@ export class MCPDevice {
         // failed, as before, but its telemetry stays "tool_call_completed"
         try {
             try {
-                await this.remoteChannel.updateCallResult(call_id, 'completed', result);
+                await this.remoteChannel.updateCallResult(call_id, 'completed', result, null, metadata.origin_instance);
             } finally {
                 observeTransport({ stage: 'tool_call_completed', ...observation});
             }
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            await this.reportToolCallFailure(call_id, tool_name, error);
+            await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance);
         }
     }
 
     /** Reports a tool call that failed, or whose result couldn't be saved, and writes its "failed" row. */
-    private async reportToolCallFailure(call_id: string, tool_name: string, error: any) {
+    private async reportToolCallFailure(call_id: string, tool_name: string, error: any, originInstance?: string) {
         // The failure path must not fail: handleNewToolCall's promise is discarded
         // at every call site, so a throw here becomes an unhandled rejection
         // and takes the device process down.
         try {
             await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message, originInstance);
         } catch (reportError: any) {
             console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
         }
