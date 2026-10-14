@@ -480,7 +480,7 @@ async function withQuietLogs(fn) {
 async function withSimulatedClock(fn) {
   const realPerfNow = performance.now;
   const realRandom = Math.random;
-  let t = realPerfNow.call(performance);
+  let t = Math.round(realPerfNow.call(performance)); // whole: decimals would leave rounding errors in the gaps
   performance.now = () => t;
   Math.random = () => 1;
   try {
