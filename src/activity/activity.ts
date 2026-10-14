@@ -45,8 +45,9 @@ export class ActivityView {
         }
         this.trim(); this.render();
     }
-    started(id: string, tool: string) {
-        const text = this.pending && Date.now() - this.pending.at < 120000 ? this.pending.text : '';
+    started(id: string, tool: string, authoredText?: string) {
+        const explicit = safeActivityText(authoredText);
+        const text = explicit || (this.pending && Date.now() - this.pending.at < 120000 ? this.pending.text : '');
         this.pending = null;
         this.rows.push({ id, tool, text: text || fallbackDescription(tool),
             state: 'running', at: Date.now(), ai: !!text });

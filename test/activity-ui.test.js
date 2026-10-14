@@ -46,3 +46,18 @@ test('TTY dashboard displays bounded activity rather than raw tool JSON', () => 
     assert.ok(!screen.includes('tool_args'));
     assert.ok(!screen.includes('JSON.stringify'));
 });
+
+test('parallel call descriptions remain attached to their own call IDs', () => {
+    const view = new ActivityView({ isTTY: false, write: () => {} });
+    view.started('a', 'read_file', 'İlk kaynak dosyası okunuyor');
+    view.started('b', 'start_process', 'İkinci işlem başlatılıyor');
+    view.finished('b');
+    view.finished('a');
+    const snapshot = view.getSnapshot();
+    assert.equal(snapshot[0].text, 'İlk kaynak dosyası okunuyor');
+    assert.equal(snapshot[1].text, 'İkinci işlem başlatılıyor');
+    assert.equal(snapshot[0].ai, true);
+    assert.equal(snapshot[1].ai, true);
+    assert.equal(snapshot[0].state, 'done');
+    assert.equal(snapshot[1].state, 'done');
+});

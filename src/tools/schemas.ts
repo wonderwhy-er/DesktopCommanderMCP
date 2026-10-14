@@ -283,3 +283,14 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
+
+// Keep the compatibility validator synchronized with the shared presentation
+// field added by tools/list. Original handler schemas remain unchanged: handlers
+// ignore this field instead of interpreting it as an instruction to execute.
+for (const [name, schema] of Object.entries(toolArgSchemas)) {
+  if (name !== 'report_activity' && name !== 'track_ui_event' && schema instanceof z.ZodObject) {
+    toolArgSchemas[name] = schema.extend({
+      activity_description: z.string().min(5).max(180).optional(),
+    });
+  }
+}
