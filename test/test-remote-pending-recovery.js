@@ -118,7 +118,7 @@ function makeRemoteChannel(rows) {
   rc.deviceId = DEVICE_ID;
   rc.deviceName = 'test-device';
   rc.channel = { state: 'joined' };
-  rc.presenceTracked = true;
+  rc.channelReady = true;
   rc.localExecutorProbe = () => true;
   rc.onToolCall = (payload) => delivered.push(payload);
 
@@ -213,15 +213,15 @@ async function runTests() {
     rc.client = {};
     rc.deviceId = DEVICE_ID;
     rc.deviceName = 'test-device';
-    rc.channel = { state: 'joined', track: async () => 'ok' };
+    rc.channel = { state: 'joined' };
     rc.localExecutorProbe = () => true;
     rc.setTransportCapable = async () => true;
     rc.queueStatusWrite = async () => true;
     rc.recoverPendingCalls = async () => { recoveryCalls++; };
 
-    await rc.trackPresenceInner(2, 1);
+    await rc.markChannelReady();
 
-    assert.equal(recoveryCalls, 1, 'successful presence/reconnect must trigger one pending-call recovery scan');
+    assert.equal(recoveryCalls, 1, 'a join that becomes ready must trigger one pending-call recovery scan');
   }
 
   console.log('✅ Remote pending-call recovery tests passed');
