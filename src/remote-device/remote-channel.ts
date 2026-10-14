@@ -3,7 +3,8 @@ import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { VERSION } from '../version.js';
-import { MqttDoorbellReceiver, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
+import { MqttTransport, type MqttConfig, type MqttDoorbell, type MqttResultUpdate } from './mqtt/mqtt-transport.js';
+import { IS_MQTT_EXECUTION_ENABLED } from './mqtt/config.js';
 import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -232,7 +233,7 @@ export class RemoteChannel {
     /** Auth session gone for good: stops rejoins and caps the notice at one line. */
     private sessionLost = false;
     private handlingSignedOut = false;
-    private mqttReceiver: MqttDoorbellReceiver | null = null;
+    private mqttReceiver: MqttTransport | null = null;
     private mqttReady = false;
     private authGeneration = 0;
 
@@ -628,7 +629,7 @@ export class RemoteChannel {
                 }
             };
             const mqttStartup = this.startMqtt(assertCurrent);
-            if (process.env.MQTT_EXECUTION_ENABLED === 'true') {
+            if (IS_MQTT_EXECUTION_ENABLED) {
                 await mqttStartup;
             } else {
                 void mqttStartup.catch(() => console.warn('[MQTT] Shadow transport unavailable; Broadcast continues'));
@@ -674,7 +675,7 @@ export class RemoteChannel {
 
     private async startMqttTransport(config: MqttConfig): Promise<void> {
         if (!this.user || !this.deviceId || this.mqttReceiver) throw new Error('MQTT requires one authenticated registered device');
-        const receiver = new MqttDoorbellReceiver(config, this.user.id, this.deviceId,
+        const receiver = new MqttTransport(config, this.user.id, this.deviceId,
             (payload) => this.onMqttDoorbell(payload),
             async (ready) => {
                 if (this.mqttReceiver !== receiver) return;
@@ -704,26 +705,36 @@ export class RemoteChannel {
         const written = await write;
         if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
         if (!written && ready) throw new Error('MQTT capability could not be saved');
-        if (ready && process.env.MQTT_EXECUTION_ENABLED === 'true') {
+        if (ready && IS_MQTT_EXECUTION_ENABLED) {
             // Clean MQTT sessions do not replay notifications missed while disconnected.
             this.recoverPendingCalls().catch(() => console.error('[MQTT] Pending call recovery failed'));
         }
     }
 
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
-        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+            return;
+        }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'mqtt' });
-        if (process.env.MQTT_EXECUTION_ENABLED !== 'true') return;
-        if (!this.mqttReady || payload.user_id !== this.user?.id || Date.parse(payload.expires_at) <= Date.now()) return;
+        if (!IS_MQTT_EXECUTION_ENABLED) {
+            return;
+        }
+        if (!this.mqttReady || payload.user_id !== this.user?.id || Date.parse(payload.expires_at) <= Date.now()) {
+            return;
+        }
         await this.onDoorbell(payload);
     }
 
     private async onBroadcastDoorbell(payload: any): Promise<void> {
-        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+            return;
+        }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'broadcast' });
-        if (process.env.MQTT_EXECUTION_ENABLED === 'true') return;
+        if (IS_MQTT_EXECUTION_ENABLED) {
+            return;
+        }
         await this.onDoorbell(payload);
     }
 
@@ -820,7 +831,7 @@ export class RemoteChannel {
                 // acknowledged. The only open question is the local executor, so ask
                 // that directly - a joined, present device whose executor is dead must
                 // not be advertised either.
-                const mqttAvailable = process.env.MQTT_EXECUTION_ENABLED !== 'true' || this.mqttReady;
+                const mqttAvailable = !IS_MQTT_EXECUTION_ENABLED || this.mqttReady;
                 const statusWritten = capabilityWritten
                     ? await this.queueStatusWrite(this.localExecutorProbe() && mqttAvailable ? 'online' : 'offline')
                     : false;
@@ -1526,7 +1537,7 @@ export class RemoteChannel {
         if (!this.client) throw new Error('Client not initialized');
         // The DB terminal-status trigger stamps completed_at using PostgreSQL
         // time. Do not send a device-generated timestamp.
-        const updateData: any = { status };
+        const updateData: MqttResultUpdate = { status };
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
         // jsonb cannot store  and rejects the whole write (Postgres 22P05),
@@ -1576,12 +1587,12 @@ export class RemoteChannel {
             console.debug('[DEBUG] Call result updated successfully:', callId);
             if (originInstance && (status === 'completed' || status === 'failed')) {
                 // The write already triggers Broadcast in shadow mode; MQTT must never delay it.
-                void this.publishMqttResult(callId, originInstance).catch(() => {});
+                void this.publishMqttResult(callId, originInstance, updateData).catch(() => {});
             }
         }
     }
 
-    private async publishMqttResult(callId: string, originInstance: string): Promise<void> {
+    private async publishMqttResult(callId: string, originInstance: string, updateData: MqttResultUpdate): Promise<void> {
         const receiver = this.mqttReceiver;
         if (!receiver) return;
         const generation = this.authGeneration;
@@ -1590,7 +1601,7 @@ export class RemoteChannel {
             const observation = { callId, deviceId: this.deviceId, transport: 'mqtt' as const };
             observeTransport({ ...observation, stage: 'mqtt_result_send_attempt' });
             try {
-                await receiver.publishResult(callId, originInstance);
+                await receiver.publishResult(callId, originInstance, updateData);
                 observeTransport({ ...observation, stage: 'mqtt_result_publish' });
                 return;
             } catch {
@@ -1610,7 +1621,7 @@ export class RemoteChannel {
     private isReachable(): boolean {
         return this.channel?.state === 'joined'
             && this.presenceTracked
-            && (process.env.MQTT_EXECUTION_ENABLED !== 'true' || this.mqttReady)
+            && (!IS_MQTT_EXECUTION_ENABLED || this.mqttReady)
             && this.localExecutorProbe();
     }
 

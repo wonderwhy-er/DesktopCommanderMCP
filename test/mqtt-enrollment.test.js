@@ -9,12 +9,12 @@ import path from 'node:path';
 import forge from 'node-forge';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
+const originalFlag = process.env.IS_MQTT_EXECUTION_ENABLED;
+process.env.IS_MQTT_EXECUTION_ENABLED = 'true';
 const { enrollMqttDevice } = await import('../dist/remote-device/mqtt/mqtt-enrollment.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
-const originalFlag = process.env.MQTT_EXECUTION_ENABLED;
-process.env.MQTT_EXECUTION_ENABLED = 'true';
 const originalBroker = process.env.MQTT_BROKER_URL;
 delete process.env.MQTT_BROKER_URL;
 const workspace = await mkdtemp(path.join(tmpdir(), 'mqtt-enrollment-device-'));
@@ -258,8 +258,8 @@ try {
   console.log(`MQTT enrollment device: ${passed} checks passed`);
 } finally {
   await rm(workspace, { recursive: true, force: true });
-  if (originalFlag === undefined) delete process.env.MQTT_EXECUTION_ENABLED;
-  else process.env.MQTT_EXECUTION_ENABLED = originalFlag;
+  if (originalFlag === undefined) delete process.env.IS_MQTT_EXECUTION_ENABLED;
+  else process.env.IS_MQTT_EXECUTION_ENABLED = originalFlag;
   if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;
   else process.env.MQTT_BROKER_URL = originalBroker;
 }

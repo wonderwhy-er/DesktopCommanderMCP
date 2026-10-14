@@ -1,8 +1,10 @@
 import { connect, type IClientOptions, type MqttClient } from "mqtt";
+import { IS_MQTT_RESULT_PAYLOAD_ENABLED } from "./config.js";
 
 // Ids become literal topic segments; reject separators and MQTT wildcards.
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CONNECT_TIMEOUT_MS = 10_000;
+const MAX_RESULT_PAYLOAD_BYTES = 128 * 1024;
 
 /** The server publishes identifiers only; RemoteChannel fetches the durable command row. */
 export interface MqttDoorbell {
@@ -17,6 +19,12 @@ export interface MqttDoorbell {
 export interface MqttConfig {
 	url: string;
 	options: IClientOptions;
+}
+
+export interface MqttResultUpdate {
+	status: string;
+	result?: unknown;
+	error_message?: string;
 }
 
 /** Connect using the enrolled device identity and the system's trusted broker certificates. */
@@ -74,7 +82,7 @@ export function mqttDoorbellTopic(userId: string, deviceId: string): string {
 }
 
 /** A per-device subscription; payload validation precedes all database access. */
-export class MqttDoorbellReceiver {
+export class MqttTransport {
 	private client: MqttClient | null = null;
 	private resultPublishes = 0;
 	private stopped = false;
@@ -258,6 +266,7 @@ export class MqttDoorbellReceiver {
 	async publishResult(
 		callId: string,
 		originInstance: string,
+		updateData: MqttResultUpdate,
 	): Promise<void> {
 		if (
 			![callId, originInstance].every(
@@ -277,7 +286,14 @@ export class MqttDoorbellReceiver {
         }
 		const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
 		// Buffer identity keeps concurrent publishes of the same call separate locally.
-		const payload = Buffer.from(JSON.stringify({ call_id: callId }));
+		let payload = Buffer.from(JSON.stringify({ call_id: callId }));
+		if (IS_MQTT_RESULT_PAYLOAD_ENABLED) {
+			const payloadWithData = Buffer.from(JSON.stringify({ call_id: callId, data: updateData }));
+			// AWS IoT caps payloads at 128 KiB; larger results remain available in the database.
+			if (payloadWithData.length <= MAX_RESULT_PAYLOAD_BYTES) {
+				payload = payloadWithData;
+			}
+		}
 		this.resultPublishes++;
 		try {
 			await new Promise<void>((resolve, reject) => {

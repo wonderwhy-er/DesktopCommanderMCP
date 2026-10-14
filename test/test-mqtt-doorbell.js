@@ -11,9 +11,11 @@ import forge from 'node-forge';
 
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
+process.env.IS_MQTT_EXECUTION_ENABLED = 'true';
+process.env.IS_MQTT_RESULT_PAYLOAD_ENABLED = 'true';
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const { MCPDevice } = await import('../dist/remote-device/device.js');
-const { MqttDoorbellReceiver, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
+const { MqttTransport, createMqttConfig, mqttDoorbellTopic } = await import('../dist/remote-device/mqtt/mqtt-transport.js');
 const { configManager } = await import('../dist/config-manager.js');
 
 const until = async (condition) => {
@@ -149,22 +151,6 @@ function fixture() {
 }
 
 try {
-    for (const flag of [undefined, 'false', 'TRUE']) {
-        if (flag === undefined) delete process.env.MQTT_EXECUTION_ENABLED;
-        else process.env.MQTT_EXECUTION_ENABLED = flag;
-        const legacy = fixture();
-        const id = `disabled-${flag ?? 'unset'}`;
-
-        assert.equal(legacy.channel.isReachable(), true);
-        legacy.add(id);
-        await legacy.channel.onMqttDoorbell(bell(id));
-        assert.equal(legacy.operations.length, 0, 'disabled MQTT cannot fetch or claim a call');
-        await legacy.channel.onBroadcastDoorbell(bell(id));
-        await until(() => legacy.rows.get(id).status === 'completed');
-        assert.equal(legacy.executed.length, 1);
-    }
-
-    process.env.MQTT_EXECUTION_ENABLED = 'true';
     const f = fixture();
     await f.channel.setTransportCapable(true);
     assert.equal(f.channel.isReachable(), false, 'MQTT must subscribe before advertising online');
@@ -197,7 +183,21 @@ try {
     const claims = f.operations.filter(op => op.update?.status === 'executing' && op.filters.id === 'mqtt-execution');
     assert.ok(claims.length >= 1);
     await until(() => resultPackets.length === 1);
-    assert.deepEqual(resultPackets[0], { body: { call_id: 'mqtt-execution' }, qos: 1, retain: false });
+    assert.deepEqual(resultPackets[0], { body: { call_id: 'mqtt-execution', data: { status: 'completed', result: { content: [] } } }, qos: 1, retain: false });
+
+    for (const [id, status, result, error] of [
+        ['mqtt-sanitized', 'completed', { content: [{ type: 'text', text: 'a\u0000b' }] }, null],
+        ['mqtt-failure', 'failed', null, 'bad\u0000message'],
+    ]) {
+        f.add(id);
+        await f.channel.updateCallResult(id, status, result, error, 'backend');
+        await until(() => resultPackets.some(packet => packet.body.call_id === id));
+        const expected = status === 'completed'
+            ? { status, result: { content: [{ type: 'text', text: 'ab' }] } }
+            : { status, error_message: 'badmessage' };
+        assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id).body, { call_id: id, data: expected });
+        for (const [key, value] of Object.entries(expected)) assert.deepEqual(f.rows.get(id)[key], value);
+    }
 
     f.add('expired');
     const expired = bell('expired');
@@ -208,6 +208,17 @@ try {
     assert.equal(f.operations.length, readsBeforeExpiry);
 
     const receiver = f.channel.mqttReceiver;
+    const limit = 128 * 1024;
+    const overhead = Buffer.byteLength(JSON.stringify({ call_id: 'size-limit', data: { status: 'completed', result: '' } }));
+    const atLimit = { status: 'completed', result: 'x'.repeat(limit - overhead) };
+    const sizeResultsBefore = resultPackets.length;
+    await receiver.publishResult('size-limit', 'backend', atLimit);
+    await receiver.publishResult('size-limit', 'backend', { ...atLimit, result: `${atLimit.result}x` });
+    await receiver.publishResult('size-limit', 'backend', { status: 'completed', result: 'é'.repeat(80 * 1024) });
+    await until(() => resultPackets.length === sizeResultsBefore + 3);
+    assert.deepEqual(resultPackets[sizeResultsBefore].body, { call_id: 'size-limit', data: atLimit });
+    for (const packet of resultPackets.slice(sizeResultsBefore + 1)) assert.deepEqual(packet.body, { call_id: 'size-limit' });
+
     receiver.onMalformed = () => malformed++;
     const valid = bell('malformed');
     const invalid = ['{', { ...valid, user_id: 'foreign' }, { ...valid, device_id: 'foreign' },
@@ -227,8 +238,8 @@ try {
     receiver.client.options.reconnectPeriod = 20;
     try {
         await Promise.all([
-            assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
-            assert.rejects(receiver.publishResult('same-call', 'backend'), /disconnected/),
+            assert.rejects(receiver.publishResult('same-call', 'backend', { status: 'completed', result: null }), /disconnected/),
+            assert.rejects(receiver.publishResult('same-call', 'backend', { status: 'completed', result: null }), /disconnected/),
             (async () => {
                 await until(() => resultPackets.filter(packet => packet.body.call_id === 'same-call').length === 2);
                 receiver.client.stream.destroy();
@@ -274,14 +285,14 @@ try {
     await f.channel.onBroadcastDoorbell(bell('stopped'));
     assert.equal(f.operations.length, afterStop);
 
-    pendingReceiver = new MqttDoorbellReceiver(config, 'owner', 'pending-device', async () => {}, async () => {});
+    pendingReceiver = new MqttTransport(config, 'owner', 'pending-device', async () => {}, async () => {});
     const startup = pendingReceiver.start();
     const stopped = assert.rejects(startup, /stopped/);
     await pendingReceiver.stop();
     await stopped;
 
     assert.throws(() => mqttDoorbellTopic('owner/foreign', 'device'), /identity/);
-    console.log('PASS MQTT doorbells: execution, call-only results, concurrent result cleanup, mutual TLS, telemetry, duplicates, validation, reconnect and shutdown');
+    console.log('PASS MQTT doorbells: execution, optional sanitized result payloads, oversized fallback, concurrent result cleanup, mutual TLS, telemetry, duplicates, validation, reconnect and shutdown');
 } finally {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
     for (const channel of channels) await channel.stopMqttTransport();
