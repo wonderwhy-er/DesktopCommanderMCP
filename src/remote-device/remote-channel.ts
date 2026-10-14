@@ -1587,6 +1587,11 @@ export class RemoteChannel {
     }
 
     startHeartbeat(deviceId: string) {
+        if (this.heartbeatDeviceId === deviceId && this.connectionCheckInterval && this.heartbeatInterval) {
+            console.debug('[DEBUG] Heartbeat already active for device:', deviceId);
+            return;
+        }
+        this.stopHeartbeat();
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
         this.heartbeatDeviceId = deviceId;
         this.realtimeHealth.setDevice(deviceId);
