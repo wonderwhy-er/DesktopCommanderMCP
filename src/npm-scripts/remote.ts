@@ -2,6 +2,7 @@ import { MCPDevice, getRemoteDeviceConfigPath, removeRemoteDeviceConfig } from '
 import os from 'os';
 import { captureRemote } from '../utils/capture.js';
 import { startDeviceLog } from '../remote-device/diagnostics/device-log.js';
+import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 
 const BLUE = '\x1b[34m';
 const RESET = '\x1b[0m';
@@ -20,6 +21,7 @@ function printRemoteHeader() {
 }
 
 export async function runRemote() {
+    startTerminalTimestamps();
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
         console.log(`Desktop Commander Remote MCP device
 

@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
  *   as its Supabase; /device/start refuses, so a device that falls back to the
  *   device-code flow fails at once instead of opening a browser. Each such
  *   request is counted: it is the flow a headless host cannot complete.
+ *   /device/rollouts answers `rollouts` to a live access token, 401 otherwise.
  * - GoTrue (/auth/v1): refresh tokens rotate on every refresh and are checked
  *   the way GoTrue checks them (supabase/auth, internal/tokens/service.go,
  *   RefreshTokenGrant):
@@ -23,10 +24,15 @@ import { WebSocketServer } from 'ws';
  *   0 here unless a test sets it, so a quick restart cannot hide a token that
  *   is too old.
  *   Access tokens are JWTs that live `accessTtlSec` seconds.
- * - PostgREST (/rest/v1): the device's mcp_devices row and an empty
- *   mcp_remote_calls table, behind the access token.
+ * - PostgREST (/rest/v1): the device's mcp_devices row and the mcp_remote_calls
+ *   rows in `calls` (none unless a test adds them), behind the access token. A
+ *   claim or a result write is kept on the row, and a claim is answered with
+ *   the whole row.
  * - Realtime: the websocket is refused. The device then reports itself
  *   registered but not reachable, which is enough for the session under test.
+ *   With `channel`, the websocket opens and every channel message (the join,
+ *   presence, a new access token) is acknowledged, so the device becomes
+ *   reachable and claims the pending rows in `calls`.
  *
  * For `remote --report`, which only probes these services and uploads a zip,
  * options that are all off by default:
@@ -52,7 +58,7 @@ const USER = {
 const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 
 export async function startRemoteStandIn({
-  accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false,
+  accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false, channel = false,
 } = {}) {
   const deviceId = 'b6f0a1c2-0000-4000-8000-000000000695';
   const anonKey = 'stand-in-anon-key';
@@ -93,6 +99,10 @@ export async function startRemoteStandIn({
     diagnosticsUrl: undefined,
     /** The report id an upload is answered with */
     reportId: 'R7KQ2M4X',
+    /** What /device/rollouts answers for the signed-in user: { name: on/off } */
+    rollouts: {},
+    /** The mcp_remote_calls rows, as the server writes them */
+    calls: [],
     /** Every upload to /diagnostics: { url, headers, body (a Buffer) } */
     uploads: [],
     /** Phoenix heartbeats answered on the realtime websocket */
@@ -283,6 +293,9 @@ export async function startRemoteStandIn({
       standIn.deviceFlowRequests++;
       return [503, { error_description: 'stand-in: the device-code flow needs a person at a browser' }];
     }
+    if (route === 'GET /device/rollouts') {
+      return sessionOfBearer(request) ? [200, { rollouts: standIn.rollouts }] : [401, { error: 'invalid token' }];
+    }
     if (route === 'POST /auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
       return refresh(JSON.parse(body || '{}').refresh_token);
     }
@@ -308,7 +321,14 @@ export async function startRemoteStandIn({
         return representation ? [200, [{ id: deviceId, device_name: 'stand-in-host' }]] : [204, null];
       }
       if (table === 'mcp_remote_calls' && request.method === 'GET') {
-        return [200, []];
+        // What a device that just became reachable asks for: its pending rows
+        return [200, standIn.calls.filter((call) => call.status === 'pending').map(({ id, device_id }) => ({ id, device_id }))];
+      }
+      if (table === 'mcp_remote_calls' && request.method === 'PATCH') {
+        const call = standIn.calls.find((candidate) => url.searchParams.get('id') === `eq.${candidate.id}`);
+        if (call) Object.assign(call, JSON.parse(body || '{}'));
+        const representation = /return=representation/.test(request.headers.prefer || '');
+        return representation ? [200, call ? [{ ...call }] : []] : [204, null];
       }
     }
     standIn.unexpected.push(route);
@@ -343,7 +363,7 @@ export async function startRemoteStandIn({
     });
   });
   // Realtime is out of scope unless asked for: refuse the websocket instead of leaving it hanging
-  const sockets = realtime ? new WebSocketServer({ noServer: true }) : null;
+  const sockets = realtime || channel ? new WebSocketServer({ noServer: true }) : null;
   server.on('upgrade', (request, socket, head) => {
     standIn.requests.push({ method: 'UPGRADE', url: request.url, apikey: request.headers.apikey });
     if (!sockets || new URL(request.url, standIn.url).pathname !== '/realtime/v1/websocket') {
@@ -357,6 +377,9 @@ export async function startRemoteStandIn({
         if (message.topic === 'phoenix' && message.event === 'heartbeat') {
           standIn.heartbeatsAnswered++;
           ws.send(JSON.stringify({ topic: 'phoenix', event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref }));
+        } else if (channel && message.ref) {
+          // A join, a presence track, a new access token: accepted, as the realtime server answers them
+          ws.send(JSON.stringify({ topic: message.topic, event: 'phx_reply', payload: { status: 'ok', response: {} }, ref: message.ref, join_ref: message.join_ref }));
         }
       });
     });

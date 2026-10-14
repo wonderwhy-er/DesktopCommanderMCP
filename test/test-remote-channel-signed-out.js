@@ -11,7 +11,9 @@
  * SIGNED_OUT ends in one restore attempt then offline instead of a retry loop.
  */
 import assert from 'node:assert';
+import { mock } from 'node:test';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { rolloutManager } from '../dist/remote-device/rollouts.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -216,6 +218,35 @@ async function main() {
 
     assert.strictEqual(rc.sessionLost, true, 'expected the session to be marked lost');
     assert.strictEqual(client.channels.length, channelsBefore, 'no channel may be created after the session is lost');
+  });
+
+  await test('a lost session also stops the 30-minute rollouts request', async () => {
+    const { rc, client } = await makeRemoteChannel();
+    client.auth.setSessionResults = [{ error: Object.assign(new Error('Invalid Refresh Token: Already Used'), { status: 400, name: 'AuthApiError' }) }];
+    const requests = [];
+    mock.method(globalThis, 'fetch', async (url) => {
+      requests.push(String(url));
+      return { ok: true, status: 200, json: async () => ({ rollouts: {} }) };
+    });
+    mock.timers.enable({ apis: ['setInterval'] });
+    try {
+      await rolloutManager.load('https://server.example', async () => USER_JWT);
+      rolloutManager.startRefresh();
+      await withQuietLogs(async () => {
+        client.auth.emit('SIGNED_OUT');
+        await flush(10);
+      });
+      assert.strictEqual(rc.sessionLost, true, 'expected the session to be marked lost');
+      requests.length = 0;
+      mock.timers.tick(30 * 60_000);
+      await flush(10);
+      assert.deepStrictEqual(requests, [],
+        `30 minutes after the session was lost for good, the device still asked for its rollouts: ${requests.join(', ')}`);
+    } finally {
+      rolloutManager.stopRefresh();
+      mock.timers.reset();
+      mock.restoreAll();
+    }
   });
 
   // --- SIGNED_OUT while the access token is still unexpired (the common case) ---
