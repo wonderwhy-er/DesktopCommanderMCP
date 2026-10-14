@@ -2,6 +2,7 @@ import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChan
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
+import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
 
 const NUL_CHAR = String.fromCharCode(0);
@@ -1086,6 +1087,11 @@ export class RemoteChannel {
         }
 
         if (row) {
+            // The server writes the user's rollouts into every call row; keep
+            // the latest. A row without them (an older server) means all off.
+            if (rolloutManager.update(row.metadata?.rollouts)) {
+                console.debug('Rollouts:', rolloutManager.getAll());
+            }
             this.dispatchToolCall({ new: row, claimed: true });
             return;
         }
