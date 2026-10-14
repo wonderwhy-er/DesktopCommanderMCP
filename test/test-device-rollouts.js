@@ -155,8 +155,12 @@ async function withDevice({ standInOptions, prepare }, check) {
   }
 }
 
-/** The "Rollouts: …" lines a device process printed */
-const rolloutLinesOf = (device) => device.output.match(/^Rollouts: .*$/gm) ?? [];
+/** The time a device process starts each printed line with, e.g. "[15:27:03] " */
+const TIME = /^\[\d{2}:\d{2}:\d{2}\] /;
+
+/** The "Rollouts: …" lines a device process printed, without their time */
+const rolloutLinesOf = (device) =>
+  (device.output.match(/^\[\d{2}:\d{2}:\d{2}\] Rollouts: .*$/gm) ?? []).map((line) => line.replace(TIME, ''));
 
 async function runTests() {
   const failures = [];
