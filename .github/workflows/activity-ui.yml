@@ -1,0 +1,43 @@
+name: Activity UI validation
+
+on:
+  push:
+    paths:
+      - 'src/activity/**'
+      - 'src/npm-scripts/activity.ts'
+      - 'src/remote-device/device.ts'
+      - 'src/remote-device/desktop-commander-integration.ts'
+      - 'src/server.ts'
+      - 'src/tools/schemas.ts'
+      - 'test/activity*.js'
+      - '.github/workflows/activity-ui.yml'
+  pull_request:
+    paths:
+      - 'src/activity/**'
+      - 'src/npm-scripts/activity.ts'
+      - 'src/remote-device/device.ts'
+      - 'src/remote-device/desktop-commander-integration.ts'
+      - 'src/server.ts'
+      - 'src/tools/schemas.ts'
+      - 'test/activity*.js'
+      - '.github/workflows/activity-ui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js

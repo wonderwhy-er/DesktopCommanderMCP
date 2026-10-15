@@ -68,6 +68,39 @@ function deliver(view: ActivityView, event: ActivityEvent): void {
     else view.finished(event.id, event.failed);
 }
 
+/** Restart after a crash without clobbering an already running monitor. */
+async function recoverStaleSocket(socketPath: string): Promise<void> {
+    if (process.platform === 'win32') return;
+    const old = await fs.lstat(socketPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+    });
+    if (!old) return;
+    if (!old.isSocket() || (process.getuid && old.uid !== process.getuid())) {
+        throw new Error('Refusing to replace an unowned or non-socket activity path');
+    }
+    const active = await new Promise<boolean>((resolve) => {
+        const probe = net.createConnection(socketPath);
+        let settled = false;
+        const done = (running: boolean) => {
+            if (settled) return;
+            settled = true;
+            probe.destroy();
+            resolve(running);
+        };
+        probe.once('connect', () => done(true));
+        probe.once('error', (err: NodeJS.ErrnoException) => done(err.code !== 'ECONNREFUSED'));
+        probe.setTimeout(300, () => done(true)); // Uncertain? Fail closed.
+    });
+    if (active) throw new Error('Activity monitor is already running');
+    // Do not delete a different socket installed while probing.
+    const current = await fs.lstat(socketPath);
+    if (current.ino !== old.ino || current.dev !== old.dev) {
+        throw new Error('Activity socket changed during recovery');
+    }
+    await fs.unlink(socketPath);
+}
+
 /** Local-only listener: no network port, owner-only Unix socket directory. */
 export async function createActivityMonitor(view: ActivityView, socketPath = activitySocketPath()) {
     if (process.platform !== 'win32') {
@@ -81,6 +114,7 @@ export async function createActivityMonitor(view: ActivityView, socketPath = act
             throw new Error('Activity socket must be inside an owner-only directory');
         }
     }
+    await recoverStaleSocket(socketPath);
     const monitor = net.createServer(socket => {
         let buffer = '';
         socket.setEncoding('utf8');
@@ -103,10 +137,16 @@ export async function createActivityMonitor(view: ActivityView, socketPath = act
         monitor.listen(socketPath, () => { monitor.off('error', reject); resolve(); });
     });
     if (process.platform !== 'win32') await fs.chmod(socketPath, 0o600);
+    const owned = process.platform !== 'win32' ? await fs.lstat(socketPath) : null;
     return {
         close: async () => {
             await new Promise<void>((resolve, reject) => monitor.close(err => err ? reject(err) : resolve()));
-            if (process.platform !== 'win32') await fs.unlink(socketPath).catch(() => {});
+            if (owned) {
+                const current = await fs.lstat(socketPath).catch(() => null);
+                if (current && current.ino === owned.ino && current.dev === owned.dev) {
+                    await fs.unlink(socketPath).catch(() => {});
+                }
+            }
         }
     };
 }

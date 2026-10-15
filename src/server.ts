@@ -1300,10 +1300,12 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 if (!validated.success) {
                     result = { content: [{ type: 'text', text: 'Invalid activity update' }], isError: true };
                 } else {
-                    await publishActivityEvent({ kind: 'announce', value: validated.data });
+                    const displayMessage = safeActivityText(validated.data.message, 180);
+                    const announcement = { phase: validated.data.phase, message: displayMessage };
+                    await publishActivityEvent({ kind: 'announce', value: announcement });
                     await server.sendLoggingMessage({
                         level: 'info', logger: 'desktop-commander.activity',
-                        data: validated.data,
+                        data: announcement,
                     }).catch(() => { /* Clients may not subscribe to MCP logs. */ });
                     result = { content: [{ type: 'text', text: 'Activity update accepted' }] };
                 }
