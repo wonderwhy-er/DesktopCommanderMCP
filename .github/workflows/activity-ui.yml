@@ -52,6 +52,8 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+      - run: rg --version
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm test
         env:
