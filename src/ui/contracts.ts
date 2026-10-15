@@ -17,7 +17,8 @@ export interface McpUiResourceCsp {
 
 /**
  * Origins the UI pages may reach. All lists are empty: the pages are self-contained, and an HTML file previewed inside
- * them inherits the policy, so it can't load anything from or send anything to another origin.
+ * them inherits the policy, so it can't send anything to another origin or load anything from one (fonts from
+ * `UI_FONT_ORIGINS` aside).
  */
 export const UI_RESOURCE_CSP: McpUiResourceCsp = {
   connectDomains: [],
