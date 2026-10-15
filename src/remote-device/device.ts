@@ -187,14 +187,17 @@ export class MCPDevice {
                 console.log(`  - 🐞 DEBUG_MODE`);
             }
 
+            console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
+            const { supabaseUrl, anonKey, telemetryUrl } = await this.fetchSupabaseConfig();
+            console.log(`   - 🔌 Connected to Remote MCP`);
+
+            // Telemetry goes where the server says. Set before the local Desktop
+            // Commander starts: it gets this environment then, so it sends there too
+            if (telemetryUrl) process.env.DC_TELEMETRY_URL = telemetryUrl;
 
             // Initialize desktop integration
             await this.desktop.initialize();
             this.desktop.onDisconnect((reason) => void this.handleLocalMcpLoss(reason));
-
-            console.log(`⏳ Connecting to Remote MCP ${this.baseServerUrl}`);
-            const { supabaseUrl, anonKey } = await this.fetchSupabaseConfig();
-            console.log(`   - 🔌 Connected to Remote MCP`);
 
             // Initialize Remote Channel
             this.remoteChannel.initialize(supabaseUrl, anonKey);
@@ -529,7 +532,8 @@ export class MCPDevice {
         console.debug('[DEBUG] Supabase config received, URL:', config.supabaseUrl?.substring(0, 30) + '...');
         return {
             supabaseUrl: config.supabaseUrl,
-            anonKey: config.supabasePublishableKey
+            anonKey: config.supabasePublishableKey,
+            telemetryUrl: config.telemetryUrl
         };
     }
 
