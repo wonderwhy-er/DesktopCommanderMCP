@@ -77,9 +77,9 @@ try {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
-    https.request = (options, onResponse) => {
-        assert.equal(options.hostname, 'telemetry.desktopcommander.app');
-        assert.equal(options.path, '/mp/collect');
+    https.request = (url, options, onResponse) => {
+        assert.equal(url.hostname, 'telemetry.desktopcommander.app');
+        assert.equal(url.pathname, '/mp/collect');
         const request = new EventEmitter();
         request.setTimeout = () => request;
         request.write = body => { sent.push(JSON.parse(body)); };

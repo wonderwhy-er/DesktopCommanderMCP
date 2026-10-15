@@ -7,13 +7,18 @@
  * built-in proxy's second address only when DC_TELEMETRY_URL is not set, so
  * events meant for another address never end up in production.
  *
+ * The address is used as given: http or https by its protocol, with its port
+ * and query.
+ *
  * https.request is replaced, as in test-transport-telemetry.js, so nothing
- * leaves this machine, and every send fails, so a retry shows when there is one.
+ * leaves this machine; an http address is sent to a local http server. Every
+ * send fails, so a retry shows when there is one.
  *
  * Runs as part of `npm test`, or alone:
  *   node test/run-all-tests.js test-telemetry-url.js
  */
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import https from 'node:https';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
@@ -21,28 +26,31 @@ import { configManager } from '../dist/config-manager.js';
 import { capture } from '../dist/utils/capture.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
-const BUILT_IN = 'telemetry.desktopcommander.app/mp/collect';
-const FALLBACK = 'dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
-const OTHER = 'telemetry.example.test/collect';
+const BUILT_IN = 'https://telemetry.desktopcommander.app/mp/collect';
+const FALLBACK = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
+const OTHER = 'https://telemetry.example.test/collect';
+const PORT_AND_QUERY = 'https://telemetry.example.test:8443/collect?key=x';
 
 /** An event reaches its last request within this; far above a send that never leaves the process */
 const SEND_DEADLINE_MS = 5000;
 
-/** DC_TELEMETRY_URL, and where one event is sent, in order, when every send fails */
-const CASES = [
+/** DC_TELEMETRY_URL, and where one event is sent, in order, when every send fails; `local` is the local http server */
+const cases = (local) => [
   { name: 'no DC_TELEMETRY_URL: the built-in address, then its fallback', url: undefined, sentTo: [BUILT_IN, FALLBACK] },
-  { name: 'a DC_TELEMETRY_URL: that address, and no retry on production', url: `https://${OTHER}`, sentTo: [OTHER] },
-  { name: 'a DC_TELEMETRY_URL that names the built-in address: that address, and no retry on its fallback', url: `https://${BUILT_IN}`, sentTo: [BUILT_IN] },
+  { name: 'a DC_TELEMETRY_URL: that address, and no retry on production', url: OTHER, sentTo: [OTHER] },
+  { name: 'a DC_TELEMETRY_URL that names the built-in address: that address, and no retry on its fallback', url: BUILT_IN, sentTo: [BUILT_IN] },
+  { name: 'an https DC_TELEMETRY_URL keeps its port and query', url: PORT_AND_QUERY, sentTo: [PORT_AND_QUERY] },
+  { name: 'an http DC_TELEMETRY_URL is sent over http, with its path and query', url: `${local}/collect?x=1`, sentTo: [`${local}/collect?x=1`] },
 ];
 
-/** Every request, as host and path */
+/** Every request, as its full address */
 const requests = [];
 /** Called after each answer */
 let answered = () => {};
 
 /** https.request: each request is kept and answered with a server error */
-function failingRequest(options, onResponse) {
-  requests.push(`${options.hostname}${options.path}`);
+function failingRequest(url, options, onResponse) {
+  requests.push(String(url));
   const request = new EventEmitter();
   request.setTimeout = () => request;
   request.write = () => {};
@@ -57,6 +65,20 @@ function failingRequest(options, onResponse) {
     });
   };
   return request;
+}
+
+/** A local http server: each request is kept and answered with a server error */
+async function startLocalServer() {
+  const server = http.createServer((request, response) => {
+    requests.push(`http://${request.headers.host}${request.url}`);
+    request.resume();
+    request.on('end', () => {
+      response.writeHead(500).end();
+      answered();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return server;
 }
 
 /** Sends one event and returns where it went: the requests up to `count` answers, and any that follow them at once */
@@ -87,6 +109,7 @@ export default async function runTests() {
     disableTelemetry: process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY,
     telemetryUrl: process.env.DC_TELEMETRY_URL,
   };
+  const server = await startLocalServer();
   let failures = 0;
   try {
     setEnv('DESKTOP_COMMANDER_DISABLE_TELEMETRY', '0');
@@ -95,7 +118,7 @@ export default async function runTests() {
     https.request = failingRequest;
     syncBuiltinESMExports();
 
-    for (const { name, url, sentTo } of CASES) {
+    for (const { name, url, sentTo } of cases(`http://127.0.0.1:${server.address().port}`)) {
       setEnv('DC_TELEMETRY_URL', url);
       try {
         const sent = await sendEvent(sentTo.length);
@@ -107,6 +130,8 @@ export default async function runTests() {
       }
     }
   } finally {
+    server.closeAllConnections();
+    server.close();
     https.request = original.request;
     syncBuiltinESMExports();
     configManager.getValue = original.getValue;

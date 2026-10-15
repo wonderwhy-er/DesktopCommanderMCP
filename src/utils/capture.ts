@@ -1,4 +1,5 @@
 import { platform, homedir } from 'os';
+import * as http from 'http';
 import * as https from 'https';
 import { AsyncLocalStorage } from 'async_hooks';
 import type { TransportParams } from '@desktop-commander/telemetry-contract/transport';
@@ -558,13 +559,12 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     }
 };
 
+/** Sends to the address as given: http or https by its protocol, with its port and query. */
 const postTelemetryPayload = async (endpoint: string, payload: string): Promise<boolean> => {
     return await new Promise((resolve) => {
         const url = new URL(endpoint);
+        const client = url.protocol === 'http:' ? http : https;
         const options = {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -572,7 +572,7 @@ const postTelemetryPayload = async (endpoint: string, payload: string): Promise<
             }
         };
 
-        const req = https.request(options, (res) => {
+        const req = client.request(url, options, (res) => {
             res.resume();
             res.on('end', () => resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300));
         });
