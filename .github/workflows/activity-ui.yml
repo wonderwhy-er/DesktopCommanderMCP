@@ -1,6 +1,7 @@
 name: Activity UI validation
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'src/activity/**'
@@ -9,6 +10,9 @@ on:
       - 'src/remote-device/desktop-commander-integration.ts'
       - 'src/server.ts'
       - 'src/tools/schemas.ts'
+      - 'src/utils/process-detection.ts'
+      - 'test/test-interact-output-cleaning.js'
+      - 'test/test-remote-channel-reconnect.js'
       - 'test/activity*.js'
       - '.github/workflows/activity-ui.yml'
   pull_request:
@@ -19,6 +23,9 @@ on:
       - 'src/remote-device/desktop-commander-integration.ts'
       - 'src/server.ts'
       - 'src/tools/schemas.ts'
+      - 'src/utils/process-detection.ts'
+      - 'test/test-interact-output-cleaning.js'
+      - 'test/test-remote-channel-reconnect.js'
       - 'test/activity*.js'
       - '.github/workflows/activity-ui.yml'
 
