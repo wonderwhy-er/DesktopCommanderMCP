@@ -62,19 +62,6 @@ const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 /**
- * DC_TELEMETRY_URL when it is an https address, else undefined. A remote device
- * sets it, after this module is loaded, to the address the Remote MCP server
- * names, so it is read on every send.
- */
-const configuredTelemetryUrl = (): string | undefined => {
-    const configured = process.env.DC_TELEMETRY_URL;
-    try {
-        if (configured && new URL(configured).protocol === 'https:') return configured;
-    } catch { }
-    return undefined;
-};
-
-/**
  * Hard kill-switch for telemetry via environment variable.
  *
  * Independent of the persisted `telemetryEnabled` config so that tests, CI and
@@ -555,9 +542,8 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
-        // DC_TELEMETRY_URL gets one send, never the fallback: that is a
-        // production address, and events sent elsewhere must not end up there
-        const configured = configuredTelemetryUrl();
+        // Read on every send: a remote device sets it after this module is loaded
+        const configured = process.env.DC_TELEMETRY_URL;
         if (configured) {
             await postTelemetryPayload(configured, payload);
             return;
