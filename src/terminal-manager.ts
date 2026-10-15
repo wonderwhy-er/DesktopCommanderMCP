@@ -4,37 +4,8 @@ import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
-import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { getCommandEnvironment, getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
-
-/**
- * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
- * spawning child shells.
- *
- * On some Windows Claude Desktop / DXT launches the server process inherits a
- * broken PATHEXT (observed as ".CPL" only). Because we build the child env from
- * { ...process.env }, that broken value would propagate into every spawned
- * shell, stripping ".EXE" and breaking resolution of git / node / python / rg /
- * etc. (and even full-path .exe invocations under PowerShell). See issue #481.
- */
-const STANDARD_PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC';
-
-/**
- * Return a healthy PATHEXT for spawned Windows shells.
- * - Unset           -> use the standard list.
- * - Missing ".EXE"  -> corrupted; merge the standard list with whatever was
- *                      present (preserves any extra extensions, order-stable).
- * - Otherwise       -> leave the inherited value untouched.
- */
-function getRepairedPathExt(): string {
-  const current = process.env.PATHEXT;
-  if (!current) return STANDARD_PATHEXT;
-  const exts = current.split(';').map(e => e.trim().toUpperCase()).filter(Boolean);
-  if (!exts.includes('.EXE')) {
-    return [...new Set([...STANDARD_PATHEXT.split(';'), ...exts])].join(';');
-  }
-  return current;
-}
 
 /** A child process's output pipes. */
 type OutputStream = 'stdout' | 'stderr';
@@ -197,7 +168,7 @@ export class TerminalManager {
     const spawnConfig: ShellSpawnConfig = getShellSpawnArgs(shellToUse, enhancedCommand);
     const spawnOptions: any = {
       env: {
-        ...process.env,
+        ...getCommandEnvironment(),  // PATHEXT and ProgramData repaired on Windows
         TERM: 'xterm-256color'  // Better terminal compatibility
       },
       windowsHide: true  // Prevent visible console windows on Windows
@@ -206,14 +177,6 @@ export class TerminalManager {
     // Add shell option if needed (for unknown shells)
     if (spawnConfig.useShellOption) {
       spawnOptions.shell = spawnConfig.useShellOption;
-    }
-
-    // Repair PATHEXT on Windows before spawning. On some Windows DXT launches
-    // the server process inherits a corrupted PATHEXT (e.g. ".CPL"), which we
-    // would otherwise propagate via { ...process.env } and break command
-    // resolution (git, node, python, rg, ...) in the spawned shell. See #481.
-    if (process.platform === 'win32' && spawnOptions.env) {
-      spawnOptions.env.PATHEXT = getRepairedPathExt();
     }
 
     // On Windows, when we invoke cmd.exe directly and pass the user's command as a
