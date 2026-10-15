@@ -1,7 +1,6 @@
 import path from 'path';
 import { randomUUID } from 'node:crypto';
 import { publishActivityEvent } from './activity/channel.js';
-import { safeActivityText } from './activity/activity.js';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
     CallToolRequestSchema,
@@ -33,12 +32,9 @@ const SERVER_INSTRUCTIONS = `Desktop Commander provides tools for working with t
 - Search tools are session-based. start_search creates a search session; get_more_search_results reads its results; stop_search ends it early.
 - Absolute paths are generally the most reliable because relative paths depend on the active working directory.
 - allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.
-- For each meaningful device tool call, write a short factual explanation in the user's language in its optional activity_description parameter. Do this as part of the SAME tool call before executing, not as a separate action. If no such parameter is available, use report_activity with phase=plan before the action and done/warning/error only for major outcomes.
-- Activity descriptions summarize intended operations only; never claim success in advance. They are display-only annotations, not permission or authorization. Do not include credentials, private file contents, tokens, or hidden reasoning.
-- This is default MCP guidance: the user does not have to repeat it in chat. Follow host/client approval requirements even when providing progress messages.`;
+- Tool activity is shown locally from actual tool execution events, not AI-generated narratives. Approval and permission requirements are unchanged.`;
 
 import {
-    ReportActivityArgsSchema,
     StartProcessArgsSchema,
     ReadProcessOutputArgsSchema,
     InteractWithProcessArgsSchema,
@@ -317,12 +313,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
-            {
-                name: 'report_activity',
-                description: 'Publish a concise, AI-written activity update to the device terminal. Before running a meaningful command, search, file read, or edit, call this tool with phase=plan to tell the user in their language what you are about to do. After important outcomes, use done/warning/error. Keep the message factual and short (max 180 chars); never include credentials or hidden reasoning. The tool only changes the status display; it never executes an operation.',
-                inputSchema: zodToJsonSchema(ReportActivityArgsSchema),
-                annotations: { title: 'Report Activity', readOnlyHint: false, openWorldHint: false, destructiveHint: false },
-            },
             // Configuration tools
             {
                 name: "get_config",
@@ -1161,27 +1151,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
 
-        // One-call authored status: the model can describe the action in the same
-        // tool call, with no separate report_activity round trip.
-        const activityTools = filteredTools.map(tool => {
-            if (tool.name === 'report_activity' || tool.name === 'track_ui_event') return tool;
-            const input = tool.inputSchema as Record<string, any>;
-            return {
-                ...tool,
-                description: tool.description + '\nOptional activity_description: add one short, factual line in the user language about what this call is about to do (5-180 chars, no secrets). The terminal displays this BEFORE execution.',
-                inputSchema: {
-                    ...input,
-                    properties: {
-                        ...(input.properties ?? {}),
-                        activity_description: {
-                            type: 'string', minLength: 5, maxLength: 180,
-                            description: 'AI-authored brief statement in the user language describing the intended action before execution; no secrets.'
-                        },
-                    }
-                }
-            };
-        });
-        return { tools: activityTools };
+        return { tools: filteredTools };
     } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
@@ -1237,12 +1207,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
     const activityId = randomUUID();
-    const displayTool = name !== 'report_activity' && name !== 'track_ui_event';
+    const displayTool = name !== 'track_ui_event';
     if (displayTool) {
-        const authored = args && typeof args === 'object'
-            ? safeActivityText((args as Record<string, unknown>).activity_description)
-            : '';
-        await publishActivityEvent({ kind: 'started', id: activityId, tool: name, ...(authored ? { text: authored } : {}) });
+        await publishActivityEvent({ kind: 'started', id: activityId, tool: name });
     }
     // Hoisted above the try so the finally block can read them when emitting the
     // server_call_tool completion event (duration + status), even on the crash path.
@@ -1293,24 +1260,6 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // (result is declared above so the finally block can read execution status)
 
         switch (name) {
-            // Display-only, AI-authored activity update. Never executes a command.
-            // MCP logging notifications are forwarded to our Remote Device TUI.
-            case "report_activity": {
-                const validated = ReportActivityArgsSchema.safeParse(args);
-                if (!validated.success) {
-                    result = { content: [{ type: 'text', text: 'Invalid activity update' }], isError: true };
-                } else {
-                    const displayMessage = safeActivityText(validated.data.message, 180);
-                    const announcement = { phase: validated.data.phase, message: displayMessage };
-                    await publishActivityEvent({ kind: 'announce', value: announcement });
-                    await server.sendLoggingMessage({
-                        level: 'info', logger: 'desktop-commander.activity',
-                        data: announcement,
-                    }).catch(() => { /* Clients may not subscribe to MCP logs. */ });
-                    result = { content: [{ type: 'text', text: 'Activity update accepted' }] };
-                }
-                break;
-            }
             // Config tools
             case "get_config":
                 try {

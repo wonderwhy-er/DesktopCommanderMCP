@@ -3,14 +3,17 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { ActivityView } from '../dist/activity/activity.js';
 import { createActivityMonitor } from '../dist/activity/channel.js';
 
-test('AI text reaches the local TUI through a real stdio MCP session', { timeout: 25000 }, async () => {
+test('real stdio MCP operation reaches the local native TUI without AI narrative', { timeout: 25000 }, async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), 'dcmcp-mon-'));
-    const socket = path.join(home, 'private', 'events.sock');
+    const socket = process.platform === 'win32'
+        ? '\\\\.\\pipe\\dcmcp-activity-test-' + randomUUID()
+        : path.join(home, 'private', 'events.sock');
     const chunks = [];
     const view = new ActivityView({ isTTY: false, write: data => chunks.push(data) });
     const monitor = await createActivityMonitor(view, socket);
@@ -19,20 +22,23 @@ test('AI text reaches the local TUI through a real stdio MCP session', { timeout
         command: process.execPath,
         args: [path.join(process.cwd(), 'dist/index.js')],
         cwd: process.cwd(),
-        env: { ...process.env, HOME: home, DC_ACTIVITY_SOCKET: socket,
-            DC_REMOTE_DEVICE: 'true', DC_DISABLE_TELEMETRY: 'true', NO_COLOR: '1' },
+        env: { ...process.env, HOME: home, USERPROFILE: home,
+            APPDATA: path.join(home, 'AppData', 'Roaming'),
+            LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
+            DC_ACTIVITY_SOCKET: socket, DC_REMOTE_DEVICE: 'true',
+            DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1', NO_COLOR: '1' },
         stderr: 'pipe',
     });
     try {
         await client.connect(transport);
-        assert.match(client.getInstructions(), /report_activity/);
+        assert.doesNotMatch(client.getInstructions() ?? '', /activity_description|report_activity/);
         const tools = await client.listTools();
-        assert.ok(tools.tools.some(x => x.name === 'report_activity'));
+        assert.ok(!tools.tools.some(x => x.name === 'report_activity'));
         const directoryTool = tools.tools.find(x => x.name === 'list_directory');
-        assert.equal(directoryTool.inputSchema.properties.activity_description.type, 'string');
+        assert.equal(directoryTool.inputSchema.properties.activity_description, undefined);
         // No separate report_activity call: the model writes text in the SAME tool invocation.
         const actual = await client.callTool({ name: 'list_directory',
-            arguments: { path: home, depth: 1, activity_description: 'Test klasöründeki dosyalar listeleniyor' } });
+            arguments: { path: home, depth: 1 } });
         assert.notEqual(actual.isError, true);
         // The stream sends an end event after the tool call, which is delivered asynchronously.
         for (let i = 0; i < 30 && view.getSnapshot()[0]?.state !== 'done'; i++) {
@@ -40,11 +46,11 @@ test('AI text reaches the local TUI through a real stdio MCP session', { timeout
         }
         const events = view.getSnapshot();
         assert.equal(events.length, 1);
-        assert.equal(events[0].ai, true);
+        assert.equal(events[0].ai, false);
         assert.equal(events[0].tool, 'list_directory');
-        assert.equal(events[0].text, 'Test klasöründeki dosyalar listeleniyor');
+        assert.equal(events[0].text, 'Browse directory');
         assert.equal(events[0].state, 'done');
-        assert.ok(chunks.some(x => x.includes('Test klasöründeki dosyalar')));
+        assert.ok(chunks.some(x => x.includes('list_directory')));
     } finally {
         await client.close().catch(() => {});
         await monitor.close();

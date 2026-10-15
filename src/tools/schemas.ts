@@ -1,11 +1,5 @@
 import { z } from "zod";
 
-// AI-authored, presentation-only progress updates. No shell command or file content accepted.
-export const ReportActivityArgsSchema = z.object({
-  phase: z.enum(['plan', 'progress', 'done', 'warning', 'error']),
-  message: z.string().trim().min(1).max(180),
-});
-
 // Config tools schemas
 export const GetConfigArgsSchema = z.object({
   // 'ui' marks calls the config-editor widget fires programmatically; they are
@@ -255,7 +249,6 @@ export const TrackUiEventArgsSchema = z.object({
  * with the tool definitions in server.ts.
  */
 export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
-  report_activity: ReportActivityArgsSchema,
   get_config: GetConfigArgsSchema,
   set_config_value: SetConfigValueArgsSchema,
   read_file: ReadFileArgsSchema,
@@ -283,14 +276,3 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
-
-// Keep the compatibility validator synchronized with the shared presentation
-// field added by tools/list. Original handler schemas remain unchanged: handlers
-// ignore this field instead of interpreting it as an instruction to execute.
-for (const [name, schema] of Object.entries(toolArgSchemas)) {
-  if (name !== 'report_activity' && name !== 'track_ui_event' && schema instanceof z.ZodObject) {
-    toolArgSchemas[name] = schema.extend({
-      activity_description: z.string().min(5).max(180).optional(),
-    });
-  }
-}

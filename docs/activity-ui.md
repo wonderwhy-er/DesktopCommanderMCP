@@ -1,47 +1,42 @@
-# Optional MCP activity monitor
+# Desktop Commander - Native Activity Monitor
 
-Desktop Commander can show a concise terminal view of MCP operations without dumping raw tool arguments, metadata, or full command results into the activity screen.
+An optional terminal dashboard for **real MCP tool executions**. No generated narration, no chat transcript, no displayed command arguments, and no source-code preview. The dashboard reports tool names, active/finished/error state, elapsed time and accumulated counts.
 
-## How it works
+## Run (independent checkout)
 
-- Each operational MCP tool accepts an optional `activity_description` string. The client can supply a short, factual, user-language explanation **in the same tool call**, before execution.
-- The separate `report_activity` tool provides free-standing plan, progress, completion, warning, and failure notes.
-- A missing model-authored explanation falls back to a short tool-name label tagged `auto`. Explanations actually provided by a model are tagged `AI`. Neither label is an authorization decision.
-- Structured start/end events are sent over a local, owner-only Unix socket (or local Windows named pipe). A separate monitor displays the current operation state, duration, and cumulative counts.
-- The monitor keeps a bounded event history, limits the number of tracked active calls, handles duplicate finish events, and attempts safe recovery of stale sockets left by crashes.
-
-The original tool outcome, side effects, permissions, and approval decisions are unchanged. An explanation never authorizes command execution or claims success in advance.
-
-## Local development
-
-From an independent checkout:
-
-~~~sh
+```sh
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 node dist/index.js activity
-~~~
+```
 
-Configure a **separate local MCP stdio client** to start `node /absolute/path/to/checkout/dist/index.js --no-onboarding`. The client and monitor must run as the same authorized OS user (and use the same `DC_ACTIVITY_SOCKET` value if overriding the default).
+Connect a separate MCP client to `node /absolute/path/to/dist/index.js --no-onboarding`. The client and monitor need to run under the same OS account. The monitor itself is read-only, uses a local IPC endpoint, does not start a Remote Device, and does not require an external tunnel.
 
-Do not run a second Remote Device using the same saved identity while an existing Remote Device is running. The activity monitor alone does not create or register another remote device.
+## Terminal controls
 
-## Controls
+| Input | Action |
+|---|---|
+| Mouse wheel / Up / Down | Scroll activity history |
+| PageUp / PageDown | Scroll a page |
+| Home / End | Oldest / newest |
+| Q or Ctrl+C | Quit and restore terminal |
 
-- `DC_ACTIVITY_SOCKET`: set a custom local event socket path. On Unix, its parent directory must be owner-only (0700).
-- `DC_ACTIVITY_UI=off`: use compact text output rather than the alternate-screen terminal display.
-- `NO_COLOR=1`: disable interactive terminal rendering.
+In an interactive terminal, raw keyboard input prevents literal `^[[A` or `^[[B` escape sequences being echoed. The UI uses the alternate screen and enables mouse-wheel reporting only while active, then restores terminal state on exit. A non-interactive terminal prints compact factual event lines. \`NO_COLOR=1\` retains the interactive UI with monochrome output; \`DC_ACTIVITY_UI=off\` switches to line-oriented output.
 
-For a local development smoke test:
+## Privacy and safety
 
-~~~sh
-node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js
-~~~
+The MCP server generates start and finish events for real tool invocations. Free-form AI explanations are not requested, transmitted, or displayed. The monitor never displays tool arguments or tool output. Event names are validated; operations and permissions stay with the MCP server and its client.
 
-## Client and security limitations
+On Unix the monitor uses a protected Unix socket. Its parent directory must belong to the user and have no group/other permissions; an existing live socket will not be overwritten. On Windows it uses a named pipe (additional pipe ACL/security testing needed for production deployment). History is bounded to 1000 rows and active call tracking is bounded. An exceptional tracking overflow is flagged on-screen.
 
-MCP initialize instructions and tool descriptions are guidance, **not** a system prompt. A model may omit `activity_description`; the fallback still shows a useful generic status. The original proprietary hosted Remote Desktop Commander connector does **not** automatically expose these new fields merely because a modified local daemon is installed.
+The monitor is **not** a secure command-approval mechanism. Host approvals and file-system access restrictions must be enforced elsewhere.
 
-The display strips terminal escape/control characters and masks common secrets. Redaction is best-effort, not a guarantee against arbitrary sensitive data: never include credentials, access tokens, private file contents, or hidden reasoning in activity messages.
+## Tests
 
-The local monitor uses IPC only; it opens no public network listener and makes no outbound tunnel connection. Remote MCP connectivity, runtime credentials, host restart behavior, and ChatGPT or Claude approvals are separate deployment concerns. See [production readiness](activity-production-readiness.md) before proposing a release.
+```sh
+node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js \
+  test/activity-local-monitor.integration.test.js \
+  test/activity-monitor-hardening.test.js test/activity-terminal-pty.test.js
+```
+
+The POSIX pseudo-terminal test explicitly verifies arrow/mouse handling and raw-mode restoration. Before claiming cross-platform production readiness, see [production readiness checklist](activity-production-readiness.md), run the full project regression suite and cross-platform CI, and perform manual operator acceptance tests.
