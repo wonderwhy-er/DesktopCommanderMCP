@@ -3,9 +3,9 @@
 /**
  * Where telemetry goes (src/utils/capture.ts). A remote device sets
  * DC_TELEMETRY_URL to the address the Remote MCP server names, and events go
- * there instead of the built-in proxy. A send that fails on the built-in proxy
- * is retried on its second address; a send to an address set from outside is
- * not, so those events never end up in production.
+ * there instead of the built-in proxy. A send that fails is retried on the
+ * built-in proxy's second address only when DC_TELEMETRY_URL is not used, so
+ * events meant for another address never end up in production.
  *
  * https.request is replaced, as in test-transport-telemetry.js, so nothing
  * leaves this machine, and every send fails, so a retry shows when there is one.
@@ -32,7 +32,7 @@ const SEND_DEADLINE_MS = 5000;
 const CASES = [
   { name: 'no DC_TELEMETRY_URL: the built-in address, then its fallback', url: undefined, sentTo: [BUILT_IN, FALLBACK] },
   { name: 'an https DC_TELEMETRY_URL: that address, and no retry on production', url: `https://${OTHER}`, sentTo: [OTHER] },
-  { name: 'a DC_TELEMETRY_URL that names the built-in address keeps its fallback', url: `https://${BUILT_IN}`, sentTo: [BUILT_IN, FALLBACK] },
+  { name: 'a DC_TELEMETRY_URL that names the built-in address: that address, and no retry on its fallback', url: `https://${BUILT_IN}`, sentTo: [BUILT_IN] },
   { name: 'an http DC_TELEMETRY_URL is ignored', url: `http://${OTHER}`, sentTo: [BUILT_IN, FALLBACK] },
 ];
 
