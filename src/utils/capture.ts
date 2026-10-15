@@ -62,16 +62,16 @@ const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 /**
- * Where events go: DC_TELEMETRY_URL when it is an https address, else the
- * built-in proxy. A remote device sets it, after this module is loaded, to the
- * address the Remote MCP server names, so it is read on every send.
+ * DC_TELEMETRY_URL when it is an https address, else undefined. A remote device
+ * sets it, after this module is loaded, to the address the Remote MCP server
+ * names, so it is read on every send.
  */
-const telemetryProxyUrl = (): string => {
+const configuredTelemetryUrl = (): string | undefined => {
     const configured = process.env.DC_TELEMETRY_URL;
     try {
         if (configured && new URL(configured).protocol === 'https:') return configured;
     } catch { }
-    return TELEMETRY_PROXY_URL;
+    return undefined;
 };
 
 /**
@@ -537,8 +537,8 @@ export const buildEventProperties = async (properties?: any) => {
 
 /**
  * Send event to the telemetry proxy (direct BigQuery ingestion).
- * On the built-in proxy, uses the custom domain first and retries the generated
- * Cloud Run URL on failure.
+ * Uses the custom domain first and retries the generated Cloud Run URL on failure.
+ * With DC_TELEMETRY_URL set, sends there instead, once.
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
@@ -555,11 +555,16 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
-        const endpoint = telemetryProxyUrl();
-        const sent = await postTelemetryPayload(endpoint, payload);
-        // The fallback is the built-in proxy's second address: events meant for
-        // another address must not end up there
-        if (!sent && endpoint === TELEMETRY_PROXY_URL) {
+        // DC_TELEMETRY_URL gets one send, never the fallback: that is a
+        // production address, and events sent elsewhere must not end up there
+        const configured = configuredTelemetryUrl();
+        if (configured) {
+            await postTelemetryPayload(configured, payload);
+            return;
+        }
+
+        const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
+        if (!sent) {
             await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
         }
     } catch {
