@@ -6,6 +6,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 async function testConditionalTools() {
     console.log('\n=== Test: Conditional Tool Registration ===\n');
@@ -31,14 +32,25 @@ async function testConditionalTools() {
     const regularTools = await regularClient.listTools();
 
     const hasFeedbackRegular = regularTools.tools.some(t => t.name === 'give_feedback_to_desktop_commander');
+    const hasGetPromptsRegular = regularTools.tools.some(t => t.name === 'get_prompts');
     console.log(`   Tools count: ${regularTools.tools.length}`);
     console.log(`   Has give_feedback_to_desktop_commander: ${hasFeedbackRegular}`);
+    console.log(`   Has get_prompts: ${hasGetPromptsRegular}`);
 
     if (hasFeedbackRegular) {
         console.log('   ✅ PASS: Feedback tool is included for regular client');
     } else {
         console.log('   ❌ FAIL: Feedback tool should be included for regular client');
-        process.exit(1);
+        exitProcess(1);
+        return;
+    }
+
+    if (!hasGetPromptsRegular) {
+        console.log('   ✅ PASS: get_prompts is not exposed');
+    } else {
+        console.log('   ❌ FAIL: get_prompts should not be exposed');
+        exitProcess(1);
+        return;
     }
 
     await regularClient.close();
@@ -46,8 +58,8 @@ async function testConditionalTools() {
     // Wait a bit between tests
     await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Test 2: desktop-commander-app client (should exclude feedback tool and get_prompts)
-    console.log('\nTest 2: Testing with desktop-commander-app client (should exclude feedback tool and get_prompts)...');
+    // Test 2: desktop-commander-app client (should exclude feedback and get_prompts)
+    console.log('\nTest 2: Testing with desktop-commander-app client (should exclude feedback tool)...');
     const dcClient = new Client(
         {
             name: "desktop-commander-app",
@@ -76,14 +88,16 @@ async function testConditionalTools() {
         console.log('   ✅ PASS: Feedback tool is excluded for desktop-commander-app client');
     } else {
         console.log('   ❌ FAIL: Feedback tool should be excluded for desktop-commander-app client');
-        process.exit(1);
+        exitProcess(1);
+        return;
     }
 
     if (!hasGetPromptsDC) {
         console.log('   ✅ PASS: get_prompts is excluded for desktop-commander-app client');
     } else {
         console.log('   ❌ FAIL: get_prompts should be excluded for desktop-commander-app client');
-        process.exit(1);
+        exitProcess(1);
+        return;
     }
 
     await dcClient.close();
@@ -93,5 +107,5 @@ async function testConditionalTools() {
 
 testConditionalTools().catch(error => {
     console.error('Test failed:', error);
-    process.exit(1);
+    exitProcess(1);
 });

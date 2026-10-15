@@ -39,6 +39,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MCPDevice } from '../dist/remote-device/device.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -282,4 +283,4 @@ await test('a save with no session available does not wipe the token on disk', a
 });
 
 console.log(`\n${failures ? '🔴' : '✅'} remote token rotation persistence: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

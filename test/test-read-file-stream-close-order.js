@@ -47,7 +47,7 @@ try {
   const largeTarget = path.join(dir, 'large.txt');
   const largeLine = `${'x'.repeat(127)}\n`;
   await fs.writeFile(largeTarget, largeLine.repeat(90000));
-  await assertReadAwaitsStreamClose('large estimated-position readFile', () =>
+  await assertReadAwaitsStreamClose('large deep-offset readFile', () =>
     readFile(largeTarget, { offset: 2000, length: 5 }),
   );
 

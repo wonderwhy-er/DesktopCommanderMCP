@@ -17,7 +17,7 @@ try {
   await fs.rename(replacement, target);
 
   assert.equal(await fs.readFile(target, 'utf8'), 'replacement\n');
-  console.log('large read_file releases sampling and result streams before returning');
+  console.log('large deep-offset read_file releases its stream before returning');
 } finally {
   await fs.rm(dir, { recursive: true, force: true });
 }

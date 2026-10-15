@@ -89,6 +89,9 @@ export interface ReadOptions {
     /** Whether to include status messages (default: true) */
     includeStatusMessage?: boolean;
 
+    /** Read an SVG as an image (base64), as the file preview widget draws it; otherwise it is text */
+    svgAsImage?: boolean;
+
     /** Optional AbortSignal to cancel an in-flight read (frees fd/thread on timeout). */
     signal?: AbortSignal;
 }
@@ -221,7 +224,7 @@ export interface FileInfo {
     permissions: string;
 
     /** File type classification */
-    fileType: 'text' | 'excel' | 'image' | 'binary' | 'docx';
+    fileType: 'text' | 'excel' | 'image' | 'binary' | 'docx' | 'directory';
 
     /** Type-specific metadata */
     metadata?: FileMetadata;
