@@ -140,6 +140,9 @@ async function loadInChrome(chromePath, html) {
             '--disable-gpu',
             '--no-first-run',
             '--no-default-browser-check',
+            // The runner's temporary home has no login keychain: without a mock one, macOS Chrome waits
+            // for it and prints nothing (puppeteer passes the same flag)
+            '--use-mock-keychain',
             `--user-data-dir=${profileDir}`,
             // Virtual time waits for the page's own requests, so every probe has run when Chrome prints the DOM
             '--virtual-time-budget=5000',
