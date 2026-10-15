@@ -101,3 +101,25 @@ test('duplicate events, concurrency and bounded history preserve totals', () => 
     assert.equal(view.getTotals().failed, 56);
     assert.equal(view.getTotals().completed, 1344);
 });
+
+test('tiny terminals show compact status without writing past the viewport', () => {
+    for (const [width, height] of [[1,1],[2,2],[10,4],[30,8],[37,9],[80,8]]) {
+        const { view, latest } = terminal(width, height);
+        view.started('small-' + width, 'get_config');
+        view.finished('small-' + width);
+        const clear = latest().replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+        const lines = clear.split('\r\n');
+        assert.ok(lines.length <= height, 'height ' + height);
+        assert.ok(lines.every(x => [...x].length <= width), 'width ' + width);
+        if (width >= 15) assert.match(clear, /ACTIVITY/);
+    }
+});
+
+test('hostile MCP tool names cannot inject escapes into non-tty logs', () => {
+    const chunks = [];
+    const view = new ActivityView({ isTTY: false, write: data => chunks.push(data) });
+    view.started('malicious', 'get_config\x1b[2J\nTOKEN=SECRET');
+    view.finished('malicious');
+    assert.ok(chunks.every(x => !x.includes('\x1b') && !x.includes('TOKEN=SECRET')));
+    assert.equal(view.getSnapshot()[0].tool, 'unknown_operation');
+});

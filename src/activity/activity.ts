@@ -59,6 +59,9 @@ export class ActivityView {
 
     started(id: string, tool: string, _authoredText?: string): void {
         if (this.inflight.has(id) || this.history.some(row => row.id === id)) return;
+        // Remote callers may supply arbitrary MCP names. Normalize before
+        // writing to a screen OR a non-interactive terminal.
+        const safeTool = /^[a-zA-Z0-9_.-]{1,128}$/.test(tool) ? tool : 'unknown_operation';
         const now = Date.now();
         this.inflight.set(id, now);
         if (this.inflight.size > this.maxActive) {
@@ -66,11 +69,11 @@ export class ActivityView {
             if (oldest !== undefined) this.inflight.delete(oldest);
             this.dropped++;
         }
-        this.history.push({ id, tool, text: fallbackDescription(tool), state: 'running', at: now, ai: false });
+        this.history.push({ id, tool: safeTool, text: fallbackDescription(safeTool), state: 'running', at: now, ai: false });
         if (this.scroll > 0) this.scroll++; // Do not shift scrollback during live updates.
         if (this.history.length > this.maxHistory) this.history.shift();
         if (this.tty) this.render();
-        else this.output.write('RUN  ' + tool + '\n');
+        else this.output.write('RUN  ' + safeTool + '\n');
     }
 
     finished(id: string, failed = false): void {
@@ -185,6 +188,19 @@ export class ActivityView {
         const height = Math.max(1, this.output.rows || 24);
         const inside = Math.max(0, width - 2);
         const clip = (text: string, size: number): string => text.length <= size ? text : text.slice(0, Math.max(0, size - 1)) + '…';
+        if (width < 38 || height < 10) {
+            // Keep status useful when the terminal is smaller than our framed
+            // layout. Never render outside the physical viewport.
+            const totals = this.getTotals();
+            const lines = [
+                'DC / ACTIVITY',
+                'ACTIVE ' + totals.active + '  OK ' + totals.completed + '  ERR ' + totals.failed,
+                this.history.length ? 'LAST ' + this.history[this.history.length - 1].text : 'WAITING',
+                'Up/Down scroll  Q quit',
+            ];
+            this.output.write('\x1b[H' + lines.slice(0, height).map(line => clip(line, width)).join('\r\n') + '\x1b[J');
+            return;
+        }
         const frame = (left: string, fill: string, right: string): string =>
             width < 3 ? fill.repeat(width) : left + fill.repeat(inside) + right;
         const line = (content: string): string => width < 3 ? clip(content, width)
