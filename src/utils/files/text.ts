@@ -60,6 +60,14 @@ function throwIfAborted(signal?: AbortSignal): void {
     }
 }
 
+async function destroyReadStream(stream: ReturnType<typeof createReadStream>): Promise<void> {
+    if (stream.closed) return;
+    await new Promise<void>((resolve) => {
+        stream.once('close', resolve);
+        stream.destroy();
+    });
+}
+
 /**
  * Text file handler implementation
  * Binary detection is done at the factory level - this handler assumes file is text
@@ -414,23 +422,27 @@ export class TextFileHandler implements FileHandler {
         start?: number,
         startLine: number = 0
     ): Promise<FileResult> {
+        const stream = createReadStream(filePath, { signal, encoding, start });
         const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
+            input: stream,
             crlfDelay: Infinity
         });
 
         const result: string[] = [];
         let lineNumber = startLine;
 
-        for await (const line of rl) {
-            if (lineNumber >= offset && result.length < length) {
-                result.push(line);
+        try {
+            for await (const line of rl) {
+                if (lineNumber >= offset && result.length < length) {
+                    result.push(line);
+                }
+                if (result.length >= length) break;
+                lineNumber++;
             }
-            if (result.length >= length) break;
-            lineNumber++;
+        } finally {
+            rl.close();
+            await destroyReadStream(stream);
         }
-
-        rl.close();
 
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
