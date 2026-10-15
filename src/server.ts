@@ -1208,9 +1208,9 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
     const startTime = Date.now();
     const activityId = randomUUID();
     const displayTool = name !== 'track_ui_event';
-    if (displayTool) {
-        await publishActivityEvent({ kind: 'started', id: activityId, tool: name });
-    }
+    const startedEvent = displayTool
+        ? publishActivityEvent({ kind: 'started', id: activityId, tool: name })
+        : Promise.resolve();
     // Hoisted above the try so the finally block can read them when emitting the
     // server_call_tool completion event (duration + status), even on the crash path.
     let telemetryData: any = { tool_name: name };
@@ -1537,7 +1537,14 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
             isError: true,
         };
     } finally {
-        if (displayTool) await publishActivityEvent({ kind: 'finished', id: activityId, failed: isError || (typeof result !== 'undefined' && !!result.isError) });
+        if (displayTool) {
+            // Strict per-call ordering without putting best-effort UI delivery
+            // on the critical MCP request/response path.
+            void startedEvent.then(() => publishActivityEvent({
+                kind: 'finished', id: activityId,
+                failed: isError || !!result.isError,
+            })).catch(() => {});
+        }
         // Single tool-call telemetry event, fired AFTER execution so it can carry
         // timing. In a finally so it still fires on the hard-crash path (the catch
         // above). Only missed if a tool never returns or throws (a true hang).
