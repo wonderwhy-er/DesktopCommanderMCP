@@ -79,40 +79,40 @@ export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | Page
     const result = await parse(pdfBuffer);
     const { fonts, pages, pdfDocument } = result;
 
-    // Calculate which pages to process
-    const allPages = Array.isArray(pageNumbers) && pageNumbers.length === 0;
-    const filterPageNumbers = Array.isArray(pageNumbers) ?
-        pageNumbers :
-        generatePageNumbers(pageNumbers.offset, pageNumbers.length, pages.length);
-
-    // Filter and transform pages
-    const pagesToProcess = allPages ?
-        pages :
-        pages.filter((_: any, index: number) => filterPageNumbers.includes(index + 1));
-
-    const pageNumberMap = allPages ?
-        pages.map((_: any, index: number) => index + 1) :
-        filterPageNumbers.filter(pageNum => pageNum >= 1 && pageNum <= pages.length);
-
-    const transformations = makeTransformations(fonts.map);
-    const parseResult = transform(pagesToProcess, transformations);
-
-    // Extract images
-    const imagesByPage = await extractImagesFromPdf(pdfBuffer, pageNumberMap, { format: 'webp', quality: 85 });
-
-    // Create pages without images for now
-    const processedPages: PdfPageItem[] = parseResult.pages.map((page: any, index: number) => {
-        const pageNumber = pageNumberMap[index];
-        return {
-            pageNumber,
-            text: page.items.join('\n') + '\n',
-            images: imagesByPage[pageNumber] || [],
-        };
-    });
-
-    const metadata = extractMetadata(result);
-
     try {
+        // Calculate which pages to process
+        const allPages = Array.isArray(pageNumbers) && pageNumbers.length === 0;
+        const filterPageNumbers = Array.isArray(pageNumbers) ?
+            pageNumbers :
+            generatePageNumbers(pageNumbers.offset, pageNumbers.length, pages.length);
+
+        // Filter and transform pages
+        const pagesToProcess = allPages ?
+            pages :
+            pages.filter((_: any, index: number) => filterPageNumbers.includes(index + 1));
+
+        const pageNumberMap = allPages ?
+            pages.map((_: any, index: number) => index + 1) :
+            filterPageNumbers.filter(pageNum => pageNum >= 1 && pageNum <= pages.length);
+
+        const transformations = makeTransformations(fonts.map);
+        const parseResult = transform(pagesToProcess, transformations);
+
+        // Extract images
+        const imagesByPage = await extractImagesFromPdf(pdfBuffer, pageNumberMap, { format: 'webp', quality: 85 });
+
+        // Create pages without images for now
+        const processedPages: PdfPageItem[] = parseResult.pages.map((page: any, index: number) => {
+            const pageNumber = pageNumberMap[index];
+            return {
+                pageNumber,
+                text: page.items.join('\n') + '\n',
+                images: imagesByPage[pageNumber] || [],
+            };
+        });
+
+        const metadata = extractMetadata(result);
+
         return { pages: processedPages, metadata };
     } finally {
         if (pdfDocument) {

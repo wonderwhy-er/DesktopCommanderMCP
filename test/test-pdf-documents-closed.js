@@ -6,22 +6,25 @@
  * Both places that read a PDF closed the document with
  * `if (typeof pdfDocument.destroy === 'function') await pdfDocument.destroy()`
  * (lib/pdf2md.ts for the text, extract-images.ts for the images), so with 1.8
- * both skipped it without a word, and every read_file of a PDF left its 2
- * documents open until Desktop Commander exited. The repo's lock has unpdf
- * 1.4.0, whose document still has destroy(), so the tests didn't see it.
+ * both skipped it without a word: read_file of a PDF returned with its 2
+ * documents still open, and closing them was left to the garbage collector.
+ * The repo's lock has unpdf 1.4.0, whose document still has destroy(), so the
+ * tests didn't see it. And pdf2md() closed the text document only once it had
+ * the whole result: if the image extraction or the transform threw after
+ * parse() had opened the document, the document stayed open.
  *
  * The test shapes the document like unpdf 1.8's on whichever unpdf is
  * installed: it removes destroy() from the document's prototype (1.4's only
  * calls loadingTask.destroy()), and watches getPage() to see which documents
  * the read opened. Expected: when the read returns, each of them has its
- * loadingTask destroyed.
+ * loadingTask destroyed, also when the read fails after opening one.
  */
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { handleReadFile } from '../dist/handlers/filesystem-handlers.js';
-import { extractImagesFromPdf } from '../dist/tools/pdf/extract-images.js';
+import { extractImagesFromPdf, unpdfPackage } from '../dist/tools/pdf/extract-images.js';
 import { SIMPLE_PDF, answerText, pdfWorkspace } from './helpers/pdf.js';
 import { isTestHome } from './helpers/test-env.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
@@ -80,15 +83,14 @@ async function run() {
   const opened = new Set();
   const undo = shapeLikeUnpdf18(await documentPrototypes(), opened);
   const failures = [];
-  const check = async (name, what, documents, read) => {
+  const check = async (name, what, documents, read, why = 'the document has no destroy() of its own, as in unpdf 1.8; only loadingTask.destroy() closes it') => {
     opened.clear();
     try {
       await read();
       assert(opened.size >= documents, `setup: ${what} read pages of ${opened.size} PDF document(s), expected ${documents}`);
       const open = [...opened].filter((doc) => doc.loadingTask?.destroyed !== true);
       assert(open.length === 0,
-        `${what} left ${open.length} of the ${opened.size} PDF document(s) it opened open after it returned ` +
-        `(the document has no destroy() of its own, as in unpdf 1.8; only loadingTask.destroy() closes it)`);
+        `${what} left ${open.length} of the ${opened.size} PDF document(s) it opened open after it returned (${why})`);
       console.log(`✓ ${name}`);
     } catch (error) {
       failures.push(name);
@@ -103,12 +105,23 @@ async function run() {
     await check('extracting the images of a PDF closes the document it opens', 'extracting the images of a PDF', 1, async () => {
       await extractImagesFromPdf(new Uint8Array(fs.readFileSync(pdf)));
     });
+    await check('read_file of a PDF whose image extraction fails still closes the text document, and answers with the error', 'read_file of a PDF whose image extraction failed', 1, async () => {
+      const failure = 'the PDF images could not be extracted (test)';
+      const load = unpdfPackage.load;
+      unpdfPackage.load = () => Promise.reject(new Error(failure));
+      try {
+        const result = await handleReadFile({ path: pdf });
+        assert(answerText(result).includes(failure), `read_file should answer with the image extraction's error, answered: ${answerText(result).slice(0, 300)}`);
+      } finally {
+        unpdfPackage.load = load;
+      }
+    }, 'the image extraction failed after parse() had opened the text document');
   } finally {
     undo();
     ws.cleanup();
   }
   if (failures.length > 0) {
-    console.log(`${failures.length} of 2 cases failed`);
+    console.log(`${failures.length} of 3 cases failed`);
     return false;
   }
   return true;
