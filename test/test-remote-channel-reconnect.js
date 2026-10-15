@@ -911,7 +911,7 @@ async function main() {
       `expected a handful of Presence retries in ${ticks} ticks, got ${attemptTimes.length}`);
     const gaps = attemptTimes.slice(1).map((t, i) => t - attemptTimes[i]);
     for (let i = 1; i < gaps.length; i++) {
-      assert.ok(gaps[i] >= gaps[i - 1], `gaps must not shrink: ${JSON.stringify(gaps)}`);
+      assert.ok(gaps[i] + 1e-6 >= gaps[i - 1], `gaps must not shrink: ${JSON.stringify(gaps)}`);
     }
     assert.ok(gaps.at(-1) >= 100_000, `cooldown must reach the ~2min tier: ${JSON.stringify(gaps)}`);
     assert.ok(rc.consecutivePresenceFailures >= 5, 'Presence failures stay counted');

@@ -1,4 +1,6 @@
 import path from 'path';
+import { randomUUID } from 'node:crypto';
+import { publishActivityEvent } from './activity/channel.js';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
     CallToolRequestSchema,
@@ -29,7 +31,8 @@ const SERVER_INSTRUCTIONS = `Desktop Commander provides tools for working with t
 - Terminal process tools support shell commands, REPLs, and long-running processes. start_process creates a process session; interact_with_process sends input; read_process_output reads later output; force_terminate ends a session.
 - Search tools are session-based. start_search creates a search session; get_more_search_results reads its results; stop_search ends it early.
 - Absolute paths are generally the most reliable because relative paths depend on the active working directory.
-- allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.`;
+- allowedDirectories and each tool's schema, annotations, and documented constraints define the operational boundaries.
+- Tool activity is shown locally from actual tool execution events, not AI-generated narratives. Approval and permission requirements are unchanged.`;
 
 import {
     StartProcessArgsSchema,
@@ -1148,9 +1151,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // logToStderr('debug', `Returning ${filteredTools.length} tools (filtered from ${allTools.length} total) for client: ${currentClient?.name || 'unknown'}`);
 
-        return {
-            tools: filteredTools,
-        };
+        return { tools: filteredTools };
     } catch (error) {
         logToStderr('error', `Error in list_tools request handler: ${error}`);
         throw error;
@@ -1205,10 +1206,15 @@ function pathArguments(args: unknown): unknown[] {
 async function handleCallToolRequest(request: CallToolRequest): Promise<ServerResult> {
     const { name, arguments: args } = request.params;
     const startTime = Date.now();
+    const activityId = randomUUID();
+    const displayTool = name !== 'track_ui_event';
+    const startedEvent = displayTool
+        ? publishActivityEvent({ kind: 'started', id: activityId, tool: name })
+        : Promise.resolve();
     // Hoisted above the try so the finally block can read them when emitting the
     // server_call_tool completion event (duration + status), even on the crash path.
     let telemetryData: any = { tool_name: name };
-    let result: ServerResult;
+    let result: ServerResult = { content: [] };
     let isError = false;
 
     try {
@@ -1531,6 +1537,14 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
             isError: true,
         };
     } finally {
+        if (displayTool) {
+            // Strict per-call ordering without putting best-effort UI delivery
+            // on the critical MCP request/response path.
+            void startedEvent.then(() => publishActivityEvent({
+                kind: 'finished', id: activityId,
+                failed: isError || !!result.isError,
+            })).catch(() => {});
+        }
         // Single tool-call telemetry event, fired AFTER execution so it can carry
         // timing. In a finally so it still fires on the hard-crash path (the catch
         // above). Only missed if a tool never returns or throws (a true hang).

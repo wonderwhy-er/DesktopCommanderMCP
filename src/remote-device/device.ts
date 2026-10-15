@@ -614,7 +614,8 @@ export class MCPDevice {
         // Count every targeted delivery, including duplicates, before the local claim.
         observeTransport({ stage: 'device_call_received', ...observation });
         
-        console.log(`🔧 Received tool call ${call_id}: ${tool_name} ${JSON.stringify(tool_args)} metadata: ${JSON.stringify(metadata)}`);
+        // No raw tool args or results in console. The local MCP child publishes
+        // actual start/finish events to the independent activity monitor.
 
         // LOCAL claim first — this is the authoritative guard against executing
         // a call twice. During the transition both transports deliver every call
@@ -670,13 +671,12 @@ export class MCPDevice {
                 result = await this.desktop.callClientTool(tool_name, tool_args, metadata);
             }
         } catch (error: any) {
-            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            console.error('MCP tool failed:', tool_name);
             observeTransport({ stage: 'tool_call_failed', ...observation });
             await this.reportToolCallFailure(call_id, tool_name, error);
             return;
         }
 
-        console.log(`✅ Tool call ${tool_name} completed:\r\n ${JSON.stringify(result)}`);
 
         // The tool ran. A result that can't be saved is reported and written as
         // failed, as before, but its telemetry stays "tool_call_completed"
@@ -687,7 +687,7 @@ export class MCPDevice {
                 observeTransport({ stage: 'tool_call_completed', ...observation});
             }
         } catch (error: any) {
-            console.error(`❌ Tool call ${tool_name} failed:`, error.message);
+            console.error('MCP tool failed:', tool_name);
             await this.reportToolCallFailure(call_id, tool_name, error);
         }
     }

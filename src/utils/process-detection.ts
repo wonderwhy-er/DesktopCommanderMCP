@@ -183,13 +183,19 @@ function removeInputEcho(output: string, inputSent?: string): { output: string; 
   if (!inputSent) return { output, prompts: 0 };
   const lines = output.split('\n');
   const echoes = new Set<number>();
+  // Bash can echo a whole multiline write without repeating the prompt
+  // before the second input line. Only allow that shape after verifying the
+  // first input was echoed and the output contains a real Bash prompt.
+  const bashPromptSeen = lines.some(line => /^bash-[\d.]+[$#] /.test(line));
   let next = 0;
   for (const [i, inputLine] of inputLinesSent(inputSent).entries()) {
     const echo = inputLine.trim();
     if (!echo) continue; // An empty line's echo can't be told from an empty output line
     const at = i === 0
       ? (isEchoLine(lines, 0, echo, true) ? 0 : -1)
-      : lines.findIndex((_, index) => index >= next && isEchoLine(lines, index, echo, false));
+      : lines.findIndex((_, index) => index >= next &&
+          (isEchoLine(lines, index, echo, false) ||
+            (bashPromptSeen && echoes.has(0) && isEchoLine(lines, index, echo, true))));
     if (at < 0) {
       // A process prints one prompt for each line it reads
       const linesRead = lines.reduce((count, line) => count + promptsAtStart(line), 0);
