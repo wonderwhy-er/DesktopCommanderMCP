@@ -1,7 +1,7 @@
 import { createRequire } from 'module';
 
 import { LazyPackage } from '../../../utils/lazy-package.js';
-import { generatePageNumbers } from '../utils.js';
+import { closePdfDocument, generatePageNumbers } from '../utils.js';
 import { extractImagesFromPdf, ImageInfo } from '../extract-images.js';
 const require = createRequire(import.meta.url);
 
@@ -121,11 +121,7 @@ export async function pdf2md(pdfBuffer: Uint8Array, pageNumbers: number[] | Page
                     await pdfDocument.cleanup(false);
                 }
             } catch (e) { }
-            try {
-                if (typeof pdfDocument.destroy === 'function') {
-                    await pdfDocument.destroy();
-                }
-            } catch (e) { }
+            await closePdfDocument(pdfDocument);
         }
     }
 }
