@@ -8,6 +8,7 @@ import {
     buildUiContentSecurityPolicy,
     CONFIG_EDITOR_RESOURCE_URI,
     FILE_PREVIEW_RESOURCE_URI,
+    UI_FONT_ORIGINS,
     UI_RESOURCE_CSP
 } from './contracts.js';
 
@@ -58,7 +59,7 @@ function inlineTemplateAssets(templateHtml: string, css: string, runtime: string
     const policyAdded = replaceOrThrow(
         templateHtml,
         /<head>/i,
-        `<head><meta http-equiv="Content-Security-Policy" content="${buildUiContentSecurityPolicy(UI_RESOURCE_CSP)}">`,
+        `<head><meta http-equiv="Content-Security-Policy" content="${buildUiContentSecurityPolicy(UI_RESOURCE_CSP, UI_FONT_ORIGINS)}">`,
         '<head> tag'
     );
     const cssInlined = replaceOrThrow(

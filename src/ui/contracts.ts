@@ -27,18 +27,25 @@ export const UI_RESOURCE_CSP: McpUiResourceCsp = {
 };
 
 /**
- * Content-Security-Policy for a `ui.csp` declaration, built the way the MCP Apps spec tells hosts to, without `'self'` (the
- * pages are inlined, and `'self'` would be the host's origin) and with form posts blocked. An empty list becomes `'none'`.
+ * Font origins the pages' own policy allows. Claude's apps send their UI font as `@font-face` rules that load from here.
+ * Kept out of `UI_RESOURCE_CSP`: its `resourceDomains` would also allow scripts and images from the origin.
  */
-export function buildUiContentSecurityPolicy(csp: McpUiResourceCsp): string {
+export const UI_FONT_ORIGINS = ['https://assets.claude.ai'];
+
+/**
+ * Content-Security-Policy for a `ui.csp` declaration, built the way the MCP Apps spec tells hosts to, without `'self'` (the
+ * pages are inlined, and `'self'` would be the host's origin), with local `blob:` images and media, extra font origins,
+ * and form posts blocked. An empty list becomes `'none'`.
+ */
+export function buildUiContentSecurityPolicy(csp: McpUiResourceCsp, fontOrigins: string[] = []): string {
   const sources = (fixed: string[], domains: string[] = []): string => [...fixed, ...domains].join(' ') || "'none'";
   return [
     "default-src 'none'",
     `script-src ${sources(["'unsafe-inline'"], csp.resourceDomains)}`,
     `style-src ${sources(["'unsafe-inline'"], csp.resourceDomains)}`,
-    `img-src ${sources(['data:'], csp.resourceDomains)}`,
-    `font-src ${sources([], csp.resourceDomains)}`,
-    `media-src ${sources(['data:'], csp.resourceDomains)}`,
+    `img-src ${sources(['data:', 'blob:'], csp.resourceDomains)}`,
+    `font-src ${sources(fontOrigins, csp.resourceDomains)}`,
+    `media-src ${sources(['data:', 'blob:'], csp.resourceDomains)}`,
     `connect-src ${sources([], csp.connectDomains)}`,
     `frame-src ${sources([], csp.frameDomains)}`,
     `base-uri ${sources([], csp.baseUriDomains)}`,
