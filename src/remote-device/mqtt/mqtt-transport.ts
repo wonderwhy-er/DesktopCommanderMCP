@@ -1,30 +1,24 @@
 import { connect, type IClientOptions, type MqttClient } from "mqtt";
-import { rolloutManager } from "../rollouts.js";
 
 // Ids become literal topic segments; reject separators and MQTT wildcards.
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CONNECT_TIMEOUT_MS = 10_000;
-const MAX_RESULT_PAYLOAD_BYTES = 128 * 1024;
+
+export interface MqttCallFlags {
+	IS_MQTT_EXECUTION_ENABLED?: boolean;
+}
 
 /** The server publishes identifiers only; RemoteChannel fetches the durable command row. */
-export interface MqttDoorbell {
+export interface MqttDoorbell extends MqttCallFlags {
 	call_id: string;
 	user_id: string;
 	device_id: string;
 	expires_at: string;
-	notification_id?: string;
-	attempt_number?: number;
 }
 
 export interface MqttConfig {
 	url: string;
 	options: IClientOptions;
-}
-
-export interface MqttResultUpdate {
-	status: string;
-	result?: unknown;
-	error_message?: string;
 }
 
 /** Connect using the enrolled device identity and the system's trusted broker certificates. */
@@ -218,15 +212,11 @@ export class MqttTransport {
 				}
 				const keys =
 					payload && typeof payload === "object" ? Object.keys(payload) : [];
-				const hasCorrelation =
-					keys.length === 6 &&
-					typeof payload.notification_id === "string" &&
-					/^[A-Za-z0-9_:-]{1,256}$/.test(payload.notification_id) &&
-					Number.isSafeInteger(payload.attempt_number) &&
-					payload.attempt_number! >= 1 &&
-					payload.attempt_number! <= 100;
+				const hasExecutionFlag = keys.includes("IS_MQTT_EXECUTION_ENABLED");
+				const baseKeyCount = 4 + Number(hasExecutionFlag);
 				if (
-					(!hasCorrelation && keys.length !== 4) ||
+					keys.length !== baseKeyCount ||
+					(hasExecutionFlag && typeof payload.IS_MQTT_EXECUTION_ENABLED !== "boolean") ||
 					keys.some(
 						(key) =>
 							![
@@ -234,9 +224,7 @@ export class MqttTransport {
 								"user_id",
 								"device_id",
 								"expires_at",
-								...(hasCorrelation
-									? ["notification_id", "attempt_number"]
-									: []),
+								...(hasExecutionFlag ? ["IS_MQTT_EXECUTION_ENABLED"] : []),
 							].includes(key),
 					) ||
 					typeof payload?.call_id !== "string" ||
@@ -263,18 +251,14 @@ export class MqttTransport {
 	}
 
 	/** Publish one bounded result attempt without queuing it for a later connection. */
-	async publishResult(
-		callId: string,
-		originInstance: string,
-		updateData: MqttResultUpdate,
-	): Promise<void> {
+	async publishResult(callId: string, originInstance: string): Promise<void> {
 		if (
 			![callId, originInstance].every(
 				(value) => typeof value === "string" && ID.test(value),
 			)
 		) {
 			throw new Error("Invalid MQTT result identity");
-        }
+		}
 		const client = this.client;
 		if (
 			this.stopped ||
@@ -283,17 +267,10 @@ export class MqttTransport {
 			this.resultPublishes >= 64
 		) {
 			throw new Error("MQTT result transport unavailable");
-        }
+		}
 		const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
 		// Buffer identity keeps concurrent publishes of the same call separate locally.
-		let payload = Buffer.from(JSON.stringify({ call_id: callId }));
-		if (rolloutManager.get("IS_MQTT_RESULT_PAYLOAD_ENABLED", false)) {
-			const payloadWithData = Buffer.from(JSON.stringify({ call_id: callId, data: updateData }));
-			// AWS IoT caps payloads at 128 KiB; larger results remain available in the database.
-			if (payloadWithData.length <= MAX_RESULT_PAYLOAD_BYTES) {
-				payload = payloadWithData;
-			}
-		}
+		const payload = Buffer.from(JSON.stringify({ call_id: callId }));
 		this.resultPublishes++;
 		try {
 			await new Promise<void>((resolve, reject) => {

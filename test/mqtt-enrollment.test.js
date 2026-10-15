@@ -198,14 +198,19 @@ try {
           startMqttTransport: async config => { assert.ok(config.options.cert); order.push('mqtt'); },
           createChannel: async () => { order.push('broadcast'); },
         });
+        const startMqtt = channel.startMqtt.bind(channel);
+        let mqttStartup;
+        channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
         await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
-        assert.deepEqual(order, ['mqtt', 'broadcast']);
+        assert.deepEqual(order, ['broadcast']);
+        await mqttStartup;
+        assert.deepEqual(order, ['broadcast', 'mqtt']);
       }
     });
     assert.equal(requests, 1);
   });
 
-  await check('MQTT connection failure stops startup and cleans up the receiver', async () => {
+  await check('MQTT connection failure preserves Broadcast startup and cleans up the receiver', async () => {
     const channel = new RemoteChannel(options());
     let stopped = 0;
     let broadcastStarts = 0;
@@ -219,30 +224,63 @@ try {
       },
       createChannel: async () => { broadcastStarts++; },
     });
-    await assert.rejects(channel.registerDevice({}, DEVICE_ID, 'test', () => {}), /connection failure/);
+    const startMqtt = channel.startMqtt.bind(channel);
+    let mqttStartup;
+    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+    await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
+    await assert.rejects(mqttStartup, /connection failure/);
     assert.equal(stopped, 1);
     assert.equal(channel.mqttReceiver, null);
-    assert.equal(broadcastStarts, 0);
+    assert.equal(broadcastStarts, 1);
+  });
+
+  await check('transport rollout off returns enrollment 404 without blocking Broadcast despite stale execution cache', async () => {
+    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
+    const profile = options();
+    const channel = new RemoteChannel(profile);
+    let broadcasts = 0;
+    Object.assign(channel, {
+      _user: { id: USER_ID }, client: {},
+      findDevice: async () => ({ id: DEVICE_ID }), updateDevice: async () => ({ error: null }),
+      getSession: async () => ({ data: { session: { access_token: profile.accessToken } }, error: null }),
+      startMqttTransport: async () => assert.fail('refused enrollment cannot start MQTT'),
+      createChannel: async () => { broadcasts++; },
+    });
+    const startMqtt = channel.startMqtt.bind(channel);
+    let mqttStartup;
+    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
+    await withFetch(async () => new Response('{}', { status: 404 }), async () => {
+      await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
+      assert.equal(broadcasts, 1);
+      await assert.rejects(mqttStartup, /HTTP 404/);
+    });
+    assert.equal(channel.mqttReceiver, null);
   });
 
   await check('shutdown during enrollment prevents credentials from being saved or a listener from starting', async () => {
     const profile = options();
     const channel = new RemoteChannel(profile);
     let starts = 0;
+    let broadcasts = 0;
     Object.assign(channel, {
       _user: { id: USER_ID }, client: {},
       findDevice: async () => ({ id: DEVICE_ID }), updateDevice: async () => ({ error: null }),
       getSession: async () => ({ data: { session: { access_token: profile.accessToken } }, error: null }),
-      startMqttTransport: async () => { starts++; }, createChannel: async () => { starts++; },
+      startMqttTransport: async () => { starts++; }, createChannel: async () => { broadcasts++; },
     });
+    const startMqtt = channel.startMqtt.bind(channel);
+    let mqttStartup;
+    channel.startMqtt = assertCurrent => (mqttStartup = startMqtt(assertCurrent));
     await withFetch(async (_url, request) => {
       const certificate = issue(JSON.parse(request.body).csr);
       await channel.unsubscribe();
       return Response.json(certificate);
     }, async () => {
-      await assert.rejects(channel.registerDevice({}, DEVICE_ID, 'test', () => {}), /session changed/);
+      await channel.registerDevice({}, DEVICE_ID, 'test', () => {});
+      await assert.rejects(mqttStartup, /session changed/);
     });
     assert.equal(starts, 0);
+    assert.equal(broadcasts, 1);
     await assert.rejects(stat(`${profile.profilePath}.mqtt/certificate.json`), { code: 'ENOENT' });
   });
 

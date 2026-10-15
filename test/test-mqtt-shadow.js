@@ -5,7 +5,6 @@ import { EventEmitter } from 'node:events';
 for (const key of Object.keys(process.env)) if (key.startsWith('MQTT_')) delete process.env[key];
 // Old environment flags must not override the user's rollout values.
 process.env.IS_MQTT_EXECUTION_ENABLED = 'true';
-process.env.IS_MQTT_RESULT_PAYLOAD_ENABLED = 'true';
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
@@ -22,9 +21,9 @@ function fixture() {
     });
     return { channel, broadcasts: () => broadcasts };
 }
-// Start MQTT once in either mode; only execution mode waits for readiness.
-for (const execution of [false, true]) {
-    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: execution });
+// Cached execution state cannot hold Broadcast startup behind MQTT enrollment.
+for (const execution of [undefined, false, true]) {
+    rolloutManager.update(execution === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: execution });
     const f = fixture();
     let release;
     let enrollments = 0;
@@ -37,10 +36,10 @@ for (const execution of [false, true]) {
     const registration = f.channel.registerDevice({}, 'device', 'fixture', () => {});
     await settle();
     assert.equal(enrollments, 1);
-    assert.equal(f.broadcasts(), execution ? 0 : 1);
+    assert.equal(f.broadcasts(), 1);
     assert.equal(mqtt, 0);
-    release({});
     await registration;
+    release({});
     await settle();
     assert.equal(mqtt, 1, 'MQTT starts exactly once in both modes');
     assert.equal(enrollments, 1);
@@ -59,6 +58,7 @@ rolloutManager.update({});
     assert.equal(mqtt, 1);
 }
 for (const failAt of ['enrollment', 'broker']) {
+    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
     const f = fixture();
     f.channel.prepareMqttConfig = async () => { if (failAt === 'enrollment') throw Error('unavailable'); return {}; };
     f.channel.startMqttTransport = async () => { throw Error('unavailable'); };
@@ -109,13 +109,18 @@ for (const execution of [undefined, false, true, false]) {
     rolloutManager.update(execution === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: execution });
     const f = fixture();
     f.channel.mqttReady = true;
-    let claims = 0;
-    f.channel.onDoorbell = async () => { claims++; };
-    const payload = { call_id: 'call', device_id: 'device', user_id: 'owner', expires_at: new Date(Date.now()+60_000).toISOString(), notification_id: 'attempt-id', attempt_number: 2 };
-    await f.channel.onMqttDoorbell(payload);
-    assert.equal(claims, execution ? 1 : 0);
+    const sources = [];
+    f.channel.onDoorbell = async (_payload, source = 'broadcast') => { sources.push(source); };
+    const payload = { call_id: 'call', device_id: 'device', user_id: 'owner', expires_at: new Date(Date.now()+60_000).toISOString() };
+    for (const enabled of [undefined, false, true]) {
+        const before = sources.length;
+        await f.channel.onMqttDoorbell({ ...payload, ...(enabled === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: enabled }) });
+        assert.deepEqual(sources.slice(before), enabled === false ? [] : ['mqtt'], 'packet selection ignores cached rollouts');
+    }
     await f.channel.onBroadcastDoorbell(payload);
-    assert.equal(claims, 1);
+    assert.equal(sources.at(-1), 'broadcast');
+    Object.assign(f.channel, { channel: { state: 'joined' }, presenceTracked: true, mqttReady: false });
+    assert.equal(f.channel.isReachable(), true, 'cached execution cannot withdraw healthy Broadcast');
     const observation = observeTransport({ stage: 'received', payload, deviceId: 'device', userId: 'owner', transport: 'mqtt' });
     assert.equal('notification_id' in observation, false);
     assert.equal('attempt_number' in observation, false);
@@ -127,11 +132,12 @@ for (const execution of [undefined, false, true, false]) {
     f.channel.client = { from: () => ({ update: () => ({ eq: async () => { writes++; return { error: failWrite ? { message: 'write failure' } : null }; } }) }) };
     f.channel.sleep = async () => {};
     f.channel.mqttReceiver = { publishResult: async (...args) => {
-        assert.deepEqual(args, ['result', 'origin', { status: 'completed', result: {} }]);
+        assert.equal(writes, 1, 'persist the terminal result before notifying the backend');
+        assert.deepEqual(args, ['result', 'origin']);
         attempts++;
         throw Error('publish failure');
     } };
-    await f.channel.updateCallResult('result', 'completed', {}, null, 'origin');
+    await f.channel.updateCallResult('result', 'completed', {}, null, 'origin', { IS_MQTT_EXECUTION_ENABLED: true });
     await settle();
     assert.equal(writes, 1);
     assert.equal(attempts, 3, 'MQTT retry is bounded and cannot reject a durable result');
@@ -148,15 +154,8 @@ for (const execution of [undefined, false, true, false]) {
         publish(_topic, payload, _options, done) { published = JSON.parse(payload.toString()); done(); },
     });
     transport.ready = true;
-    for (const enabled of [undefined, false, true, false]) {
-        rolloutManager.update(enabled === undefined ? {} : { IS_MQTT_RESULT_PAYLOAD_ENABLED: enabled });
-        const updateData = {
-            status: 'completed',
-            result: enabled ? {} : { toJSON() { throw new Error('Disabled result data must not be serialized'); } },
-        };
-        await transport.publishResult('call', 'origin', updateData);
-        assert.deepEqual(published, enabled ? { call_id: 'call', data: updateData } : { call_id: 'call' });
-    }
+    await transport.publishResult('call', 'origin');
+    assert.deepEqual(published, { call_id: 'call' });
 }
 rolloutManager.update({});
-console.log('PASS MQTT rollouts: live execution/payload switches, default-off behavior, startup, failure isolation, UTC observations and bounded retries');
+console.log('PASS MQTT selection: packet execution flag, identifier-only results and retries, cache-independent readiness, startup, failure isolation and UTC observations');

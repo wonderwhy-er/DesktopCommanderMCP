@@ -22,7 +22,7 @@ interface EnrollmentOptions {
 	deviceId: string;
 	accessToken: string;
 	/** RemoteChannel invalidates asynchronous enrollment when sign-out or shutdown occurs. */
-	assertCurrent?: () => void;
+	assertSessionStillActive?: () => void;
 }
 
 /** Read only existing credentials; a damaged file must never trigger silent key replacement. */
@@ -133,7 +133,7 @@ export async function enrollMqttDevice(
 		);
 	}
 	const brokerUrl = getMqttBrokerUrl();
-	options.assertCurrent?.();
+	options.assertSessionStillActive?.();
 	const folder = `${path.resolve(profilePath)}.mqtt`;
 	await mkdir(folder, { recursive: true, mode: 0o700 });
 	const identityFile = path.join(folder, "identity.json");
@@ -155,7 +155,7 @@ export async function enrollMqttDevice(
 			device_id: deviceId,
 			private_key: keys.privateKey,
 		};
-		options.assertCurrent?.();
+		options.assertSessionStillActive?.();
 		await writePrivateCache(identityFile, identity);
 	}
 	// A profile switched to another account/backend cannot reuse its previous AWS identity.
@@ -188,7 +188,7 @@ export async function enrollMqttDevice(
 		csr.publicKey = forge.pki.setRsaPublicKey(privateKey.n, privateKey.e);
 		csr.setSubject([{ name: "commonName", value: `dc-device-${deviceId}` }]);
 		csr.sign(privateKey, forge.md.sha256.create());
-		options.assertCurrent?.();
+		options.assertSessionStillActive?.();
 		try {
 			// One bounded request: redirects are forbidden so the bearer token cannot follow another origin.
 			const response = await fetch(new URL("/device/mqtt/enroll", backend), {
@@ -217,12 +217,12 @@ export async function enrollMqttDevice(
 			);
 		}
 		validateCertificate(certificate, identity.private_key, brokerUrl);
-		options.assertCurrent?.();
+		options.assertSessionStillActive?.();
 		// shortcut: a lost enrollment response needs server reconciliation; automatic renewal is a separate change.
 		await writePrivateCache(certificateFile, certificate);
 	}
 	validateCertificate(certificate, identity.private_key, brokerUrl);
-	options.assertCurrent?.();
+	options.assertSessionStillActive?.();
 	// Pass credentials to this connection only; another profile in the process must not inherit them via env.
 	return createMqttConfig({
 		url: brokerUrl,
