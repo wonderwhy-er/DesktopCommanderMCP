@@ -215,7 +215,6 @@ async function runTests() {
     rc.deviceName = 'test-device';
     rc.channel = { state: 'joined' };
     rc.localExecutorProbe = () => true;
-    rc.setTransportCapable = async () => true;
     rc.queueStatusWrite = async () => true;
     rc.recoverPendingCalls = async () => { recoveryCalls++; };
 

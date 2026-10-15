@@ -214,7 +214,7 @@ await test('a dead local executor is not advertised online, however healthy the 
     // The restart failed, so the device cannot execute anything.
     device.desktop = { ready: false };
 
-    await device.remoteChannel.updateHeartbeat(DEVICE_ID);
+    await device.remoteChannel.updateHeartbeat();
 
     assert.deepStrictEqual(
         advertisedOnline(client), [],
@@ -225,7 +225,7 @@ await test('a dead local executor is not advertised online, however healthy the 
     // Control: the same device with a working executor is advertised online,
     // so the executor probe is what made the difference above.
     device.desktop = { ready: true };
-    await device.remoteChannel.updateHeartbeat(DEVICE_ID);
+    await device.remoteChannel.updateHeartbeat();
     assert.strictEqual(advertisedOnline(client).length > 0, true,
         'a device with a healthy channel and a ready executor should be advertised online');
 });
