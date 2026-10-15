@@ -12,11 +12,13 @@
  * page can send its text (or whatever the user types into it) to any host,
  * unless the AI app happens to set a policy that stops it.
  *
- * The test renders previews the way the app does (renderHtmlPreview) and loads
- * them in headless Chrome, one preview frame per way out, inside a page that
- * stands for the app's document and sets no policy, as in a host that sets
- * none. A local HTTP server on another port stands for "another website" and
- * records every request it gets.
+ * The test renders previews the way the app does (renderHtmlPreview), one
+ * preview frame per way out, puts them into the file preview's own document
+ * as the server serves it (getFilePreviewResourceText), and loads that in
+ * headless Chrome with no policy from a host, as in a host that sets none. So
+ * a policy counts wherever Desktop Commander sets it: on the preview frame or
+ * on its own document, which the srcdoc frames inherit. A local HTTP server on
+ * another port stands for "another website" and records every request it gets.
  *
  * Cases:
  *   - requests: fetch, XMLHttpRequest, sendBeacon, WebSocket, an image, a
@@ -38,6 +40,7 @@ import os from 'os';
 import path from 'path';
 
 import { renderHtmlPreview } from '../dist/ui/file-preview/src/components/html-renderer.js';
+import { getFilePreviewResourceText } from '../dist/ui/resources.js';
 import { findPuppeteerChrome, findSystemChrome } from '../dist/tools/pdf/markdown.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { createTempDir } from './helpers/test-env.js';
@@ -83,15 +86,18 @@ async function startListener() {
 }
 
 /**
- * The app's document, standing in for the host's: one preview per probe,
- * each made by renderHtmlPreview() like the app makes it. It lists in #loaded
- * every preview frame that loaded.
+ * The file preview's document as the server serves it, with one preview per
+ * probe added at the top of its body (outside #app, which its runtime
+ * renders into), each made by renderHtmlPreview() like the app makes it. It
+ * lists in #loaded every preview frame that loaded.
  */
-function buildHostPage(probes, listenerUrl) {
+async function buildPreviewDocument(probes, listenerUrl) {
     const previews = Object.entries(probes)
         .map(([name, probe]) => `<section data-probe="${name}">${renderHtmlPreview(probe(listenerUrl), 'rendered').html}</section>`)
         .join('\n');
-    return `<!doctype html><html><head><meta charset="utf-8"></head><body><pre id="loaded"></pre>
+    const previewDocument = await getFilePreviewResourceText();
+    assert.ok(/<body[^>]*>/i.test(previewDocument), 'the file preview document has a <body>');
+    return previewDocument.replace(/<body[^>]*>/i, (body) => `${body}<pre id="loaded"></pre>
 <script>
 const loaded = new Set();
 // load does not bubble: listen in the capture phase, before the frames exist
@@ -102,7 +108,7 @@ document.addEventListener('load', (event) => {
     }
 }, true);
 </script>
-${previews}</body></html>`;
+${previews}`);
 }
 
 /**
@@ -151,7 +157,7 @@ async function loadInChrome(chromePath, html) {
 async function assertNothingLeaves(chromePath, caseName, probes) {
     const listener = await startListener();
     try {
-        const loaded = await loadInChrome(chromePath, buildHostPage(probes, listener.url));
+        const loaded = await loadInChrome(chromePath, await buildPreviewDocument(probes, listener.url));
         const names = Object.keys(probes);
         assert.deepStrictEqual(names.filter((name) => !loaded.has(name)), [],
             `${caseName}: every preview frame should load`);
