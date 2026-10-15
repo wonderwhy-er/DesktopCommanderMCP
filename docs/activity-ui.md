@@ -1,62 +1,47 @@
-# MCP activity view — separate fork
+# Optional MCP activity monitor
 
-This project adds an AI-authored activity stream without changing or restarting an existing Remote Desktop Commander device.
+Desktop Commander can show a concise terminal view of MCP operations without dumping raw tool arguments, metadata, or full command results into the activity screen.
 
-## One-call AI explanations
+## How it works
 
-All standard operational tools from this fork now expose an **optional** `activity_description` argument. A model can provide a short explanation in the user's language **within the tool call itself**. This is preferred over a separate progress tool call; the terminal sees the status just before execution. Nothing in `activity_description` is executed, and no private tool inputs or full results are printed in the dashboard.
+- Each operational MCP tool accepts an optional `activity_description` string. The client can supply a short, factual, user-language explanation **in the same tool call**, before execution.
+- The separate `report_activity` tool provides free-standing plan, progress, completion, warning, and failure notes.
+- A missing model-authored explanation falls back to a short tool-name label tagged `auto`. Explanations actually provided by a model are tagged `AI`. Neither label is an authorization decision.
+- Structured start/end events are sent over a local, owner-only Unix socket (or local Windows named pipe). A separate monitor displays the current operation state, duration, and cumulative counts.
+- The monitor keeps a bounded event history, limits the number of tracked active calls, handles duplicate finish events, and attempts safe recovery of stale sockets left by crashes.
 
-The MCP server also includes default activity guidance in its `initialize.instructions`. A client that obeys MCP tool descriptions can use this automatically: the user should not have to request it repeatedly. The optional `report_activity` tool remains available for significant completion notes, warnings and errors. When a model omits both, a generic **auto** tool-name status appears, never a fabricated model explanation.
+The original tool outcome, side effects, permissions, and approval decisions are unchanged. An explanation never authorizes command execution or claims success in advance.
 
-MCP **cannot** impose a system prompt on ChatGPT or force a model to fill optional parameters. Client selection of MCP tool metadata and compliance with server hints depend on the host.
+## Local development
 
-## Terminal activity monitor
+From an independent checkout:
 
-**Run this only from the separately cloned fork**, not from the currently installed remote version:
-
-```sh
-cd /home/tayfur/DesktopCommanderMCP-fork-work
-npm ci --ignore-scripts
+~~~sh
+npm ci --ignore-scripts --no-audit --no-fund
 npm run build
 node dist/index.js activity
-```
+~~~
 
-The monitor uses a private local Unix socket, by default `~/.cache/desktop-commander-activity/monitor.sock`; it neither opens an internet port nor reads/updates `~/.desktop-commander-device/device.json`. A normal local/stdio MCP process started under the same account publishes only descriptions, tool names, call IDs, statuses and elapsed times to the monitor. To inspect or configure a separate test instance without any local/global setup, launch `node /home/tayfur/DesktopCommanderMCP-fork-work/dist/index.js` as the MCP stdio command. The original `desktop-commander remote` must remain unchanged.
+Configure a **separate local MCP stdio client** to start `node /absolute/path/to/checkout/dist/index.js --no-onboarding`. The client and monitor must run as the same authorized OS user (and use the same `DC_ACTIVITY_SOCKET` value if overriding the default).
 
-`DC_ACTIVITY_SOCKET` can override the socket path. The socket directory must already have owner-only permissions (0700) or be newly created with those permissions. `DC_ACTIVITY_UI=off` changes the monitor to compact text output even on an interactive terminal.
+Do not run a second Remote Device using the same saved identity while an existing Remote Device is running. The activity monitor alone does not create or register another remote device.
 
-## Private ChatGPT integration: official Secure MCP Tunnel
+## Controls
 
-The upstream **hosted** Remote Desktop Commander plugin at `mcp.desktopcommander.app` decides which tools are presented to ChatGPT. We do not control its server and cannot force it to advertise the new activity fields. Merely installing this fork will not replace its published tool list.
+- `DC_ACTIVITY_SOCKET`: set a custom local event socket path. On Unix, its parent directory must be owner-only (0700).
+- `DC_ACTIVITY_UI=off`: use compact text output rather than the alternate-screen terminal display.
+- `NO_COLOR=1`: disable interactive terminal rendering.
 
-For a **separate connection**, the official Secure MCP Tunnel can forward to a private local **stdio MCP server** without inbound ports. This requires a Platform tunnel ID, a runtime API key, the relevant tunnel permissions, and a one-time ChatGPT custom MCP plugin connection. Do not copy secrets into source files or publish them on GitHub.
+For a local development smoke test:
 
-Official docs: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
+~~~sh
+node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js
+~~~
 
-After receiving the tunnel ID and **securely** entering the runtime key locally, you can initialize the tunnel (adjust the checkout path):
+## Client and security limitations
 
-```sh
-# Example only: requires an authorized OpenAI Platform tunnel and locally supplied runtime key.
-tunnel-client init \
-  --sample sample_mcp_stdio_local \
-  --profile local-stdio \
-  --tunnel-id YOUR_TUNNEL_ID \
-  --mcp-command "node /home/tayfur/DesktopCommanderMCP-fork-work/dist/index.js"
+MCP initialize instructions and tool descriptions are guidance, **not** a system prompt. A model may omit `activity_description`; the fallback still shows a useful generic status. The original proprietary hosted Remote Desktop Commander connector does **not** automatically expose these new fields merely because a modified local daemon is installed.
 
-tunnel-client doctor --profile local-stdio --explain
-tunnel-client run --profile local-stdio
-```
+The display strips terminal escape/control characters and masks common secrets. Redaction is best-effort, not a guarantee against arbitrary sensitive data: never include credentials, access tokens, private file contents, or hidden reasoning in activity messages.
 
-The tunnel client and `node dist/index.js activity` monitor run in **separate** terminals. The fork's stdio server is spawned by the tunnel client and publishes events to the monitor. Use ChatGPT Plugins → Add custom MCP server → Tunnel to create your own additional plugin. Keep existing Remote Desktop Commander connected until this independent plugin has been verified. The tunnel is optional and **has not been created, started, or authorized by this development work**.
-
-The tunnel grants significant control over a computer. Use the narrowest feasible tool permissions and ordinary ChatGPT approval controls. A model-authored display message **never** substitutes for user approval.
-
-## Isolated validation
-
-```sh
-cd /home/tayfur/DesktopCommanderMCP-fork-work
-npm run build
-node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js
-```
-
-Tests create temporary home directories and local sockets. They do not register another Remote Device or access the installed device credentials.
+The local monitor uses IPC only; it opens no public network listener and makes no outbound tunnel connection. Remote MCP connectivity, runtime credentials, host restart behavior, and ChatGPT or Claude approvals are separate deployment concerns. See [production readiness](activity-production-readiness.md) before proposing a release.

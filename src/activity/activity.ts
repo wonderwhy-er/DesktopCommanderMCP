@@ -152,7 +152,7 @@ export class ActivityView {
         const display = [
             border('┌', '┐'),
             line('Desktop Commander · İşlem görünümü'),
-            line(`Aktif: ${count.active}    Tamamlandı: ${count.completed}    Hata: ${count.failed}`),
+            line(`Aktif: ${count.active}    Tamamlandı: ${count.completed}    Hata: ${count.failed}` + (this.droppedTracking ? `    İzleme taşması: ${this.droppedTracking}` : '')),
             border('├', '┤'),
             ...entries,
             border('├', '┤'),
