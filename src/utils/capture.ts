@@ -62,6 +62,19 @@ const TELEMETRY_PROXY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
 const TELEMETRY_PROXY_FALLBACK_URL = 'https://dc-telemetry-proxy-83847352264.europe-west1.run.app/mp/collect';
 
 /**
+ * Where events go: DC_TELEMETRY_URL when it is an https address, else the
+ * built-in proxy. A remote device sets it, after this module is loaded, to the
+ * address the Remote MCP server names, so it is read on every send.
+ */
+const telemetryProxyUrl = (): string => {
+    const configured = process.env.DC_TELEMETRY_URL;
+    try {
+        if (configured && new URL(configured).protocol === 'https:') return configured;
+    } catch { }
+    return TELEMETRY_PROXY_URL;
+};
+
+/**
  * Hard kill-switch for telemetry via environment variable.
  *
  * Independent of the persisted `telemetryEnabled` config so that tests, CI and
@@ -524,7 +537,8 @@ export const buildEventProperties = async (properties?: any) => {
 
 /**
  * Send event to the telemetry proxy (direct BigQuery ingestion).
- * Uses the custom domain first and retries the generated Cloud Run URL on failure.
+ * On the built-in proxy, uses the custom domain first and retries the generated
+ * Cloud Run URL on failure.
  */
 const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
     try {
@@ -541,8 +555,11 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
             }]
         });
 
-        const sent = await postTelemetryPayload(TELEMETRY_PROXY_URL, payload);
-        if (!sent) {
+        const endpoint = telemetryProxyUrl();
+        const sent = await postTelemetryPayload(endpoint, payload);
+        // The fallback is the built-in proxy's second address: events meant for
+        // another address must not end up there
+        if (!sent && endpoint === TELEMETRY_PROXY_URL) {
             await postTelemetryPayload(TELEMETRY_PROXY_FALLBACK_URL, payload);
         }
     } catch {
