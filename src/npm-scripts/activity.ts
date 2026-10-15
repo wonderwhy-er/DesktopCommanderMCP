@@ -1,4 +1,5 @@
 import { ActivityView } from '../activity/activity.js';
+import { FrameCoalescer } from '../activity/frame-coalescer.js';
 import { activitySocketPath, createActivityMonitor } from '../activity/channel.js';
 
 export async function runActivityMonitor(): Promise<void> {
@@ -7,9 +8,16 @@ export async function runActivityMonitor(): Promise<void> {
         return;
     }
 
-    const view = new ActivityView();
-    const monitor = await createActivityMonitor(view);
     const tty = !!process.stdout.isTTY && process.env.DC_ACTIVITY_UI !== 'off';
+    const frames = tty ? new FrameCoalescer(process.stdout) : null;
+    const screen = frames ? {
+        isTTY: true,
+        get columns() { return process.stdout.columns; },
+        get rows() { return process.stdout.rows; },
+        write: (data: string) => frames.write(data),
+    } : process.stdout;
+    const view = new ActivityView(screen);
+    const monitor = await createActivityMonitor(view);
     let finish: (() => void) | undefined;
     let onInput: ((data: Buffer) => void) | undefined;
     let rawChanged = false;
@@ -54,6 +62,7 @@ export async function runActivityMonitor(): Promise<void> {
         if (refreshTimer) clearInterval(refreshTimer);
         if (onInput) process.stdin.off('data', onInput);
         process.stdout.off('resize', redraw);
+        frames?.close(); // No queued screen writes after terminal restoration.
         if (tty) process.stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?25h\x1b[?1049l');
         if (rawChanged) {
             process.stdin.setRawMode(initialRawMode);

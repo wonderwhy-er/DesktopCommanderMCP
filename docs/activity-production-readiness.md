@@ -6,6 +6,7 @@ This is a native, English-only terminal interface for **real MCP tool events**. 
 
 - State is derived from actual MCP start/finish events; a successful operation is counted only after its completion event.
 - Terminal input uses raw mode when interactive, consumes arrow/PageUp/PageDown/Home/End, handles SGR mouse wheel and Q/Ctrl+C, and restores terminal settings and mouse mode at exit.
+- Full-screen terminal updates are coalesced to a bounded refresh interval; no operation start/end events are dropped by the coalescer.
 - Rows remain within viewport and obey terminal resize. History is limited to 1000 operations; active calls limited to 4096 with visible overflow warning.
 - No AI-authored or localized messages reach the UI. Readable English labels correspond to real tool names.
 - Unix socket parent directory must be private to its owner. Stale sockets can be recovered without replacing another active monitor or a regular file.

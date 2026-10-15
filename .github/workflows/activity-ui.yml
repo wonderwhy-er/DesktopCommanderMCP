@@ -41,7 +41,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
-      - run: node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js test/activity-terminal-pty.test.js
+      - run: node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js test/activity-terminal-pty.test.js test/activity-frame-coalescer.test.js
 
   full-regression:
     runs-on: ubuntu-latest
