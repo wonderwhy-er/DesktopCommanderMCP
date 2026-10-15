@@ -25,7 +25,9 @@
  *     refresh) reaches nobody
  *
  * Every preview frame must load, so a preview that never rendered cannot pass.
- * Skipped when no Chrome or Chromium is installed.
+ * Chrome is found the way the PDF render finds it (Desktop Commander's cached
+ * Chrome for Testing, else the system's), without installing one; the test is
+ * skipped when there is none.
  */
 
 import assert from 'assert';
@@ -36,7 +38,7 @@ import os from 'os';
 import path from 'path';
 
 import { renderHtmlPreview } from '../dist/ui/file-preview/src/components/html-renderer.js';
-import { findSystemChrome } from '../dist/tools/pdf/markdown.js';
+import { findPuppeteerChrome, findSystemChrome } from '../dist/tools/pdf/markdown.js';
 import { runIfMain, skip } from './helpers/run-if-main.js';
 import { createTempDir } from './helpers/test-env.js';
 
@@ -163,7 +165,8 @@ async function assertNothingLeaves(chromePath, caseName, probes) {
 }
 
 export default async function runTests() {
-    const chromePath = findSystemChrome();
+    // getChromePath()'s order, minus its last resort (installing Chrome)
+    const chromePath = findPuppeteerChrome()?.executablePath ?? findSystemChrome();
     if (!chromePath) {
         return skip('HTML preview network: no Chrome or Chromium installed');
     }
