@@ -33,7 +33,9 @@ const TOOL_LABELS: Record<string, string> = {
 };
 export function fallbackDescription(tool: string): string {
     if (!/^[a-zA-Z0-9_.-]{1,128}$/.test(tool)) return 'Unknown operation';
-    return TOOL_LABELS[tool] ?? tool.replace(/_/g, ' ');
+    return Object.prototype.hasOwnProperty.call(TOOL_LABELS, tool)
+        ? TOOL_LABELS[tool]
+        : tool.replace(/_/g, ' ');
 }
 
 export class ActivityView {

@@ -123,3 +123,15 @@ test('hostile MCP tool names cannot inject escapes into non-tty logs', () => {
     assert.ok(chunks.every(x => !x.includes('\x1b') && !x.includes('TOKEN=SECRET')));
     assert.equal(view.getSnapshot()[0].tool, 'unknown_operation');
 });
+
+test('reserved JavaScript object names cannot become UI labels or crash rendering', () => {
+    const { view, latest } = terminal();
+    for (const [i, name] of ['constructor', 'toString', '__proto__', 'valueOf'].entries()) {
+        const id = 'prototype-' + i;
+        view.started(id, name);
+        view.finished(id);
+    }
+    assert.ok(view.getSnapshot().every(row => typeof row.text === 'string'));
+    assert.equal(view.getTotals().completed, 4);
+    assert.match(latest(), /valueOf/);
+});
