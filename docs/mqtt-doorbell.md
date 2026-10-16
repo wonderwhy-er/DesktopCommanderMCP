@@ -7,11 +7,11 @@ for shadow observation. Enrollment or MQTT failure leaves Broadcast working.
 | --- | --- |
 | `false` | MQTT receipt is observation only; the Broadcast handler executes the stored Broadcast call |
 | `true` | MQTT fetches and claims the call only when its stored `metadata.transport` is `mqtt_v1` |
-| Missing (legacy packet) | The stored call mode determines whether the MQTT handler may claim it |
+| Missing | The stored call mode determines whether the MQTT handler may claim it |
 
-The backend resolves `IS_MQTT_EXECUTION_ENABLED` from the user's
-rollouts for each dispatch. The five-field command contains this boolean alongside `call_id`, `user_id`,
-`device_id` and `expires_at`. It stores the selected mode in `metadata.transport`. The device does not use its
+The backend resolves `IS_MQTT_EXECUTION_ENABLED` from the user's rollouts, backend configuration,
+and the selected device's MQTT capability for each dispatch. The four-field command contains this boolean alongside `call_id`, `user_id`,
+and `device_id`. It stores the selected mode in `metadata.transport`. The device does not use its
 cached execution rollout to choose execution, startup or reachability. MQTT always starts in the
 background while Broadcast connects. `MQTT_TRANSPORT_ENABLED` gates backend MQTT publications and
 enrollment; when it is off, the backend sends no MQTT command. There is no Broadcast fallback for MQTT calls.
@@ -19,10 +19,9 @@ The backend's execution migration suppresses command/result Broadcast for MQTT c
 Pending calls and retries retain their dispatch mode when rollouts change;
 this decision needs no device rollout refresh. Drain active calls before removing their transport or rolling back that migration.
 
-This receiver accepts only the four required fields plus the optional execution boolean.
-When upgrading from a legacy publisher that sends only those four fields, deploy this receiver first:
-older device parsers reject the execution field. This receiver rejects the previous six-field pilot
-publisher's commands and packets containing `notification_id` or `attempt_number`. For those deployments,
+This receiver accepts only the three required identifiers plus the optional execution boolean.
+It rejects packets containing `expires_at`, `notification_id`, `attempt_number`, or any other extra field.
+Older MQTT pilot receivers require different envelopes and must be updated together with the backend:
 disable MQTT execution, drain active calls, update both sides, then re-enable execution.
 Without the execution boolean, it checks the stored call mode. Both handlers enforce that mode through
 the existing database-time conditional claim, ambiguous-claim readback and recovery, with duplicate suppression.

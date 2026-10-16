@@ -111,7 +111,7 @@ for (const execution of [undefined, false, true, false]) {
     f.channel.mqttReady = true;
     const sources = [];
     f.channel.onDoorbell = async (_payload, source = 'broadcast') => { sources.push(source); };
-    const payload = { call_id: 'call', device_id: 'device', user_id: 'owner', expires_at: new Date(Date.now()+60_000).toISOString() };
+    const payload = { call_id: 'call', device_id: 'device', user_id: 'owner' };
     for (const enabled of [undefined, false, true]) {
         const before = sources.length;
         await f.channel.onMqttDoorbell({ ...payload, ...(enabled === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: enabled }) });

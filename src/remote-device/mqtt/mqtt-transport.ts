@@ -212,7 +212,7 @@ export class MqttTransport {
 				const keys =
 					payload && typeof payload === "object" ? Object.keys(payload) : [];
 				const hasExecutionFlag = keys.includes("IS_MQTT_EXECUTION_ENABLED");
-				const baseKeyCount = 4 + Number(hasExecutionFlag);
+				const baseKeyCount = 3 + Number(hasExecutionFlag);
 				if (
 					keys.length !== baseKeyCount ||
 					(hasExecutionFlag && typeof payload.IS_MQTT_EXECUTION_ENABLED !== "boolean") ||
@@ -233,7 +233,7 @@ export class MqttTransport {
 					invalid();
 					return;
 				}
-				// Expired but valid envelopes must reach receipt observation before execution rejection.
+				// The durable row's deadline is checked during the claim, after receipt observation.
 				void this.onDoorbell(payload).catch(() => {});
 			});
 		});

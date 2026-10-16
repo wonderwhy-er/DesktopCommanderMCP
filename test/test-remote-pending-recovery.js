@@ -165,7 +165,7 @@ async function runTests() {
     rc.mqttReady = true;
     await Promise.all([
       rc.recoverPendingCalls(),
-      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1', expires_at: iso(60_000), IS_MQTT_EXECUTION_ENABLED: true }),
+      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1', IS_MQTT_EXECUTION_ENABLED: true }),
     ]);
     assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy', 'mqtt']);
     assert.equal(rows[0].status, 'executing', 'recovery and an MQTT duplicate share one conditional claim');

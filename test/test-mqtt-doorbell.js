@@ -85,7 +85,7 @@ const channels = [];
 let publisher;
 let pendingReceiver;
 let malformed = 0;
-const bell = id => ({ call_id: id, user_id: 'owner', device_id: 'device', expires_at: new Date(Date.now() + 60_000).toISOString(),
+const bell = id => ({ call_id: id, user_id: 'owner', device_id: 'device',
     IS_MQTT_EXECUTION_ENABLED: true });
 
 function fixture() {
@@ -293,18 +293,23 @@ try {
     }
 
     f.add('expired');
-    const expired = bell('expired');
-    expired.expires_at = new Date(Date.now() - 1000).toISOString();
+    f.rows.get('expired').timeout_at = new Date(Date.now() - 1000).toISOString();
     const readsBeforeExpiry = f.operations.length;
-    await send(expired);
-    await until(() => events.some(e => e.params.call_id === 'expired'));
-    assert.equal(f.operations.length, readsBeforeExpiry);
+    const executionsBeforeExpiry = f.executed.length;
+    await send(bell('expired'));
+    await until(() => f.operations.length > readsBeforeExpiry);
+    assert.equal(f.rows.get('expired').status, 'pending', 'the durable row controls expiry');
+    assert.equal(f.executed.length, executionsBeforeExpiry, 'an expired row cannot execute through a valid envelope');
 
     const receiver = f.channel.mqttReceiver;
     receiver.onMalformed = () => malformed++;
+    const operationsBeforeMalformed = f.operations.length;
     const valid = bell('malformed');
     const invalid = ['{', { ...valid, user_id: 'foreign' }, { ...valid, device_id: 'foreign' },
         { ...valid, call_id: '../bad' }, { ...valid, extra: 'tool_args' }, { ...valid, expires_at: 'yesterday' },
+        // Earlier internal pilots used expires_at; that unsupported envelope is rejected explicitly.
+        { ...valid, expires_at: new Date(Date.now() + 60_000).toISOString() },
+        { call_id: valid.call_id, user_id: valid.user_id, device_id: valid.device_id, expires_at: new Date(Date.now() + 60_000).toISOString() },
         { ...valid, notification_id: 'malformed:mqtt:1' }, { ...valid, attempt_number: 1 },
         { ...valid, notification_id: 'malformed:mqtt:1', attempt_number: 1 },
         { ...valid, IS_MQTT_EXECUTION_ENABLED: undefined, notification_id: 'malformed:mqtt:1', attempt_number: 1 },
@@ -312,7 +317,7 @@ try {
         { ...valid, IS_MQTT_EXECUTION_ENABLED: null }, 'x'.repeat(1025)];
     for (const payload of invalid) await send(payload);
     await until(() => malformed === invalid.length);
-    assert.equal(f.operations.length, readsBeforeExpiry);
+    assert.equal(f.operations.length, operationsBeforeMalformed);
     // Retained replay is not an instruction, even if its envelope otherwise validates.
     receiver.client.emit('message', topic, Buffer.from(JSON.stringify(valid)), { retain: true });
     assert.equal(malformed, invalid.length + 1);
