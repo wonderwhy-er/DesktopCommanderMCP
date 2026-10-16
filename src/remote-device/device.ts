@@ -15,6 +15,7 @@ import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
+import type { MqttCallFlags } from './mqtt/mqtt-transport.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -102,10 +103,10 @@ export class MCPDevice {
 
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
-        this.remoteChannel = new RemoteChannel();
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
+        this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl, profilePath: this.configPath });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
         // refresh-token families get replayed, trip GoTrue's reuse detection, and
@@ -600,6 +601,9 @@ export class MCPDevice {
         const toolCall = payload.new;
         // Expect toolCall to include a device_id field used to route calls to this device instance.
         const { id: call_id, tool_name, tool_args, device_id, metadata = {} } = toolCall;
+        const mqttFlags: MqttCallFlags = {
+            IS_MQTT_EXECUTION_ENABLED: metadata?.transport === 'mqtt_v1',
+        };
 
         console.debug('[DEBUG] Tool call received, device_id:', device_id, 'this.deviceId:', this.deviceId);
 
@@ -609,7 +613,7 @@ export class MCPDevice {
             return;
         }
 
-        const observation = { callId: call_id, deviceId: this.deviceId, toolName: tool_name };
+        const observation = { callId: call_id, deviceId: this.deviceId, toolName: tool_name, ...mqttFlags };
 
         // Count every targeted delivery, including duplicates, before the local claim.
         observeTransport({ stage: 'device_call_received', ...observation });
@@ -672,7 +676,7 @@ export class MCPDevice {
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
             observeTransport({ stage: 'tool_call_failed', ...observation });
-            await this.reportToolCallFailure(call_id, tool_name, error);
+            await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance, mqttFlags);
             return;
         }
 
@@ -682,24 +686,24 @@ export class MCPDevice {
         // failed, as before, but its telemetry stays "tool_call_completed"
         try {
             try {
-                await this.remoteChannel.updateCallResult(call_id, 'completed', result);
+                await this.remoteChannel.updateCallResult(call_id, 'completed', result, null, metadata.origin_instance, mqttFlags);
             } finally {
                 observeTransport({ stage: 'tool_call_completed', ...observation});
             }
         } catch (error: any) {
             console.error(`❌ Tool call ${tool_name} failed:`, error.message);
-            await this.reportToolCallFailure(call_id, tool_name, error);
+            await this.reportToolCallFailure(call_id, tool_name, error, metadata.origin_instance, mqttFlags);
         }
     }
 
     /** Reports a tool call that failed, or whose result couldn't be saved, and writes its "failed" row. */
-    private async reportToolCallFailure(call_id: string, tool_name: string, error: any) {
+    private async reportToolCallFailure(call_id: string, tool_name: string, error: any, originInstance?: string, mqttFlags: MqttCallFlags = {}) {
         // The failure path must not fail: handleNewToolCall's promise is discarded
         // at every call site, so a throw here becomes an unhandled rejection
         // and takes the device process down.
         try {
             await captureRemote('remote_device_tool_call_failed', { error, tool_name });
-            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message);
+            await this.remoteChannel.updateCallResult(call_id, 'failed', null, error.message, originInstance, mqttFlags);
         } catch (reportError: any) {
             console.error(`❌ Could not report failure for ${call_id}:`, reportError?.message);
         }

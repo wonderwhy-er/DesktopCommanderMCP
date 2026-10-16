@@ -89,6 +89,12 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
   let claimAttempts = 0;
   let pendingWrite = null;
   let lastClaim = null;
+  const matchesTransport = (filter) => !filter || (filter === 'metadata->>transport.eq.mqtt_v1'
+    ? row?.metadata?.transport === 'mqtt_v1' : row?.metadata?.transport !== 'mqtt_v1');
+  const assertTransportFilter = filter => assert(
+    ['metadata->>transport.eq.mqtt_v1', 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1'].includes(filter),
+    `unexpected transport filter: ${filter}`,
+  );
 
   // The claim, update({status:'executing'}).eq(...).select(...): it records the
   // filters and the select, because both decide what PostgREST returns — a
@@ -98,15 +104,16 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
   const claim = () => {
     const filters = {};
     let selected = null;
+    let transportFilter;
     const settle = () => {
       claimAttempts++;
       const failed = claimAttempts <= failClaims;
       const wantsRow = selected === '*';
       const matches =
         filters.id === row?.id && filters.status === 'pending' && (!wantsRow || filters.device_id === claimDeviceId);
-      const committed = !!row && matches && row.status === 'pending' && (!failed || claimAttempts <= lostClaims);
+      const committed = !!row && matches && matchesTransport(transportFilter) && row.status === 'pending' && (!failed || claimAttempts <= lostClaims);
       if (committed) row.status = 'executing';
-      lastClaim = { filters: { ...filters }, select: selected };
+      lastClaim = { filters: { ...filters }, select: selected, transportFilter };
       if (failed) return { data: null, error: { message: 'claim failed' } };
       if (selected === null) return { data: null, error: null }; // PostgREST 204, no representation
       return { data: committed ? [wantsRow ? row : { id: row.id }] : [], error: null };
@@ -120,6 +127,11 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
       // tests focus on claim routing/atomicity, so the fake accepts the range
       // predicate without adding clock behavior of its own.
       gt: () => builder,
+      or: filter => {
+        assertTransportFilter(filter);
+        transportFilter = filter;
+        return builder;
+      },
       select: (cols = '*') => {
         selected = cols;
         return builder;
@@ -129,22 +141,26 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
     return builder;
   };
 
-  const result = () => {
+  const result = (transportFilter) => {
     const p = Promise.resolve({ data: null, error: null });
     p.maybeSingle = async () => {
       fetchAttempts++;
       if (fetchAttempts <= failFetches) {
         return { data: null, error: { message: 'fetch failed' } };
       }
-      return { data: row, error: null };
+      return { data: matchesTransport(transportFilter) ? row : null, error: null };
     };
-    p.eq = () => result();
+    p.eq = () => result(transportFilter);
+    p.or = filter => {
+      assertTransportFilter(filter);
+      return result(filter);
+    };
     p.gt = (col, value) => {
       assert(col === 'timeout_at', 'fallback must filter timeout_at');
       assert(value === 'now', 'fallback read must compare against database time');
-      return result();
+      return result(transportFilter);
     };
-    p.select = () => result();
+    p.select = () => result(transportFilter);
     return p;
   };
 
@@ -370,6 +386,22 @@ await test('every claim failing falls back to an unclaimed delivery', async () =
   assert(client.claims() === 3 && client.attempts() === 1, 'three claims, then one fetch');
   assert(delivered.length === 1, 'the fetched pending row must be delivered');
   assert(delivered[0].claimed !== true, 'device.ts must still claim it');
+});
+
+await test('claim errors cannot bypass the stored transport through fallback readback', async () => {
+  for (const source of ['mqtt', 'broadcast']) {
+    for (const matches of [true, false]) {
+      const transport = (source === 'mqtt') === matches ? 'mqtt_v1' : 'broadcast_v1';
+      const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending', metadata: { transport } }, failClaims: 3 });
+      rc.mqttReady = true;
+      rc.sleep = async () => {};
+      const delivered = [];
+      rc.onToolCall = payload => delivered.push(payload);
+      await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID }, source);
+      assert(client.claims() === 3 && client.attempts() === 1, 'exercise all claim retries and the fallback read');
+      assert(delivered.length === Number(matches), 'fallback must reject a row selected for the other transport');
+    }
+  }
 });
 
 await test('doorbell with a missing row is a no-op', async () => {

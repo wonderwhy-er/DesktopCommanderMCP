@@ -31,6 +31,9 @@ assert.equal('monotonic_ms' in receipt, false);
 assert.match(receipt.observation_id, /^[0-9a-f-]{36}$/);
 assert.match(receipt.source_process_id, /^[0-9a-f-]{36}$/);
 assert.equal('tool_name' in receipt, false);
+assert.equal('IS_MQTT_EXECUTION_ENABLED' in receipt, false);
+const invalidFlags = received({ ...target, IS_MQTT_EXECUTION_ENABLED: 'false' });
+assert.equal('IS_MQTT_EXECUTION_ENABLED' in invalidFlags, false);
 assert.notEqual(received(target).observation_id, receipt.observation_id);
 assert.equal(observeTransport({ stage: 'received', payload: target, deviceId: 'device-1', userId: 'other-user' }), null);
 assert.equal(observeTransport({ stage: 'received', payload: target, deviceId: 'other-device', userId: 'user-1' }), null);
@@ -57,6 +60,7 @@ const mqtt = observeTransport({ stage: 'execution_start', callId: 'call-1', devi
     toolName: 'read_file', transport: 'mqtt' });
 assert.equal(mqtt.transport, 'mqtt');
 assert.equal('notification_id' in mqtt, false);
+assert.equal('attempt_number' in mqtt, false);
 assert.equal('duration_ms' in end, false);
 assert.equal('outcome' in end, false);
 assert.equal('tool_name' in observeTransport({ stage: 'execution_start', callId: 'call-1', deviceId: 'device-1',
@@ -95,7 +99,7 @@ try {
     };
     syncBuiltinESMExports();
 
-    const wireObservation = received({ ...target, call_id: 'call-wire' });
+    const wireObservation = received({ ...target, call_id: 'call-wire', IS_MQTT_EXECUTION_ENABLED: false });
     void capture('ordinary_event', { custom_field: 'kept' });
     await Promise.race([
         bothSent,
@@ -112,6 +116,7 @@ try {
     assert.equal(parsed.events[0].params.call_id, 'call-wire');
     assert.equal(parsed.events[0].params.source, 'device');
     assert.equal(parsed.events[0].params.monotonic_ms, undefined);
+    assert.equal(parsed.events[0].params.IS_MQTT_EXECUTION_ENABLED, false);
 
     const ordinaryBody = sent.find(body => body.events[0].name === 'ordinary_event');
     assert.equal(ordinaryBody.events[0].params.custom_field, 'kept');

@@ -4,6 +4,8 @@ import { observeTransport } from './transport-telemetry.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
+import { MqttTransport, type MqttCallFlags, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
+import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -231,6 +233,9 @@ export class RemoteChannel {
     /** Auth session gone for good: stops rejoins and caps the notice at one line. */
     private sessionLost = false;
     private handlingSignedOut = false;
+    private mqttReceiver: MqttTransport | null = null;
+    private mqttReady = false;
+    private authGeneration = 0;
 
 
     // Store subscription parameters for channel recreation
@@ -242,6 +247,8 @@ export class RemoteChannel {
     /** False when presence publishing failed on an otherwise healthy channel;
      * the health check retries, since SUBSCRIBED won't fire again. */
     private presenceTracked = false;
+    /** Broadcast readiness is independent of failures saving MQTT capabilities. */
+    private broadcastCapable = false;
     /** Last capability value written (null = never), to avoid redundant writes. */
     private transportCapableWritten: boolean | null = null;
     /** Value of the last capability write still queued or in flight; null once the queue is idle. */
@@ -293,6 +300,8 @@ export class RemoteChannel {
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
+    constructor(private readonly enrollment?: { serverUrl: string; profilePath: string }) {}
+
 
     initialize(url: string, key: string): void {
         // autoRefreshToken:false — we drive refresh ourselves (startTokenRefresh(),
@@ -341,6 +350,8 @@ export class RemoteChannel {
 
     async setSession(session: AuthSession): Promise<{ error: any }> {
         if (!this.client) throw new Error('Client not initialized');
+        this.authGeneration++;
+        await this.stopMqttTransport();
         console.debug('[DEBUG] RemoteChannel.setSession() called, has refresh_token:', !!session.refresh_token);
         // setSession() already fetches the user from GoTrue (or refreshes), so no getUser() after it.
         const { data: { user }, error } = await this.client.auth.setSession({
@@ -412,6 +423,7 @@ export class RemoteChannel {
     private async handleSignedOut(): Promise<void> {
         if (this.handlingSignedOut || this.sessionLost || this.shuttingDown) return;
         this.handlingSignedOut = true;
+        this.authGeneration++;
         try {
             const cached = this.lastKnownSession;
             if (cached?.refresh_token && this.client) {
@@ -458,6 +470,7 @@ export class RemoteChannel {
             }
 
             this.sessionLost = true;
+            await this.stopMqttTransport();
             await captureRemote('remote_channel_session_lost', {
                 hadRefreshToken: !!cached?.refresh_token,
             });
@@ -618,12 +631,14 @@ export class RemoteChannel {
             // Create and subscribe to the channel
             console.debug('[DEBUG] Calling createChannel()');
 
-            // Let a failed join reach the caller. createChannel() resolves only
-            // once the channel is joined AND presence is published — the two
-            // things dispatch needs — so swallowing its rejection here was what
-            // let device.ts print "Device ready" over a device that cannot
-            // receive a single command. The caller decides what to do with it;
-            // it is not fatal, the socket watchdog keeps retrying.
+            const generation = this.authGeneration;
+            const assertSessionStillActive = () => {
+                if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+                    throw new Error('Device session changed during MQTT startup; restart the connector');
+                }
+            };
+            void this.startMqtt(assertSessionStillActive).catch(() => console.warn('[MQTT] Transport unavailable; Broadcast continues'));
+            assertSessionStillActive();
             await this.createChannel();
 
         } else {
@@ -631,6 +646,97 @@ export class RemoteChannel {
             await captureRemote('remote_channel_register_device_error', { error: 'Device not found', deviceId: currentDeviceId });
             throw new Error(`Device not found: ${currentDeviceId}`);
         }
+    }
+
+    private async startMqtt(assertSessionStillActive: () => void): Promise<void> {
+        const generation = this.authGeneration;
+        try {
+            const mqttConfig = await this.prepareMqttConfig(assertSessionStillActive);
+            assertSessionStillActive();
+            if (mqttConfig) await this.startMqttTransport(mqttConfig);
+        } catch (error) {
+            // A superseded enrollment must not stop the new session's receiver.
+            if (generation === this.authGeneration) await this.stopMqttTransport();
+            throw error;
+        }
+    }
+
+    private async prepareMqttConfig(assertSessionStillActive: () => void): Promise<MqttConfig | null> {
+        if (!this.enrollment || !this.user || !this.deviceId) {
+            throw new Error('MQTT enrollment requires the authenticated connector backend and profile');
+        }
+        const { data, error } = await this.getSession();
+        assertSessionStillActive();
+        if (error || !data.session?.access_token) throw new Error('MQTT enrollment requires a current device session');
+        return enrollMqttDevice({
+            ...this.enrollment,
+            userId: this.user.id,
+            deviceId: this.deviceId,
+            accessToken: data.session.access_token,
+            assertSessionStillActive,
+        });
+    }
+
+    private async startMqttTransport(config: MqttConfig): Promise<void> {
+        if (!this.user || !this.deviceId || this.mqttReceiver) throw new Error('MQTT requires one authenticated registered device');
+        const receiver = new MqttTransport(config, this.user.id, this.deviceId,
+            (payload) => this.onMqttDoorbell(payload),
+            async (ready) => {
+                if (this.mqttReceiver !== receiver) return;
+                await this.setMqttReady(ready);
+            });
+        this.mqttReceiver = receiver;
+        await receiver.start();
+    }
+
+    private async stopMqttTransport(): Promise<void> {
+        const receiver = this.mqttReceiver;
+        this.mqttReceiver = null;
+        if (receiver) await receiver.stop();
+        await this.setMqttReady(false);
+    }
+
+    private async setMqttReady(ready: boolean): Promise<void> {
+        ready = ready && !this.shuttingDown && !this.sessionLost;
+        if (this.mqttReady === ready) return;
+        this.mqttReady = ready;
+        if (this.shuttingDown || this.sessionLost) return;
+        // Both transports replace the same JSON column; preserve their write order.
+        const broadcast = this.broadcastCapable;
+        const write = this.capabilityWriteChain.then(() => this.writeTransportCapable(broadcast));
+        this.capabilityWriteChain = write;
+        this.syncReachabilityStatus();
+        const written = await write;
+        if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
+        if (!written && ready) throw new Error('MQTT capability could not be saved');
+        if (ready) {
+            // Clean MQTT sessions do not replay notifications missed while disconnected.
+            this.recoverPendingCalls().catch(() => console.error('[MQTT] Pending call recovery failed'));
+        }
+    }
+
+    private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
+        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+            return;
+        }
+        observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
+            userId: this.user?.id, transport: 'mqtt' });
+        if (payload.IS_MQTT_EXECUTION_ENABLED === false) {
+            return;
+        }
+        if (!this.mqttReady || payload.user_id !== this.user?.id) {
+            return;
+        }
+        await this.onDoorbell(payload, 'mqtt');
+    }
+
+    private async onBroadcastDoorbell(payload: any): Promise<void> {
+        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
+            return;
+        }
+        observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
+            userId: this.user?.id, transport: 'broadcast' });
+        await this.onDoorbell(payload);
     }
 
     /**
@@ -809,6 +915,7 @@ export class RemoteChannel {
     private capabilitiesPayload(broadcastCapable: boolean): Record<string, any> {
         return {
             app_version: VERSION,
+            ...(this.mqttReady ? { transport_mqtt_v1: true, transport_mqtt_observability_v1: true } : {}),
             ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
         };
     }
@@ -826,6 +933,7 @@ export class RemoteChannel {
      */
     private setTransportCapable(capable: boolean): Promise<boolean> {
         if (!this.client || !this.deviceId) return Promise.resolve(false);
+        this.broadcastCapable = capable;
         // What the row holds once the queue drains — no redundant writes.
         if ((this.transportCapableQueued ?? this.transportCapableWritten) === capable) {
             return this.capabilityWriteChain.then(() => this.transportCapableWritten === capable);
@@ -904,11 +1012,7 @@ export class RemoteChannel {
                     'broadcast',
                     { event: 'new_call' },
                     ({ payload }: any) => {
-                        if (!this.shuttingDown) {
-                            observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
-                                userId: this.user?.id, transport: 'broadcast' });
-                        }
-                        this.onDoorbell(payload).catch((e: any) => {
+                        this.onBroadcastDoorbell(payload).catch((e: any) => {
                             console.error('[DEBUG] Doorbell handling failed:', e?.message);
                         });
                     }
@@ -990,8 +1094,8 @@ export class RemoteChannel {
     }
 
     /**
-     * Recover calls whose Realtime doorbell was missed while this device was
-     * disconnected. Broadcast provides the fast path; the DB row is the source
+     * Recover calls whose doorbell was missed while this device was
+     * disconnected. Notifications provide the fast path; the DB row is the source
      * of truth. Only still-live pending rows for this device are considered.
      *
      * The follow-up onDoorbell() call performs the existing conditional claim,
@@ -1002,7 +1106,7 @@ export class RemoteChannel {
 
         const { data: pending, error } = await this.client
             .from('mcp_remote_calls')
-            .select('id,device_id')
+            .select('id,device_id,metadata')
             .eq('device_id', this.deviceId)
             .eq('status', 'pending')
             .gt('timeout_at', 'now')
@@ -1027,10 +1131,12 @@ export class RemoteChannel {
         // this loop serializes only the small REST claim operations.
         for (const row of pending) {
             if (!this.isReachable()) break;
+            const source = row.metadata?.transport === 'mqtt_v1' ? 'mqtt' : 'broadcast';
+            if (source === 'mqtt' && !this.mqttReady) continue;
             await this.onDoorbell({
                 call_id: row.id,
                 device_id: row.device_id,
-            });
+            }, source);
         }
     }
 
@@ -1054,7 +1160,10 @@ export class RemoteChannel {
      * claims the row (pending -> executing) and returns it, and it is handed to
      * device.ts marked as claimed.
      */
-    private async onDoorbell(payload: any): Promise<void> {
+    private async onDoorbell(payload: any, source: 'broadcast' | 'mqtt' = 'broadcast'): Promise<void> {
+        if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
+        if (source === 'mqtt' && !this.mqttReady) return;
+        const generation = this.authGeneration;
         const callId = payload?.call_id;
         if (!callId) return;
         if (payload?.device_id !== this.deviceId) {
@@ -1067,6 +1176,10 @@ export class RemoteChannel {
         console.debug('[DEBUG] Doorbell received for call:', callId);
 
         if (!this.client) return;
+        // The stored selection authorizes execution; a doorbell cannot switch a call's transport.
+        const transportFilter = source === 'mqtt'
+            ? 'metadata->>transport.eq.mqtt_v1'
+            : 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1';
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
@@ -1077,12 +1190,14 @@ export class RemoteChannel {
         let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
             if (delayMs > 0) await this.sleep(delayMs);
+            if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
             const { data, error } = await this.client
                 .from('mcp_remote_calls')
                 .update({ status: 'executing' })
                 .eq('id', callId)
                 .eq('device_id', this.deviceId)
                 .eq('status', 'pending')
+                .or(transportFilter)
                 .gt('timeout_at', 'now')
                 .select('*');
             if (!error) {
@@ -1095,11 +1210,15 @@ export class RemoteChannel {
             console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
 
+        if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
         if (row) {
             // The server writes the user's rollouts into every call row; a row
             // without them (an older server) keeps what the device has.
             rolloutManager.update(row.metadata?.rollouts);
-            this.dispatchToolCall({ new: row, claimed: true });
+            this.dispatchToolCall({
+                new: row,
+                claimed: true,
+            });
             return;
         }
         if (!claimError) {
@@ -1118,6 +1237,7 @@ export class RemoteChannel {
             .select('*')
             .eq('id', callId)
             .eq('device_id', this.deviceId)
+            .or(transportFilter)
             .gt('timeout_at', 'now')
             .maybeSingle();
         if (error) {
@@ -1125,10 +1245,13 @@ export class RemoteChannel {
             await captureRemote('remote_channel_doorbell_fetch_error', { error });
             return;
         }
+        if (generation !== this.authGeneration || this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
         if (current?.status === 'pending') {
             // No claim landed; device.ts claims it. Read-back already excludes
             // expired rows using PostgreSQL time; its own claim does likewise.
-            this.dispatchToolCall({ new: current });
+            this.dispatchToolCall({
+                new: current,
+            });
         } else {
             // 'executing' reads the same whether our own claim committed with its
             // response lost or another process holding this device_id won it, and
@@ -1427,11 +1550,11 @@ export class RemoteChannel {
         return claimed;
     }
 
-    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null): Promise<void> {
+    async updateCallResult(callId: string, status: string, result: any = null, errorMessage: string | null = null, originInstance?: string, mqttFlags: MqttCallFlags = {}): Promise<void> {
         if (!this.client) throw new Error('Client not initialized');
         // The DB terminal-status trigger stamps completed_at using PostgreSQL
         // time. Do not send a device-generated timestamp.
-        const updateData: any = { status };
+        const updateData: { status: string; result?: unknown; error_message?: string } = { status };
 
         // Strip NUL (U+0000) before it reaches the jsonb `result` column.
         // jsonb cannot store  and rejects the whole write (Postgres 22P05),
@@ -1472,12 +1595,37 @@ export class RemoteChannel {
                     callId,
                     'failed',
                     null,
-                    `Result could not be stored (${error.message})`
+                    `Result could not be stored (${error.message})`,
+                    originInstance,
+                    mqttFlags,
                 );
             }
         } else {
             // (an UPDATE without .select() returns no row data — log the id)
             console.debug('[DEBUG] Call result updated successfully:', callId);
+            if (originInstance && (status === 'completed' || status === 'failed')) {
+                // The write already triggers Broadcast in shadow mode; MQTT must never delay it.
+                void this.publishMqttResult(callId, originInstance, mqttFlags).catch(() => {});
+            }
+        }
+    }
+
+    private async publishMqttResult(callId: string, originInstance: string, mqttFlags: MqttCallFlags = {}): Promise<void> {
+        const receiver = this.mqttReceiver;
+        if (!receiver) return;
+        const generation = this.authGeneration;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            if (generation !== this.authGeneration || receiver !== this.mqttReceiver || this.shuttingDown || this.sessionLost) return;
+            const observation = { callId, deviceId: this.deviceId, transport: 'mqtt' as const, ...mqttFlags };
+            observeTransport({ ...observation, stage: 'mqtt_result_send_attempt' });
+            try {
+                await receiver.publishResult(callId, originInstance);
+                observeTransport({ ...observation, stage: 'mqtt_result_publish' });
+                return;
+            } catch {
+                observeTransport({ ...observation, stage: 'mqtt_result_publish_failed' });
+                if (attempt < 3) await this.sleep(attempt * 1_000);
+            }
         }
     }
 
@@ -1804,6 +1952,8 @@ export class RemoteChannel {
         // SIGINT during recreateChannel()'s backoff, where the later join's
         // SUBSCRIBED would queue 'online' after the durable write.
         this.shuttingDown = true;
+        this.authGeneration++;
+        await this.stopMqttTransport();
         // Budget against device.ts's 5s force-exit, worst case:
         //   250 drain + 2x300 leave + 500 session + 3000 spawnSync = 4350ms.
         // In practice only the untrack bound binds — removeChannel/unsubscribe

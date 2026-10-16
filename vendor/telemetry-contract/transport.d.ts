@@ -5,6 +5,7 @@ export interface TransportParams {
   monotonic_ms?: number;
   transport?: 'mqtt' | 'broadcast';
   device_id?: string;
+  IS_MQTT_EXECUTION_ENABLED?: boolean;
   [key: string]: unknown;
 }
 
