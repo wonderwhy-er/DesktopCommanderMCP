@@ -13,7 +13,6 @@ export interface MqttDoorbell extends MqttCallFlags {
 	call_id: string;
 	user_id: string;
 	device_id: string;
-	expires_at: string;
 }
 
 export interface MqttConfig {
@@ -223,23 +222,13 @@ export class MqttTransport {
 								"call_id",
 								"user_id",
 								"device_id",
-								"expires_at",
 								...(hasExecutionFlag ? ["IS_MQTT_EXECUTION_ENABLED"] : []),
 							].includes(key),
 					) ||
 					typeof payload?.call_id !== "string" ||
 					!ID.test(payload.call_id) ||
 					payload.user_id !== this.userId ||
-					payload.device_id !== this.deviceId ||
-					typeof payload.expires_at !== "string"
-				) {
-					invalid();
-					return;
-				}
-				const expires = Date.parse(payload.expires_at);
-				if (
-					!Number.isFinite(expires) ||
-					new Date(expires).toISOString() !== payload.expires_at
+					payload.device_id !== this.deviceId
 				) {
 					invalid();
 					return;

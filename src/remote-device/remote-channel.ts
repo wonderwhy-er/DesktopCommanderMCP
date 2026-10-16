@@ -724,7 +724,7 @@ export class RemoteChannel {
         if (payload.IS_MQTT_EXECUTION_ENABLED === false) {
             return;
         }
-        if (!this.mqttReady || payload.user_id !== this.user?.id || Date.parse(payload.expires_at) <= Date.now()) {
+        if (!this.mqttReady || payload.user_id !== this.user?.id) {
             return;
         }
         await this.onDoorbell(payload, 'mqtt');
