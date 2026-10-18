@@ -44,8 +44,18 @@ Broadcast trigger. Each attempt is observed, with at most three attempts, a five
 PUBACK deadline, and one-/two-second waits. A failed MQTT publish cannot turn a stored result
 into a failed tool call. Existing database recovery still covers lost notifications.
 
-Enrollment uses `/device/mqtt/enroll` over HTTPS and stores the locally generated key and
-certificate in `<profile>.mqtt` (directory 0700, files 0600). The private key never leaves
+Enrollment uses `/device/mqtt/enroll` over HTTPS, with a local HTTP exception for
+`localhost`, `127.0.0.1`, `[::1]`, and `mcp.localhost`. Local hostnames must resolve to this
+computer. The device profile directory depends on the environment:
+
+- `DC_ENV=staging`: `~/.desktop-commander-device-staging`.
+- `DC_ENV=development`: `~/.desktop-commander-device-dev`.
+- Otherwise, including unset: `~/.desktop-commander-device`.
+
+Each directory contains `device.json` and its MQTT credentials in `.mqtt`.
+`npm run device:start:local` sets `DC_ENV=development`; `npm run device:start:staging`
+sets `DC_ENV=staging`. `NODE_ENV` and `IS_STAGING` do not affect the profile directory.
+The directory uses mode 0700 and files use 0600. The private key never leaves
 the device. Credentials are bound to backend/user/device; invalid caches are not replaced
 silently. Initial enrollment is attempted once; fix configuration and restart on failure.
 Established MQTT connections reconnect automatically. Renewal is separate work.

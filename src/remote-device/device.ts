@@ -16,6 +16,9 @@ import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
 import type { MqttCallFlags } from './mqtt/mqtt-transport.js';
+import { getRemoteDeviceConfigPath } from './remote-utils.js';
+
+export { getRemoteDeviceConfigPath };
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -37,10 +40,6 @@ const PERSISTED_DEVICE_LOOKUP_RETRY_MS = 250;
  * where no restart backoff was armed and the loop would otherwise spin.
  */
 const RECOVERY_MIN_DELAY_MS = 1000;
-
-export function getRemoteDeviceConfigPath() {
-    return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-}
 
 /**
  * Cross-process lock on device.json. A device's save holds it from its check
@@ -106,7 +105,7 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
-        this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl, profilePath: this.configPath });
+        this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
         // refresh-token families get replayed, trip GoTrue's reuse detection, and

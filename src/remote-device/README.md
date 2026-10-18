@@ -38,7 +38,9 @@ If the browser does not open, use the verification URL and code printed in the t
 By default, the authenticated device session is saved to:
 
 ```text
-~/.desktop-commander-device/device.json
+~/.desktop-commander-device/device.json          # default, including DC_ENV unset
+~/.desktop-commander-device-staging/device.json  # DC_ENV=staging
+~/.desktop-commander-device-dev/device.json      # DC_ENV=development
 ```
 
 On POSIX systems, the file is created with mode `0600` (read/write for the owning user only). On Windows, this code does not set a custom owner-only ACL; access is governed by the Windows filesystem permissions for the user profile. Restarting the Remote Device normally reuses this saved session, so browser authorization is not required on every start.
@@ -92,7 +94,9 @@ Run:
 npx @wonderwhy-er/desktop-commander@latest remote --logout
 ```
 
-This removes `~/.desktop-commander-device/device.json`. It does **not** revoke the device in the Remote MCP dashboard.
+This removes `device.json` from the selected environment's directory listed above.
+Use the same `DC_ENV` value as the device process you want to log out.
+It does **not** revoke the device in the Remote MCP dashboard.
 
 For a completely clean authorization reset, revoke the device in the dashboard, log out locally, then start `remote` and pair again.
 

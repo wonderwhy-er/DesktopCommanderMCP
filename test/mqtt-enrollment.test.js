@@ -4,8 +4,9 @@
 import assert from 'node:assert/strict';
 import { createPrivateKey, createPublicKey, generateKeyPairSync, X509Certificate } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import os from 'node:os';
 import path from 'node:path';
+import { mock } from 'node:test';
 import forge from 'node-forge';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -13,21 +14,27 @@ const { rolloutManager } = await import('../dist/remote-device/rollouts.js');
 const originalRollouts = rolloutManager.getAll();
 rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true });
 const { enrollMqttDevice } = await import('../dist/remote-device/mqtt/mqtt-enrollment.js');
+const { getRemoteDeviceConfigDirectory } = await import('../dist/remote-device/remote-utils.js');
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
 const originalBroker = process.env.MQTT_BROKER_URL;
+const originalDcEnv = process.env.DC_ENV;
 delete process.env.MQTT_BROKER_URL;
-const workspace = await mkdtemp(path.join(tmpdir(), 'mqtt-enrollment-device-'));
+delete process.env.DC_ENV;
+const workspace = await mkdtemp(path.join(os.tmpdir(), 'mqtt-enrollment-device-'));
+let testHome = workspace;
+mock.method(os, 'homedir', () => testHome);
 const caPair = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const caKey = forge.pki.privateKeyFromPem(caPair.privateKey.export({ format: 'pem', type: 'pkcs1' }));
 let profileNumber = 0;
 let certificateNumber = 0;
 let passed = 0;
 
-/** Every check gets a private profile, so failures cannot alter a user's saved session. */
+/** Each fixture selects a temporary home without adding storage options to production code. */
 function options(overrides = {}) {
-  return { serverUrl: 'https://staging-mcp.desktopcommander.app', profilePath: path.join(workspace, `profile-${++profileNumber}.json`), userId: USER_ID, deviceId: DEVICE_ID, accessToken: 'synthetic-test-token', ...overrides };
+  testHome = path.join(workspace, `profile-${++profileNumber}`);
+  return { serverUrl: 'https://staging-mcp.desktopcommander.app', userId: USER_ID, deviceId: DEVICE_ID, accessToken: 'synthetic-test-token', ...overrides };
 }
 
 /** Sign the real CSR public key with an ephemeral CA, independently of the device private key. */
@@ -57,8 +64,9 @@ async function withFetch(fake, run) {
 }
 
 /** Read only our throwaway credentials; private material is compared without printing it. */
-async function cache(profile) {
-  const folder = `${profile.profilePath}.mqtt`;
+const mqttFolder = () => path.join(getRemoteDeviceConfigDirectory(), '.mqtt');
+async function cache() {
+  const folder = mqttFolder();
   return { folder, identity: JSON.parse(await readFile(path.join(folder, 'identity.json'), 'utf8')), certificate: JSON.parse(await readFile(path.join(folder, 'certificate.json'), 'utf8')) };
 }
 async function check(name, run) { await run(); passed++; console.log(`PASS ${name}`); }
@@ -84,7 +92,8 @@ try {
       const first = await enrollMqttDevice(profile);
       const second = await enrollMqttDevice(profile);
       assert.equal(calls, 1, 'a process restart uses the persisted successful enrollment');
-      const saved = await cache(profile);
+      const saved = await cache();
+      assert.equal(saved.folder, path.join(testHome, '.desktop-commander-device', '.mqtt'));
       const csr = forge.pki.certificationRequestFromPem(sent.csr);
       assert.ok(csr.verify());
       const csrPublicKey = createPublicKey(forge.pki.publicKeyToPem(csr.publicKey));
@@ -98,6 +107,50 @@ try {
       assert.equal(first.options.rejectUnauthorized, true);
       assert.equal(first.url, saved.certificate.broker_url);
     });
+  });
+
+  await check('production, staging and development keep separate credentials and reuse their own cache', async () => {
+    const profile = options();
+    const snapshots = new Map();
+    const keys = new Set();
+    let calls = 0;
+    try {
+      await withFetch(async (_url, request) => {
+        calls++;
+        return Response.json(issue(JSON.parse(request.body).csr));
+      }, async () => {
+        for (const [dcEnv, suffix, serverUrl] of [
+          [undefined, '', 'https://mcp.desktopcommander.app'],
+          ['staging', '-staging', 'https://staging-mcp.desktopcommander.app'],
+          ['development', '-dev', 'http://mcp.localhost:3007'],
+          ['development', '-dev', 'http://mcp.localhost:3007'],
+          ['staging', '-staging', 'https://staging-mcp.desktopcommander.app'],
+          ['production', '', 'https://mcp.desktopcommander.app'],
+          [undefined, '', 'https://mcp.desktopcommander.app'],
+        ]) {
+          if (dcEnv === undefined) delete process.env.DC_ENV;
+          else process.env.DC_ENV = dcEnv;
+
+          const config = await enrollMqttDevice({ ...profile, serverUrl });
+          const folder = path.join(testHome, `.desktop-commander-device${suffix}`, '.mqtt');
+          const identityText = await readFile(path.join(folder, 'identity.json'), 'utf8');
+          const certificateText = await readFile(path.join(folder, 'certificate.json'), 'utf8');
+          assert.equal(JSON.parse(identityText).backend_origin, serverUrl);
+          assert.equal(JSON.parse(identityText).private_key, config.options.key.toString());
+          if (snapshots.has(suffix)) {
+            assert.deepEqual([identityText, certificateText], snapshots.get(suffix));
+          } else {
+            snapshots.set(suffix, [identityText, certificateText]);
+            keys.add(config.options.key.toString());
+          }
+          assert.equal(calls, snapshots.size, 'switching back reuses credentials without enrolling again');
+        }
+      });
+      assert.equal(calls, 3);
+      assert.equal(keys.size, 3, 'each environment keeps its own private key');
+    } finally {
+      delete process.env.DC_ENV;
+    }
   });
 
   await check('broker override works with a custom HTTPS backend', async () => {
@@ -121,7 +174,7 @@ try {
       await withFetch(async () => { calls++; return failure(); }, async () => {
         await assert.rejects(enrollMqttDevice(profile), (error) => /restart/.test(error.message) && !/PRIVATE_/.test(error.message));
         assert.equal(calls, 1);
-        await assert.rejects(stat(`${profile.profilePath}.mqtt/certificate.json`), { code: 'ENOENT' });
+        await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
       });
     }
   });
@@ -129,23 +182,23 @@ try {
   await check('an explicit manual restart after failed enrollment retains the original private key', async () => {
     const profile = options();
     await withFetch(async () => { throw new Error('injected'); }, async () => { await assert.rejects(enrollMqttDevice(profile)); });
-    const original = await readFile(`${profile.profilePath}.mqtt/identity.json`, 'utf8');
+    const original = await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8');
     await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
-    assert.equal(await readFile(`${profile.profilePath}.mqtt/identity.json`, 'utf8'), original);
+    assert.equal(await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8'), original);
   });
 
   await check('identity changes and corrupt key/certificate caches fail without re-enrolling', async () => {
     const base = options();
     await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(base); });
-    const saved = await cache(base);
+    const saved = await cache();
     await withFetch(async () => { throw new Error('must not POST'); }, async () => {
       for (const patch of [{ serverUrl: 'https://staging-mcp.desktopcommander.app:8443' }, { userId: 'another-user' }, { deviceId: 'another-device' }]) {
         await assert.rejects(enrollMqttDevice({ ...base, ...patch }), /different backend, user, or device/);
       }
       for (const [file, value] of [['identity.json', '{'], ['identity.json', JSON.stringify({ ...saved.identity, private_key: 'invalid' })], ['certificate.json', '{'], ['certificate.json', JSON.stringify({ ...saved.certificate, certificate_id: 'invalid' })]]) {
         const profile = options();
-        const folder = `${profile.profilePath}.mqtt`;
-        await mkdir(folder, { mode: 0o700 });
+        const folder = mqttFolder();
+        await mkdir(folder, { recursive: true, mode: 0o700 });
         await writeFile(path.join(folder, 'identity.json'), JSON.stringify(saved.identity), { mode: 0o600 });
         await writeFile(path.join(folder, 'certificate.json'), JSON.stringify(saved.certificate), { mode: 0o600 });
         await writeFile(path.join(folder, file), value);
@@ -164,16 +217,36 @@ try {
       await withFetch(async (_url, request) => { calls++; return Response.json(responseFor(JSON.parse(request.body).csr)); }, async () => {
         await assert.rejects(enrollMqttDevice(profile), /certificate/);
         assert.equal(calls, 1);
-        await assert.rejects(stat(`${profile.profilePath}.mqtt/certificate.json`), { code: 'ENOENT' });
+        await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
       });
     }
   });
 
-  await check('enrollment always requires HTTPS and URLs cannot redirect or carry credentials', async () => {
+  await check('local HTTP backends enroll while retaining broker TLS and redirect protection', async () => {
+    for (const serverUrl of ['http://localhost:3007', 'http://127.0.0.1:3007', 'http://[::1]:3007', 'http://mcp.localhost:3007']) {
+      let calls = 0;
+      await withFetch(async (url, request) => {
+        calls++;
+        assert.equal(url.href, `${serverUrl}/device/mqtt/enroll`);
+        assert.equal(request.redirect, 'error');
+        return Response.json(issue(JSON.parse(request.body).csr));
+      }, async () => {
+        const config = await enrollMqttDevice(options({ serverUrl }));
+        assert.equal(calls, 1);
+        assert.equal(config.options.rejectUnauthorized, true);
+        assert.equal(new URL(config.url).protocol, 'mqtts:');
+      });
+    }
+  });
+
+  await check('remote HTTP, lookalike hosts and unsafe URL fields are rejected before enrollment', async () => {
     let calls = 0;
     await withFetch(async (_url, request) => { calls++; return Response.json(issue(JSON.parse(request.body).csr)); }, async () => {
-      for (const serverUrl of ['http://public.example.test', 'http://localhost:3007', 'http://127.0.0.1:3007',
-        'http://[::1]:3007', 'http://mcp.localhost.localdomain:3007', 'http://mcp.localhost.localdomain.example.test',
+      for (const serverUrl of ['http://public.example.test', 'http://192.168.1.10:3007', 'ftp://localhost:3007',
+        'http://localhost.example.test', 'http://mcp.localhost.example.test',
+        'http://mcp.localhost.localdomain:3007', 'http://mcp.localhost.localdomain.example.test',
+        'http://user:pass@localhost:3007', 'http://localhost:3007/path',
+        'http://mcp.localhost:3007?secret=yes', 'http://127.0.0.1:3007#fragment',
         'https://user:pass@example.test', 'https://example.test/path', 'https://example.test?secret=yes', 'https://example.test#fragment']) {
         await assert.rejects(enrollMqttDevice(options({ serverUrl })), /HTTPS|MCP_SERVER_URL/);
       }
@@ -281,7 +354,7 @@ try {
     });
     assert.equal(starts, 0);
     assert.equal(broadcasts, 1);
-    await assert.rejects(stat(`${profile.profilePath}.mqtt/certificate.json`), { code: 'ENOENT' });
+    await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
   });
 
   await check('enrollment cannot redirect a device to a different broker', async () => {
@@ -291,13 +364,16 @@ try {
     }), async () => {
       await assert.rejects(enrollMqttDevice(profile), /configured broker/);
     });
-    await assert.rejects(stat(`${profile.profilePath}.mqtt/certificate.json`), { code: 'ENOENT' });
+    await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
   });
 
   console.log(`MQTT enrollment device: ${passed} checks passed`);
 } finally {
+  mock.restoreAll();
   await rm(workspace, { recursive: true, force: true });
   rolloutManager.update(originalRollouts);
   if (originalBroker === undefined) delete process.env.MQTT_BROKER_URL;
   else process.env.MQTT_BROKER_URL = originalBroker;
+  if (originalDcEnv === undefined) delete process.env.DC_ENV;
+  else process.env.DC_ENV = originalDcEnv;
 }

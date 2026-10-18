@@ -7,6 +7,7 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import forge from "node-forge";
+import { getRemoteDeviceConfigDirectory, isBackendLocal } from "../remote-utils.js";
 import { createMqttConfig, type MqttConfig } from "./mqtt-transport.js";
 import { getMqttBrokerUrl } from "./config.js";
 
@@ -17,7 +18,6 @@ const ENROLLMENT_TIMEOUT_MS = 30_000;
 
 interface EnrollmentOptions {
 	serverUrl: string;
-	profilePath: string;
 	userId: string;
 	deviceId: string;
 	accessToken: string;
@@ -110,7 +110,7 @@ function validateCertificate(
 export async function enrollMqttDevice(
 	options: EnrollmentOptions,
 ): Promise<MqttConfig> {
-	const { serverUrl, profilePath, userId, deviceId, accessToken } = options;
+	const { serverUrl, userId, deviceId, accessToken } = options;
 	if (!ID.test(userId) || !ID.test(deviceId) || !accessToken) {
 		throw new Error("MQTT enrollment requires an authenticated device");
 	}
@@ -121,7 +121,7 @@ export async function enrollMqttDevice(
 		throw new Error("MQTT enrollment requires a valid MCP_SERVER_URL");
 	}
 	if (
-		backend.protocol !== "https:" ||
+		(backend.protocol !== "https:" && !isBackendLocal(backend)) ||
 		backend.username ||
 		backend.password ||
 		backend.search ||
@@ -129,12 +129,13 @@ export async function enrollMqttDevice(
 		(backend.pathname && backend.pathname !== "/")
 	) {
 		throw new Error(
-			"MQTT enrollment requires an HTTPS backend without credentials, paths, or query parameters",
+			"MQTT enrollment requires HTTPS or local HTTP, without credentials, paths, or query parameters",
 		);
 	}
+	console.debug('Start MQTT enrollment for userId:', userId, 'deviceId:', deviceId);
 	const brokerUrl = getMqttBrokerUrl();
 	options.assertSessionStillActive?.();
-	const folder = `${path.resolve(profilePath)}.mqtt`;
+	const folder = path.join(getRemoteDeviceConfigDirectory(), ".mqtt");
 	await mkdir(folder, { recursive: true, mode: 0o700 });
 	const identityFile = path.join(folder, "identity.json");
 	const certificateFile = path.join(folder, "certificate.json");

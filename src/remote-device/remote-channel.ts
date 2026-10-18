@@ -300,7 +300,7 @@ export class RemoteChannel {
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
-    constructor(private readonly enrollment?: { serverUrl: string; profilePath: string }) {}
+    constructor(private readonly enrollment?: { serverUrl: string }) {}
 
 
     initialize(url: string, key: string): void {
@@ -651,12 +651,18 @@ export class RemoteChannel {
     private async startMqtt(assertSessionStillActive: () => void): Promise<void> {
         const generation = this.authGeneration;
         try {
+            console.debug('[DEBUG] starting MQTT');
             const mqttConfig = await this.prepareMqttConfig(assertSessionStillActive);
             assertSessionStillActive();
-            if (mqttConfig) await this.startMqttTransport(mqttConfig);
+            if (mqttConfig) {
+                console.debug('[DEBUG] MQTT Is ready to start');
+                await this.startMqttTransport(mqttConfig);
+            }
         } catch (error) {
             // A superseded enrollment must not stop the new session's receiver.
-            if (generation === this.authGeneration) await this.stopMqttTransport();
+            if (generation === this.authGeneration) {
+                await this.stopMqttTransport();
+            }
             throw error;
         }
     }
