@@ -32,6 +32,8 @@
     "device:install": "cd src/remote-device && npm install",
     "device:start": "tsx src/remote-device/device.ts",
     "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
+    "device:start:local": "npm run build && MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev",
+    "device:start:staging": "npm run build && MCP_SERVER_URL=https://staging-mcp.desktopcommander.app npm run device:start:dev",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
@@ -65,8 +67,7 @@
     "logs:clear": "npm run build && node scripts/clear-fuzzy-logs.js",
     "logs:export": "npm run build && node scripts/export-fuzzy-logs.js",
     "count-tokens": "npm run build && node scripts/count-tokens.js",
-    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json",
-    "test:mqtt": "npm run build && node test/test-mqtt-config.js && node test/test-mqtt-doorbell.js && node test/test-mqtt-shadow.js && node test/mqtt-enrollment.test.js"
+    "count-tokens:json": "npm run build && node scripts/count-tokens.js --json"
   },
   "publishConfig": {
     "access": "public"
