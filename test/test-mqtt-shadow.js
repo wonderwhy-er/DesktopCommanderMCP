@@ -115,7 +115,7 @@ for (const execution of [undefined, false, true, false]) {
     for (const enabled of [undefined, false, true]) {
         const before = sources.length;
         await f.channel.onMqttDoorbell({ ...payload, ...(enabled === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: enabled }) });
-        assert.deepEqual(sources.slice(before), enabled === false ? [] : ['mqtt'], 'packet selection ignores cached rollouts');
+        assert.deepEqual(sources.slice(before), [], 'MQTT remains observation-only for every packet flag and cached rollout');
     }
     await f.channel.onBroadcastDoorbell(payload);
     assert.equal(sources.at(-1), 'broadcast');
@@ -158,4 +158,4 @@ for (const execution of [undefined, false, true, false]) {
     assert.deepEqual(published, { call_id: 'call' });
 }
 rolloutManager.update({});
-console.log('PASS MQTT selection: packet execution flag, identifier-only results and retries, cache-independent readiness, startup, failure isolation and UTC observations');
+console.log('PASS MQTT shadow: observation-only packets, identifier-only results and retries, cache-independent readiness, startup, failure isolation and UTC observations');

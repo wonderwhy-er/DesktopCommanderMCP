@@ -153,7 +153,7 @@ function fixture() {
         desktop: { callClientTool: async (_tool, args) => { executed.push(args); return { content: [] }; } },
     });
     channel.onToolCall = payload => device.handleNewToolCall(payload);
-    const add = (id, transport = 'mqtt_v1') => rows.set(id, { id, device_id: 'device', user_id: 'owner', status: 'pending',
+    const add = (id, transport = 'broadcast_v1') => rows.set(id, { id, device_id: 'device', user_id: 'owner', status: 'pending',
         timeout_at: new Date(Date.now() + 60_000).toISOString(), tool_name: 'read_file', tool_args: { id }, metadata: transport ? { transport } : {} });
     return { channel, rows, operations, capabilities, executed, add };
 }
@@ -177,85 +177,64 @@ try {
     });
     await publisher.subscribeAsync(resultTopic, { qos: 1 });
 
-    f.add('mqtt-execution');
-    f.rows.get('mqtt-execution').metadata.origin_instance = 'backend';
-    const before = f.operations.length;
-    await f.channel.onBroadcastDoorbell(bell('mqtt-execution'));
-    assert.equal(f.operations.length, before + 1, 'Broadcast checks the stored transport in its claim');
-    assert.equal(f.rows.get('mqtt-execution').status, 'pending', 'Broadcast cannot claim an MQTT-selected call');
-    const executionsBefore = f.executed.length;
-    await Promise.all([send(bell('mqtt-execution')), send(bell('mqtt-execution'))]);
-    await until(() => f.rows.get('mqtt-execution').status === 'completed');
-    await until(() => events.some(e => e.name === 'received' && e.params.call_id === 'mqtt-execution' && e.params.transport === 'mqtt'));
-    await until(() => events.some(e => e.name === 'received' && e.params.call_id === 'mqtt-execution' && e.params.transport === 'broadcast'));
-    assert.equal(f.executed.length, executionsBefore + 1, 'duplicate MQTT packets execute once');
-    const claims = f.operations.filter(op => op.update?.status === 'executing' && op.filters.id === 'mqtt-execution');
-    assert.ok(claims.length >= 1);
-    await until(() => resultPackets.length === 1);
-    assert.deepEqual(resultPackets[0], { body: { call_id: 'mqtt-execution' }, qos: 1, retain: false });
-
     for (const cached of [undefined, false, true]) {
         rolloutManager.update(cached === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: cached });
-        const id = `cache-${cached}`;
-        f.add(id);
-        await send(bell(id));
-        await until(() => f.rows.get(id).status === 'completed');
+        for (const enabled of [undefined, false, true]) {
+            const id = `shadow-${cached}-${enabled}`;
+            f.add(id);
+            f.rows.get(id).metadata.origin_instance = 'backend';
+            const payload = bell(id);
+            if (enabled === undefined) delete payload.IS_MQTT_EXECUTION_ENABLED;
+            else payload.IS_MQTT_EXECUTION_ENABLED = enabled;
+            const before = f.operations.length;
+            const executionsBefore = f.executed.length;
+            await Promise.all([send(payload), send(payload)]);
+            await until(() => events.filter(event => event.params.call_id === id && event.name === 'received').length === 2);
+            const receipts = events.filter(event => event.params.call_id === id && event.name === 'received');
+            for (const event of receipts) {
+                assert.equal(event.params.transport, 'mqtt');
+                assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, enabled);
+            }
+            assert.equal(f.operations.length, before, 'MQTT receipts never read or claim a call');
+            assert.equal(f.executed.length, executionsBefore, 'duplicate MQTT packets only record analytics');
+            assert.equal(f.rows.get(id).status, 'pending');
+            assert.ok(!resultPackets.some(packet => packet.body.call_id === id));
+            await f.channel.onBroadcastDoorbell(payload);
+            await until(() => f.rows.get(id).status === 'completed');
+            await until(() => resultPackets.some(packet => packet.body.call_id === id));
+            assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id), {
+                body: { call_id: id }, qos: 1, retain: false,
+            });
+            assert.equal(f.executed.length, executionsBefore + 1, 'Broadcast still executes once');
+        }
+    }
 
-        const shadowId = `shadow-${cached}`;
-        f.add(shadowId, 'broadcast_v1');
-        const beforeShadow = f.operations.length;
-        await send({ ...bell(shadowId), IS_MQTT_EXECUTION_ENABLED: false });
-        await until(() => events.some(event => event.params.call_id === shadowId));
-        const receipt = events.find(event => event.params.call_id === shadowId && event.name === 'received').params;
-        assert.equal(receipt.IS_MQTT_EXECUTION_ENABLED, false, 'shadow receipt preserves an explicit false');
-        assert.equal(f.operations.length, beforeShadow, 'false packet is observed without a database claim');
-        await send(bell(shadowId));
-        await until(() => f.operations.length > beforeShadow);
-        assert.equal(f.rows.get(shadowId).status, 'pending', 'a forged true packet cannot claim a Broadcast row');
-        await f.channel.onBroadcastDoorbell(bell(shadowId));
-        await until(() => f.rows.get(shadowId).status === 'completed');
-    }
-    for (const fields of [{}, { IS_MQTT_EXECUTION_ENABLED: true }]) {
-        const id = `legacy-mqtt-${Object.keys(fields).join('-') || 'none'}`;
-        f.add(id);
-        const payload = bell(id);
-        delete payload.IS_MQTT_EXECUTION_ENABLED;
-        Object.assign(payload, fields);
-        await send(payload);
-        await until(() => f.rows.get(id).status === 'completed');
-        await until(() => events.some(event => event.params.call_id === id && event.name === 'received'));
-        const receipt = events.find(event => event.params.call_id === id && event.name === 'received').params;
-        assert.equal(receipt.IS_MQTT_EXECUTION_ENABLED, fields.IS_MQTT_EXECUTION_ENABLED, 'legacy receipt omits an unknown flag');
-    }
-    f.add('legacy-broadcast', null);
-    await f.channel.onBroadcastDoorbell(bell('legacy-broadcast'));
-    await until(() => f.rows.get('legacy-broadcast').status === 'completed');
+    f.add('mqtt-selected', 'mqtt_v1');
+    const beforeMqtt = f.operations.length;
+    await send(bell('mqtt-selected'));
+    await until(() => events.some(event => event.params.call_id === 'mqtt-selected'));
+    assert.equal(f.operations.length, beforeMqtt);
+    await f.channel.onBroadcastDoorbell(bell('mqtt-selected'));
+    await f.channel.recoverPendingCalls();
+    assert.equal(f.rows.get('mqtt-selected').status, 'pending', 'shadow devices never claim MQTT-selected rows');
 
     for (const source of ['legacy', 'recovery', 'broadcast']) {
         const id = `result-${source}`;
-        f.add(id, source === 'broadcast' ? 'broadcast_v1' : 'mqtt_v1');
+        f.add(id, source === 'legacy' ? null : 'broadcast_v1');
         f.rows.get(id).metadata.origin_instance = 'backend';
-        if (source === 'legacy') {
-            const payload = bell(id);
-            delete payload.IS_MQTT_EXECUTION_ENABLED;
-            await send(payload);
-        } else if (source === 'recovery') {
-            await f.channel.recoverPendingCalls();
-        } else {
-            await f.channel.onBroadcastDoorbell(bell(id));
-        }
+        if (source === 'recovery') await f.channel.recoverPendingCalls();
+        else await f.channel.onBroadcastDoorbell(bell(id));
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
-        const body = resultPackets.find(packet => packet.body.call_id === id).body;
-        assert.deepEqual(body, { call_id: id });
+        assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id).body, { call_id: id });
         await until(() => events.some(event => event.params.call_id === id && event.name === 'mqtt_result_publish'));
         for (const stage of ['device_call_received', 'tool_call_completed', 'mqtt_result_send_attempt', 'mqtt_result_publish']) {
             const event = events.find(event => event.params.call_id === id && event.name === stage);
             assert.ok(event, `missing ${stage}`);
-            assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, source !== 'broadcast');
+            assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
         }
     }
 
-    // Retry telemetry retains the call's execution mode after the device cache changes.
+    // Shadow result retries keep the call's mode after the rollout cache changes.
     const originalPublish = f.channel.mqttReceiver.publishResult.bind(f.channel.mqttReceiver);
     const originalSleep = f.channel.sleep;
     try {
@@ -267,12 +246,12 @@ try {
             if (args[0] === id && ++attempts === 1) throw Error('synthetic publish failure');
             return originalPublish(...args);
         };
-        f.channel.sleep = async () => { rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: false }); };
-        await send(bell(id));
+        f.channel.sleep = async () => { rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true }); };
+        await f.channel.onBroadcastDoorbell(bell(id));
         await until(() => events.some(event => event.params.call_id === id && event.name === 'mqtt_result_publish'));
         const retryEvents = events.filter(event => event.params.call_id === id && event.name.startsWith('mqtt_result_'));
         assert.deepEqual(retryEvents.map(event => event.name), ['mqtt_result_send_attempt', 'mqtt_result_publish_failed', 'mqtt_result_send_attempt', 'mqtt_result_publish']);
-        for (const event of retryEvents) assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, true);
+        for (const event of retryEvents) assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
     } finally {
         f.channel.mqttReceiver.publishResult = originalPublish;
         f.channel.sleep = originalSleep;
@@ -283,7 +262,7 @@ try {
         ['mqtt-failure', 'failed', null, 'bad\u0000message'],
     ]) {
         f.add(id);
-        await f.channel.updateCallResult(id, status, result, error, 'backend', { IS_MQTT_EXECUTION_ENABLED: true });
+        await f.channel.updateCallResult(id, status, result, error, 'backend', { IS_MQTT_EXECUTION_ENABLED: false });
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         const expected = status === 'completed'
             ? { status, result: { content: [{ type: 'text', text: 'ab' }] } }
@@ -297,7 +276,9 @@ try {
     const readsBeforeExpiry = f.operations.length;
     const executionsBeforeExpiry = f.executed.length;
     await send(bell('expired'));
-    await until(() => f.operations.length > readsBeforeExpiry);
+    await until(() => events.some(event => event.params.call_id === 'expired'));
+    assert.equal(f.operations.length, readsBeforeExpiry, 'even expired MQTT receipts only record analytics');
+    await f.channel.onBroadcastDoorbell(bell('expired'));
     assert.equal(f.rows.get('expired').status, 'pending', 'the durable row controls expiry');
     assert.equal(f.executed.length, executionsBeforeExpiry, 'an expired row cannot execute through a valid envelope');
 
@@ -343,16 +324,21 @@ try {
     }
     await until(() => !f.channel.mqttReady);
     assert.equal(f.channel.isReachable(), true, 'an MQTT outage does not withdraw healthy Broadcast');
-    f.add('missed-while-disconnected');
+    f.add('missed-while-disconnected', 'mqtt_v1');
     const disconnectedOperations = f.operations.length;
     await f.channel.onBroadcastDoorbell(bell('missed-while-disconnected'));
     assert.equal(f.operations.length, disconnectedOperations + 1);
     assert.equal(f.rows.get('missed-while-disconnected').status, 'pending', 'an MQTT outage cannot switch the stored transport');
     await until(() => f.channel.mqttReady);
-    await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
-    await until(() => f.rows.get('missed-while-disconnected').status === 'completed');
+    await until(() => f.capabilities.at(-1).transport_mqtt_observability_v1 === true);
+    assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
+    assert.equal(f.operations.length, disconnectedOperations + 1, 'MQTT reconnect does not recover execution');
+    assert.equal(f.rows.get('missed-while-disconnected').status, 'pending');
     f.add('reconnected');
     await send(bell('reconnected'));
+    await until(() => events.some(event => event.params.call_id === 'reconnected'));
+    assert.equal(f.rows.get('reconnected').status, 'pending');
+    await f.channel.onBroadcastDoorbell(bell('reconnected'));
     await until(() => f.rows.get('reconnected').status === 'completed');
 
     // A pending claim from the old session must never execute after shutdown.
@@ -384,7 +370,7 @@ try {
     await stopped;
 
     assert.throws(() => mqttDoorbellTopic('owner/foreign', 'device'), /identity/);
-    console.log('PASS MQTT doorbells: execution, identifier-only results, sanitized persistence, concurrent result cleanup, mutual TLS, telemetry, duplicates, validation, reconnect and shutdown');
+    console.log('PASS MQTT shadow doorbells: observation-only receipt, Broadcast execution, identifier-only results, sanitized persistence, concurrent result cleanup, mutual TLS, telemetry, duplicates, validation, reconnect and shutdown');
 } finally {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
     for (const channel of channels) await channel.stopMqttTransport();

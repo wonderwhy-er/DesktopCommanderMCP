@@ -161,14 +161,14 @@ async function runTests() {
     const { rc, delivered } = makeRemoteChannel(rows);
     await rc.recoverPendingCalls();
     assert.deepEqual(delivered.map(payload => payload.new.id), ['broadcast', 'legacy']);
-    assert.equal(rows[0].status, 'pending', 'MQTT-selected rows wait for MQTT readiness');
+    assert.equal(rows[0].status, 'pending', 'shadow recovery skips MQTT-selected rows');
     rc.mqttReady = true;
     await Promise.all([
       rc.recoverPendingCalls(),
       rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1', IS_MQTT_EXECUTION_ENABLED: true }),
     ]);
-    assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy', 'mqtt']);
-    assert.equal(rows[0].status, 'executing', 'recovery and an MQTT duplicate share one conditional claim');
+    assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy']);
+    assert.equal(rows[0].status, 'pending', 'MQTT readiness and packets cannot enable execution on a shadow device');
   }
   rolloutManager.update({});
   {

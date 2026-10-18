@@ -389,18 +389,16 @@ await test('every claim failing falls back to an unclaimed delivery', async () =
 });
 
 await test('claim errors cannot bypass the stored transport through fallback readback', async () => {
-  for (const source of ['mqtt', 'broadcast']) {
-    for (const matches of [true, false]) {
-      const transport = (source === 'mqtt') === matches ? 'mqtt_v1' : 'broadcast_v1';
-      const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending', metadata: { transport } }, failClaims: 3 });
-      rc.mqttReady = true;
-      rc.sleep = async () => {};
-      const delivered = [];
-      rc.onToolCall = payload => delivered.push(payload);
-      await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID }, source);
-      assert(client.claims() === 3 && client.attempts() === 1, 'exercise all claim retries and the fallback read');
-      assert(delivered.length === Number(matches), 'fallback must reject a row selected for the other transport');
-    }
+  for (const matches of [true, false]) {
+    const transport = matches ? 'broadcast_v1' : 'mqtt_v1';
+    const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending', metadata: { transport } }, failClaims: 3 });
+    rc.mqttReady = true;
+    rc.sleep = async () => {};
+    const delivered = [];
+    rc.onToolCall = payload => delivered.push(payload);
+    await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+    assert(client.claims() === 3 && client.attempts() === 1, 'exercise all claim retries and the fallback read');
+    assert(delivered.length === Number(matches), 'fallback must reject a row selected for the other transport');
   }
 });
 

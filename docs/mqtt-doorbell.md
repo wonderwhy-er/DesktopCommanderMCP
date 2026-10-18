@@ -1,31 +1,29 @@
-# MQTT notifications
+# MQTT shadow analytics
 
 MQTT starts automatically in the background while Broadcast connects. No flag is needed
 for shadow observation. Enrollment or MQTT failure leaves Broadcast working.
 
-| Command `IS_MQTT_EXECUTION_ENABLED` field | Notifications and handling |
-| --- | --- |
-| `false` | MQTT receipt is observation only; the Broadcast handler executes the stored Broadcast call |
-| `true` | MQTT fetches and claims the call only when its stored `metadata.transport` is `mqtt_v1` |
-| Missing | The stored call mode determines whether the MQTT handler may claim it |
+The `MQTT` branch records MQTT receipts without fetching, claiming or executing calls.
+This holds whether `IS_MQTT_EXECUTION_ENABLED` is `false`, `true` or missing, and regardless
+of cached rollouts. MQTT execution lives on the stacked `codex/mqtt-execution` branch.
 
-The backend resolves `IS_MQTT_EXECUTION_ENABLED` from the user's rollouts, backend configuration,
-and the selected device's MQTT capability for each dispatch. The four-field command contains this boolean alongside `call_id`, `user_id`,
-and `device_id`. It stores the selected mode in `metadata.transport`. The device does not use its
-cached execution rollout to choose execution, startup or reachability. MQTT always starts in the
-background while Broadcast connects. `MQTT_TRANSPORT_ENABLED` gates backend MQTT publications and
-enrollment; when it is off, the backend sends no MQTT command. There is no Broadcast fallback for MQTT calls.
-The backend's execution migration suppresses command/result Broadcast for MQTT call rows.
-Pending calls and retries retain their dispatch mode when rollouts change;
-this decision needs no device rollout refresh. Drain active calls before removing their transport or rolling back that migration.
+The device keeps both `transport_mqtt_v1` and `transport_mqtt_observability_v1` when MQTT
+is ready: the backend currently requires the former even for shadow publications.
+These shared capabilities do not distinguish the two device branches. Pair this branch
+with the backend's shadow branch; an execution backend could otherwise select MQTT calls
+that this device will not execute. Broadcast handles execution and pending-call recovery;
+both reject rows whose stored `metadata.transport` is `mqtt_v1`.
+MQTT reconnects only restore observation. Drain active MQTT execution calls before
+switching an execution device to this branch.
+`MQTT_TRANSPORT_ENABLED` gates backend MQTT publications and enrollment; when it is off,
+the backend sends no MQTT command.
 
 This receiver accepts only the three required identifiers plus the optional execution boolean.
 It rejects packets containing `expires_at`, `notification_id`, `attempt_number`, or any other extra field.
 Older MQTT pilot receivers require different envelopes and must be updated together with the backend:
 disable MQTT execution, drain active calls, update both sides, then re-enable execution.
-Without the execution boolean, it checks the stored call mode. Both handlers enforce that mode through
-the existing database-time conditional claim, ambiguous-claim readback and recovery, with duplicate suppression.
-Every valid MQTT receipt is observed before the mode/claim guard, including retries, with
+Broadcast retains its database-time conditional claim, ambiguous-claim readback and
+recovery, with duplicate suppression. Every valid MQTT receipt is observed, including retries, with
 `transport`, `call_id`, a unique observation ID and a UTC timestamp.
 Device telemetry omits MQTT notification/attempt IDs and monotonic timestamps.
 Telemetry includes the per-call `IS_MQTT_EXECUTION_ENABLED` boolean when known, preserving explicit `false`.
@@ -38,9 +36,10 @@ cannot establish exact one-way latency.
 
 After a successful terminal database write, the device publishes `{ call_id }`
 on `dc/mqtt/v1/users/{userId}/devices/{deviceId}/result-{origin_instance}`.
-The backend fetches the sanitized result or error from the database. The origin comes
-from the call's database metadata. This runs independently of the result write and its
-Broadcast trigger. Each attempt is observed, with at most three attempts, a five-second
+This mirrors Broadcast results for shadow analytics; the backend must keep Broadcast
+authoritative for these calls. The origin comes from the call's database metadata.
+This runs independently of the result write and its Broadcast trigger.
+Each attempt is observed, with at most three attempts, a five-second
 PUBACK deadline, and one-/two-second waits. A failed MQTT publish cannot turn a stored result
 into a failed tool call. Existing database recovery still covers lost notifications.
 
@@ -64,9 +63,10 @@ The broker defaults to `mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8
 Set `MQTT_BROKER_URL` to override it; unset or empty values use the default for every backend.
 Backend and device must use the same broker. Cached certificates for another broker are rejected.
 Broker and certificate verification remain mandatory. MQTT shadow failure does not affect Broadcast readiness.
-Supabase Presence remains part of device availability. MQTT readiness controls the capability the
-backend requires for MQTT execution calls, without blocking Broadcast startup or reachability.
+Supabase Presence remains part of device availability. MQTT readiness controls the
+transport capabilities, without blocking Broadcast startup or reachability.
 
-Run `npm run test:mqtt` for mutual TLS, mode isolation, automatic nonblocking startup,
-result retries, receipt telemetry and enrollment checks. These local fixtures do not prove
+Run `node test/run-all-tests.js test-mqtt-config.js test-mqtt-shadow.js test-mqtt-doorbell.js mqtt-enrollment.test.js`
+to build and check mutual TLS, shadow isolation, automatic nonblocking startup,
+result retries, receipt telemetry and enrollment. These local fixtures do not prove
 live AWS policy or fleet behavior.

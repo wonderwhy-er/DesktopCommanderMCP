@@ -715,10 +715,6 @@ export class RemoteChannel {
         const written = await write;
         if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
         if (!written && ready) throw new Error('MQTT capability could not be saved');
-        if (ready) {
-            // Clean MQTT sessions do not replay notifications missed while disconnected.
-            this.recoverPendingCalls().catch(() => console.error('[MQTT] Pending call recovery failed'));
-        }
     }
 
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {
@@ -727,13 +723,6 @@ export class RemoteChannel {
         }
         observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
             userId: this.user?.id, transport: 'mqtt' });
-        if (payload.IS_MQTT_EXECUTION_ENABLED === false) {
-            return;
-        }
-        if (!this.mqttReady || payload.user_id !== this.user?.id) {
-            return;
-        }
-        await this.onDoorbell(payload, 'mqtt');
     }
 
     private async onBroadcastDoorbell(payload: any): Promise<void> {
@@ -921,6 +910,7 @@ export class RemoteChannel {
     private capabilitiesPayload(broadcastCapable: boolean): Record<string, any> {
         return {
             app_version: VERSION,
+            // The backend also requires transport_mqtt_v1 for shadow publications.
             ...(this.mqttReady ? { transport_mqtt_v1: true, transport_mqtt_observability_v1: true } : {}),
             ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
         };
@@ -1137,12 +1127,11 @@ export class RemoteChannel {
         // this loop serializes only the small REST claim operations.
         for (const row of pending) {
             if (!this.isReachable()) break;
-            const source = row.metadata?.transport === 'mqtt_v1' ? 'mqtt' : 'broadcast';
-            if (source === 'mqtt' && !this.mqttReady) continue;
+            if (row.metadata?.transport === 'mqtt_v1') continue;
             await this.onDoorbell({
                 call_id: row.id,
                 device_id: row.device_id,
-            }, source);
+            });
         }
     }
 
@@ -1166,9 +1155,8 @@ export class RemoteChannel {
      * claims the row (pending -> executing) and returns it, and it is handed to
      * device.ts marked as claimed.
      */
-    private async onDoorbell(payload: any, source: 'broadcast' | 'mqtt' = 'broadcast'): Promise<void> {
+    private async onDoorbell(payload: any): Promise<void> {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) return;
-        if (source === 'mqtt' && !this.mqttReady) return;
         const generation = this.authGeneration;
         const callId = payload?.call_id;
         if (!callId) return;
@@ -1182,10 +1170,8 @@ export class RemoteChannel {
         console.debug('[DEBUG] Doorbell received for call:', callId);
 
         if (!this.client) return;
-        // The stored selection authorizes execution; a doorbell cannot switch a call's transport.
-        const transportFilter = source === 'mqtt'
-            ? 'metadata->>transport.eq.mqtt_v1'
-            : 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1';
+        // Shadow devices must not claim calls assigned to MQTT execution.
+        const transportFilter = 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1';
 
         // Retry on transient failures (a REST blip while the socket stays
         // healthy). This claim is the only way we learn about a call,
