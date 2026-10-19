@@ -77,6 +77,7 @@ export function mqttDoorbellTopic(userId: string, deviceId: string): string {
 /** A per-device subscription; payload validation precedes all database access. */
 export class MqttTransport {
 	private client: MqttClient | null = null;
+	private resultPublishes = 0;
 	private stopped = false;
 	private ready = false;
 	private cancelStart: (() => void) | null = null;
@@ -114,7 +115,6 @@ export class MqttTransport {
 		});
 		this.client = client;
         // its a listener warning threshold on one MQTT client inside one device process. It does not limit connected devices.
-		// TODO why 140? what happens if we hit 140 listeners? can this situation happens that we hit 140?
 		client.setMaxListeners(140); 
 		await new Promise<void>((resolve, reject) => {
 			let settled = false;
@@ -172,7 +172,6 @@ export class MqttTransport {
 						})
 						.catch(() => {
 							finish(new Error("MQTT readiness update failed"));
-							// should we stop??? we should restart connection
 							void this.stop().catch(() => {});
 						});
 				});
@@ -199,13 +198,12 @@ export class MqttTransport {
 					}
 				};
 				if (this.stopped || !this.ready) return;
-				if (topic !== this.topic || packet.retain) {
+				if (topic !== this.topic || packet.retain || bytes.length > 1024) {
 					invalid();
 					return;
 				}
 				let payload: MqttDoorbell;
 				try {
-					//TODO add integration test to make sure we will receive all bytes from the mqtt message. need to check data integrity 
 					payload = JSON.parse(bytes.toString("utf8"));
 				} catch {
 					invalid();
@@ -254,14 +252,15 @@ export class MqttTransport {
 		if (
 			this.stopped ||
 			!this.ready ||
-			!client?.connected
+			!client?.connected ||
+			this.resultPublishes >= 64
 		) {
 			throw new Error("MQTT result transport unavailable");
 		}
 		const topic = `dc/mqtt/v1/users/${this.userId}/devices/${this.deviceId}/result-${originInstance}`;
 		// Buffer identity keeps concurrent publishes of the same call separate locally.
-		// need to verify that payload is correct and this is what expected  on otehr side.
 		const payload = Buffer.from(JSON.stringify({ call_id: callId }));
+		this.resultPublishes++;
 		try {
 			await new Promise<void>((resolve, reject) => {
 				let settled = false;
@@ -294,8 +293,6 @@ export class MqttTransport {
 					)
 						messageId = packet.messageId;
 				};
-				//TODO will it stop whole mqtt transport or just this message? 
-				// we should stop inly this message if timeout, not the other messages.
 				const timer = setTimeout(
 					() => finish(new Error("MQTT result acknowledgement timed out")),
 					5_000,
@@ -311,6 +308,7 @@ export class MqttTransport {
 				}
 			});
 		} finally {
+			this.resultPublishes--;
 		}
 	}
 

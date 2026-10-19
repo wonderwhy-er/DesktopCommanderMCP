@@ -684,15 +684,11 @@ export class RemoteChannel {
     }
 
     private async startMqttTransport(config: MqttConfig): Promise<void> {
-        if (!this.user || !this.deviceId || this.mqttReceiver) {
-            throw new Error('MQTT requires one authenticated registered device');
-        }
+        if (!this.user || !this.deviceId || this.mqttReceiver) throw new Error('MQTT requires one authenticated registered device');
         const receiver = new MqttTransport(config, this.user.id, this.deviceId,
             (payload) => this.onMqttDoorbell(payload),
             async (ready) => {
-                if (this.mqttReceiver !== receiver) {
-                    return;
-                }
+                if (this.mqttReceiver !== receiver) return;
                 await this.setMqttReady(ready);
             });
         this.mqttReceiver = receiver;

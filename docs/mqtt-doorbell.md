@@ -55,12 +55,21 @@ Each directory contains `device.json` and its MQTT credentials in `.mqtt`.
 `npm run device:start:local` sets `DC_ENV=development`; `npm run device:start:staging`
 sets `DC_ENV=staging`. `NODE_ENV` and `IS_STAGING` do not affect the profile directory.
 The directory uses mode 0700 and files use 0600. The private key never leaves
-the device. When the authenticated device ID changes within the same backend and account,
-startup removes the old local certificate and private key, then enrolls the new device
-with a fresh key. An unchanged device reuses its credentials. Backend/account mismatches
-and damaged identity caches still require inspection. Only one process may enroll a profile
-at a time. Removing local credentials does not revoke the old certificate in AWS.
-Initial enrollment is attempted once; fix configuration and restart on failure.
+the device. On startup, enrollment compares the authenticated device ID (registered from
+`device.json`) with `.mqtt/identity.json`. If only the device ID changed, it sends
+`POST /device/mqtt/revoke` with `device_id` (current) and `previous_device_id` (cached),
+using the existing session. The backend checks ownership and revokes the previous
+Thing's certificates. Only after `{ "revoked": true }` does the connector remove
+`certificate.json`, then `identity.json` containing the old private key, and enroll
+with a new key. This also works when the old certificate response was never saved.
+
+Failed revocation keeps both old files. Restart retries the revocation. If replacement
+enrollment fails after revocation, restart reuses the new key. An unchanged device
+reuses its credentials without either request. Backend/account mismatches and damaged
+identity caches still require inspection. One process may enroll a profile at a time.
+This flow does not run on logout or ordinary restart and does not revoke device rows.
+The matching backend and its documented AWS permissions must be available first;
+an older backend's 404 preserves the old files and leaves MQTT unavailable.
 Established MQTT connections reconnect automatically. Renewal is separate work.
 
 The broker defaults to `mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8883`.
