@@ -17,6 +17,7 @@ import fs from "fs/promises";
 import path from "path";
 import { createReadStream } from 'fs';
 import { createInterface } from 'readline';
+import { finished } from 'stream/promises';
 import {
     FileHandler,
     ReadOptions,
@@ -57,6 +58,20 @@ function throwIfAborted(signal?: AbortSignal): void {
         const err = new Error('Read aborted') as NodeJS.ErrnoException;
         err.code = 'ABORT_ERR';
         throw err;
+    }
+}
+
+/** Own the input until its descriptor closes, including pagination and abort. */
+async function* readLines(filePath: string, signal?: AbortSignal, encoding?: BufferEncoding, start?: number): AsyncGenerator<string> {
+    const input = createReadStream(filePath, { signal, encoding, start });
+    const rl = createInterface({ input, crlfDelay: Infinity });
+    try {
+        yield* rl;
+    } finally {
+        rl.close();
+        input.destroy();
+        // Stream errors still propagate from iteration; cleanup must not replace them.
+        await finished(input, { cleanup: true }).catch(() => {});
     }
 }
 
@@ -364,22 +379,15 @@ export class TextFileHandler implements FileHandler {
         encoding?: BufferEncoding,
         start?: number
     ): Promise<FileResult> {
-        const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
-            crlfDelay: Infinity
-        });
-
         const buffer: string[] = new Array(requestedLines);
         let bufferIndex = 0;
         let totalLines = 0;
 
-        for await (const line of rl) {
+        for await (const line of readLines(filePath, signal, encoding, start)) {
             buffer[bufferIndex] = line;
             bufferIndex = (bufferIndex + 1) % requestedLines;
             totalLines++;
         }
-
-        rl.close();
 
         let result: string[];
         if (totalLines >= requestedLines) {
@@ -414,23 +422,16 @@ export class TextFileHandler implements FileHandler {
         start?: number,
         startLine: number = 0
     ): Promise<FileResult> {
-        const rl = createInterface({
-            input: createReadStream(filePath, { signal, encoding, start }),
-            crlfDelay: Infinity
-        });
-
         const result: string[] = [];
         let lineNumber = startLine;
 
-        for await (const line of rl) {
+        for await (const line of readLines(filePath, signal, encoding, start)) {
             if (lineNumber >= offset && result.length < length) {
                 result.push(line);
             }
             if (result.length >= length) break;
             lineNumber++;
         }
-
-        rl.close();
 
         if (includeStatusMessage) {
             const statusMessage = this.generateEnhancedStatusMessage(result.length, offset, fileTotalLines, false);
