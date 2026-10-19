@@ -16,6 +16,19 @@ import { pythonCommand } from './helpers/python.js';
 // Helper to wait
 const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Reads new output (offset=0) until `done` holds for all the text read so far,
+// for up to 10s: a command can take most of a second to start (on Windows it
+// starts through powershell.exe), so a fixed wait can end before its output
+async function readUntil(pid, done) {
+  let text = '';
+  for (const deadline = Date.now() + 10000; !done(text) && Date.now() < deadline;) {
+    const read = await readProcessOutput({ pid, timeout_ms: 300 });
+    assert(!read.isError, `Read should succeed, got: ${read.content[0].text}`);
+    text += read.content[0].text;
+  }
+  return text;
+}
+
 /**
  * Test 1: Basic offset=0 (new output) behavior for RUNNING processes
  */
@@ -31,12 +44,11 @@ async function testNewOutputBehavior() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  // First read - get initial output
-  const read1 = await readProcessOutput({ pid, timeout_ms: 300 });
-  assert(!read1.isError, 'First read should succeed');
+  // First read - get initial output, until the first tick has arrived
   const ticks = (text) => text.match(/tick\d+/g) || [];
-  const ticks1 = ticks(read1.content[0].text);
+  const ticks1 = ticks(await readUntil(pid, (text) => ticks(text).length > 0));
   console.log(`  First read got ${ticks1.length} tick lines`);
+  assert(ticks1.length > 0, 'The first tick should arrive within 10s');
 
   // Wait for more output
   await wait(400);
@@ -157,13 +169,10 @@ async function testRuntimeInfo() {
   const pid = startResult.structuredContent.pid;
   assert(pid, 'Should get PID');
   
-  // Wait for process to complete
-  await wait(1000);
-  
-  const read = await readProcessOutput({ pid, timeout_ms: 1000 });
-  assert(!read.isError, 'Read should succeed');
-  assert(read.content[0].text.includes('runtime:'), 'Should show runtime');
-  assert(read.content[0].text.includes('Process completed'), 'Should show completion');
+  // Read until the process has completed
+  const text = await readUntil(pid, (text) => text.includes('Process completed'));
+  assert(text.includes('runtime:'), 'Should show runtime');
+  assert(text.includes('Process completed'), 'Should show completion');
   
   console.log('✅ Test 5 passed: Runtime info works correctly');
 }
