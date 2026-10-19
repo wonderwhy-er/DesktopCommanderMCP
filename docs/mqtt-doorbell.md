@@ -7,9 +7,9 @@ The `MQTT` branch records MQTT receipts without fetching, claiming or executing 
 This holds whether `IS_MQTT_EXECUTION_ENABLED` is `false`, `true` or missing, and regardless
 of cached rollouts. MQTT execution lives on the stacked `codex/mqtt-execution` branch.
 
-The device keeps both `transport_mqtt_v1` and `transport_mqtt_observability_v1` when MQTT
-is ready: the backend currently requires the former even for shadow publications.
-These shared capabilities do not distinguish the two device branches. Pair this branch
+The device advertises `transport_mqtt_v1` when MQTT is ready. The backend requires it
+even for shadow publications. This capability does not distinguish the two device
+branches. Pair this branch
 with the backend's shadow branch; an execution backend could otherwise select MQTT calls
 that this device will not execute. Broadcast handles execution and pending-call recovery;
 both reject rows whose stored `metadata.transport` is `mqtt_v1`.
@@ -63,8 +63,8 @@ The broker defaults to `mqtts://a1vw7p0stdnykd-ats.iot.eu-west-1.amazonaws.com:8
 Set `MQTT_BROKER_URL` to override it; unset or empty values use the default for every backend.
 Backend and device must use the same broker. Cached certificates for another broker are rejected.
 Broker and certificate verification remain mandatory. MQTT shadow failure does not affect Broadcast readiness.
-Supabase Presence remains part of device availability. MQTT readiness controls the
-transport capabilities, without blocking Broadcast startup or reachability.
+Supabase Presence remains part of device availability. MQTT readiness controls this
+capability, without blocking Broadcast startup or reachability.
 
 Run `node test/run-all-tests.js test-mqtt-config.js test-mqtt-shadow.js test-mqtt-doorbell.js mqtt-enrollment.test.js`
 to build and check mutual TLS, shadow isolation, automatic nonblocking startup,

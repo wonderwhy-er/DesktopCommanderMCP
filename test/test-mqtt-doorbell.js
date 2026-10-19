@@ -166,7 +166,9 @@ try {
     assert.equal(f.channel.isReachable(), true);
     assert.equal(f.capabilities.at(-1).transport_broadcast_v1, true);
     assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
-    assert.equal(f.capabilities.at(-1).transport_mqtt_observability_v1, true);
+    assert.deepEqual(Object.keys(f.capabilities.at(-1)).sort(), [
+        'app_version', 'transport_broadcast_v1', 'transport_mqtt_v1',
+    ]);
     publisher = await connectAsync(url, tlsOptions);
     const topic = mqttDoorbellTopic('owner', 'device');
     const send = (payload, options = {}) => publisher.publishAsync(topic, typeof payload === 'string' ? payload : JSON.stringify(payload), { qos: 1, ...options });
@@ -330,8 +332,7 @@ try {
     assert.equal(f.operations.length, disconnectedOperations + 1);
     assert.equal(f.rows.get('missed-while-disconnected').status, 'pending', 'an MQTT outage cannot switch the stored transport');
     await until(() => f.channel.mqttReady);
-    await until(() => f.capabilities.at(-1).transport_mqtt_observability_v1 === true);
-    assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
+    await until(() => f.capabilities.at(-1).transport_mqtt_v1 === true);
     assert.equal(f.operations.length, disconnectedOperations + 1, 'MQTT reconnect does not recover execution');
     assert.equal(f.rows.get('missed-while-disconnected').status, 'pending');
     f.add('reconnected');

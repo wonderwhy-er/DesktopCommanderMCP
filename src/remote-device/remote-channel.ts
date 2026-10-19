@@ -911,7 +911,7 @@ export class RemoteChannel {
         return {
             app_version: VERSION,
             // The backend also requires transport_mqtt_v1 for shadow publications.
-            ...(this.mqttReady ? { transport_mqtt_v1: true, transport_mqtt_observability_v1: true } : {}),
+            ...(this.mqttReady ? { transport_mqtt_v1: true } : {}),
             ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
         };
     }
