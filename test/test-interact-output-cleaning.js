@@ -60,6 +60,11 @@ const CASES = [
   ['powershell.exe at the prompt after the first of two lines', `echo a\na\r\n${PS_PROMPT}`, 'echo a\necho b', `a\r\n${PS_PROMPT.trimEnd()}`],
   ['cmd.exe at the prompt after the first of two lines', `echo a\na\r\n\r\n${CMD_PROMPT}`, 'echo a\necho b', `a\r\n\r\n${CMD_PROMPT}`],
   ['node -i at the prompt after the first of two lines', '1\n> ', '1\nx = 5', '1'],
+  // An interactive Bash shell may echo the next line *without* printing its
+  // prompt again, after a whole multiline write (observed on Ubuntu CI).
+  ['bash echoing second multiline input without its prompt',
+    'echo a\nbash-5.2$ a\necho b\nbash-5.2$ b\nbash-5.2$ ',
+    'echo a\necho b', 'bash-5.2$ a\nbash-5.2$ b\nbash-5.2$'],
   // Output lines that look like prompts are output
   ['node -i printing lines that start like prompts', '+ a\n> b\n... c\n>>> d\nundefined\n> ', "console.log('+ a\\n> b\\n... c\\n>>> d')", '+ a\n> b\n... c\n>>> d\nundefined'],
   ['python -i printing lines that start like prompts', '+ a\n> b\n>>> c\n>>> ', "print('+ a\\n> b\\n>>> c')", '+ a\n> b\n>>> c'],

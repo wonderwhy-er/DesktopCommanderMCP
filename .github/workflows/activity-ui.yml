@@ -1,0 +1,71 @@
+name: Activity UI validation
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'src/activity/**'
+      - 'src/npm-scripts/activity.ts'
+      - 'src/remote-device/device.ts'
+      - 'src/remote-device/desktop-commander-integration.ts'
+      - 'src/server.ts'
+      - 'src/tools/schemas.ts'
+      - 'src/utils/process-detection.ts'
+      - 'test/test-interact-output-cleaning.js'
+      - 'test/test-remote-channel-reconnect.js'
+      - 'test/activity*.js'
+      - '.github/workflows/activity-ui.yml'
+  pull_request:
+    paths:
+      - 'src/activity/**'
+      - 'src/npm-scripts/activity.ts'
+      - 'src/remote-device/device.ts'
+      - 'src/remote-device/desktop-commander-integration.ts'
+      - 'src/server.ts'
+      - 'src/tools/schemas.ts'
+      - 'src/utils/process-detection.ts'
+      - 'test/test-interact-output-cleaning.js'
+      - 'test/test-remote-channel-reconnect.js'
+      - 'test/activity*.js'
+      - '.github/workflows/activity-ui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: node --test test/activity-ui.test.js test/activity-mcp.smoke.test.js test/activity-local-monitor.integration.test.js test/activity-monitor-hardening.test.js test/activity-terminal-pty.test.js test/activity-frame-coalescer.test.js
+
+  full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+      - run: rg --version
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+        env:
+          DESKTOP_COMMANDER_DISABLE_TELEMETRY: '1'

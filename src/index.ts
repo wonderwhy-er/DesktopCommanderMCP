@@ -14,6 +14,7 @@ import { capture } from './utils/capture.js';
 import { logToStderr, logger } from './utils/logger.js';
 import { exitProcess } from './utils/exit-process.js';
 import { runRemote } from './npm-scripts/remote.js';
+import { runActivityMonitor } from './npm-scripts/activity.js';
 import { ensureChromeAvailable } from './tools/pdf/markdown.js';
 import { preloadFileSupport } from './utils/files/index.js';
 
@@ -34,6 +35,11 @@ async function runServer() {
     // Check if first argument is "remove"
     if (process.argv[2] === 'remove') {
       await runUninstall();
+      return;
+    }
+
+    if (process.argv[2] === 'activity') {
+      await runActivityMonitor();
       return;
     }
 
