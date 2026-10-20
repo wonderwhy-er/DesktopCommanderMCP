@@ -12,7 +12,7 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 /** Starts a node:local session; returns its start answer and the PID the answer names */
 async function startNodeLocal() {
-  const started = await startProcess({ command: 'node:local', timeout_ms: 5000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms: 5000 });
   const pid = Number(started.content[0].text.match(/PID (-?\d+)/)?.[1]);
   assert(Number.isInteger(pid), `start_process of node:local should start a session, got: ${started.content[0].text}`);
   return { started, pid };
@@ -46,7 +46,7 @@ async function testNodeLocalScript() {
 
 async function testInputWithoutWaiting() {
   console.log('\nTest 3: input sent without waiting for the response');
-  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node -i', timeout_ms: 5000 });
   const pid = started.structuredContent?.pid;
   assert(pid > 0, `start_process should give the PID, got: ${started.content[0].text}`);
   try {

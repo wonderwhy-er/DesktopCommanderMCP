@@ -61,7 +61,7 @@ function blockEventLoop(ms) {
 }
 
 async function startFakeRepl(promptName) {
-  const started = await startProcess({ command: `node "${FAKE_REPL}" ${promptName}`, timeout_ms: 10000 });
+  const started = await startProcess({ mode: 'interactive', command: `node "${FAKE_REPL}" ${promptName}`, timeout_ms: 10000 });
   const pid = started.structuredContent?.pid;
   assert.ok(pid > 0, `start_process should start the fake REPL, got: ${started.content[0].text}`);
   assert.strictEqual(started.structuredContent.status, 'waiting_for_input',

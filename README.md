@@ -1150,3 +1150,11 @@ For complete details, see our [Privacy Policy](PRIVACY.md).
 ## License
 
 MIT
+
+### Finite commands and interactive sessions
+
+`start_process` defaults to `mode: "finite"`. It invokes the installed `ai-fleet harness tool-execution finite-command serve` owner. Fleet project policy selects either with-limits or direct Conflux Bounded Process and owns stdin, lifetime, output and resource budgets, cancellation, native process identity and cleanup. Desktop Commander retains and presents the original admission, operation ID and receipt; it does not select a second executor or implement another limiter.
+
+`timeout_ms` bounds only the tool-response wait. Recover a retained operation through the Fleet owner's `show` command; polling does not renew its lifetime. The former Desktop Commander-specific `max_duration_ms` and `max_output_bytes` fields have been removed.
+
+Use `mode: "interactive"` for REPLs (including `node:local`) and deliberately persistent sessions. Real REPLs retain writable stdin. Each `node:local` script is a separate finite invocation of the same Fleet owner, with its exact script supplied as stdin.

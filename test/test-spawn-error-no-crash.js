@@ -45,7 +45,7 @@ async function settle() {
 }
 
 async function testBogusShellDoesNotCrash() {
-  const result = await terminalManager.executeCommand('echo hi', 3000, BOGUS_SHELL);
+  const result = await terminalManager.executeCommand('echo hi', 3000, BOGUS_SHELL, undefined, undefined, { mode: 'interactive' });
   await settle();
 
   assert.strictEqual(uncaught, null,
@@ -63,7 +63,7 @@ async function testBogusExecutableDoesNotCrash() {
   // executeCommand returns as soon as the shell exits; the long wait is for a
   // busy machine, where starting PowerShell alone can take more than 3 s.
   const BOGUS_COMMAND = 'this-command-does-not-exist-4f2a';
-  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 30000);
+  const result = await terminalManager.executeCommand(BOGUS_COMMAND, 30000, undefined, undefined, undefined, { mode: 'interactive' });
   await settle();
 
   assert.strictEqual(uncaught, null,
@@ -75,7 +75,7 @@ async function testBogusExecutableDoesNotCrash() {
 }
 
 async function testHealthyCommandStillWorks() {
-  const result = await terminalManager.executeCommand('echo roundtrip-ok', 8000);
+  const result = await terminalManager.executeCommand('echo roundtrip-ok', 8000, undefined, undefined, undefined, { mode: 'interactive' });
   await settle();
 
   assert.strictEqual(uncaught, null, 'healthy command must not raise');

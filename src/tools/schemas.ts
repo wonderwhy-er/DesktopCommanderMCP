@@ -26,13 +26,14 @@ export const ListProcessesArgsSchema = z.object({});
 // Terminal tools schemas
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
-  timeout_ms: z.number(),
+  timeout_ms: z.number().finite().nonnegative(),
+  mode: z.enum(['finite', 'interactive']).optional().describe('Defaults to finite: Fleet policy selects the existing executor and owns stdin, budgets, cancellation and cleanup. Use interactive for a REPL or deliberately persistent session.'),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
   // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
   // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
   origin: z.enum(['ui', 'llm']).optional(),
-});
+}).strict();
 
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),

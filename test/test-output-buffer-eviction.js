@@ -29,7 +29,7 @@ function sleep(ms) {
 async function testOverflowAbsorbedQuickly() {
   const lines = Math.ceil(MAX_BUFFERED_OUTPUT_CHARS / (LINE_WIDTH + 1)) + OVERFLOW_LINES;
   console.log(`\n--- ${lines} lines of ${LINE_WIDTH} chars into one session (cap ${MAX_BUFFERED_OUTPUT_CHARS} chars) ---`);
-  const started = await startProcess({ command: `node "${FAKE_REPL}"`, timeout_ms: 10000 });
+  const started = await startProcess({ mode: 'interactive', command: `node "${FAKE_REPL}"`, timeout_ms: 10000 });
   const pid = started.structuredContent?.pid;
   assert.ok(pid > 0, `start_process should start the fake REPL, got: ${started.content[0].text}`);
   try {

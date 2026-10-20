@@ -169,6 +169,11 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // PowerShell Core (cross-platform, supports -Login)
+  if (['sh', 'dash', 'ksh'].includes(shellName)) {
+    return { executable, args: ['-c', command], useShellOption: false };
+  }
+
+  // PowerShell Core (cross-platform, supports -Login)
   if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
     return {
       executable,

@@ -96,7 +96,7 @@ function testCleaning() {
 
 async function testNodeRepl() {
   console.log('\n--- interact_with_process in node -i ---');
-  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node -i', timeout_ms: 5000 });
   const pid = started.structuredContent?.pid;
   assert(pid > 0, `start_process should start the Node.js REPL, got: ${started.content[0].text}`);
   try {
@@ -116,7 +116,7 @@ async function testNodeRepl() {
 async function testNoPrompt() {
   console.log('\n--- interact_with_process in a process that reads its input without a prompt ---');
   // Prints each line it reads back as a diff's added line
-  const started = await startProcess({ command: `node -e "process.stdin.on('data', (d) => process.stdout.write('+ ' + d))"`, timeout_ms: 1000 });
+  const started = await startProcess({ mode: 'interactive', command: `node -e "process.stdin.on('data', (d) => process.stdout.write('+ ' + d))"`, timeout_ms: 1000 });
   const pid = started.structuredContent?.pid;
   assert(pid > 0, `start_process should start node, got: ${started.content[0].text}`);
   try {
@@ -136,7 +136,7 @@ async function testShell() {
     ? ['PowerShell', 'powershell -NoLogo', /📤 Output:\na\r?\n(b\r?\n)?PS /]
     : ['bash', 'bash --norc --noprofile -i', /📤 Output:\n(bash-[\d.]+\$ )?a\n((bash-[\d.]+\$ )?b\n)?/];
   console.log(`\n--- interact_with_process in a real ${name} session: two lines ---`);
-  const started = await startProcess({ command, timeout_ms: 10_000 });
+  const started = await startProcess({ mode: 'interactive', command, timeout_ms: 10_000 });
   const pid = started.structuredContent?.pid;
   try {
     // It may answer at the prompt after the first line, before the second is read

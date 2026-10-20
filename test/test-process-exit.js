@@ -59,7 +59,7 @@ function check(ok, message) {
 }
 
 async function start(command, timeoutMs) {
-  const result = await startProcess({ command, timeout_ms: timeoutMs });
+  const result = await startProcess({ mode: 'interactive', command, timeout_ms: timeoutMs });
   const pid = result.structuredContent?.pid;
   check(pid > 0, `start_process should start "${command}", got: ${text(result)}`);
   return { pid, reply: text(result), status: result.structuredContent.status };

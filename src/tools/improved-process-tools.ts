@@ -1,3 +1,4 @@
+import { formatFiniteOwner, finiteOwnerFailed } from '../fleet-finite-command.js';
 import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
@@ -6,10 +7,7 @@ import { ServerResult } from '../types.js';
 import { analyzeProcessState, cleanProcessOutput, formatProcessStateMessage, ProcessState } from '../utils/process-detection.js';
 import { configManager } from '../config-manager.js';
 import { getDefaultShell } from '../utils/shell.js';
-import { terminateProcessTree } from '../utils/process-tree.js';
 import { MAX_PROCESS_WAIT_MS } from '../config.js';
-import { spawn } from 'child_process';
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -19,11 +17,8 @@ const __dirname = path.dirname(__filename);
 const mcpRoot = path.resolve(__dirname, '..', '..');
 
 // Track virtual Node sessions (PIDs that are actually Node fallback sessions)
-const virtualNodeSessions = new Map<number, { timeout_ms: number }>();
+const virtualNodeSessions = new Map<number, { timeout_ms: number; finitePids: Set<number> }>();
 let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
-
-/** How long a node:local script's output pipes may stay open after its timeout ended its tree */
-const PIPES_CLOSE_WAIT_MS = 1000;
 
 /** The answer when some processes of a session could not be ended */
 function terminationFailedResult(pid: number): ServerResult {
@@ -34,105 +29,23 @@ function terminationFailedResult(pid: number): ServerResult {
 }
 
 /**
- * Execute Node.js code via temp file (fallback when Python unavailable)
- * Creates temp .mjs file in MCP directory for ES module import access
+ * Submit each node:local script to the same finite owner as shell commands
  */
 async function executeNodeCode(code: string, timeout_ms: number = 30000, sessionPid: number): Promise<ServerResult> {
-  const tempFile = path.join(mcpRoot, `.mcp-exec-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
-
-  try {
-    await fs.writeFile(tempFile, code, 'utf8');
-
-    const result = await new Promise<{ stdout: string; stderr: string; exitCode: number; treeSurvived?: boolean }>((resolve) => {
-      const proc = spawn(process.execPath, [tempFile], {
-        cwd: mcpRoot,
-        windowsHide: true  // Prevent visible console windows on Windows
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      // Not spawn's own timeout option: that kills only the script, leaving the
-      // processes it started running and holding its output pipes open, so
-      // 'close' never came and the call never returned.
-      const timer = setTimeout(async () => {
-        if (await terminateProcessTree(proc)) {
-          // The tree ended, but a process that left it before the walk (one
-          // started by a child that has exited) may still hold the output
-          // pipes: 'close' answers if it comes within PIPES_CLOSE_WAIT_MS
-          await new Promise((wait) => setTimeout(wait, PIPES_CLOSE_WAIT_MS).unref());
-        }
-        // Some of the tree survived, or a process outside it holds the output
-        // pipes, so 'close' may never come: answer now and stop reading them
-        proc.stdout.destroy();
-        proc.stderr.destroy();
-        resolve({ stdout, stderr, exitCode: 1, treeSurvived: true });
-      }, timeout_ms);
-
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      proc.on('close', (exitCode) => {
-        clearTimeout(timer);
-        resolve({ stdout, stderr, exitCode: exitCode ?? 1 });
-      });
-
-      proc.on('error', (err) => {
-        clearTimeout(timer);
-        resolve({ stdout, stderr: stderr + '\n' + err.message, exitCode: 1 });
-      });
-    });
-
-    // Clean up temp file
-    await fs.unlink(tempFile).catch(() => {});
-
-    if (result.treeSurvived) {
-      return terminationFailedResult(sessionPid);
-    }
-
-    if (result.exitCode !== 0) {
-      return {
-        content: [{
-          type: "text",
-          text: `Execution failed (exit code ${result.exitCode}):\n${result.stderr}\n${result.stdout}`
-        }],
-        isError: true
-      };
-    }
-
-    // Each call runs a fresh script and the session waits for the next one; the output isn't cut
-    const outputLines = result.stdout.trim().length > 0 ? result.stdout.replace(/\r?\n$/, '').split('\n').length : 0;
-    return {
-      content: [{
-        type: "text",
-        text: result.stdout || '(no output)'
-      }],
-      structuredContent: {
-        pid: sessionPid,
-        status: 'waiting_for_input',
-        truncated: false,
-        shownLines: outputLines,
-        totalLines: outputLines,
-      },
-    };
-
-  } catch (error) {
-    // Clean up temp file on error
-    await fs.unlink(tempFile).catch(() => {});
-
-    return {
-      content: [{
-        type: "text",
-        text: `Failed to execute Node.js code: ${error instanceof Error ? error.message : String(error)}`
-      }],
-      isError: true
-    };
-  }
+  const config = await configManager.getConfig();
+  const result = await terminalManager.executeFiniteCommand({ executable: process.execPath,
+    argv: ['--input-type=module'], cwd: mcpRoot, input: code }, config.defaultShell || getDefaultShell(), timeout_ms);
+  const session = virtualNodeSessions.get(sessionPid);
+  if (session && !result.processState.isFinished) session.finitePids.add(result.pid);
+  else if (!session && !result.processState.isFinished) await terminalManager.forceTerminate(result.pid);
+  const text = result.output || '(no output)';
+  const outputLines = result.output.trim().length ? result.output.replace(/\r?\n$/, '').split('\n').length : 0;
+  const failed = result.ownerError !== undefined || finiteOwnerFailed(result.owner?.evidence || result.owner?.notStarted || result.owner?.refusal ? result.owner : undefined);
+  return { content: [{ type: 'text', text: text + '\nRetained operation: ' + result.operationId + formatFiniteOwner(result.owner) }],
+    ...(failed ? { isError: true } : {}),
+    structuredContent: { pid: sessionPid, processPid: result.pid, operationId: result.operationId,
+      status: result.processState.isFinished ? 'waiting_for_input' : 'running',
+      truncated: false, shownLines: outputLines, totalLines: outputLines } };
 }
 
 /**
@@ -178,8 +91,11 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
 
   // Handle node:local - runs Node.js code directly on MCP server
   if (commandToRun.trim() === 'node:local') {
+    if (parsed.data.mode !== 'interactive') return {
+      content: [{ type: 'text', text: 'node:local requires mode interactive; send scripts with interact_with_process.' }], isError: true,
+    };
     const virtualPid = virtualPidCounter--;
-    virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
+    virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000, finitePids: new Set() });
 
     return {
       content: [{
@@ -212,7 +128,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     parsed.data.timeout_ms,
     shellUsed,
     parsed.data.verbose_timing || false,
-    maxWaitMs
+    maxWaitMs,
+    parsed.data
   );
 
   if (result.pid === -1) {
@@ -243,10 +160,13 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})${result.operationId ? '\nRetained operation: ' + result.operationId : ''}\nInitial output:\n${result.output}${formatFiniteOwner(result.owner)}${statusMessage}${timingMessage}`
     }],
+    ...((result.ownerError !== undefined || finiteOwnerFailed(result.owner?.evidence || result.owner?.notStarted || result.owner?.refusal ? result.owner : undefined)) ? { isError: true } : {}),
     structuredContent: {
       pid: result.pid,
+      operationId: result.operationId,
+      owner: result.owner,
       shell: shellUsed,
       status: getProcessStatus(processState),
       ...getWaitCapFields(result.waitCappedAtMs),
@@ -443,12 +363,15 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
     timingMessage = `\n\n📊 Timing: ${endTime - startTime}ms`;
   }
 
+  const owner = terminalManager.getFiniteOwner(pid);
   const responseText = output || '(No output in requested range)';
 
   return {
+    ...((terminalManager.getOwnerError(pid) !== undefined || finiteOwnerFailed(owner?.evidence || owner?.notStarted || owner?.refusal ? owner : undefined)) ? { isError: true } : {}),
+    structuredContent: { pid, owner, status: result.isComplete ? 'finished' : 'running' },
     content: [{
       type: "text",
-      text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}`
+      text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}${formatFiniteOwner(owner)}`
     }],
   };
 }
@@ -492,10 +415,10 @@ export async function interactWithProcess(args: unknown, maxWaitMs: number = MAX
       inputLength: input.length
     });
 
-    // Execute code via temp file approach
+    // Submit a finite script to Fleet. These values bound response observation only.
     // Respect per-call timeout if provided, otherwise use session default
     // (parsed.data's: timeout_ms above already holds the 8000ms default for processes),
-    // within the process wait ceiling: the call answers only once the script ends
+    // within the process wait ceiling; an unfinished operation retains its identity
     const effectiveTimeout = Math.min(parsed.data.timeout_ms ?? session.timeout_ms, waitLimit.capMs);
     return executeNodeCode(input, effectiveTimeout, pid);
   }
@@ -773,6 +696,10 @@ export async function forceTerminate(args: unknown): Promise<ServerResult> {
 
   // Handle virtual Node.js sessions (node:local)
   if (virtualNodeSessions.has(pid)) {
+    const session = virtualNodeSessions.get(pid)!;
+    for (const finitePid of session.finitePids) {
+      if (await terminalManager.forceTerminate(finitePid) === 'failed') return terminationFailedResult(finitePid);
+    }
     virtualNodeSessions.delete(pid);
     return {
       content: [{

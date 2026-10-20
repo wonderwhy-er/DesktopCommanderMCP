@@ -36,7 +36,7 @@ const MULTILINE_CODE = [
 async function testNodeREPL() {
   console.log(`${colors.blue}Node.js REPL test via MCP tools...${colors.reset}`);
 
-  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node -i', timeout_ms: 5000 });
   const pid = started.structuredContent?.pid;
   assert(pid, `start_process should start the Node.js REPL, got: ${started.content[0].text}`);
   console.log(`${colors.green}✓ Started Node.js REPL with PID ${pid}${colors.reset}`);
