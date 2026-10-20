@@ -120,34 +120,23 @@ async function extractZip(zipPath, outputDir, targetBinary) {
 }
 
 async function extractTarGz(tarPath, outputDir, targetBinary) {
-  return new Promise((resolve, reject) => {
-    const { execSync } = require('child_process');
-    const tempExtractDir = path.join(TEMP_DIR, 'extract-' + Date.now());
-    
-    try {
-      ensureDir(tempExtractDir);
-      
-      // Extract tar.gz
-      execSync(`tar -xzf "${tarPath}" -C "${tempExtractDir}"`, { stdio: 'pipe' });
-      
-      // Find the rg binary
-      const files = fs.readdirSync(tempExtractDir, { recursive: true });
-      const rgFile = files.find(f => f.endsWith('/rg') || f === 'rg');
-      
-      if (rgFile) {
-        const sourcePath = path.join(tempExtractDir, rgFile);
-        const destPath = path.join(outputDir, targetBinary);
-        fs.copyFileSync(sourcePath, destPath);
-        fs.chmodSync(destPath, 0o755);
-      }
-      
-      // Cleanup
-      fs.rmSync(tempExtractDir, { recursive: true, force: true });
-      resolve();
-    } catch (error) {
-      reject(error);
-    }
-  });
+  const { execFileSync } = require('child_process');
+  const tempExtractDir = fs.mkdtempSync(path.join(TEMP_DIR, 'extract-'));
+  try {
+    // A drive-qualified archive is parsed as a remote host by GNU tar. Resolve
+    // the local archive through cwd and pass arguments without a shell.
+    execFileSync('tar', ['-xzf', path.basename(tarPath), '-C', tempExtractDir], {
+      cwd: path.dirname(tarPath), stdio: 'pipe'
+    });
+    const files = fs.readdirSync(tempExtractDir, { recursive: true });
+    const rgFile = files.find(file => path.basename(file) === 'rg');
+    if (!rgFile) throw new Error('ripgrep archive contains no rg binary: ' + tarPath);
+    const destPath = path.join(outputDir, targetBinary);
+    fs.copyFileSync(path.join(tempExtractDir, rgFile), destPath);
+    fs.chmodSync(destPath, 0o755);
+  } finally {
+    fs.rmSync(tempExtractDir, { recursive: true, force: true });
+  }
 }
 
 async function downloadAndExtractPlatform(platform) {
