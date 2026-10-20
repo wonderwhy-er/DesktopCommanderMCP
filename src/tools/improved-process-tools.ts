@@ -1,4 +1,4 @@
-import { processLifecycle } from '../process-lifecycle.js';
+import { processLifecycle, formatProcessLifecycle, processLifecycleFailed } from '../process-lifecycle.js';
 import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
@@ -251,8 +251,9 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}${formatProcessLifecycle(result.lifecycle)}`
     }],
+    ...(processLifecycleFailed(result.lifecycle) ? { isError: true } : {}),
     structuredContent: {
       pid: result.pid,
       lifecycle: result.lifecycle,
@@ -452,13 +453,15 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
     timingMessage = `\n\n📊 Timing: ${endTime - startTime}ms`;
   }
 
+  const lifecycle = terminalManager.getLifecycle(pid);
   const responseText = output || '(No output in requested range)';
 
   return {
-    structuredContent: { pid, lifecycle: terminalManager.getLifecycle(pid), status: result.isComplete ? 'finished' : 'running' },
+    ...(processLifecycleFailed(lifecycle) ? { isError: true } : {}),
+    structuredContent: { pid, lifecycle, status: result.isComplete ? 'finished' : 'running' },
     content: [{
       type: "text",
-      text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}`
+      text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}${formatProcessLifecycle(lifecycle)}`
     }],
   };
 }

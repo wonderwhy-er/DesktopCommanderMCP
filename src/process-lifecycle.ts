@@ -15,6 +15,8 @@ export interface ProcessLifecycleReceipt {
   outputBytes: number;
   reason?: 'exited' | 'duration_limit' | 'output_limit';
   cleanupComplete?: boolean;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
 }
 export function processLifecycle(options: ProcessLifecycleOptions): ProcessLifecycleReceipt {
   const mode = options.mode ?? 'finite';
@@ -35,4 +37,12 @@ export function processLifecycle(options: ProcessLifecycleOptions): ProcessLifec
     }
   }
   return { mode, maxDurationMs, maxOutputBytes, outputBytes: 0 };
+}
+
+export function formatProcessLifecycle(receipt: ProcessLifecycleReceipt | undefined): string {
+  return receipt ? '\nProcess lifecycle: ' + JSON.stringify(receipt) : '';
+}
+export function processLifecycleFailed(receipt: ProcessLifecycleReceipt | undefined): boolean {
+  return receipt?.mode === 'finite' && !!receipt.reason &&
+    (receipt.reason !== 'exited' || receipt.cleanupComplete === false || receipt.exitCode !== 0);
 }

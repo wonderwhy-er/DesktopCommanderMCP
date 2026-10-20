@@ -355,6 +355,8 @@ export class TerminalManager {
             output += diagnostic;
             this.recordOutput(session, 'stderr', diagnostic);
           }
+          lifecycle.exitCode = childProcess.exitCode ?? code;
+          lifecycle.signal = childProcess.signalCode ?? signal;
           this.completedSessions.set(childProcess.pid!, { session, exitCode: childProcess.exitCode ?? code, signal: childProcess.signalCode ?? signal, endTime: new Date() });
           if (this.completedSessions.size > 100) this.completedSessions.delete(this.completedSessions.keys().next().value!);
           this.sessions.delete(childProcess.pid!);

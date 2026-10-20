@@ -25,7 +25,7 @@ async function run(code, options, check) {
   let pid;
   try {
     const result = await startProcess({ command: input.command, timeout_ms: 5000, ...options });
-    assert.equal(result.isError, undefined, JSON.stringify(result));
+    if (!['duration_limit', 'output_limit'].includes(result.structuredContent?.lifecycle?.reason)) assert.equal(result.isError, undefined, JSON.stringify(result));
     pid = result.structuredContent.pid;
     await check(result, pid);
   } finally { if (pid) await forceTerminate({ pid }); await input.cleanup(); }
