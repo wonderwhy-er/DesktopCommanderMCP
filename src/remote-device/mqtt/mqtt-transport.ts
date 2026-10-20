@@ -164,8 +164,8 @@ export class MqttTransport {
 						.then(() => {
 							if (!this.stopped && this.ready) {
 								// Report usable command delivery only after the broker grants the subscription.
-								console.debug(
-									"[MQTT] Connected and subscribed; observing shadow notifications",
+								console.log(
+									"[MQTT] Connected and subscribed; ready for tool calls",
 								);
 								finish();
 							}
