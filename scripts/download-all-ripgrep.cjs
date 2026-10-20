@@ -88,38 +88,22 @@ async function downloadFile(url, dest) {
 }
 
 async function extractZip(zipPath, outputDir, targetBinary) {
-  const zipfile = await new Promise((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true, autoClose: false }, (error, zip) =>
-      error ? reject(error) : resolve(zip));
-  });
+  const { execFileSync } = require('child_process');
   const pendingPath = path.join(outputDir, targetBinary + '.partial');
+  const descriptor = fs.openSync(pendingPath, 'w');
   try {
-    await new Promise((resolve, reject) => {
-      let found = false;
-      zipfile.on('error', reject);
-      zipfile.on('end', () => {
-        if (!found) reject(new Error('ripgrep ZIP contains no rg.exe: ' + zipPath));
-      });
-      zipfile.on('entry', entry => {
-        if (!entry.fileName.endsWith('rg.exe')) return zipfile.readEntry();
-        found = true;
-        zipfile.openReadStream(entry, (error, stream) => {
-          if (error) return reject(error);
-          streamPipeline(stream, fs.createWriteStream(pendingPath)).then(() => {
-            if (fs.statSync(pendingPath).size !== entry.uncompressedSize) {
-              throw new Error('ripgrep ZIP output size does not match its archive: ' + zipPath);
-            }
-            resolve();
-          }).catch(reject);
-        });
-      });
-      zipfile.readEntry();
+    // The archive tool owns decompression and CRC validation. Await its terminal
+    // status before publishing the binary; no pending stream can look complete.
+    execFileSync('unzip', ['-p', path.basename(zipPath), 'rg.exe'], {
+      cwd: path.dirname(zipPath), stdio: ['ignore', descriptor, 'pipe']
     });
-    fs.renameSync(pendingPath, path.join(outputDir, targetBinary));
-  } finally {
-    zipfile.close();
+  } catch (error) {
+    fs.closeSync(descriptor);
     fs.rmSync(pendingPath, { force: true });
+    throw error;
   }
+  fs.closeSync(descriptor);
+  fs.renameSync(pendingPath, path.join(outputDir, targetBinary));
 }
 
 async function extractTarGz(tarPath, outputDir, targetBinary) {
