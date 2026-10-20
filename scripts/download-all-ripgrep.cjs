@@ -88,35 +88,38 @@ async function downloadFile(url, dest) {
 }
 
 async function extractZip(zipPath, outputDir, targetBinary) {
-  return new Promise((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
-      if (err) return reject(err);
-
-      zipfile.readEntry();
-      zipfile.on('entry', (entry) => {
-        if (entry.fileName.endsWith('rg.exe')) {
-          zipfile.openReadStream(entry, (err, readStream) => {
-            if (err) return reject(err);
-
-            const outputPath = path.join(outputDir, targetBinary);
-            const writeStream = fs.createWriteStream(outputPath);
-            
-            readStream.pipe(writeStream);
-            writeStream.on('close', () => {
-              zipfile.close();
-              resolve();
-            });
-            writeStream.on('error', reject);
-          });
-        } else {
-          zipfile.readEntry();
-        }
-      });
-
-      zipfile.on('end', resolve);
-      zipfile.on('error', reject);
-    });
+  const zipfile = await new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true, autoClose: false }, (error, zip) =>
+      error ? reject(error) : resolve(zip));
   });
+  const pendingPath = path.join(outputDir, targetBinary + '.partial');
+  try {
+    await new Promise((resolve, reject) => {
+      let found = false;
+      zipfile.on('error', reject);
+      zipfile.on('end', () => {
+        if (!found) reject(new Error('ripgrep ZIP contains no rg.exe: ' + zipPath));
+      });
+      zipfile.on('entry', entry => {
+        if (!entry.fileName.endsWith('rg.exe')) return zipfile.readEntry();
+        found = true;
+        zipfile.openReadStream(entry, (error, stream) => {
+          if (error) return reject(error);
+          streamPipeline(stream, fs.createWriteStream(pendingPath)).then(() => {
+            if (fs.statSync(pendingPath).size !== entry.uncompressedSize) {
+              throw new Error('ripgrep ZIP output size does not match its archive: ' + zipPath);
+            }
+            resolve();
+          }).catch(reject);
+        });
+      });
+      zipfile.readEntry();
+    });
+    fs.renameSync(pendingPath, path.join(outputDir, targetBinary));
+  } finally {
+    zipfile.close();
+    fs.rmSync(pendingPath, { force: true });
+  }
 }
 
 async function extractTarGz(tarPath, outputDir, targetBinary) {
@@ -132,8 +135,10 @@ async function extractTarGz(tarPath, outputDir, targetBinary) {
     const rgFile = files.find(file => path.basename(file) === 'rg');
     if (!rgFile) throw new Error('ripgrep archive contains no rg binary: ' + tarPath);
     const destPath = path.join(outputDir, targetBinary);
-    fs.copyFileSync(path.join(tempExtractDir, rgFile), destPath);
-    fs.chmodSync(destPath, 0o755);
+    const pendingPath = path.join(tempExtractDir, 'rg-complete');
+    fs.copyFileSync(path.join(tempExtractDir, rgFile), pendingPath);
+    fs.chmodSync(pendingPath, 0o755);
+    fs.renameSync(pendingPath, destPath);
   } finally {
     fs.rmSync(tempExtractDir, { recursive: true, force: true });
   }
