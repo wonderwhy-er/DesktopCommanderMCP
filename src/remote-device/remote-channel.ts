@@ -708,17 +708,27 @@ export class RemoteChannel {
 
     private async setMqttReady(ready: boolean): Promise<void> {
         ready = ready && !this.shuttingDown && !this.sessionLost;
-        if (this.mqttReady === ready) return;
+        if (this.mqttReady === ready) {
+            return;
+        }
         this.mqttReady = ready;
-        if (this.shuttingDown || this.sessionLost) return;
+        if (this.shuttingDown || this.sessionLost) {
+            return;
+        }
         // Both transports replace the same JSON column; preserve their write order.
         const broadcast = this.broadcastCapable;
-        const write = this.capabilityWriteChain.then(() => this.writeTransportCapable(broadcast));
+        const write = this.capabilityWriteChain.then(() => {
+            return this.writeTransportCapable(broadcast);
+        });
         this.capabilityWriteChain = write;
         this.syncReachabilityStatus();
         const written = await write;
-        if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
-        if (!written && ready) throw new Error('MQTT capability could not be saved');
+        if (this.capabilityWriteChain === write) {
+            this.transportCapableQueued = null;
+        }
+        if (!written && ready) {
+            throw new Error('MQTT capability could not be saved');
+        }
     }
 
     private async onMqttDoorbell(payload: MqttDoorbell): Promise<void> {

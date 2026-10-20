@@ -103,7 +103,7 @@ export class MqttTransport {
 			throw new Error("MQTT receiver already started or stopped");
         }
 		// Log only the hostname: credentials and raw broker errors must stay out of logs.
-		console.log(
+		console.debug(
 			"[MQTT] Connecting to broker:",
 			new URL(this.config.url).hostname,
 		);
@@ -164,7 +164,7 @@ export class MqttTransport {
 						.then(() => {
 							if (!this.stopped && this.ready) {
 								// Report usable command delivery only after the broker grants the subscription.
-								console.log(
+								console.debug(
 									"[MQTT] Connected and subscribed; observing shadow notifications",
 								);
 								finish();
@@ -180,7 +180,7 @@ export class MqttTransport {
 			// Withdraw local admission immediately; RemoteChannel serializes the durable flag update.
 			client.on("close", () => {
 				if (this.ready && !this.stopped) {
-					console.warn("[MQTT] Disconnected; waiting for reconnection");
+					console.debug("[MQTT] Disconnected; waiting for reconnection");
 				}
 				this.ready = false;
 				void this.onReady(false).catch(() => {});
