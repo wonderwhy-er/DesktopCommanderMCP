@@ -108,7 +108,7 @@ async function testCappedWaitAnswers() {
   console.log('\n--- Test 4: a wait the ceiling ends answers as before ---');
   // A small ceiling stands in for MAX_PROCESS_WAIT_MS so the test doesn't wait a minute
   const CAP_MS = 300;
-  const started = await startProcess({ command: 'node -e "setTimeout(() => {}, 3000)"', timeout_ms: 5000 }, CAP_MS);
+  const started = await startProcess({ mode: 'interactive', command: 'node -e "setTimeout(() => {}, 3000)"', timeout_ms: 5000 }, CAP_MS);
   const pid = started.structuredContent?.pid;
   assert.ok(pid > 0, `start_process should start node, got: ${started.content[0].text}`);
   try {
@@ -119,7 +119,7 @@ async function testCappedWaitAnswers() {
     await forceTerminate({ pid });
   }
 
-  const repl = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const repl = await startProcess({ mode: 'interactive', command: 'node -i', timeout_ms: 5000 });
   const replPid = repl.structuredContent?.pid;
   assert.ok(replPid > 0, `start_process should start the Node.js REPL, got: ${repl.content[0].text}`);
   try {
@@ -138,7 +138,7 @@ async function testNodeLocalWaitsWithinTheCeiling() {
   console.log('\n--- Test 5: a node:local call waits within the ceiling too ---');
   // A small ceiling stands in for MAX_PROCESS_WAIT_MS; the script needs 6 s, the call allows 20 s
   const CAP_MS = 1500;
-  const started = await startProcess({ command: 'node:local', timeout_ms: 20000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms: 20000 });
   const pid = Number(started.content[0].text.match(/PID (-?\d+)/)?.[1]);
   assert.ok(pid < 0, `start_process should start a node:local session, got: ${started.content[0].text}`);
   try {

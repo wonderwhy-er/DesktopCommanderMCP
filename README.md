@@ -1150,3 +1150,11 @@ For complete details, see our [Privacy Policy](PRIVACY.md).
 ## License
 
 MIT
+
+### Finite commands and interactive sessions
+
+`start_process` defaults to `mode: "finite"`: stdin is closed, elapsed lifetime is bounded by `max_duration_ms` (default 120000, maximum 900000), and combined stdout/stderr is bounded by `max_output_bytes` (default 8388608, maximum 67108864). Exhausting either budget terminates the owned process tree and retains a lifecycle receipt with the termination reason and cleanup result. On POSIX, finite commands own a separate process group so ordinary background descendants remain owned after their shell exits.
+
+`timeout_ms` controls only how long one tool response waits; reading output does not reset the command deadline. A byte budget bounds process output, not filesystem or network I/O.
+
+Use `mode: "interactive"` for REPLs (including `node:local`) and deliberately persistent sessions. These retain writable stdin and can be used with `interact_with_process` and `force_terminate`; finite-only budget fields are rejected. For example: `{command: "python3 -i", mode: "interactive", timeout_ms: 1000}`.

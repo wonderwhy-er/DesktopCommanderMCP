@@ -23,7 +23,7 @@ async function testNewOutputBehavior() {
   console.log('\n📋 Test 1: Basic new output behavior (offset=0) for running process...');
   
   // Start a process that prints a tick every 200ms for ~4s, so it is still running for both reads
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: 'node -e "let i=0; setInterval(() => { console.log(\'tick\' + i++); if(i>20) process.exit(0); }, 200)"',
     timeout_ms: 500  // Return before completion
   });
@@ -63,7 +63,7 @@ async function testNewOutputBehavior() {
 async function testAbsoluteOffset() {
   console.log('\n📋 Test 2: Absolute position (positive offset)...');
   
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: "node -e \"for(let i=0; i<10; i++) console.log('line' + i)\"",
     timeout_ms: 3000
   });
@@ -91,7 +91,7 @@ async function testAbsoluteOffset() {
 async function testTailBehavior() {
   console.log('\n📋 Test 3: Tail behavior (negative offset)...');
   
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: "node -e \"for(let i=0; i<20; i++) console.log('line' + i)\"",
     timeout_ms: 3000
   });
@@ -120,7 +120,7 @@ async function testTailBehavior() {
 async function testLengthLimit() {
   console.log('\n📋 Test 4: Length limit enforcement...');
   
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: "node -e \"for(let i=0; i<100; i++) console.log('line' + i)\"",
     timeout_ms: 3000
   });
@@ -149,7 +149,7 @@ async function testLengthLimit() {
 async function testRuntimeInfo() {
   console.log('\n📋 Test 5: Runtime info for completed processes...');
   
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: "node -e \"setTimeout(() => console.log('done'), 500)\"",
     timeout_ms: 200  // Return before completion
   });
@@ -183,7 +183,7 @@ async function testInteractTruncation() {
   const printedLines = lineLimit + 500;
 
   // Start a Python REPL
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: `${python} -i`,
     timeout_ms: 3000
   });
@@ -224,7 +224,7 @@ async function testInteractTruncation() {
 async function testReReadOutput() {
   console.log('\n📋 Test 7: Re-reading output with absolute offset...');
   
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: "node -e \"for(let i=0; i<5; i++) console.log('data' + i)\"",
     timeout_ms: 3000
   });
@@ -258,7 +258,7 @@ async function testCountsAfterTrailingNewline() {
   // Prints "done", then exits once the trigger file exists, or after 15s on
   // its own, so a failing run (no trigger) leaves nothing running
   const trigger = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dc-pagination-')), 'exit');
-  const startResult = await startProcess({
+  const startResult = await startProcess({ mode: 'interactive',
     command: `node -e "console.log('done'); setTimeout(() => process.exit(0), 15000).unref(); const t = setInterval(() => { if (require('fs').existsSync(process.argv[1])) clearInterval(t); }, 20)" "${trigger}"`,
     timeout_ms: 1000
   });

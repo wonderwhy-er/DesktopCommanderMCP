@@ -36,7 +36,7 @@ async function assertForceTerminateEndsTree(levels, ...flags) {
   const dir = createPidDir();
   let shellPid;
   try {
-    const started = await startProcess({ command: processTreeCommand(dir, levels, ...flags), timeout_ms: 500 });
+    const started = await startProcess({ mode: 'interactive', command: processTreeCommand(dir, levels, ...flags), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
     const treePids = await readTreePids(dir, levels);
@@ -94,7 +94,7 @@ async function testForceTerminateEndsChildrenStartedDuringGrace() {
   const dir = createPidDir();
   let shellPid;
   try {
-    const started = await startProcess({ command: processTreeCommand(dir, 2, 'ignore-sigterm', 'spawn-on-sigterm'), timeout_ms: 500 });
+    const started = await startProcess({ mode: 'interactive', command: processTreeCommand(dir, 2, 'ignore-sigterm', 'spawn-on-sigterm'), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
     const treePids = await readTreePids(dir, 2);
@@ -125,7 +125,7 @@ async function testNodeLocalTimeoutEndsTree() {
   console.log('\nTest: node:local timeout ends the script and the processes it started');
   const TIMEOUT_MS = 1500;
   const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
-  const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
+  const session = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
   const dir = createPidDir();
@@ -173,7 +173,7 @@ async function testNodeLocalTimeoutAnswersWhenTreeSurvives() {
   console.log('\nTest: node:local timeout answers when part of the tree survives');
   const TIMEOUT_MS = 1500;
   const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
-  const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
+  const session = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
   const dir = createPidDir();
@@ -239,7 +239,7 @@ async function testNodeLocalTimeoutAnswersWhenAProcessLeftTheTree() {
   console.log('\nTest: node:local timeout answers when a process that left the tree holds the pipes');
   const TIMEOUT_MS = 1500;
   const RETURN_LIMIT_MS = TIMEOUT_MS + 8000;
-  const session = await startProcess({ command: 'node:local', timeout_ms: 30000 });
+  const session = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms: 30000 });
   const virtualPid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(virtualPid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
   const dir = createPidDir();
@@ -290,7 +290,7 @@ async function testTerminationFailureIsReported() {
   };
   const stdoutWrite = process.stdout.write;
   try {
-    const started = await startProcess({ command: processTreeCommand(dir, 2), timeout_ms: 500 });
+    const started = await startProcess({ mode: 'interactive', command: processTreeCommand(dir, 2), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
     await readTreePids(dir, 2);
@@ -349,7 +349,7 @@ async function testFailedTerminationIsRetried() {
   };
   const stdoutWrite = process.stdout.write;
   try {
-    const started = await startProcess({ command: processTreeCommand(dir, 1), timeout_ms: 500 });
+    const started = await startProcess({ mode: 'interactive', command: processTreeCommand(dir, 1), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
     await readTreePids(dir, 1);
@@ -402,7 +402,7 @@ async function testSessionsStayInServerProcessGroup() {
   const dir = createPidDir();
   let shellPid;
   try {
-    const started = await startProcess({ command: processTreeCommand(dir, 2), timeout_ms: 500 });
+    const started = await startProcess({ mode: 'interactive', command: processTreeCommand(dir, 2), timeout_ms: 500 });
     shellPid = started.structuredContent?.pid;
     assert(shellPid > 0, `start_process should start the tree: ${started.content[0].text}`);
     const pids = [shellPid, ...await readTreePids(dir, 2)];

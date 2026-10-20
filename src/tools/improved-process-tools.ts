@@ -1,3 +1,4 @@
+import { processLifecycle } from '../process-lifecycle.js';
 import { terminalManager, MAX_BUFFERED_OUTPUT_CHARS, getProcessWaitLimit } from '../terminal-manager.js';
 import { commandManager } from '../command-manager.js';
 import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema } from './schemas.js';
@@ -174,10 +175,16 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     };
   }
 
+  try { processLifecycle(parsed.data); } catch (error) {
+    return { content: [{ type: 'text', text: String(error) }], isError: true };
+  }
   const commandToRun = parsed.data.command;
 
   // Handle node:local - runs Node.js code directly on MCP server
   if (commandToRun.trim() === 'node:local') {
+    if (parsed.data.mode !== 'interactive') return {
+      content: [{ type: 'text', text: 'node:local requires mode interactive; send scripts with interact_with_process.' }], isError: true,
+    };
     const virtualPid = virtualPidCounter--;
     virtualNodeSessions.set(virtualPid, { timeout_ms: parsed.data.timeout_ms || 30000 });
 
@@ -212,7 +219,8 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     parsed.data.timeout_ms,
     shellUsed,
     parsed.data.verbose_timing || false,
-    maxWaitMs
+    maxWaitMs,
+    parsed.data
   );
 
   if (result.pid === -1) {
@@ -247,6 +255,7 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     }],
     structuredContent: {
       pid: result.pid,
+      lifecycle: result.lifecycle,
       shell: shellUsed,
       status: getProcessStatus(processState),
       ...getWaitCapFields(result.waitCappedAtMs),
@@ -446,6 +455,7 @@ export async function readProcessOutput(args: unknown, maxWaitMs: number = MAX_P
   const responseText = output || '(No output in requested range)';
 
   return {
+    structuredContent: { pid, lifecycle: terminalManager.getLifecycle(pid), status: result.isComplete ? 'finished' : 'running' },
     content: [{
       type: "text",
       text: `${statusMessage}\n\n${responseText}${processStateMessage}${timingMessage}`

@@ -13,7 +13,7 @@ import { logger } from './logger.js';
  * macOS/Linux a signal sent to one PID reaches only that process, so the
  * program kept running, orphaned, while the session was reported terminated.
  *
- * Both platforms find the tree the same way, through each process's parent
+ * Interactive sessions find the tree through each process's parent
  * PID, so processes are spawned exactly as before: on macOS/Linux they stay
  * in the server's process group and session, and Ctrl+C, closing the
  * terminal and password prompts behave as they always did.
@@ -24,6 +24,10 @@ import { logger } from './logger.js';
  *   started meanwhile), and whatever still runs gets SIGKILL.
  * Limit: a process whose parent exited before a walk has been reparented (to
  * init or a subreaper) and can no longer be found through its parent.
+ *
+ * Finite POSIX commands instead own an isolated process group. Their cleanup
+ * signals that group even after the original shell exits, retaining ordinary
+ * background descendants through reparenting. Interactive groups stay unchanged.
  *
  * Every path that ends a command DC runs for the client (force_terminate on a
  * start_process session, the node:local timeout) goes through terminateProcessTree.
@@ -198,9 +202,18 @@ function taskkillPath(): string {
  * true, or false if some could not be ended (why is logged, and the root is
  * then killed on its own if it still runs). Never rejects.
  */
-export async function terminateProcessTree(child: ChildProcess): Promise<boolean> {
+export async function terminateProcessTree(child: ChildProcess, ownedProcessGroup = false): Promise<boolean> {
   const pid = child.pid;
-  if (pid === undefined || hasExited(child)) return true;
+  if (pid === undefined) return true;
+  if (ownedProcessGroup && !isWindows()) {
+    const group = -pid;
+    const failures = signalAll([group], 'SIGTERM');
+    if (!(await waitUntilGone([group], TERMINATE_GRACE_MS))) failures.push(...signalAll([group], 'SIGKILL'));
+    const gone = await waitUntilGone([group], EXIT_WAIT_MS);
+    if (failures.length || !gone) logger.error('Could not end owned process group ' + pid + ': ' + failures.join('; '));
+    return failures.length === 0 && gone && await waitForExit(child, EXIT_WAIT_MS);
+  }
+  if (hasExited(child)) return true;
 
   let failure: string | undefined;
   try {

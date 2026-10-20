@@ -77,7 +77,7 @@ async function testPythonREPL() {
     }
     
     // Start a Python REPL process
-    const result = await terminalManager.executeCommand(pythonCmd + ' -i', 5000);
+    const result = await terminalManager.executeCommand(pythonCmd + ' -i', 5000, undefined, undefined, undefined, { mode: 'interactive' });
     
     if (result.pid <= 0) {
       throw new Error(`Failed to start Python REPL: ${result.output}`);
@@ -149,7 +149,7 @@ async function testNodeREPL() {
   
   try {
     // Start a Node.js REPL process
-    const result = await terminalManager.executeCommand('node -i', 5000);
+    const result = await terminalManager.executeCommand('node -i', 5000, undefined, undefined, undefined, { mode: 'interactive' });
     
     if (result.pid <= 0) {
       throw new Error(`Failed to start Node.js REPL: ${result.output}`);

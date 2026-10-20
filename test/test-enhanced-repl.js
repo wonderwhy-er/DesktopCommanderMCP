@@ -22,7 +22,7 @@ async function testEnhancedREPL() {
 
   // Start Python in interactive mode (shell left to start_process's platform default)
   console.log('Starting Python REPL...');
-  const result = await startProcess({
+  const result = await startProcess({ mode: 'interactive',
     command: `${pythonCommand} -i`,
     timeout_ms: 10000
   });

@@ -103,7 +103,7 @@ function testDetection() {
 
 async function testStartProcess() {
   console.log('\n--- start_process: pytest collecting (#196) ---');
-  const result = await startProcess({ command: `node "${FIXTURE}"`, timeout_ms: 1500 });
+  const result = await startProcess({ mode: 'interactive', command: `node "${FIXTURE}"`, timeout_ms: 1500 });
   const pid = result.structuredContent?.pid;
   const text = result.content[0].text;
   try {
@@ -128,7 +128,7 @@ async function testStartProcessOnAPieceOfALine() {
   try {
     await Promise.all(['markup', 'dollar', 'hash'].map(async (piece) => {
       const trigger = path.join(dir, piece);
-      const started = startProcess({ command: `node "${SPLIT_LINE}" "${trigger}" ${piece}`, timeout_ms: 3000 });
+      const started = startProcess({ mode: 'interactive', command: `node "${SPLIT_LINE}" "${trigger}" ${piece}`, timeout_ms: 3000 });
       // The rest of the line comes 1 s later: a wait that ended on the first piece misses it
       setTimeout(() => fs.writeFileSync(trigger, ''), 1000);
       const result = await started;
@@ -149,7 +149,7 @@ async function testStartProcessOnAPieceOfALine() {
 async function testInteractWithShell() {
   const [name, command] = process.platform === 'win32' ? ['PowerShell', 'powershell -NoLogo'] : ['bash', 'bash --norc --noprofile -i'];
   console.log(`\n--- interact_with_process: a real ${name} session ---`);
-  const started = await startProcess({ command, timeout_ms: 10_000 });
+  const started = await startProcess({ mode: 'interactive', command, timeout_ms: 10_000 });
   const pid = started.structuredContent?.pid;
   try {
     check(started.structuredContent?.status === 'waiting_for_input',
@@ -173,7 +173,7 @@ async function testInteractWithShell() {
 
 async function testInteractAtNodeContinuation() {
   console.log('\n--- interact_with_process: node -i at its continuation prompt ---');
-  const started = await startProcess({ command: 'node -i', timeout_ms: 5000 });
+  const started = await startProcess({ mode: 'interactive', command: 'node -i', timeout_ms: 5000 });
   const pid = started.structuredContent?.pid;
   try {
     // [input, what the answer shows]: a statement typed a line at a time, then its result

@@ -30,7 +30,7 @@ const CAP_MS = 1500;
 const script = (ms) => `await new Promise((resolve) => setTimeout(resolve, ${ms})); console.log('done');`;
 
 async function startNodeLocal(timeout_ms) {
-  const session = await startProcess({ command: 'node:local', timeout_ms });
+  const session = await startProcess({ mode: 'interactive', command: 'node:local', timeout_ms });
   const pid = Number(/PID (-\d+)/.exec(session.content[0].text)?.[1]);
   assert(pid < 0, `node:local should start a virtual session: ${session.content[0].text}`);
   return pid;

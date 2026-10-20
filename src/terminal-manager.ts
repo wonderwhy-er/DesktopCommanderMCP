@@ -6,6 +6,7 @@ import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
 import { getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
+import { processLifecycle, type ProcessLifecycleOptions, type ProcessLifecycleReceipt } from './process-lifecycle.js';
 
 /**
  * Standard Windows PATHEXT value, used to repair a corrupted PATHEXT before
@@ -55,6 +56,7 @@ function newStreamTails(): StreamTails {
 /** An active session plus the per-stream tails that state detection reads. */
 interface ManagedSession extends TerminalSession {
   streams: StreamTails;
+  lifecycle: ProcessLifecycleReceipt;
   termination?: Promise<boolean>;  // The forceTerminate in progress (or done); calls meanwhile await it, a failed one is dropped
 }
 
@@ -111,6 +113,7 @@ export function getProcessWaitLimit(timeoutMs: number, capMs: number = MAX_PROCE
 /** executeCommand result: CommandExecutionResult plus the process state and whether the wait ceiling ended the wait. */
 export interface ProcessStartResult extends CommandExecutionResult {
   processState: ProcessState;  // State of the process when the wait ended (see getProcessState)
+  lifecycle?: ProcessLifecycleReceipt;
   waitCappedAtMs?: number;     // Set when the wait stopped at the wait ceiling before timeout_ms; the process keeps running
 }
 
@@ -172,7 +175,9 @@ export class TerminalManager {
     }
   }
   
-  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS): Promise<ProcessStartResult> {
+  async executeCommand(command: string, timeoutMs: number = DEFAULT_COMMAND_TIMEOUT, shell?: string, collectTiming: boolean = false, maxWaitMs: number = MAX_PROCESS_WAIT_MS, lifecycleOptions: ProcessLifecycleOptions = {}): Promise<ProcessStartResult> {
+    const lifecycle = processLifecycle(lifecycleOptions);
+    const finite = lifecycle.mode === 'finite';
     let config: ServerConfig = {};
     try {
       config = await configManager.getConfig();
@@ -200,6 +205,8 @@ export class TerminalManager {
         ...process.env,
         TERM: 'xterm-256color'  // Better terminal compatibility
       },
+      stdio: [finite ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      detached: finite && process.platform !== 'win32',
       windowsHide: true  // Prevent visible console windows on Windows
     };
 
@@ -275,7 +282,8 @@ export class TerminalManager {
       bufferedChars: 0,
       evictedLines: 0,
       evictedChars: 0,
-      streams: newStreamTails()
+      streams: newStreamTails(),
+      lifecycle
     };
 
     this.sessions.set(childProcess.pid, session);
@@ -295,7 +303,7 @@ export class TerminalManager {
       // Whether the process waits for input, judged as the periodic check does:
       // from the end of each output stream, not from the chunk that just came
       // (a chunk can end in the middle of a line, e.g. right after "<div>").
-      const waitingForInput = () => this.getProcessState(childProcess.pid!)?.isWaitingForInput === true;
+      const waitingForInput = () => !finite && this.getProcessState(childProcess.pid!)?.isWaitingForInput === true;
 
       const resolveOnce = (waitResult: Omit<ProcessStartResult, 'processState'>) => {
         if (resolved) return;
@@ -308,6 +316,7 @@ export class TerminalManager {
         // the exit leaves no session behind, so the text it returns is judged.
         const result: ProcessStartResult = {
           ...waitResult,
+          lifecycle: { ...lifecycle },
           processState: this.getProcessState(childProcess.pid!) ?? analyzeProcessState(waitResult.output)
         };
 
@@ -328,6 +337,41 @@ export class TerminalManager {
 
         resolve(result);
       };
+
+      let lifetimeTimer: NodeJS.Timeout | undefined;
+      let finishing: Promise<void> | undefined;
+      const finish = (reason: NonNullable<ProcessLifecycleReceipt['reason']>, code: number | null = childProcess.exitCode, signal: NodeJS.Signals | null = childProcess.signalCode): Promise<void> => {
+        if (finishing) return finishing;
+        lifecycle.reason = reason;
+        if (lifetimeTimer) clearTimeout(lifetimeTimer);
+        finishing = (async () => {
+          if (finite) {
+            session.termination ??= terminateProcessTree(childProcess, process.platform !== 'win32');
+            lifecycle.cleanupComplete = await session.termination;
+          }
+          if (reason !== 'exited' || lifecycle.cleanupComplete === false) {
+            const diagnostic = '\nProcess ended: ' + reason + '; outputBytes=' + lifecycle.outputBytes +
+              '; cleanupComplete=' + lifecycle.cleanupComplete + '\n';
+            output += diagnostic;
+            this.recordOutput(session, 'stderr', diagnostic);
+          }
+          this.completedSessions.set(childProcess.pid!, { session, exitCode: childProcess.exitCode ?? code, signal: childProcess.signalCode ?? signal, endTime: new Date() });
+          if (this.completedSessions.size > 100) this.completedSessions.delete(this.completedSessions.keys().next().value!);
+          this.sessions.delete(childProcess.pid!);
+          exitReason = 'process_exit';
+          resolveOnce({ pid: childProcess.pid!, output, isBlocked: false });
+        })();
+        return finishing;
+      };
+      const acceptOutput = (data: Buffer): string => {
+        if (finite && lifecycle.reason && lifecycle.reason !== 'exited') return '';
+        const remaining = finite ? lifecycle.maxOutputBytes! - lifecycle.outputBytes : data.length;
+        lifecycle.outputBytes += data.length;
+        const text = data.subarray(0, Math.max(0, remaining)).toString();
+        if (finite && lifecycle.outputBytes >= lifecycle.maxOutputBytes!) void finish('output_limit');
+        return text;
+      };
+      if (finite) lifetimeTimer = setTimeout(() => { void finish('duration_limit'); }, lifecycle.maxDurationMs!);
 
       // Now that resolveOnce exists, route process errors into it, so the caller
       // doesn't sit waiting for output. The session goes only if the process
@@ -352,7 +396,7 @@ export class TerminalManager {
       }
 
       childProcess.stdout.on('data', (data: any) => {
-        const text = data.toString();
+        const text = acceptOutput(Buffer.isBuffer(data) ? data : Buffer.from(data));
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -369,7 +413,7 @@ export class TerminalManager {
         this.recordOutput(session, 'stdout', text);
 
         // Record output event if collecting timing
-        if (collectTiming) {
+        if (collectTiming && !resolved && outputEvents.length < 1000) {
           outputEvents.push({
             timestamp: now,
             deltaMs: now - startTime,
@@ -396,7 +440,7 @@ export class TerminalManager {
       });
 
       childProcess.stderr.on('data', (data: any) => {
-        const text = data.toString();
+        const text = acceptOutput(Buffer.isBuffer(data) ? data : Buffer.from(data));
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -447,29 +491,7 @@ export class TerminalManager {
       }, waitLimit.waitMs);
 
       childProcess.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
-        if (childProcess.pid) {
-          // Store completed session before removing active session
-          this.completedSessions.set(childProcess.pid, {
-            session,
-            exitCode: code,
-            signal,
-            endTime: new Date()
-          });
-
-          // Keep only last 100 completed sessions
-          if (this.completedSessions.size > 100) {
-            const oldestKey = Array.from(this.completedSessions.keys())[0];
-            this.completedSessions.delete(oldestKey);
-          }
-
-          this.sessions.delete(childProcess.pid);
-        }
-        exitReason = 'process_exit';
-        resolveOnce({
-          pid: childProcess.pid!,
-          output,
-          isBlocked: false
-        });
+        void finish('exited', code, signal);
       });
     });
   }
@@ -808,6 +830,7 @@ export class TerminalManager {
   getProcessState(pid: number, since?: OutputSnapshot): ProcessState | null {
     const session = this.sessions.get(pid);
     if (session) {
+      if (session.lifecycle.mode === 'finite') return { isWaitingForInput: false, isFinished: false, isRunning: true, lastOutput: TerminalManager.lastWrittenOutput(session.streams, since).join('\n') };
       return analyzeProcessState(TerminalManager.lastWrittenOutput(session.streams, since), pid);
     }
     const completedSession = this.completedSessions.get(pid);
@@ -865,6 +888,11 @@ export class TerminalManager {
    * @param pid Process ID
    * @returns The session or undefined if not found
    */
+  getLifecycle(pid: number): ProcessLifecycleReceipt | undefined {
+    const session = this.sessions.get(pid) ?? this.completedSessions.get(pid)?.session;
+    return session ? { ...session.lifecycle } : undefined;
+  }
+
   getSession(pid: number): TerminalSession | undefined {
     return this.sessions.get(pid);
   }
@@ -883,7 +911,7 @@ export class TerminalManager {
 
     if (!session.termination) {
       // Calls made while it runs share it; a failed one is dropped, so the next call tries again
-      session.termination = terminateProcessTree(session.process).then((ended) => {
+      session.termination = terminateProcessTree(session.process, session.lifecycle.mode === 'finite' && process.platform !== 'win32').then((ended) => {
         if (!ended) session.termination = undefined;
         return ended;
       });

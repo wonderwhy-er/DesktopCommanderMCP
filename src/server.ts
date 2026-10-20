@@ -875,7 +875,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "start_process",
                 description: `
-                        Start a terminal process on the authorized device with intelligent state detection.
+                        Start a terminal process on the authorized device. Defaults to finite mode: stdin is closed,
+                        lifetime is at most max_duration_ms (default 120000), and combined stdout/stderr
+                        is at most max_output_bytes (default 8388608). A limit ends the process tree.
+                        timeout_ms limits only this response wait; polling never renews the lifetime.
+                        Select mode: "interactive" for a REPL or deliberately persistent service.
+                        Interactive sessions retain stdin and support interact_with_process.
                         
                         Suitable for shell commands, interactive REPL sessions, data-processing scripts,
                         programmatic file analysis, and other long-running terminal work.
@@ -883,9 +888,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ${OS_GUIDANCE}
                         
                         Examples:
-                        • start_process("python3 -i") → Start an interactive Python REPL
-                        • start_process("node -i") → Start an interactive Node.js REPL
-                        • start_process("node:local") → Run stateless Node.js code on the MCP server
+                        • start_process({command:"python3 -i", mode:"interactive", timeout_ms:1000}) → Start an interactive Python REPL
+                        • start_process({command:"node -i", mode:"interactive", timeout_ms:1000}) → Start an interactive Node.js REPL
+                        • start_process({command:"node:local", mode:"interactive", timeout_ms:1000}) → Run stateless Node.js code on the MCP server
                         • start_process("wc -l /path/file.csv") → Run a one-shot shell command
 
                         Interactive process sessions support follow-up input after they are started.
