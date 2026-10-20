@@ -10,12 +10,13 @@ export function isBackendLocal(url: URL): boolean {
 }
 
 export function getRemoteDeviceConfigDirectory(home = os.homedir()): string {
-	let suffix = "";
-	if (process.env.DC_ENV === "staging") {
-		suffix = "-staging";
-	} else if (process.env.DC_ENV === "development") {
-		suffix = "-dev";
-	}
+	const suffix = "";
+	// TODO: uncomment this when everything will be merged to main
+	// if (process.env.DC_ENV === "staging") {
+	// 	suffix = "-staging";
+	// } else if (process.env.DC_ENV === "development") {
+	// 	suffix = "-dev";
+	// }
 	return path.join(home, `.desktop-commander-device${suffix}`);
 }
 
