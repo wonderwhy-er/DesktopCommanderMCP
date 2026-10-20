@@ -105,6 +105,8 @@ export function formatFiniteOwner(document: OwnerDocument | undefined): string {
     policy: admission.policy, limits: admission.limits, resultId: document.resultId,
     executor: document.evidence?.executor, package: document.evidence?.package,
     terminal: result?.terminal, cleanup: result?.cleanup, cleanupComplete: result?.cleanupComplete,
+    nativeTerminal: result?.nativeTerminal, stopRequested: result?.stopRequested,
+    originalTermination: result?.originalTermination, cancellation: document.cancellation,
     exitCode: result?.exitCode, diagnostic: result?.diagnostic,
     notStarted: document.notStarted, refusal: document.refusal });
 }
