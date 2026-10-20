@@ -251,7 +251,7 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
   return {
     content: [{
       type: "text",
-      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${statusMessage}${timingMessage}${formatProcessLifecycle(result.lifecycle)}`
+      text: `Process started with PID ${result.pid} (shell: ${shellUsed})\nInitial output:\n${result.output}${formatProcessLifecycle(result.lifecycle)}${statusMessage}${timingMessage}`
     }],
     ...(processLifecycleFailed(result.lifecycle) ? { isError: true } : {}),
     structuredContent: {
