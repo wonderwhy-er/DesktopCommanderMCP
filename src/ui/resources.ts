@@ -4,7 +4,13 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { CONFIG_EDITOR_RESOURCE_URI, FILE_PREVIEW_RESOURCE_URI } from './contracts.js';
+import {
+    buildUiContentSecurityPolicy,
+    CONFIG_EDITOR_RESOURCE_URI,
+    FILE_PREVIEW_RESOURCE_URI,
+    UI_FONT_ORIGINS,
+    UI_RESOURCE_CSP
+} from './contracts.js';
 
 const UI_RESOURCE_MIME_TYPE = 'text/html;profile=mcp-app';
 
@@ -49,8 +55,15 @@ function inlineTemplateAssets(templateHtml: string, css: string, runtime: string
     const safeCss = css.replace(/<\/style/gi, '<\\/style');
     const safeRuntime = runtime.replace(/<\/script/gi, '<\\/script');
 
-    const cssInlined = replaceOrThrow(
+    // First in <head>, so it covers everything the page loads, previews included
+    const policyAdded = replaceOrThrow(
         templateHtml,
+        /<head>/i,
+        `<head><meta http-equiv="Content-Security-Policy" content="${buildUiContentSecurityPolicy(UI_RESOURCE_CSP, UI_FONT_ORIGINS)}">`,
+        '<head> tag'
+    );
+    const cssInlined = replaceOrThrow(
+        policyAdded,
         /<link[^>]*href=["']\.\/styles\.css["'][^>]*>/i,
         `<style>${safeCss}</style>`,
         'styles.css link tag'
@@ -87,14 +100,20 @@ export async function getConfigEditorResourceText(): Promise<string> {
     return readInlinedResourceHtml(DIST_CONFIG_EDITOR_DIR, 'config-editor-runtime.js');
 }
 
+function getUiResourceMeta(): Record<string, unknown> {
+    return { ui: { csp: UI_RESOURCE_CSP } };
+}
+
 const READABLE_UI_RESOURCES: Record<string, ReadableUiResource> = {
     [FILE_PREVIEW_RESOURCE_URI]: {
         mimeType: FILE_PREVIEW_RESOURCE.mimeType,
-        getText: getFilePreviewResourceText
+        getText: getFilePreviewResourceText,
+        getMeta: getUiResourceMeta
     },
     [CONFIG_EDITOR_RESOURCE_URI]: {
         mimeType: CONFIG_EDITOR_RESOURCE.mimeType,
-        getText: getConfigEditorResourceText
+        getText: getConfigEditorResourceText,
+        getMeta: getUiResourceMeta
     }
 };
 
