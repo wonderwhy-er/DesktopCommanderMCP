@@ -1153,8 +1153,8 @@ MIT
 
 ### Finite commands and interactive sessions
 
-`start_process` defaults to `mode: "finite"`: stdin is closed, elapsed lifetime is bounded by `max_duration_ms` (default 120000, maximum 900000), and combined stdout/stderr is bounded by `max_output_bytes` (default 8388608, maximum 67108864). Exhausting either budget terminates the owned process tree and retains a lifecycle receipt with the termination reason and cleanup result. On POSIX, finite commands own a separate process group so ordinary background descendants remain owned after their shell exits.
+`start_process` defaults to `mode: "finite"`. It invokes the installed `ai-fleet harness tool-execution finite-command serve` owner. Fleet project policy selects either with-limits or direct Conflux Bounded Process and owns stdin, lifetime, output and resource budgets, cancellation, native process identity and cleanup. Desktop Commander retains and presents the original admission, operation ID and receipt; it does not select a second executor or implement another limiter.
 
-`timeout_ms` controls only how long one tool response waits; reading output does not reset the command deadline. A byte budget bounds process output, not filesystem or network I/O.
+`timeout_ms` bounds only the tool-response wait. Recover a retained operation through the Fleet owner's `show` command; polling does not renew its lifetime. The former Desktop Commander-specific `max_duration_ms` and `max_output_bytes` fields have been removed.
 
-Use `mode: "interactive"` for REPLs (including `node:local`) and deliberately persistent sessions. These retain writable stdin and can be used with `interact_with_process` and `force_terminate`; finite-only budget fields are rejected. For example: `{command: "python3 -i", mode: "interactive", timeout_ms: 1000}`.
+Use `mode: "interactive"` for REPLs (including `node:local`) and deliberately persistent sessions. Real REPLs retain writable stdin. Each `node:local` script is a separate finite invocation of the same Fleet owner, with its exact script supplied as stdin.

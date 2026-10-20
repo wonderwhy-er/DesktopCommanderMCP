@@ -14,6 +14,7 @@ async function testReadCompletedProcessOutput() {
   
   // Start echo command with delay, but timeout before echo happens
   const startResult = await startProcess({
+    mode: 'interactive', // Original local-session output retention; finite-owner coverage is separate.
     // Cross-platform delay + output using Node
     command: 'node -e "setTimeout(() => console.log(\'SUCCESS MESSAGE\'), 1000)"',
     timeout_ms: 500  // Returns before the output happens
@@ -47,6 +48,7 @@ async function testImmediateCompletion() {
   console.log('Testing immediate completion...');
   
   const startResult = await startProcess({
+    mode: 'interactive', // Original local-session output retention; finite-owner coverage is separate.
     command: 'node -e "console.log(\'IMMEDIATE OUTPUT\')"',
     timeout_ms: 2000
   });

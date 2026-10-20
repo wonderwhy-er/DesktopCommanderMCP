@@ -1,4 +1,3 @@
-import { MAX_FINITE_DURATION_MS, MAX_FINITE_OUTPUT_BYTES } from '../process-lifecycle.js';
 import { z } from "zod";
 
 // Config tools schemas
@@ -28,15 +27,13 @@ export const ListProcessesArgsSchema = z.object({});
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number().finite().nonnegative(),
-  mode: z.enum(['finite', 'interactive']).optional().describe('Defaults to finite: stdin is closed and time/output budgets terminate the process tree. Use interactive for REPLs or deliberately persistent sessions.'),
-  max_duration_ms: z.number().int().positive().max(MAX_FINITE_DURATION_MS).optional().describe('Finite lifetime, independent of timeout_ms (the response wait). Default 120000 ms.'),
-  max_output_bytes: z.number().int().positive().max(MAX_FINITE_OUTPUT_BYTES).optional().describe('Combined stdout and stderr byte budget; terminates on exhaustion. Default 8388608 bytes.'),
+  mode: z.enum(['finite', 'interactive']).optional().describe('Defaults to finite: Fleet policy selects the existing executor and owns stdin, budgets, cancellation and cleanup. Use interactive for a REPL or deliberately persistent session.'),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
   // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
   // excluded from tool-call telemetry (see isUiOriginCall in server.ts).
   origin: z.enum(['ui', 'llm']).optional(),
-});
+}).strict();
 
 export const ReadProcessOutputArgsSchema = z.object({
   pid: z.number(),

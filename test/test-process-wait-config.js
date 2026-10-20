@@ -150,7 +150,7 @@ async function testNodeLocalWaitsWithinTheCeiling() {
   } finally {
     await forceTerminate({ pid });
   }
-  console.log('ok: a node:local script ends at the wait ceiling');
+  console.log('ok: a node:local response returns at the wait ceiling');
 }
 
 // The settings these tests change: they must be left as they were found

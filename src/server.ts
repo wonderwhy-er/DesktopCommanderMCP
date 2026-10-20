@@ -875,10 +875,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "start_process",
                 description: `
-                        Start a terminal process on the authorized device. Defaults to finite mode: stdin is closed,
-                        lifetime is at most max_duration_ms (default 120000), and combined stdout/stderr
-                        is at most max_output_bytes (default 8388608). A limit ends the process tree.
-                        timeout_ms limits only this response wait; polling never renews the lifetime.
+                        Start a terminal process on the authorized device.
+                        Finite mode delegates to the installed Fleet retained finite-command owner. Fleet project
+                        policy selects with-limits or direct Conflux Bounded Process and owns the deadline,
+                        output/resource budgets, closed stdin, cancellation and audited cleanup.
+                        timeout_ms controls only this response wait; it never changes the admitted limits.
+                        The result retains the original operation ID and native receipt for recovery after a restart.
                         Select mode: "interactive" for a REPL or deliberately persistent service.
                         Interactive sessions retain stdin and support interact_with_process.
                         
