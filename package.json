@@ -157,5 +157,8 @@
     },
     "proxy-addr": "^2.0.8",
     "argparse": "^2.0.1"
-  }
+  },
+  "bundledDependencies": [
+    "@desktop-commander/telemetry-contract"
+  ]
 }
