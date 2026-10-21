@@ -191,6 +191,7 @@ export class MqttTransport {
 			// Treat broker input as untrusted before RemoteChannel performs any database read.
 			// Reject retained backlog and oversized data before parsing, then enforce exact identity.
 			client.on("message", (topic, bytes, packet) => {
+				console.debug("[MQTT] Doorbell received");
 				const invalid = () => {
 					try {
 						this.onMalformed();
@@ -235,6 +236,7 @@ export class MqttTransport {
 					invalid();
 					return;
 				}
+				console.debug("[MQTT] Received doorbell processing notification");
 				// The durable row's deadline is checked during the claim, after receipt observation.
 				void this.onDoorbell(payload).catch(() => {});
 			});

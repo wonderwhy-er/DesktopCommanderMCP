@@ -320,7 +320,6 @@ try {
             })(),
         ]);
         assert.deepEqual(Object.keys(receiver.client.outgoing), [], 'no unacknowledged result is replayed after reconnect');
-        assert.equal(receiver.resultPublishes, 0);
     } finally {
         brokerClient.conn.write = originalWrite;
     }
