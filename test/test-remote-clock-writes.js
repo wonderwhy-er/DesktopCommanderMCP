@@ -46,12 +46,12 @@ async function deviceWrites() {
   rc.client = makeClient(writes);
   rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.channel = { state: 'joined' };
-  rc.presenceTracked = true;
+  rc.channelReady = true;
   rc.localExecutorProbe = () => true;
   rc.createChannel = async () => {};
 
   await rc.registerDevice({}, DEVICE_ID, 'test-device', () => {});
-  await rc.updateHeartbeat(DEVICE_ID);
+  await rc.updateHeartbeat();
   await rc.setOnlineStatus(DEVICE_ID, 'online');
   await rc.updateCallResult('call-1', 'completed', { content: [] });
 
