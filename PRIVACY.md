@@ -1,21 +1,30 @@
 # Privacy Policy for Desktop Commander
 
-**Last updated: December 11, 2025**
+**Last updated: October 23, 2026**
 
 ## Introduction
 
-We at Desktop Commander are committed to respecting your privacy and keeping secure any information collected through our software. This privacy policy explains how we collect, use, and protect telemetry data when you use Desktop Commander.
+We at Desktop Commander are committed to respecting your privacy and keeping secure any information collected through our software. This privacy policy explains how we collect, use, and protect telemetry data when you use Desktop Commander, and documents separate operational network requests the application performs.
 
-Desktop Commander is an open-source MCP (Model Context Protocol) server that runs locally on your machine. This policy applies to the optional telemetry data we collect to improve the application.
+Desktop Commander is an open-source MCP (Model Context Protocol) server that runs locally on your machine. Most of this policy describes the optional telemetry data we collect to improve the application; operational network traffic is described separately below.
 
 ## Data Collection
 
-Desktop Commander collects limited telemetry data to help us understand usage patterns, detect errors, and improve the tool. **Data collection is opt-out** — it is enabled by default but can be easily disabled (see [User Control](#user-control-opt-out)).
+Desktop Commander collects limited telemetry data to help us understand usage patterns, detect errors, and improve the tool. **Telemetry collection is opt-out** — it is enabled by default but can be easily disabled (see [User Control](#user-control-opt-out)).
 
 Our telemetry system is designed to be privacy-focused:
 - We collect only the minimum information necessary for product improvement
 - We do not collect directly identifying information such as names, email addresses, usernames, or file paths
 - We use a pseudonymous identifier (random UUID) for analytics, which cannot directly identify you but allows us to understand usage patterns
+
+### Operational Network Requests
+
+Separately from telemetry, Desktop Commander performs network requests used for runtime configuration and PDF support:
+
+- By default, it requests a public feature-flag document from `https://desktopcommander.app/flags/v2/production.json` during startup and refreshes it periodically. The endpoint can be overridden with `DC_FLAG_URL`. The application request does not include the telemetry client ID, file contents, file paths, or command arguments. The returned flags are cached locally.
+- After MCP initialization, it checks for a compatible Chrome installation used by `write_pdf`. If no compatible cached or system Chrome is found, `@puppeteer/browsers` resolves and downloads a stable Chrome build in the background.
+
+These requests are operational traffic rather than telemetry events. They are not controlled by the `telemetryEnabled` setting and therefore still occur when telemetry is disabled. As with any network request, the receiving services and network infrastructure can observe ordinary connection metadata such as the source IP address and HTTP/TLS metadata.
 
 ### What We Collect
 
@@ -61,9 +70,9 @@ Our telemetry system is designed to be privacy-focused:
 - **Sanitized error messages**: Error descriptions with file paths and usernames removed
 - **Operation context**: Which operation encountered the error
 
-### What We DO NOT Collect
+### What We DO NOT Collect in Telemetry
 
-We explicitly DO NOT collect:
+Our telemetry does not collect:
 - **File paths**: Full paths or filenames of accessed files
 - **File contents**: The actual data or code in your files
 - **Command arguments**: Arguments or parameters passed to terminal commands
@@ -71,9 +80,9 @@ We explicitly DO NOT collect:
 - **Personal information**: Any personally identifiable information
 - **Sensitive data**: We do not knowingly collect sensitive or special category personal information
 
-### IP Addresses
+### Telemetry IP Addresses
 
-We do not store or have access to IP addresses. Our analytics provider (Google Analytics) receives IP addresses as part of standard HTTPS requests but automatically anonymizes them before storage. We do not have access to this data in any form.
+For telemetry, we do not store or have access to IP addresses. Our analytics provider (Google Analytics) receives IP addresses as part of standard HTTPS requests but automatically anonymizes them before storage. We do not have access to this data in any form. This statement is specific to telemetry; the operational network requests described above expose ordinary connection metadata to their receiving services and network infrastructure.
 
 ### Children
 
@@ -114,7 +123,7 @@ Telemetry data is retained for a period of 14 months, after which it is automati
 
 ## Security
 
-We implement commercially reasonable technical and organizational measures to protect data from loss, misuse, and unauthorized access. All data is transmitted securely via HTTPS. However, no method of transmission over the Internet is completely secure.
+We implement commercially reasonable technical and organizational measures to protect data from loss, misuse, and unauthorized access. Telemetry data and the default feature-flag request are transmitted via HTTPS. If you override the feature-flag endpoint with `DC_FLAG_URL`, use an `https://` URL to preserve transport encryption. However, no method of transmission over the Internet is completely secure.
 
 ## User Control (Opt-Out)
 
@@ -129,7 +138,7 @@ Simply ask Claude (or your AI assistant) to disable telemetry:
 2. Set `"telemetryEnabled": false`
 3. Restart the application
 
-When telemetry is disabled, no data will be sent. Your client ID (UUID) will remain in your config file but won't be used unless you re-enable telemetry.
+When telemetry is disabled, no telemetry events are sent. Your client ID (UUID) will remain in your config file but won't be used for telemetry unless you re-enable it. The non-telemetry operational network requests described above are separate and are not disabled by this setting.
 
 
 ## Your Rights and Choices
@@ -138,13 +147,13 @@ Depending on where you live and the laws that apply, you may have certain rights
 
 **Exercising Your Rights**
 
-The most effective way to exercise your privacy rights is to disable telemetry as described above. Once disabled, no further data will be collected, and any existing data will be automatically deleted after our 14-month retention period.
+The most effective way to stop telemetry collection is to disable telemetry as described above. Once disabled, no further telemetry events will be collected, and any existing telemetry data will be automatically deleted after our 14-month retention period. This does not disable the separate operational network requests described above.
 
-**Why we cannot process UUID-based data requests**: Privacy laws require us to verify the identity of individuals before fulfilling access or deletion requests. Because we collect no identifying information (no email, name, IP address, machine ID, or account), we have no way to verify that someone requesting data for a particular UUID is actually the person that UUID belongs to. Processing unverifiable requests could inadvertently expose or delete another person's data.
+**Why we cannot process UUID-based telemetry requests**: Privacy laws require us to verify the identity of individuals before fulfilling access or deletion requests. Because the telemetry dataset contains no directly identifying information such as email, name, IP address, machine ID, or account, we have no way to verify that someone requesting telemetry data for a particular UUID is actually the person that UUID belongs to. Processing unverifiable requests could inadvertently expose or delete another person's telemetry data.
 
 **What this means for you**:
-- Your privacy is protected by design: we cannot identify you, and neither can anyone else
-- To stop future data collection: disable telemetry in your config
+- The telemetry dataset is designed so the UUID cannot directly identify you
+- To stop future telemetry collection: disable telemetry in your config
 - To ensure old data is removed: it will automatically purge after 14 months
 - If you uninstall Desktop Commander and delete your config file, there is no way to link any stored analytics data back to you
 
@@ -161,4 +170,4 @@ We aim to respond to privacy inquiries within 30 days.
 
 ---
 
-*Desktop Commander is open-source software. This privacy policy applies only to the optional telemetry feature.*
+*Desktop Commander is open-source software. This privacy policy primarily covers optional telemetry and also documents the separate operational network requests described above.*
