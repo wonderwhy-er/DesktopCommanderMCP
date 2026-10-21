@@ -17,7 +17,6 @@ import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
-const CAPABILITY = 'transport_broadcast_v1';
 const DEVICE_ID = 'device-1';
 
 // ---------------------------------------------------------------------------
@@ -72,8 +71,6 @@ class FakeClient {
   onTrack = null;
   /** While set, a status write lands only once this promise settles. */
   holdStatusWrite = null;
-  /** Same, for a capability write. */
-  holdCapabilityWrite = null;
   /** The 1-based 'online' status write to refuse; 0 refuses none. */
   refuseOnlineAt = 0;
   onlineWrites = 0;
@@ -97,7 +94,7 @@ class FakeClient {
     const chain = new Proxy({}, {
       get(_, prop) {
         if (prop === 'then') {
-          const hold = payload && ('status' in payload ? client.holdStatusWrite : client.holdCapabilityWrite);
+          const hold = payload && 'status' in payload ? client.holdStatusWrite : null;
           const refused = payload?.status === 'online' && ++client.onlineWrites === client.refuseOnlineAt;
           const settled = Promise.resolve(hold).then(() => {
             if (refused) return { data: null, error: { message: 'refused' } };
@@ -173,7 +170,6 @@ async function rejoin(ch, clock) {
 
 const landed = (client, field) =>
   client.writes.filter((w) => w.table === 'mcp_devices' && field in w.payload);
-const lastCapabilities = (client) => landed(client, 'capabilities').at(-1)?.payload.capabilities;
 const lastStatus = (client) => landed(client, 'status').at(-1)?.payload.status;
 
 async function withQuietLogs(fn) {
@@ -217,8 +213,6 @@ async function main() {
 
     assert.strictEqual(ready, true,
       'createChannel() rejected because track() failed; the joined channel can deliver tool calls');
-    assert.strictEqual(lastCapabilities(client)?.[CAPABILITY], true,
-      `the row never advertised ${CAPABILITY}, so the server refuses every tool call`);
     assert.strictEqual(lastStatus(client), 'online',
       `the row says ${lastStatus(client)}, so the server never picks this device`);
   });
@@ -235,8 +229,6 @@ async function main() {
     await rc.statusWriteChain;
 
     assert.strictEqual(rc.channel.state, 'joined', 'precondition: the channel stayed joined');
-    assert.strictEqual(lastCapabilities(client)?.[CAPABILITY], true,
-      'the device withdrew its broadcast capability over a dashboard-only signal');
     assert.strictEqual(lastStatus(client), 'online',
       `the row says ${lastStatus(client)} for a joined device whose only failure is presence`);
   });
@@ -247,7 +239,7 @@ async function main() {
     await join(rc);
     const before = client.writes.length;
 
-    await rc.updateHeartbeat(DEVICE_ID);
+    await rc.updateHeartbeat();
 
     const heartbeats = client.writes.slice(before)
       .filter((w) => 'last_seen' in w.payload && w.payload.status === 'online');
@@ -325,16 +317,17 @@ async function main() {
       `the row says ${lastStatus(client)} for a rejoined channel, so the server sends it no calls`);
   });
 
-  await test('a drop during the capability write leaves the row offline', async () => {
+  await test('a drop during the join\'s status write leaves the row offline', async () => {
     const { rc, client } = makeRemoteChannel();
     let release;
-    client.holdCapabilityWrite = new Promise((r) => { release = r; });
+    client.holdStatusWrite = new Promise((r) => { release = r; });
 
     const joined = join(rc);
     await flush();
     await flush();
+    // The channel drops while the join's 'online' is still in flight.
     await sdkStatus(rc.channel, 'CHANNEL_ERROR', { message: 'unknown' });
-    client.holdCapabilityWrite = null;
+    client.holdStatusWrite = null;
     release();
     await joined;
     await rc.statusWriteChain;

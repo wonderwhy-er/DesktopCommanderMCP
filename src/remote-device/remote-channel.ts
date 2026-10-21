@@ -61,11 +61,9 @@ interface DeviceData {
     last_seen: string;
 }
 
-// last_seen cadences. The server tiers its sweep on the transport_broadcast_v1
-// flag, so each must fit its tier's threshold in the server's constants.ts:
-// capable -> 15 min, unflagged -> 45s.
-const CAPABLE_HEARTBEAT_INTERVAL = 5 * 60 * 1000;
-const LEGACY_HEARTBEAT_INTERVAL = 15 * 1000;
+// last_seen cadence. Must stay under the server's 15 min offline sweep and the
+// dashboard's ~7 min freshness window for the online dot.
+export const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 // Fast recovery for short Wi-Fi blips, but never retry every 10 seconds forever.
 // Prolonged provider incidents must not keep the entire device fleet joining.
 // Independent jitter spreads retry work; full jitter applies at attempt >= 5.
@@ -80,7 +78,8 @@ const PRESENCE_RETRY_MAX_MS = 60 * 60 * 1000;
 const READINESS_RETRY_BASE_MS = 5_000;
 const READINESS_RETRY_MAX_MS = 60_000;
 // Cap on a recreate's rebuild step so a hung await can't disable the watchdog.
-// Must exceed createChannel()'s worst case: the join plus two row writes (~30s).
+// Must exceed createChannel()'s worst case: the join plus its status write,
+// queued behind the teardown's 'offline' (~30s).
 const RECREATE_TIMEOUT_MS = 45000;
 // Upper bound on the persistent unready-join budget. Anything >= 8 already
 // selects the 120s SDK tier; the cap only keeps the counter meaningful.
@@ -101,17 +100,10 @@ const HEARTBEAT_STALE_TIMEOUT_MS = 75000;
 const TOKEN_REFRESH_INTERVAL_MS = 45 * 60 * 1000;
 // Below this, skew is noise — leave Date.now untouched. Above it, correct.
 const CLOCK_SKEW_CORRECTION_THRESHOLD_MS = 5 * 60 * 1000;
-// Failed recreates before withdrawing transport_broadcast_v1 — keeping it while
-// unable to join leaves the server dispatching calls this device can't
-// receive. Not lower than 3: ordinary half-open recovery legitimately costs 2.
-const TRANSPORT_WITHDRAW_AFTER_ATTEMPTS = 3;
-// Cap on the withdrawal write; it runs in a catch block RECREATE_TIMEOUT_MS
-// does not cover.
-const CAPABILITY_WRITE_TIMEOUT_MS = 5000;
-// Cap on one write to this device's row (capability, status), after which it
-// is aborted. A PATCH sent down a half-open connection is otherwise answered
-// only by fetch's own 300 s headers timeout, and the write queue behind it,
-// with the presence publish waiting on that queue, waits as long.
+// Cap on one status write to this device's row, after which it is aborted. A
+// PATCH sent down a half-open connection is otherwise answered only by fetch's
+// own 300 s headers timeout, and the write queue behind it, readiness
+// included, waits as long.
 const DEVICE_ROW_WRITE_TIMEOUT_MS = 10_000;
 // Cap on the shutdown session fetch, which races device.ts's 5s force-exit.
 const OFFLINE_SESSION_TIMEOUT_MS = 500;
@@ -162,7 +154,7 @@ export function presenceRecoveryDelayMs(failures: number, random: () => number =
     return Math.round(stepMs * (1 + 0.5 * Math.max(0, Math.min(1, random()))));
 }
 
-/** Full-jitter wait before retrying the readiness writes after failed ones. */
+/** Full-jitter wait before retrying the readiness write after failed ones. */
 function readinessRetryDelayMs(failures: number, random: () => number = Math.random): number {
     const stepMs = backoffStepMs(failures, READINESS_RETRY_BASE_MS, READINESS_RETRY_MAX_MS);
     return Math.max(1_000, Math.round(stepMs * Math.max(0, Math.min(1, random()))));
@@ -217,8 +209,6 @@ export class RemoteChannel {
     private channel: RealtimeChannel | null = null;
     private heartbeatInterval: NodeJS.Timeout | null = null;
     private connectionCheckInterval: NodeJS.Timeout | null = null;
-    /** Device the heartbeat timer maintains; null = stopped, so re-arm is inert. */
-    private heartbeatDeviceId: string | null = null;
     // Single-slot queue keeping concurrent `status` PATCHes in order.
     private statusWriteChain: Promise<void> = Promise.resolve();
     /**
@@ -245,27 +235,21 @@ export class RemoteChannel {
     private onToolCall: ((payload: any) => void) | null = null;
     // Guard so setSession being called twice can't stack auth listeners.
     private authListenerRegistered = false;
-    /** The current join's capability and status writes landed: dispatchable.
-     * Raised last, so a heartbeat never advertises the row mid-sequence. */
+    /** The current join's status write landed: dispatchable. Gates the
+     * heartbeat, so only that write first marks the row online. */
     private channelReady = false;
-    /** Readiness writes in flight. Cleared on every join, so each join writes its own. */
+    /** Readiness write in flight. Cleared on every join, so each join writes its own. */
     private readinessInFlight: Promise<boolean> | null = null;
     private consecutiveReadinessFailures = 0;
     private nextReadinessAttemptAt = 0; // monotonic
     /** Presence published on the current join. Dashboard only; never gates dispatch. */
     private presenceTracked = false;
-    /** Last capability value written (null = never), to avoid redundant writes. */
-    private transportCapableWritten: boolean | null = null;
-    /** Value of the last capability write still queued or in flight; null once the queue is idle. */
-    private transportCapableQueued: boolean | null = null;
-    // Single-slot queue keeping capability writes in order (see setTransportCapable).
-    private capabilityWriteChain: Promise<unknown> = Promise.resolve();
     /** Re-entrancy guard: on a wedged socket each track() buffers for the full
      * 10s push timeout, so 10s health ticks would stack pushes. */
     private isTrackingPresence = false;
     // The SDK resets its rejoin timer on *every* SUBSCRIBED, even if the join
     // dies before it is ready. Count such joins across SDK/channel recreation.
-    // Reset once the readiness writes succeed.
+    // Reset once the readiness write succeeds.
     private consecutiveUnreadyJoins = 0;
     private consecutivePresenceFailures = 0;
     private nextPresenceAttemptAt = 0; // monotonic; independent of Date.now skew correction
@@ -583,17 +567,14 @@ export class RemoteChannel {
 
         if (existingDevice) {
             console.debug('[DEBUG] Registering device as offline until the channel proves otherwise');
-            // Neither half of this row may claim reachability yet. transport_
-            // broadcast_v1 is NOT set here: the server treats it as binding, so
-            // it is written only once the channel has joined. `status` is the same
-            // promise in the other notation — dispatch picks its target by it,
-            // then fails the call fast for the missing capability, so a row
-            // marked online before the channel is up hands every call in that
-            // window to a device with no delivery path. SUBSCRIBED writes both.
+            // The row may not claim reachability yet: dispatch picks its target
+            // by `status`, so a row marked online before the channel is up hands
+            // every call in that window to a device with no delivery path.
+            // SUBSCRIBED writes 'online'.
             const { error: registrationError } = await this.updateDevice(existingDevice.id, {
                 status: 'offline',
                 last_seen: 'now',
-                capabilities: this.capabilitiesPayload(false),
+                capabilities: this.capabilitiesPayload(),
                 device_name: deviceName
             });
 
@@ -634,9 +615,9 @@ export class RemoteChannel {
     }
 
     /**
-     * Mark this join dispatchable: write the capability, then `status`. Both
-     * have to land — Supabase reports a refused write in the result rather than
-     * by throwing. The health check retries on its own cooldown.
+     * Mark this join dispatchable by writing `status`. The write has to land —
+     * Supabase reports a refused write in the result rather than by throwing.
+     * The health check retries on its own cooldown.
      */
     private markChannelReady(): Promise<boolean> {
         if (this.readinessInFlight) return this.readinessInFlight;
@@ -651,20 +632,15 @@ export class RemoteChannel {
         const channel = this.channel;
         if (!channel || channel.state !== 'joined') return false;
 
-        const capabilityWritten = await this.setTransportCapable(true);
-        // Strictly after, never alongside: `online` may be claimed only where
-        // the capability is already advertised. A dead local executor is
-        // written as offline even on a healthy channel. Checked again here:
-        // a drop during the capability write has already queued its 'offline'.
-        const stillJoined = this.channel === channel && channel.state === 'joined';
-        const statusWritten = capabilityWritten && stillJoined
-            ? await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline')
-            : false;
+        // Queued while the channel is joined, so a drop's 'offline' queues
+        // behind it and lands last. A dead local executor is written as
+        // offline even on a healthy channel.
+        const statusWritten = await this.queueStatusWrite(this.localExecutorProbe() ? 'online' : 'offline');
         // A replaced channel, or one that dropped meanwhile, decides for itself;
-        // the drop's 'offline' and the rejoin's own writes are queued behind these.
+        // the drop's 'offline' and the rejoin's own write are queued behind this one.
         if (this.channel !== channel || channel.state !== 'joined') return false;
 
-        if (!capabilityWritten || !statusWritten) {
+        if (!statusWritten) {
             console.error('❌ Channel joined but the device row could not be updated — not ready');
             // Status writes land in order, so this result is newer than any
             // earlier join's success: the row may say offline now.
@@ -673,9 +649,7 @@ export class RemoteChannel {
             this.consecutiveReadinessFailures++;
             this.nextReadinessAttemptAt = performance.now() +
                 readinessRetryDelayMs(this.consecutiveReadinessFailures);
-            captureRemote('remote_channel_readiness_write_failed', {
-                capabilityWritten, statusWritten
-            }).catch(() => { });
+            captureRemote('remote_channel_readiness_write_failed', {}).catch(() => { });
             return false;
         }
 
@@ -754,74 +728,11 @@ export class RemoteChannel {
     }
 
     /**
-     * The complete `capabilities` JSONB value. One place only: every write
-     * replaces the whole column, so a second literal would silently drop keys.
+     * The complete `capabilities` JSONB value. The write replaces the whole
+     * column, so a key left out here is dropped from the row.
      */
-    private capabilitiesPayload(broadcastCapable: boolean): Record<string, any> {
-        return {
-            app_version: VERSION,
-            ...(broadcastCapable ? { transport_broadcast_v1: true } : {})
-        };
-    }
-
-    /**
-     * Advertise (or withdraw) the broadcast capability. Only true while genuinely
-     * reachable that way — the server fails dispatch fast without it and picks
-     * the offline-sweep tier from it, so every change must re-arm the heartbeat.
-     *
-     * Writes are queued, like the status writes. A withdrawal the recreate stops
-     * waiting for still lands: compared with the last landed value, a re-publish
-     * in the meantime looked redundant and was skipped, and the withdrawal then
-     * left a device that claims to be online without the flag. Resolves with
-     * whether the row holds `capable` once this write is done.
-     */
-    private setTransportCapable(capable: boolean): Promise<boolean> {
-        if (!this.client || !this.deviceId) return Promise.resolve(false);
-        // What the row holds once the queue drains — no redundant writes.
-        if ((this.transportCapableQueued ?? this.transportCapableWritten) === capable) {
-            return this.capabilityWriteChain.then(() => this.transportCapableWritten === capable);
-        }
-        this.transportCapableQueued = capable;
-        const write = this.capabilityWriteChain.then(() => this.writeTransportCapable(capable));
-        this.capabilityWriteChain = write;
-        write.then(() => {
-            if (this.capabilityWriteChain === write) this.transportCapableQueued = null;
-        });
-        return write;
-    }
-
-    private async writeTransportCapable(capable: boolean): Promise<boolean> {
-        if (!this.client || !this.deviceId) return false;
-        try {
-            const capabilities = this.capabilitiesPayload(capable);
-            const { error } = await this.client
-                .from('mcp_devices')
-                .update({ capabilities })
-                .eq('id', this.deviceId)
-                .abortSignal(this.deviceRowWriteSignal());
-            if (error) {
-                console.error('[DEBUG] Failed to update transport capability:', error.message);
-                // An aborted write may still land: what the row holds is
-                // unknown, so the next write of either value is not skipped.
-                this.transportCapableWritten = null;
-                return false;
-            }
-            this.transportCapableWritten = capable;
-            console.debug(`[DEBUG] Transport capability set to ${capable ? 'broadcast_v1' : 'withdrawn'}`);
-            // Tier changed — move last_seen onto the cadence that tier's sweep
-            // threshold expects (no-op if the heartbeat hasn't started yet).
-            this.scheduleHeartbeat();
-            // last_seen may already be past the 45s threshold now judging us,
-            // so write once immediately rather than waiting out the interval.
-            if (!capable && this.heartbeatDeviceId) {
-                this.updateHeartbeat(this.heartbeatDeviceId).catch(() => { /* logged inside */ });
-            }
-        } catch (error: any) {
-            console.error('[DEBUG] Transport capability update threw:', error?.message);
-            this.transportCapableWritten = null;
-            return false;
-        }
-        return true;
+    private capabilitiesPayload(): Record<string, any> {
+        return { app_version: VERSION };
     }
 
     /** Aborts one write to this device's row after DEVICE_ROW_WRITE_TIMEOUT_MS (a method, so tests can shorten it). */
@@ -873,8 +784,8 @@ export class RemoteChannel {
                         // The SDK resets its rejoinTimer here even if the join dies
                         // before it is ready. Carry failure budget across such joins.
                         // reconnectAttempt is different: it counts watchdog
-                        // recreations (and gates capability withdrawal), and a
-                        // join does end that particular failure mode.
+                        // recreations, and a join does end that particular
+                        // failure mode.
                         this.consecutiveUnreadyJoins = Math.min(
                             MAX_UNREADY_JOIN_BUDGET, this.consecutiveUnreadyJoins + 1
                         );
@@ -1303,25 +1214,6 @@ export class RemoteChannel {
         } catch (err: any) {
             captureRemote('remote_channel_recreate_error', { errMsg: err?.message, attempt: this.reconnectAttempt });
             console.debug(`[DEBUG] Channel recreation failed: ${err?.message} — ${this.connState()}`);
-            // Sustained failure: stop promising a transport we can't deliver, so
-            // dispatch fails fast instead of every call waiting out the timeout.
-            if (this.reconnectAttempt >= TRANSPORT_WITHDRAW_AFTER_ATTEMPTS) {
-                // Bounded, in its own try: this catch block is outside
-                // RECREATE_TIMEOUT_MS, so a hanging PATCH would pin
-                // isRecreatingChannel and disable the watchdog.
-                try {
-                    await this.withTimeout(
-                        () => this.setTransportCapable(false),
-                        CAPABILITY_WRITE_TIMEOUT_MS,
-                        'withdrawTransportCapability'
-                    );
-                } catch (withdrawErr: any) {
-                    // The write stays queued, in order with any re-publish after
-                    // it, and ends within DEVICE_ROW_WRITE_TIMEOUT_MS; the flag
-                    // only advances on a confirmed write.
-                    console.debug(`[DEBUG] Capability withdrawal did not complete: ${withdrawErr?.message}`);
-                }
-            }
         } finally {
             this.isRecreatingChannel = false;
         }
@@ -1417,7 +1309,7 @@ export class RemoteChannel {
 
     /**
      * Reachable means all of it is true at once: the private channel is
-     * joined, the device row advertises it, and the local executor answers.
+     * joined, the join's status write landed, and the local executor answers.
      * The server needs the first two before it will dispatch, and a healthy
      * channel on a device whose executor is dead is the false-online state
      * issue #4 was opened for. Presence is not part of it. Gates the heartbeat
@@ -1445,13 +1337,13 @@ export class RemoteChannel {
     }
 
     /**
-     * Serialize the channel-callback status writes. They fire from un-awaited
-     * callbacks, and inside recreateChannel() a teardown's 'offline' and the
-     * fresh join's 'online' land ~100-300ms apart — unordered, 'offline' can win
-     * and leave a healthy device undispatchable until the next heartbeat.
+     * Serialize the status writes, the heartbeat's included. They fire from
+     * un-awaited callbacks, and inside recreateChannel() a teardown's 'offline'
+     * and the fresh join's 'online' land ~100-300ms apart — unordered, 'offline'
+     * can win and leave a healthy device undispatchable until the next heartbeat.
      *
-     * Not the single writer: updateHeartbeat, registerDevice and setOffline's
-     * subprocess write status directly, so this is not total ordering.
+     * Not the single writer: registerDevice and setOffline's subprocess write
+     * status directly, so this is not total ordering.
      */
     private queueStatusWrite(status: 'online' | 'offline'): Promise<boolean> {
         // After teardown begins, setOffline() owns the final status write.
@@ -1471,72 +1363,46 @@ export class RemoteChannel {
         return write;
     }
 
-    /**
-     * Heartbeat cadence for the tier this device is CURRENTLY in. Follows the
-     * capability flag (what the server actually tiers its sweep on), not the
-     * build — see LEGACY_HEARTBEAT_INTERVAL.
-     */
-    private heartbeatIntervalMs(): number {
-        return this.transportCapableWritten === true
-            ? CAPABLE_HEARTBEAT_INTERVAL
-            : LEGACY_HEARTBEAT_INTERVAL;
-    }
-
-    async updateHeartbeat(deviceId: string) {
+    async updateHeartbeat() {
         if (!this.client) return;
         // This write asserts status:'online' too, so it MUST respect the
         // shutdown gate — otherwise a heartbeat firing (or in flight) as SIGINT
         // lands can be applied after setOffline()'s subprocess write and leave
-        // an exited process marked online with a fresh last_seen, which for a
-        // capable device the sweep then cannot age out for a full tier window.
+        // an exited process marked online with a fresh last_seen, which the
+        // sweep then cannot age out for its full window.
         if (this.shuttingDown) {
             console.debug('[DEBUG] Skipping heartbeat write — shutting down');
             return;
         }
-        try {
-            // Skip the write entirely when no transport is up. Bumping last_seen
-            // on a deaf device would keep its row perpetually young, so the
-            // server's staleness sweep could never age it out and correct a
-            // stale 'online' — and that row is what dispatch reads. Staying
-            // silent lets the sweep do its job.
-            if (!this.isReachable()) {
-                console.debug('[DEBUG] Skipping heartbeat write — no transport joined; letting the row age out');
-                return;
-            }
-
-            const { error } = await this.client
-                .from('mcp_devices')
-                .update({ last_seen: 'now', status: 'online' })
-                .eq('id', deviceId);
-
-            if (error) {
-                console.error('[DEBUG] Heartbeat update failed:', error.message);
-                await captureRemote('remote_channel_heartbeat_error', { error });
-            } else {
-                console.debug('[DEBUG] last_seen bookkeeping write ok:', deviceId);
-            }
-        } catch (error: any) {
-            console.error('Heartbeat failed:', error.message);
-            await captureRemote('remote_channel_heartbeat_error', { error });
+        // Skip the write entirely when no transport is up. Bumping last_seen
+        // on a deaf device would keep its row perpetually young, so the
+        // server's staleness sweep could never age it out and correct a
+        // stale 'online' — and that row is what dispatch reads. Staying
+        // silent lets the sweep do its job.
+        if (!this.isReachable()) {
+            console.debug('[DEBUG] Skipping heartbeat write — no transport joined; letting the row age out');
+            return;
         }
+        // Queued, so a drop's 'offline' queued after it always lands last.
+        // setOnlineStatus also refreshes last_seen and reports a failed write.
+        await this.queueStatusWrite('online');
     }
 
     startHeartbeat(deviceId: string) {
         console.debug('[DEBUG] Starting heartbeat for device:', deviceId);
-        this.heartbeatDeviceId = deviceId;
         this.realtimeHealth.setDevice(deviceId);
         this.realtimeHealth.start();
         this.connectionCheckInterval = setInterval(() => {
             this.checkConnectionHealth();
         }, 10000);
 
-        // Bookkeeping last_seen write. Self-rescheduling rather than a fixed
-        // setInterval so the cadence can follow the tier: a device that
-        // withdraws the capability flag must fall back to the fast legacy
-        // cadence immediately, not 30 minutes later.
-        this.scheduleHeartbeat();
+        // Bookkeeping last_seen write. A fixed interval, so a slow write never
+        // pushes the next one past the dashboard's freshness window.
+        this.heartbeatInterval = setInterval(() => {
+            this.updateHeartbeat().catch(() => { /* logged inside */ });
+        }, HEARTBEAT_INTERVAL_MS);
         this.startTokenRefresh();
-        console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${this.heartbeatIntervalMs()}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
+        console.debug(`[DEBUG] Heartbeat started - connectionCheck: 10s, last_seen: ${HEARTBEAT_INTERVAL_MS}ms, tokenRefresh: ${TOKEN_REFRESH_INTERVAL_MS}ms`);
     }
 
     private async refreshTokenNow(): Promise<void> {
@@ -1569,25 +1435,9 @@ export class RemoteChannel {
         }
     }
 
-    /** Arm (or re-arm) the last_seen timer at the current tier's cadence. */
-    private scheduleHeartbeat(): void {
-        if (this.heartbeatInterval) {
-            clearTimeout(this.heartbeatInterval);
-            this.heartbeatInterval = null;
-        }
-        if (!this.heartbeatDeviceId) return;
-        this.heartbeatInterval = setTimeout(async () => {
-            if (this.heartbeatDeviceId) {
-                await this.updateHeartbeat(this.heartbeatDeviceId);
-            }
-            this.scheduleHeartbeat(); // re-read the tier every tick
-        }, this.heartbeatIntervalMs());
-    }
-
     stopHeartbeat() {
-        this.heartbeatDeviceId = null;
         if (this.heartbeatInterval) {
-            clearTimeout(this.heartbeatInterval);
+            clearInterval(this.heartbeatInterval);
             this.heartbeatInterval = null;
         }
         if (this.connectionCheckInterval) {
@@ -1744,9 +1594,8 @@ export class RemoteChannel {
         // In practice only the untrack bound binds — removeChannel/unsubscribe
         // set state='leaving' first, so their leave push resolves inline.
         const LEAVE_BOUND_MS = 300;
-        // Drain queued channel-callback writes. Can't drain an in-flight
-        // heartbeat PATCH (it doesn't use the chain), but the gate above stops
-        // any new one and an in-flight one started earlier.
+        // Drain queued status writes, the heartbeat's included; the gate above
+        // stops any new one.
         await Promise.race([this.statusWriteChain, this.sleep(250)]);
         if (this.channel) {
             // Leave presence on the graceful path (socket close covers the abrupt
