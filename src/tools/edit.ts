@@ -158,20 +158,37 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
     // Detect file's line ending style
     const fileLineEnding = detectLineEnding(content);
     
-    // Normalize search string to match file's line endings
+    // Prefer the caller's bytes when they already match the requested count.
+    // In mixed-line-ending files, global normalization can hide a real exact
+    // match. If the raw form has the wrong occurrence count, fall back to the
+    // historical normalized-match path instead.
     const normalizedSearch = normalizeLineEndings(block.search, fileLineEnding);
-    
-    // First try exact match
-    let tempContent = content;
-    let count = 0;
-    let pos = tempContent.indexOf(normalizedSearch);
-    
-    // Count the matches a replacement changes: they can't overlap, so the next
-    // search starts after this match (split/join below replaces the same ones)
-    while (pos !== -1) {
-        count++;
-        pos = tempContent.indexOf(normalizedSearch, pos + normalizedSearch.length);
+    const countOccurrences = (search: string): number => {
+        if (search.length === 0) return 0;
+        let occurrences = 0;
+        let pos = content.indexOf(search);
+        while (pos !== -1) {
+            occurrences++;
+            pos = content.indexOf(search, pos + search.length);
+        }
+        return occurrences;
+    };
+
+    const rawCount = countOccurrences(block.search);
+    let exactSearch = block.search;
+    let count = rawCount;
+
+    // The new behavior applies only when the raw form exactly satisfies the
+    // caller's requested count. Otherwise keep the historical normalized path,
+    // including its occurrence-count diagnostics and fuzzy-search fallback.
+    if (rawCount !== expectedReplacements && normalizedSearch !== block.search) {
+        exactSearch = normalizedSearch;
+        count = countOccurrences(normalizedSearch);
     }
+
+    const replacementLineEnding = /[\r\n]/.test(exactSearch)
+        ? detectLineEnding(exactSearch)
+        : fileLineEnding;
     
     // If exact match found and count matches expected replacements, proceed with exact replacement
     if (count > 0 && count === expectedReplacements) {
@@ -180,14 +197,14 @@ export async function performSearchReplace(filePath: string, block: SearchReplac
         
         // If we're only replacing one occurrence, replace it directly
         if (expectedReplacements === 1) {
-            const searchIndex = newContent.indexOf(normalizedSearch);
+            const searchIndex = newContent.indexOf(exactSearch);
             newContent = 
                 newContent.substring(0, searchIndex) + 
-                normalizeLineEndings(block.replace, fileLineEnding) + 
-                newContent.substring(searchIndex + normalizedSearch.length);
+                normalizeLineEndings(block.replace, replacementLineEnding) +
+                newContent.substring(searchIndex + exactSearch.length);
         } else {
             // Replace all occurrences using split and join for multiple replacements
-            newContent = newContent.split(normalizedSearch).join(normalizeLineEndings(block.replace, fileLineEnding));
+            newContent = newContent.split(exactSearch).join(normalizeLineEndings(block.replace, replacementLineEnding));
         }
         
         // Check if search or replace text has too many lines
@@ -210,7 +227,7 @@ RECOMMENDATION: For large search/replace operations, consider breaking them into
         // Show a partial preview centered on the edited area
         const newLines = newContent.split('\n');
         const totalLines = newLines.length;
-        const changePos = content.indexOf(normalizedSearch);
+        const changePos = content.indexOf(exactSearch);
         const changeStartLine = changePos >= 0 ? newContent.substring(0, changePos).split('\n').length - 1 : 0;
         const changeLineCount = block.replace.split('\n').length;
         const contextLines = 10;
