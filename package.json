@@ -33,7 +33,6 @@
     "device:start": "tsx src/remote-device/device.ts",
     "device:start:dev": "nodemon --watch src/remote-device --exec tsx src/remote-device/device.ts",
     "device:start:local": "npm run build && DC_ENV=development MCP_SERVER_URL=http://mcp.localhost:3007 npm run device:start:dev",
-    "device:start:staging": "npm run build && DC_ENV=staging MCP_SERVER_URL=https://staging-mcp.desktopcommander.app npm run device:start:dev",
     "sync-version": "node scripts/sync-version.js",
     "bump": "node scripts/sync-version.js --bump",
     "bump:minor": "node scripts/sync-version.js --bump --minor",
