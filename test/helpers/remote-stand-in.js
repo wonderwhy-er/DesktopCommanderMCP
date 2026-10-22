@@ -43,6 +43,8 @@ import { WebSocketServer } from 'ws';
  * - realtime: the websocket opens and phoenix heartbeats are answered
  * A test can also point mcp-info at another Supabase (supabaseUrl) and set the
  * REST root's status (restRootStatus). Every request is kept in `requests`.
+ * With `telemetryUrl`, mcp-info names that address for the device's telemetry;
+ * without it, none, as the server named none before.
  */
 
 const USER = {
@@ -59,6 +61,7 @@ const base64url = (value) => Buffer.from(JSON.stringify(value)).toString('base64
 
 export async function startRemoteStandIn({
   accessTtlSec = 3600, reuseIntervalSec = 0, serverAheadSec = 0, diagnostics = false, realtime = false, channel = false,
+  telemetryUrl = undefined,
 } = {}) {
   const deviceId = 'b6f0a1c2-0000-4000-8000-000000000695';
   const anonKey = 'stand-in-anon-key';
@@ -281,6 +284,7 @@ export async function startRemoteStandIn({
         supabaseUrl: standIn.supabaseUrl ?? standIn.url,
         supabasePublishableKey: anonKey,
         diagnosticsUrl: standIn.diagnosticsUrl,
+        telemetryUrl,
       }];
     }
     if (diagnostics && route === 'POST /diagnostics') {
