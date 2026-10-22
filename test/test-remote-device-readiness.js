@@ -170,9 +170,9 @@ function makeDevice({ channelState = 'joined', latencyByStatus = {} } = {}) {
     device.remoteChannel.client = client;
     device.remoteChannel.deviceId = DEVICE_ID;
     device.remoteChannel.channel = { state: channelState };
-    // A joined channel models a device that also published its presence: the
-    // readiness predicate needs both halves of the remote side, plus the executor.
-    device.remoteChannel.presenceTracked = channelState === 'joined';
+    // A joined channel models a device whose row already advertises it: the
+    // readiness predicate needs both, plus the executor.
+    device.remoteChannel.channelReady = channelState === 'joined';
     return { device, client };
 }
 
@@ -214,7 +214,7 @@ await test('a dead local executor is not advertised online, however healthy the 
     // The restart failed, so the device cannot execute anything.
     device.desktop = { ready: false };
 
-    await device.remoteChannel.updateHeartbeat(DEVICE_ID);
+    await device.remoteChannel.updateHeartbeat();
 
     assert.deepStrictEqual(
         advertisedOnline(client), [],
@@ -225,7 +225,7 @@ await test('a dead local executor is not advertised online, however healthy the 
     // Control: the same device with a working executor is advertised online,
     // so the executor probe is what made the difference above.
     device.desktop = { ready: true };
-    await device.remoteChannel.updateHeartbeat(DEVICE_ID);
+    await device.remoteChannel.updateHeartbeat();
     assert.strictEqual(advertisedOnline(client).length > 0, true,
         'a device with a healthy channel and a ready executor should be advertised online');
 });

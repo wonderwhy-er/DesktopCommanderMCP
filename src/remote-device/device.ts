@@ -276,7 +276,7 @@ export class MCPDevice {
             const deviceName = os.hostname();
 
             // Register as device. registerDevice() resolves only once the
-            // realtime channel is joined and presence is published, which is
+            // realtime channel is joined and the device row records it, which is
             // exactly what the hosted service needs to deliver a call — so a
             // rejection means "running, but nothing can reach this device", and
             // that has to be said instead of "Device ready".
@@ -314,7 +314,7 @@ export class MCPDevice {
             console.log(`   - Device Name:  ${deviceName}`);
             console.log(`   - Version:      ${VERSION}`);
             if (!reachable) {
-                console.log('   - Retrying in the background; commands start working once you see "✅ Channel subscribed".');
+                console.log('   - Retrying in the background; commands start working once you see "✅ Device ready".');
             } else {
                 console.log('');
                 console.log('✅ Desktop Commander Remote is connected');

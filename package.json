@@ -94,7 +94,7 @@
   "dependencies": {
     "@desktop-commander/telemetry-contract": "file:vendor/telemetry-contract",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@opendocsg/pdf2md": "^0.3.4",
+    "@opendocsg/pdf2md": "0.3.4",
     "@supabase/supabase-js": "^2.89.0",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extension-image": "^3.31.4",
@@ -125,7 +125,7 @@
     "sharp": "^0.35.5",
     "tiptap-markdown": "^0.9.0",
     "unified": "^11.0.5",
-    "unpdf": "^1.4.0",
+    "unpdf": "~1.8.1",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.23.5"
   },
