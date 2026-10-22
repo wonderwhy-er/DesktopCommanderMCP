@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
 // This checks the hostname, not its resolved address.
 export function isBackendLocal(url: URL): boolean {
@@ -22,4 +23,14 @@ export function getRemoteDeviceConfigDirectory(home = os.homedir()): string {
 
 export function getRemoteDeviceConfigPath(home = os.homedir()): string {
 	return path.join(getRemoteDeviceConfigDirectory(home), "device.json");
+}
+
+/** Retained after logout so an older process cannot recreate deleted credentials. */
+export function getRemoteDeviceLogoutVersion(configPath = getRemoteDeviceConfigPath()): string | undefined {
+	try {
+		return readFileSync(path.join(path.dirname(configPath), ".logout"), "utf8");
+	} catch (error: any) {
+		if (error.code === "ENOENT") return undefined;
+		throw new Error("Local logout state could not be read; check profile permissions");
+	}
 }

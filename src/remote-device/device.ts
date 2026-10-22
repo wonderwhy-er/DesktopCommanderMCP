@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import fs from 'fs/promises';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import lockfile from 'proper-lockfile';
 import { captureRemote } from '../utils/capture.js';
 import { writeFileAtomic } from '../utils/atomic-write.js';
@@ -16,7 +18,7 @@ import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
 import type { MqttCallFlags } from './mqtt/mqtt-transport.js';
-import { getRemoteDeviceConfigPath } from './remote-utils.js';
+import { getRemoteDeviceConfigPath, getRemoteDeviceLogoutVersion, isBackendLocal } from './remote-utils.js';
 
 export { getRemoteDeviceConfigPath };
 
@@ -58,19 +60,86 @@ function lockRemoteDeviceConfig(configPath: string): Promise<() => Promise<void>
     });
 }
 
-/** `remote --logout`: removes device.json, under the lock a running device's save takes. */
-export async function removeRemoteDeviceConfig(configPath = getRemoteDeviceConfigPath()): Promise<void> {
-    let release: (() => Promise<void>) | undefined;
+/** Revoke the device before discarding the credentials needed to retry a failed logout. */
+export async function logoutRemoteDevice(configPath = getRemoteDeviceConfigPath()): Promise<void> {
+    const folder = path.join(path.dirname(configPath), '.mqtt');
+    await fs.mkdir(folder, { recursive: true, mode: 0o700 });
+    // Enrollment can hold this lock across two bounded 30-second HTTP requests.
+    const releaseMqtt = await lockfile.lock(folder, {
+        stale: 30_000,
+        update: 10_000,
+        retries: { retries: 1000, factor: 1.2, minTimeout: 10, maxTimeout: 100 },
+    });
     try {
-        release = await lockRemoteDeviceConfig(configPath);
-    } catch (error: any) {
-        // No config folder: nothing was saved
-        if (error.code !== 'ENOENT') throw error;
-    }
-    try {
-        await fs.rm(configPath, { force: true });
+        const release = await lockRemoteDeviceConfig(configPath);
+        try {
+            let config;
+            try {
+                config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+            } catch (error: any) {
+                if (error.code !== 'ENOENT') throw new Error('Saved device configuration cannot be read; credentials were kept');
+            }
+            if (config) {
+                if (typeof config.deviceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(config.deviceId) || !config.session?.access_token) {
+                    throw new Error('No usable saved device session. Revoke this device in the dashboard; local credentials were kept');
+                }
+                const backend = new URL(process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app');
+                if ((backend.protocol !== 'https:' && !isBackendLocal(backend)) || backend.username || backend.password || backend.search || backend.hash || (backend.pathname && backend.pathname !== '/')) {
+                    throw new Error('Logout requires an HTTPS MCP_SERVER_URL or local HTTP, without credentials, paths, or query parameters');
+                }
+                const revoke = () => fetch(new URL('/device/revoke', backend), {
+                    method: 'POST',
+                    headers: { Authorization: `Bearer ${config.session.access_token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: config.deviceId }),
+                    redirect: 'error',
+                    signal: AbortSignal.timeout(30_000),
+                });
+                let response = await revoke();
+                if (response.status === 401 && config.session.refresh_token) {
+                    const infoResponse = await fetch(new URL('/api/mcp-info', backend), { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+                    if (!infoResponse.ok) throw new Error('Could not refresh the saved session; credentials were kept');
+                    const info = await infoResponse.json();
+                    const authUrl = new URL(info.supabaseUrl);
+                    if ((authUrl.protocol !== 'https:' && !isBackendLocal(authUrl)) || authUrl.username || authUrl.password) {
+                        throw new Error('Session refresh requires HTTPS or local HTTP; credentials were kept');
+                    }
+                    const client = createClient(info.supabaseUrl, info.supabasePublishableKey, {
+                        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+                        global: { fetch: (input, init) => fetch(input, { ...init, redirect: 'error', signal: AbortSignal.timeout(30_000) }) },
+                    });
+                    const { data, error } = await client.auth.setSession(config.session);
+                    if (error || !data.session) throw new Error('Saved session is no longer usable. Revoke this device in the dashboard; local credentials were kept');
+                    config.session = { access_token: data.session.access_token, refresh_token: data.session.refresh_token };
+                    // A rotated token must survive a subsequent revoke failure so logout can be retried.
+                    await writeFileAtomic(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+                    response = await revoke();
+                }
+                const result = await response.json().catch(() => null);
+                if (!response.ok || result?.success !== true || result?.mqtt_revoked !== true) {
+                    throw new Error(`Backend did not confirm device and MQTT certificate revocation (HTTP ${response.status}); credentials were kept. Retry logout or revoke the device in the dashboard`);
+                }
+            } else {
+                for (const file of ['identity.json', 'certificate.json']) {
+                    try {
+                        await fs.access(path.join(folder, file));
+                    } catch (error: any) {
+                        if (error.code === 'ENOENT') continue;
+                        throw error;
+                    }
+                    throw new Error('MQTT credentials exist without a saved login. Revoke the device in the dashboard before removing the local MQTT files');
+                }
+            }
+            await fs.rm(configPath, { force: true });
+            await fs.rm(path.join(folder, 'identity.json'), { force: true });
+            await fs.rm(path.join(folder, 'certificate.json'), { force: true });
+            // Publish the new version only after no old credentials can be loaded.
+            await writeFileAtomic(path.join(path.dirname(configPath), '.logout'), randomUUID(), { mode: 0o600 });
+        } finally {
+            await release();
+        }
     } finally {
-        await release?.();
+        // Keep the folder: removing a lock target could let another process replace it.
+        await releaseMqtt();
     }
 }
 
@@ -80,6 +149,7 @@ export class MCPDevice {
     private deviceId?: string;
     private isShuttingDown: boolean;
     private configPath: string;
+    private readonly logoutVersion: string | undefined;
     private persistSession: boolean;
     private desktop: DesktopCommanderIntegration;
     /**
@@ -105,6 +175,7 @@ export class MCPDevice {
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();
+        this.logoutVersion = getRemoteDeviceLogoutVersion(this.configPath);
         this.remoteChannel = new RemoteChannel({ serverUrl: this.baseServerUrl });
         // Default ON. Off meant a full re-authorization on every start, and each
         // one mints a fresh GoTrue session that nothing ever revokes; the orphaned
@@ -476,10 +547,15 @@ export class MCPDevice {
             // From the check to the write, `remote --logout` waits for this lock
             const release = await lockRemoteDeviceConfig(this.configPath);
             try {
+                if (getRemoteDeviceLogoutVersion(this.configPath) !== this.logoutVersion) {
+                    this.loggedOutLocally = true;
+                    console.log('🔓 Saved Remote MCP device credentials were removed (remote --logout): this run won\'t save credentials again');
+                    return;
+                }
                 // `remote --logout` removes device.json from another process, and
                 // the docs say that removes the saved credentials. Writing them back
-                // at the next rotation or at shutdown would undo it: this run keeps
-                // its session in memory (the logout is local only) and saves nothing.
+                // at the next rotation or at shutdown would undo it: this run
+                // must not persist its old in-memory session again.
                 // A login after the logout saves its own device.json, which this
                 // run's credentials must not replace either.
                 if (this.configTextOnDisk !== undefined) {
@@ -487,8 +563,8 @@ export class MCPDevice {
                     if (onDisk !== this.configTextOnDisk) {
                         this.loggedOutLocally = true;
                         console.log(onDisk === undefined
-                            ? '🔓 Saved Remote MCP device credentials were removed (remote --logout): this run keeps its session in memory and won\'t save it again'
-                            : '🔓 Saved Remote MCP device credentials were replaced (a login after remote --logout): this run keeps its session in memory and won\'t save it again');
+                            ? '🔓 Saved Remote MCP device credentials were removed (remote --logout): this run won\'t save credentials again'
+                            : '🔓 Saved Remote MCP device credentials were replaced (a login after remote --logout): this run won\'t save credentials again');
                         return;
                     }
                 }
