@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import forge from "node-forge";
 import lockfile from "proper-lockfile";
+import { writeFileAtomic } from "../../utils/atomic-write.js";
 import { getRemoteDeviceConfigDirectory, isBackendLocal } from "../remote-utils.js";
 import { createMqttConfig, type MqttConfig } from "./mqtt-transport.js";
 import { getMqttBrokerUrl } from "./config.js";
@@ -159,40 +160,82 @@ export async function enrollMqttDevice(
 		const identityFile = path.join(folder, "identity.json");
 		const certificateFile = path.join(folder, "certificate.json");
 		let identity = await readCache(identityFile);
-		// A changed device may have lost its certificate response, so revoke by the old Thing.
+		let certificate = null;
 		if (identity) {
-			if (
-				identity.backend_origin !== backend.origin ||
-				identity.user_id !== userId ||
-				typeof identity.device_id !== "string" ||
-				!ID.test(identity.device_id) ||
-				typeof identity.private_key !== "string"
-			) {
-				throw new Error(
-					"MQTT credentials belong to a different backend, user, or device; use a separate profile",
-				);
+			// A cached origin is not trusted with the current session token.
+			const previousDeviceId =
+				identity.backend_origin === backend.origin &&
+				typeof identity.device_id === "string" &&
+				ID.test(identity.device_id) &&
+				identity.device_id.length <= 118
+					? identity.device_id
+					: null;
+			let key;
+			try {
+				if (typeof identity.private_key === "string") {
+					const parsed = createPrivateKey(identity.private_key);
+					if (
+						parsed.asymmetricKeyType === "rsa" &&
+						parsed.asymmetricKeyDetails?.modulusLength === 2048
+					) {
+						key = parsed;
+					}
+				}
+			} catch {
+				// Invalid keys are replaced below.
 			}
-			if (identity.device_id !== deviceId) {
+			let replaceIdentity =
+				!previousDeviceId ||
+				identity.reset_pending === true ||
+				identity.user_id !== userId ||
+				identity.device_id !== deviceId ||
+				!key;
+			if (!replaceIdentity && key) {
+				certificate = await readCache(certificateFile);
+				if (certificate) {
+					try {
+						replaceIdentity = !new X509Certificate(certificate.certificate_pem).checkPrivateKey(key);
+					} catch {
+						throw new Error(
+							"MQTT cached certificate is invalid; inspect the profile MQTT folder before restarting",
+						);
+					}
+				}
+			}
+			if (replaceIdentity) {
+				// Revoke by the old Thing even when its key or certificate response was lost.
 				assertCurrent();
-				try {
-					const response = await fetch(new URL("/device/mqtt/revoke", backend), {
-						method: "POST",
-						headers: {
-							Authorization: `Bearer ${accessToken}`,
-							"Content-Type": "application/json",
-						},
-						body: JSON.stringify({ device_id: deviceId, previous_device_id: identity.device_id }),
-						redirect: "error",
-						signal: AbortSignal.timeout(ENROLLMENT_TIMEOUT_MS),
-					});
-					if (!response.ok || (await response.json())?.revoked !== true) throw new Error();
-				} catch {
-					throw new Error(
-						"MQTT previous certificate revocation failed; credentials were kept. Check backend access and restart the connector",
+				if (previousDeviceId) {
+					try {
+						const response = await fetch(new URL("/device/mqtt/revoke", backend), {
+							method: "POST",
+							headers: {
+								Authorization: `Bearer ${accessToken}`,
+								"Content-Type": "application/json",
+							},
+							body: JSON.stringify({ device_id: deviceId, previous_device_id: previousDeviceId }),
+							redirect: "error",
+							signal: AbortSignal.timeout(ENROLLMENT_TIMEOUT_MS),
+						});
+						if (!response.ok || (await response.json())?.revoked !== true) throw new Error();
+					} catch {
+						console.warn(
+							"[MQTT] Previous certificate revocation failed; continuing with fresh enrollment. The old certificate may remain active.",
+						);
+					}
+				} else {
+					console.warn(
+						"[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.",
 					);
 				}
 				assertCurrent();
 				try {
+					// Preserve the reset across interruption between certificate and identity deletion.
+					await writeFileAtomic(identityFile, JSON.stringify({ ...identity, reset_pending: true }), {
+						mode: 0o600,
+						beforeCommit: assertCurrent,
+					});
+					assertCurrent();
 					// Keep the old identity until its certificate is removed, so interruption is retryable.
 					await rm(certificateFile, { force: true });
 					assertCurrent();
@@ -203,10 +246,11 @@ export async function enrollMqttDevice(
 					);
 				}
 				identity = null;
+				certificate = null;
 			}
 		}
-		let certificate = await readCache(certificateFile);
 		if (!identity) {
+			certificate = await readCache(certificateFile);
 			if (certificate)
 				throw new Error("MQTT certificate exists without its device private key");
 			// Node generates RSA asynchronously; forge only encodes and signs the CSR below.
