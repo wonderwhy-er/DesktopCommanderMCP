@@ -27,15 +27,15 @@ const originalNodeEnv = process.env.NODE_ENV;
 const originalIsStaging = process.env.IS_STAGING;
 const originalDcEnv = process.env.DC_ENV;
 try {
-  // Unrelated environment variables must not select the device profile.
+  // Profile suffixes are disabled until the environment split is merged to main.
   process.env.NODE_ENV = 'production';
   process.env.IS_STAGING = 'true';
   for (const [dcEnv, directory] of [
     [undefined, '.desktop-commander-device'],
     ['', '.desktop-commander-device'],
     ['production', '.desktop-commander-device'],
-    ['development', '.desktop-commander-device-dev'],
-    ['staging', '.desktop-commander-device-staging'],
+    ['development', '.desktop-commander-device'],
+    ['staging', '.desktop-commander-device'],
     ['test', '.desktop-commander-device'],
   ]) {
     if (dcEnv === undefined) delete process.env.DC_ENV;
@@ -53,4 +53,4 @@ try {
   if (originalIsStaging === undefined) delete process.env.IS_STAGING;
   else process.env.IS_STAGING = originalIsStaging;
 }
-console.log('PASS remote utilities: DC_ENV selects profile directories independently of NODE_ENV and IS_STAGING');
+console.log('PASS remote utilities: device profile directory is unchanged by DC_ENV, NODE_ENV and IS_STAGING');

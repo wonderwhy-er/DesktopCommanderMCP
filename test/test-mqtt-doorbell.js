@@ -96,11 +96,8 @@ function fixture() {
     const channel = new RemoteChannel();
     channels.push(channel);
     Object.assign(channel, {
-        _user: { id: 'owner' }, deviceId: 'device', presenceTracked: true,
+        _user: { id: 'owner' }, deviceId: 'device', channelReady: true,
         channel: { state: 'joined', untrack: async () => {}, unsubscribe: async () => {} },
-        transportCapableWritten: true,
-        // Keep capability serialization real without status/heartbeat timers in the fixture.
-        syncReachabilityStatus: () => {}, scheduleHeartbeat: () => {},
         client: { from(table) {
             const filters = {};
             let transportFilter;
@@ -160,14 +157,12 @@ function fixture() {
 
 try {
     const f = fixture();
-    await f.channel.setTransportCapable(true);
     assert.equal(f.channel.isReachable(), true, 'Broadcast readiness cannot depend on cached MQTT execution');
     await f.channel.startMqttTransport(config);
     assert.equal(f.channel.isReachable(), true);
-    assert.equal(f.capabilities.at(-1).transport_broadcast_v1, true);
     assert.equal(f.capabilities.at(-1).transport_mqtt_v1, true);
     assert.deepEqual(Object.keys(f.capabilities.at(-1)).sort(), [
-        'app_version', 'transport_broadcast_v1', 'transport_mqtt_v1',
+        'app_version', 'transport_mqtt_v1',
     ]);
     publisher = await connectAsync(url, tlsOptions);
     const topic = mqttDoorbellTopic('owner', 'device');
@@ -191,11 +186,11 @@ try {
             const before = f.operations.length;
             const executionsBefore = f.executed.length;
             await Promise.all([send(payload), send(payload)]);
-            await until(() => events.filter(event => event.params.call_id === id && event.name === 'received').length === 2);
-            const receipts = events.filter(event => event.params.call_id === id && event.name === 'received');
+            await until(() => events.filter(event => event.params.call_id === id && event.name === 'received_from_backend').length === 2);
+            const receipts = events.filter(event => event.params.call_id === id && event.name === 'received_from_backend');
             for (const event of receipts) {
                 assert.equal(event.params.transport, 'mqtt');
-                assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, enabled);
+                assert.ok(Number.isFinite(Date.parse(event.params.timestamp_utc)));
             }
             assert.equal(f.operations.length, before, 'MQTT receipts never read or claim a call');
             assert.equal(f.executed.length, executionsBefore, 'duplicate MQTT packets only record analytics');
@@ -228,8 +223,8 @@ try {
         else await f.channel.onBroadcastDoorbell(bell(id));
         await until(() => resultPackets.some(packet => packet.body.call_id === id));
         assert.deepEqual(resultPackets.find(packet => packet.body.call_id === id).body, { call_id: id });
-        await until(() => events.some(event => event.params.call_id === id && event.name === 'mqtt_result_publish'));
-        for (const stage of ['device_call_received', 'tool_call_completed', 'mqtt_result_send_attempt', 'mqtt_result_publish']) {
+        await until(() => events.some(event => event.params.call_id === id && event.name === 'publish_from_device'));
+        for (const stage of ['device_call_received', 'tool_call_completed']) {
             const event = events.find(event => event.params.call_id === id && event.name === stage);
             assert.ok(event, `missing ${stage}`);
             assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
@@ -240,20 +235,22 @@ try {
     const originalPublish = f.channel.mqttReceiver.publishResult.bind(f.channel.mqttReceiver);
     const originalSleep = f.channel.sleep;
     try {
+        rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: false });
         const id = 'telemetry-retry';
         f.add(id);
         f.rows.get(id).metadata.origin_instance = 'backend';
         let attempts = 0;
         f.channel.mqttReceiver.publishResult = async (...args) => {
-            if (args[0] === id && ++attempts === 1) throw Error('synthetic publish failure');
+            if (args[0] === id && ++attempts <= 2) throw Error('synthetic publish failure');
             return originalPublish(...args);
         };
         f.channel.sleep = async () => { rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: true }); };
         await f.channel.onBroadcastDoorbell(bell(id));
-        await until(() => events.some(event => event.params.call_id === id && event.name === 'mqtt_result_publish'));
-        const retryEvents = events.filter(event => event.params.call_id === id && event.name.startsWith('mqtt_result_'));
-        assert.deepEqual(retryEvents.map(event => event.name), ['mqtt_result_send_attempt', 'mqtt_result_publish_failed', 'mqtt_result_send_attempt', 'mqtt_result_publish']);
-        for (const event of retryEvents) assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
+        await until(() => resultPackets.some(packet => packet.body.call_id === id));
+        assert.equal(attempts, 3);
+        const retryEvents = events.filter(event => event.params.call_id === id && event.name.startsWith('publish_from_device'));
+        assert.deepEqual(retryEvents.map(event => event.name), ['publish_from_device_failed', 'publish_from_device_failed', 'publish_from_device']);
+        for (const event of retryEvents.slice(0, 2)) assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, false);
     } finally {
         f.channel.mqttReceiver.publishResult = originalPublish;
         f.channel.sleep = originalSleep;
