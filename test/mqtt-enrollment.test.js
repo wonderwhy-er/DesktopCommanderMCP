@@ -3,6 +3,7 @@
 // The HTTP response is a controlled seam here; the server suite covers the actual route.
 import assert from 'node:assert/strict';
 import { createPrivateKey, createPublicKey, generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile, mkdir, stat, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +19,8 @@ const { getRemoteDeviceConfigDirectory } = await import('../dist/remote-device/r
 const { RemoteChannel } = await import('../dist/remote-device/remote-channel.js');
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const DEVICE_ID = '22222222-2222-4222-8222-222222222222';
+const SKIPPED_REVOCATION_WARNING = '[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.';
+const FAILED_REVOCATION_WARNING = '[MQTT] Previous certificate revocation failed; continuing with fresh enrollment. The old certificate may remain active.';
 const originalBroker = process.env.MQTT_BROKER_URL;
 const originalDcEnv = process.env.DC_ENV;
 delete process.env.MQTT_BROKER_URL;
@@ -62,12 +65,26 @@ async function withFetch(fake, run) {
   globalThis.fetch = fake;
   try { return await run(); } finally { globalThis.fetch = original; }
 }
+async function withWarnings(run) {
+  const messages = [];
+  const warning = mock.method(console, 'warn', (...args) => messages.push(args));
+  try { return await run(messages); } finally { warning.mock.restore(); }
+}
 
 /** Read only our throwaway credentials; private material is compared without printing it. */
 const mqttFolder = () => path.join(getRemoteDeviceConfigDirectory(), '.mqtt');
 async function cache() {
   const folder = mqttFolder();
   return { folder, identity: JSON.parse(await readFile(path.join(folder, 'identity.json'), 'utf8')), certificate: JSON.parse(await readFile(path.join(folder, 'certificate.json'), 'utf8')) };
+}
+function revoked(url, request, profile, previousDeviceId = DEVICE_ID) {
+  assert.equal(url.href, `${profile.serverUrl}/device/mqtt/revoke`);
+  assert.equal(request.method, 'POST');
+  assert.equal(request.headers.Authorization, `Bearer ${profile.accessToken}`);
+  assert.equal(request.redirect, 'error');
+  assert.ok(request.signal instanceof AbortSignal);
+  assert.deepEqual(JSON.parse(request.body), { device_id: profile.deviceId, previous_device_id: previousDeviceId });
+  return Response.json({ revoked: true });
 }
 async function check(name, run) { await run(); passed++; console.log(`PASS ${name}`); }
 
@@ -200,9 +217,15 @@ try {
       const previous = JSON.parse(await readFile(path.join(folder, 'identity.json'), 'utf8'));
       const previousCertificate = enrolled ? await readFile(path.join(folder, 'certificate.json'), 'utf8') : null;
       const replacement = { ...profile, deviceId: 'replacement-device' };
-      let requests = 0;
-      await withFetch(async (_url, request) => {
-        requests++;
+      const requests = [];
+      await withFetch(async (url, request) => {
+        requests.push(url.pathname);
+        if (url.pathname === '/device/mqtt/revoke') {
+          assert.deepEqual(JSON.parse(await readFile(path.join(folder, 'identity.json'), 'utf8')), previous);
+          if (enrolled) assert.equal(await readFile(path.join(folder, 'certificate.json'), 'utf8'), previousCertificate);
+          return revoked(url, request, replacement);
+        }
+        assert.equal(url.pathname, '/device/mqtt/enroll');
         const body = JSON.parse(request.body);
         assert.equal(body.device_id, replacement.deviceId);
         const csr = forge.pki.certificationRequestFromPem(body.csr);
@@ -222,31 +245,196 @@ try {
         assert.equal(restarted.options.key.toString(), config.options.key.toString());
         assert.equal(restarted.options.cert.toString(), config.options.cert.toString());
       });
-      assert.equal(requests, 1);
+      assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
     }
   });
 
-  await check('backend/account changes and corrupt key/certificate caches fail without re-enrolling', async () => {
+  await check('cached backend changes and unsafe old device IDs reset locally without sending credentials to an untrusted target', async () => {
+    for (const identityPatch of [
+      { backend_origin: 'https://untrusted.example.test' },
+      { backend_origin: 'https://staging-mcp.desktopcommander.app:8443' },
+      { backend_origin: 'https://user:PRIVATE_PASSWORD@untrusted.example.test/PRIVATE_PATH' },
+      { backend_origin: undefined },
+      { device_id: '../PRIVATE_UNSAFE_DEVICE' },
+      { device_id: undefined },
+      { device_id: null },
+      { device_id: 'x'.repeat(119) },
+    ]) {
+      const profile = options();
+      await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
+      const saved = await cache();
+      await writeFile(path.join(saved.folder, 'identity.json'), JSON.stringify({ ...saved.identity, ...identityPatch }));
+      const requests = [];
+      await withWarnings(async warnings => {
+        await withFetch(async (url, request) => {
+          requests.push(url.href);
+          assert.equal(url.href, `${profile.serverUrl}/device/mqtt/enroll`);
+          assert.equal(request.headers.Authorization, `Bearer ${profile.accessToken}`);
+          assert.equal(JSON.parse(request.body).device_id, profile.deviceId);
+          await assert.rejects(stat(path.join(saved.folder, 'certificate.json')), { code: 'ENOENT' });
+          return Response.json(issue(JSON.parse(request.body).csr));
+        }, async () => {
+          await enrollMqttDevice(profile);
+          const fresh = await cache();
+          assert.equal(fresh.identity.backend_origin, profile.serverUrl);
+          assert.equal(fresh.identity.device_id, profile.deviceId);
+          assert.notEqual(fresh.identity.private_key, saved.identity.private_key);
+          assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)));
+          await enrollMqttDevice(profile);
+        });
+        assert.deepEqual(warnings, [[SKIPPED_REVOCATION_WARNING]]);
+      });
+      assert.deepEqual(requests, [`${profile.serverUrl}/device/mqtt/enroll`]);
+    }
+  });
+
+  await check('unreadable identity and certificate caches fail without revocation or enrollment', async () => {
     const base = options();
     await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(base); });
     const saved = await cache();
-    await withFetch(async () => { throw new Error('must not POST'); }, async () => {
-      for (const patch of [{ serverUrl: 'https://staging-mcp.desktopcommander.app:8443' }, { userId: 'another-user' },
-        { serverUrl: 'https://staging-mcp.desktopcommander.app:8443', deviceId: 'another-device' },
-        { userId: 'another-user', deviceId: 'another-device' }]) {
-        await assert.rejects(enrollMqttDevice({ ...base, ...patch }), /different backend, user, or device/);
-        assert.deepEqual(await cache(), saved, 'a different backend/account cannot replace the cache');
-      }
-      for (const [file, value] of [['identity.json', '{'], ['identity.json', JSON.stringify({ ...saved.identity, private_key: 'invalid' })], ['certificate.json', '{'], ['certificate.json', JSON.stringify({ ...saved.certificate, certificate_id: 'invalid' })]]) {
+    let requests = 0;
+    await withFetch(async () => { requests++; throw new Error('must not POST'); }, async () => {
+      for (const [file, value] of [['identity.json', '{'],
+        ['certificate.json', '{'],
+        ['certificate.json', JSON.stringify({ ...saved.certificate, certificate_pem: 'invalid' })],
+        ['certificate.json', JSON.stringify({ ...saved.certificate, certificate_id: 'invalid' })]]) {
         const profile = options();
         const folder = mqttFolder();
         await mkdir(folder, { recursive: true, mode: 0o700 });
         await writeFile(path.join(folder, 'identity.json'), JSON.stringify(saved.identity), { mode: 0o600 });
         await writeFile(path.join(folder, 'certificate.json'), JSON.stringify(saved.certificate), { mode: 0o600 });
         await writeFile(path.join(folder, file), value);
-        await assert.rejects(enrollMqttDevice(profile), /cache|private key|certificate/);
+        const identityText = await readFile(path.join(folder, 'identity.json'), 'utf8');
+        const certificateText = await readFile(path.join(folder, 'certificate.json'), 'utf8');
+        await assert.rejects(enrollMqttDevice(profile), /cache|certificate/);
+        assert.equal(await readFile(path.join(folder, 'identity.json'), 'utf8'), identityText);
+        assert.equal(await readFile(path.join(folder, 'certificate.json'), 'utf8'), certificateText);
       }
     });
+    assert.equal(requests, 0);
+  });
+
+  await check('changed identities and unusable or mismatched keys attempt revocation before replacement and restart reuses the fresh pair', async () => {
+    const ecKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ format: 'pem', type: 'pkcs8' });
+    const shortKey = generateKeyPairSync('rsa', { modulusLength: 1024 }).privateKey.export({ format: 'pem', type: 'pkcs8' });
+    const differentKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' });
+    for (const [name, identityPatch, optionPatch] of [
+      ['different user', {}, { userId: 'another-user', accessToken: 'new-user-token' }],
+      ['maximum-length old device ID', { device_id: 'x'.repeat(118) }, {}],
+      ['missing key', { private_key: undefined }, {}],
+      ['non-string key', { private_key: 42 }, {}],
+      ['invalid key', { private_key: 'invalid' }, {}],
+      ['non-RSA key', { private_key: ecKey }, {}],
+      ['wrong-size RSA key', { private_key: shortKey }, {}],
+      ['mismatched valid key', { private_key: differentKey }, {}],
+    ]) {
+      const profile = options();
+      await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
+      const original = await cache();
+      const identityFile = path.join(original.folder, 'identity.json');
+      const certificateFile = path.join(original.folder, 'certificate.json');
+      await writeFile(identityFile, JSON.stringify({ ...original.identity, ...identityPatch }));
+      const identityText = await readFile(identityFile, 'utf8');
+      const certificateText = await readFile(certificateFile, 'utf8');
+      const replacement = { ...profile, ...optionPatch };
+      const requests = [];
+      let revocationRequest;
+      await withWarnings(async warnings => {
+        await withFetch(async (url, request) => {
+          requests.push(url.pathname);
+          if (url.pathname === '/device/mqtt/revoke') {
+            revocationRequest = [url, request];
+            assert.equal(await readFile(identityFile, 'utf8'), identityText, name);
+            assert.equal(await readFile(certificateFile, 'utf8'), certificateText, name);
+            const response = revoked(url, request, replacement, JSON.parse(identityText).device_id);
+            return name === 'different user' ? new Response(null, { status: 403 }) : response;
+          }
+          assert.equal(url.pathname, '/device/mqtt/enroll');
+          await assert.rejects(stat(certificateFile), { code: 'ENOENT' });
+          const fresh = JSON.parse(await readFile(identityFile, 'utf8'));
+          assert.equal(fresh.user_id, replacement.userId, name);
+          assert.notEqual(fresh.private_key, original.identity.private_key, name);
+          assert.notEqual(fresh.private_key, JSON.parse(identityText).private_key, name);
+          return Response.json(issue(JSON.parse(request.body).csr));
+        }, async () => {
+          await enrollMqttDevice(replacement);
+          const fresh = await cache();
+          assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)), name);
+          await enrollMqttDevice(replacement);
+        });
+        assert.deepEqual(warnings, name === 'different user' ? [[FAILED_REVOCATION_WARNING]] : []);
+      });
+      assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll'], name);
+      revoked(...revocationRequest, replacement, JSON.parse(identityText).device_id);
+    }
+  });
+
+  await check('failed or unconfirmed revocation warns without private details and continues with a fresh key and certificate', async () => {
+    for (const failure of [() => { throw new Error('PRIVATE_PROVIDER_DETAIL'); },
+      () => new Response('PRIVATE_PROVIDER_DETAIL', { status: 403 }),
+      () => new Response('PRIVATE_PROVIDER_DETAIL', { status: 502 }), () => Response.json({ revoked: false }),
+      () => Response.json({}), () => new Response('invalid JSON')]) {
+      const profile = options();
+      await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
+      const saved = await cache();
+      const replacement = { ...profile, deviceId: 'replacement-device' };
+      const requests = [];
+      let revocationRequest;
+      await withWarnings(async warnings => {
+        await withFetch(async (url, request) => {
+          requests.push(url.pathname);
+          if (url.pathname === '/device/mqtt/revoke') {
+            revocationRequest = [url, request];
+            assert.deepEqual(await cache(), saved);
+            revoked(url, request, replacement);
+            return failure();
+          }
+          assert.equal(url.href, `${replacement.serverUrl}/device/mqtt/enroll`);
+          await assert.rejects(stat(path.join(saved.folder, 'certificate.json')), { code: 'ENOENT' });
+          return Response.json(issue(JSON.parse(request.body).csr));
+        }, async () => {
+          await enrollMqttDevice(replacement);
+          const fresh = await cache();
+          assert.equal(fresh.identity.device_id, replacement.deviceId);
+          assert.notEqual(fresh.identity.private_key, saved.identity.private_key);
+          assert.ok(new X509Certificate(fresh.certificate.certificate_pem).checkPrivateKey(createPrivateKey(fresh.identity.private_key)));
+          await enrollMqttDevice(replacement);
+        });
+        assert.deepEqual(warnings, [[FAILED_REVOCATION_WARNING]]);
+      });
+      assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
+      revoked(...revocationRequest, replacement);
+    }
+  });
+
+  await check('a session change during successful or failed revocation preserves cached credentials without fresh enrollment', async () => {
+    for (const refused of [false, true]) {
+      const profile = options();
+      await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
+      const saved = await cache();
+      const identityText = await readFile(path.join(saved.folder, 'identity.json'), 'utf8');
+      const certificateText = await readFile(path.join(saved.folder, 'certificate.json'), 'utf8');
+      let active = true;
+      const replacement = { ...profile, deviceId: 'replacement-device', assertSessionStillActive() { if (!active) throw new Error('session changed'); } };
+      const requests = [];
+      let revocationRequest;
+      await withWarnings(async warnings => {
+        await withFetch(async (url, request) => {
+          requests.push(url.pathname);
+          revocationRequest = [url, request];
+          active = false;
+          const response = revoked(url, request, replacement);
+          return refused ? new Response(null, { status: 403 }) : response;
+        }, async () => {
+          await assert.rejects(enrollMqttDevice(replacement), /session changed/);
+        });
+        assert.deepEqual(warnings, refused ? [[FAILED_REVOCATION_WARNING]] : []);
+      });
+      assert.deepEqual(requests, ['/device/mqtt/revoke']);
+      revoked(...revocationRequest, replacement);
+      assert.equal(await readFile(path.join(saved.folder, 'identity.json'), 'utf8'), identityText);
+      assert.equal(await readFile(path.join(saved.folder, 'certificate.json'), 'utf8'), certificateText);
+    }
   });
 
   await check('a failed replacement enrollment keeps its new key for the next attempt', async () => {
@@ -254,14 +442,24 @@ try {
     await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
     const previous = await cache();
     const replacement = { ...profile, deviceId: 'replacement-device' };
-    await withFetch(async () => new Response(null, { status: 503 }), async () => {
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') return revoked(url, request, replacement);
+      assert.equal(url.pathname, '/device/mqtt/enroll');
+      return new Response(null, { status: 503 });
+    }, async () => {
       await assert.rejects(enrollMqttDevice(replacement), /HTTP 503/);
     });
+    assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
     const identityText = await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8');
     assert.equal(JSON.parse(identityText).device_id, replacement.deviceId);
     assert.notEqual(JSON.parse(identityText).private_key, previous.identity.private_key);
     await assert.rejects(stat(path.join(mqttFolder(), 'certificate.json')), { code: 'ENOENT' });
-    await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(replacement); });
+    await withFetch(async (url, request) => {
+      assert.equal(url.pathname, '/device/mqtt/enroll');
+      return Response.json(issue(JSON.parse(request.body).csr));
+    }, async () => { await enrollMqttDevice(replacement); });
     assert.equal(await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8'), identityText);
   });
 
@@ -272,9 +470,14 @@ try {
     const started = new Promise(resolve => { requestStarted = resolve; });
     let finishRequest;
     const pending = new Promise(resolve => { finishRequest = resolve; });
-    let requests = 0;
-    await withFetch(async (_url, request) => {
-      requests++;
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') {
+        const deviceId = JSON.parse(request.body).device_id;
+        return revoked(url, request, { ...profile, deviceId }, deviceId === 'replacement-device' ? DEVICE_ID : 'replacement-device');
+      }
+      assert.equal(url.pathname, '/device/mqtt/enroll');
       const certificate = issue(JSON.parse(request.body).csr);
       requestStarted();
       await pending;
@@ -286,7 +489,7 @@ try {
         const identityText = await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8');
         await assert.rejects(enrollMqttDevice({ ...profile, deviceId: 'competing-device' }), /credentials are in use/);
         assert.equal(await readFile(path.join(mqttFolder(), 'identity.json'), 'utf8'), identityText);
-        assert.equal(requests, 1);
+        assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
       } finally {
         finishRequest();
         await first;
@@ -294,7 +497,7 @@ try {
       assert.equal((await cache()).identity.device_id, 'replacement-device');
       await enrollMqttDevice({ ...profile, deviceId: 'competing-device' });
       assert.equal((await cache()).identity.device_id, 'competing-device');
-      assert.equal(requests, 2);
+      assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll', '/device/mqtt/revoke', '/device/mqtt/enroll']);
     });
   });
 
@@ -307,13 +510,63 @@ try {
     await rm(certificateFile);
     await mkdir(certificateFile);
     const replacement = { ...profile, deviceId: 'replacement-device' };
-    await withFetch(async () => assert.fail('reset failure must not reach the backend'), async () => {
+    let revocations = 0;
+    await withFetch(async (url, request) => {
+      revocations++;
+      assert.equal(await readFile(identityFile, 'utf8'), previousIdentity);
+      return revoked(url, request, replacement);
+    }, async () => {
       await assert.rejects(enrollMqttDevice(replacement), /credentials could not be reset/);
     });
-    assert.equal(await readFile(identityFile, 'utf8'), previousIdentity);
+    assert.equal(revocations, 1);
+    assert.deepEqual(JSON.parse(await readFile(identityFile, 'utf8')), { ...JSON.parse(previousIdentity), reset_pending: true });
     await rm(certificateFile, { recursive: true });
-    await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(replacement); });
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') return revoked(url, request, replacement);
+      assert.equal(url.pathname, '/device/mqtt/enroll');
+      return Response.json(issue(JSON.parse(request.body).csr));
+    }, async () => { await enrollMqttDevice(replacement); });
+    assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/enroll']);
     assert.equal((await cache()).identity.device_id, replacement.deviceId);
+  });
+
+  await check('interrupted key replacement keeps its reset pending after certificate deletion and retries with a fresh key', async () => {
+    const profile = options();
+    await withFetch(async (_url, request) => Response.json(issue(JSON.parse(request.body).csr)), async () => { await enrollMqttDevice(profile); });
+    const previous = await cache();
+    const identityFile = path.join(previous.folder, 'identity.json');
+    const certificateFile = path.join(previous.folder, 'certificate.json');
+    const differentKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' });
+    const mismatchedIdentity = { ...previous.identity, private_key: differentKey };
+    await writeFile(identityFile, JSON.stringify(mismatchedIdentity));
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      return revoked(url, request, profile);
+    }, async () => {
+      await assert.rejects(enrollMqttDevice({
+        ...profile,
+        assertSessionStillActive() { if (!existsSync(certificateFile)) throw new Error('session changed after certificate deletion'); },
+      }), /credentials could not be reset/);
+    });
+    assert.deepEqual(requests, ['/device/mqtt/revoke']);
+    assert.deepEqual(JSON.parse(await readFile(identityFile, 'utf8')), { ...mismatchedIdentity, reset_pending: true });
+    assert.equal((await stat(identityFile)).mode & 0o777, 0o600);
+    await assert.rejects(stat(certificateFile), { code: 'ENOENT' });
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') return revoked(url, request, profile);
+      assert.equal(url.pathname, '/device/mqtt/enroll');
+      return Response.json(issue(JSON.parse(request.body).csr));
+    }, async () => { await enrollMqttDevice(profile); });
+    assert.deepEqual(requests, ['/device/mqtt/revoke', '/device/mqtt/revoke', '/device/mqtt/enroll']);
+    const saved = await cache();
+    assert.notEqual(saved.identity.private_key, differentKey);
+    assert.notEqual(saved.identity.private_key, previous.identity.private_key);
+    assert.equal(saved.identity.reset_pending, undefined);
+    assert.ok(new X509Certificate(saved.certificate.certificate_pem).checkPrivateKey(createPrivateKey(saved.identity.private_key)));
   });
 
   await check('mismatched key, expired/future certificate, invalid response and unsafe broker URL cannot be saved', async () => {
@@ -365,9 +618,11 @@ try {
 
   await check('registration re-enrolls a changed device, reuses credentials, and preserves the Presence channel', async () => {
     const profile = options();
-    let requests = 0;
-    await withFetch(async (_url, request) => {
-      requests++;
+    const requests = [];
+    await withFetch(async (url, request) => {
+      requests.push(url.pathname);
+      if (url.pathname === '/device/mqtt/revoke') return revoked(url, request, { ...profile, deviceId: 'replacement-device' });
+      assert.equal(url.pathname, '/device/mqtt/enroll');
       return Response.json(issue(JSON.parse(request.body).csr));
     }, async () => {
       for (const deviceId of [DEVICE_ID, DEVICE_ID, 'replacement-device', 'replacement-device']) {
@@ -389,7 +644,7 @@ try {
         assert.deepEqual(order, ['broadcast', 'mqtt']);
       }
     });
-    assert.equal(requests, 2);
+    assert.deepEqual(requests, ['/device/mqtt/enroll', '/device/mqtt/revoke', '/device/mqtt/enroll']);
   });
 
   await check('MQTT connection failure preserves Broadcast startup and cleans up the receiver', async () => {

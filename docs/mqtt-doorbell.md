@@ -55,11 +55,18 @@ Each directory contains `device.json` and its MQTT credentials in `.mqtt`.
 `npm run device:start:local` sets `DC_ENV=development`; `npm run device:start:staging`
 sets `DC_ENV=staging`. `NODE_ENV` and `IS_STAGING` do not affect the profile directory.
 The directory uses mode 0700 and files use 0600. The private key never leaves
-the device. When the authenticated device ID changes within the same backend and account,
-startup removes the old local certificate and private key, then enrolls the new device
-with a fresh key. An unchanged device reuses its credentials. Backend/account mismatches
-and damaged identity caches still require inspection. Only one process may enroll a profile
-at a time. Removing local credentials does not revoke the old certificate in AWS.
+the device. When the cached backend, user or device ID changes, the cached device ID
+is invalid, or the key is missing, invalid, unsupported, or does not match its certificate,
+startup removes the old local credentials and enrolls with a fresh key and certificate.
+Before removal it attempts `/device/mqtt/revoke` only when the old credentials belong
+to the current backend and have a valid device ID. The current token is never sent
+to a cached backend origin. Revocation is best effort: a failure or an unsafe target
+logs a warning and enrollment continues. The old certificate may remain active.
+The backend still checks ownership; a new account cannot revoke another account's device.
+A failed replacement enrollment keeps the new key for the next restart. An interrupted
+reset is resumed before enrollment on the next startup. Valid matching credentials are reused.
+Unreadable identity or certificate caches still require inspection. Session, lock and
+filesystem errors stop enrollment. Only one process may enroll a profile at a time.
 Initial enrollment is attempted once; fix configuration and restart on failure.
 Established MQTT connections reconnect automatically. Renewal is separate work.
 
