@@ -213,7 +213,6 @@ export class MqttTransport {
 					invalid();
 					return;
 				}
-				observeTransport({ stage: 'received_from_backend', callId:payload.call_id, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
 				const keys =
 					payload && typeof payload === "object" ? Object.keys(payload) : [];
 				const hasExecutionFlag = keys.includes("IS_MQTT_EXECUTION_ENABLED");
@@ -238,6 +237,7 @@ export class MqttTransport {
 					invalid();
 					return;
 				}
+				observeTransport({ stage: 'received_from_backend', callId:payload.call_id, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
 				console.debug("[MQTT] Received doorbell processing notification");
 				// The durable row's deadline is checked during the claim, after receipt observation.
 				void this.onDoorbell(payload).catch(() => {});
