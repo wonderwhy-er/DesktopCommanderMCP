@@ -67,43 +67,57 @@ for (const failAt of ['enrollment', 'broker']) {
     assert.equal(f.broadcasts(), 1);
 }
 // A failed MQTT capability write must not withdraw healthy Broadcast on cleanup.
+for (const failure of ['response', 'rejection']) {
+    const f = fixture();
+    const writes = [];
+    let failWrite = true;
+    Object.assign(f.channel, { channel: { state: 'joined' }, channelReady: true });
+    f.channel.client = { from: () => ({ update: value => ({ eq: () => ({ abortSignal: async () => {
+        assert.deepEqual(Object.keys(value), ['capabilities'], 'MQTT must not change Broadcast status');
+        writes.push(value.capabilities);
+        if (failWrite && failure === 'rejection') throw Error('temporary capability write failure');
+        return { error: failWrite ? { message: 'temporary capability write failure' } : null };
+    } }) }) }) };
+    await assert.rejects(f.channel.setMqttReady(true), /capability could not be saved/);
+    await assert.doesNotReject(f.channel.setMqttReady(false), 'failed cleanup must not stop Broadcast');
+    assert.equal(writes.at(-1).transport_mqtt_v1, undefined);
+    assert.equal(f.channel.isReachable(), true);
+    failWrite = false;
+    await f.channel.setMqttReady(true);
+    assert.equal(writes.at(-1).transport_mqtt_v1, true, 'failed writes must not poison the queue');
+    assert.ok(writes.every(value => value.app_version === writes[0].app_version && value.app_version));
+}
+// Overlapping readiness transitions persist their snapshots in order.
 {
     const f = fixture();
     const writes = [];
-    let failWrite = false;
-    f.channel.client = { from: () => ({ update: value => ({ eq: () => ({ abortSignal: async () => {
-        if (value.capabilities) writes.push(value.capabilities);
-        return { error: failWrite ? { message: 'temporary capability write failure' } : null };
+    let release;
+    f.channel.client = { from: () => ({ update: value => ({ eq: (key, id) => ({ abortSignal: async signal => {
+        assert.equal(key, 'id');
+        assert.equal(id, 'device');
+        assert.ok(signal instanceof AbortSignal, 'capability writes must have a deadline');
+        writes.push(value.capabilities.transport_mqtt_v1);
+        if (writes.length === 1) await new Promise(resolve => { release = resolve; });
+        return { error: null };
     } }) }) }) };
-    assert.equal(await f.channel.setTransportCapable(true), true);
-    failWrite = true;
-    await assert.rejects(f.channel.setMqttReady(true), /capability could not be saved/);
-    failWrite = false;
-    await f.channel.setMqttReady(false);
-    assert.equal(writes.at(-1).transport_broadcast_v1, true);
-    assert.equal(writes.at(-1).transport_mqtt_v1, undefined);
-    assert.equal(f.channel.transportCapableWritten, true);
+    const ready = f.channel.setMqttReady(true);
+    const disconnected = f.channel.setMqttReady(false);
+    const reconnected = f.channel.setMqttReady(true);
+    await settle();
+    assert.deepEqual(writes, [true], 'later writes must wait for the first to finish');
+    release();
+    await Promise.all([ready, disconnected, reconnected]);
+    assert.deepEqual(writes, [true, undefined, true]);
 }
-// Failed overlapping writes must not leave a queued marker that suppresses recovery.
-{
+// Queued readiness must not publish after shutdown or an auth session change.
+for (const property of ['shuttingDown', 'sessionLost', 'authGeneration']) {
     const f = fixture();
-    let failWrite = true;
     let writes = 0;
-    f.channel.syncReachabilityStatus = () => {};
-    f.channel.client = { from: () => ({ update: () => ({ eq: () => ({ abortSignal: async () => {
-        writes++;
-        return { error: failWrite ? { message: 'temporary database outage' } : null };
-    } }) }) }) };
-    const broadcast = f.channel.setTransportCapable(true);
-    const mqtt = f.channel.setMqttReady(true);
-    await assert.rejects(mqtt, /capability could not be saved/);
-    assert.equal(await broadcast, false);
-    await f.channel.setMqttReady(false);
-    assert.equal(writes, 3);
-    failWrite = false;
-    assert.equal(await f.channel.setTransportCapable(true), true);
-    assert.equal(writes, 4);
-    assert.equal(f.channel.transportCapableQueued, null);
+    f.channel.client = { from: () => { writes++; throw Error('unexpected write'); } };
+    const ready = f.channel.setMqttReady(true);
+    f.channel[property] = property === 'authGeneration' ? 1 : true;
+    await assert.rejects(ready, /capability could not be saved/);
+    assert.equal(writes, 0);
 }
 for (const execution of [undefined, false, true, false]) {
     rolloutManager.update(execution === undefined ? {} : { IS_MQTT_EXECUTION_ENABLED: execution });
@@ -119,7 +133,7 @@ for (const execution of [undefined, false, true, false]) {
     }
     await f.channel.onBroadcastDoorbell(payload);
     assert.equal(sources.at(-1), 'broadcast');
-    Object.assign(f.channel, { channel: { state: 'joined' }, presenceTracked: true, mqttReady: false });
+    Object.assign(f.channel, { channel: { state: 'joined' }, channelReady: true, mqttReady: false });
     assert.equal(f.channel.isReachable(), true, 'cached execution cannot withdraw healthy Broadcast');
     const observation = observeTransport({ stage: 'received', payload, deviceId: 'device', userId: 'owner', transport: 'mqtt' });
     assert.equal('notification_id' in observation, false);

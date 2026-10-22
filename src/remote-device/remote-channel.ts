@@ -232,6 +232,7 @@ export class RemoteChannel {
     private handlingSignedOut = false;
     private mqttReceiver: MqttTransport | null = null;
     private mqttReady = false;
+    private mqttCapabilityWriteChain: Promise<boolean> = Promise.resolve(true);
     private authGeneration = 0;
 
 
@@ -710,18 +711,32 @@ export class RemoteChannel {
         if (this.shuttingDown || this.sessionLost) {
             return;
         }
-        // Both transports replace the same JSON column; preserve their write order.
-        const broadcast = this.broadcastCapable;
-        const write = this.capabilityWriteChain.then(() => {
-            return this.writeTransportCapable(broadcast);
-        });
-        this.capabilityWriteChain = write;
-        this.syncReachabilityStatus();
-        const written = await write;
-        if (this.capabilityWriteChain === write) {
-            this.transportCapableQueued = null;
-        }
-        if (!written && ready) {
+        // A disconnect must not be overwritten by an earlier, slower ready write.
+        const capabilities = this.capabilitiesPayload();
+        const sessionGeneration = this.authGeneration;
+        const write = this.mqttCapabilityWriteChain.then(async () => {
+            const sessionChanged = sessionGeneration !== this.authGeneration;
+            if (sessionChanged || this.shuttingDown || this.sessionLost) {
+                return false;
+            }
+            if (!this.client || !this.deviceId) {
+                return false;
+            }
+            // update capabilities based on the status of mqttReady
+            const { error } = await this.client
+                .from('mcp_devices')
+                .update({ capabilities })
+                .eq('id', this.deviceId)
+                .abortSignal(this.deviceRowWriteSignal());
+            return !error;
+        }).catch(() => false);
+        this.mqttCapabilityWriteChain = write;
+
+        const saved = await write;
+        if (saved) return;
+
+        console.warn('[MQTT] Capability update failed');
+        if (ready) {
             throw new Error('MQTT capability could not be saved');
         }
     }
@@ -860,7 +875,7 @@ export class RemoteChannel {
      */
     private capabilitiesPayload(): Record<string, any> {
         return { 
-            ...(this.mqttReady ? { transport_mqtt_v1: true } : {}),,
+            ...(this.mqttReady ? { transport_mqtt_v1: true } : {}),
             app_version: VERSION 
         };
     }
