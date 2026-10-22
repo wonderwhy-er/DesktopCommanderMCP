@@ -6,6 +6,7 @@ import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
 import { MqttTransport, type MqttCallFlags, type MqttConfig, type MqttDoorbell } from './mqtt/mqtt-transport.js';
 import { enrollMqttDevice } from './mqtt/mqtt-enrollment.js';
+import { getRemoteDeviceLogoutVersion } from './remote-utils.js';
 
 const NUL_CHAR = String.fromCharCode(0);
 const NUL_RE = new RegExp(NUL_CHAR, 'g');
@@ -295,6 +296,8 @@ export class RemoteChannel {
     get user(): User | null { return this._user; }
 
     constructor(private readonly enrollment?: { serverUrl: string }) {}
+
+    private readonly logoutVersion = getRemoteDeviceLogoutVersion();
 
 
     initialize(url: string, key: string): void {
@@ -664,18 +667,24 @@ export class RemoteChannel {
     }
 
     private async prepareMqttConfig(assertSessionStillActive: () => void): Promise<MqttConfig | null> {
+        const assertCurrent = () => {
+            assertSessionStillActive();
+            if (getRemoteDeviceLogoutVersion() !== this.logoutVersion) {
+                throw new Error('Local credentials were removed during this run; restart and sign in to enable MQTT');
+            }
+        };
         if (!this.enrollment || !this.user || !this.deviceId) {
             throw new Error('MQTT enrollment requires the authenticated connector backend and profile');
         }
         const { data, error } = await this.getSession();
-        assertSessionStillActive();
+        assertCurrent();
         if (error || !data.session?.access_token) throw new Error('MQTT enrollment requires a current device session');
         return enrollMqttDevice({
             ...this.enrollment,
             userId: this.user.id,
             deviceId: this.deviceId,
             accessToken: data.session.access_token,
-            assertSessionStillActive,
+            assertSessionStillActive: assertCurrent,
         });
     }
 
