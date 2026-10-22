@@ -735,8 +735,6 @@ export class RemoteChannel {
         if (this.shuttingDown || this.sessionLost || this.handlingSignedOut) {
             return;
         }
-        observeTransport({ stage: 'received', payload, deviceId: this.deviceId,
-            userId: this.user?.id, transport: 'mqtt' });
     }
 
     private async onBroadcastDoorbell(payload: any): Promise<void> {
@@ -1622,14 +1620,12 @@ export class RemoteChannel {
         const generation = this.authGeneration;
         for (let attempt = 1; attempt <= 3; attempt++) {
             if (generation !== this.authGeneration || receiver !== this.mqttReceiver || this.shuttingDown || this.sessionLost) return;
-            const observation = { callId, deviceId: this.deviceId, transport: 'mqtt' as const, ...mqttFlags };
-            observeTransport({ ...observation, stage: 'mqtt_result_send_attempt' });
+            const observation = { callId, deviceId: this.deviceId, userId: this.user?.id, transport: 'mqtt' as const, ...mqttFlags };
             try {
                 await receiver.publishResult(callId, originInstance);
-                observeTransport({ ...observation, stage: 'mqtt_result_publish' });
                 return;
             } catch {
-                observeTransport({ ...observation, stage: 'mqtt_result_publish_failed' });
+                observeTransport({ ...observation, stage: 'publish_from_device_failed' });
                 if (attempt < 3) await this.sleep(attempt * 1_000);
             }
         }

@@ -7,9 +7,9 @@ const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const PROCESS_ID = randomUUID();
 
 type TransportObservation = (
-    | { stage: 'received'; payload: any; deviceId: string | null; userId: string | undefined }
+    | { stage: 'received'; payload: any; deviceId: string | null }
     | { stage: string; callId: string; deviceId: string | null | undefined; toolName?: string; operation?: string; operationId?: string }
-) & MqttCallFlags & { transport?: 'broadcast' | 'mqtt' };
+) & MqttCallFlags & { userId: string | undefined; transport?: 'broadcast' | 'mqtt' };
 
 /** Record a device transport checkpoint without affecting command handling. */
 export function observeTransport(input: TransportObservation) {
@@ -18,8 +18,10 @@ export function observeTransport(input: TransportObservation) {
         const receipt = 'payload' in input;
         const callId = receipt ? input.payload?.call_id : input.callId;
         const deviceId = input.deviceId;
+        const userId = input.userId;
         if (typeof callId !== 'string' || !ID.test(callId) ||
-            typeof deviceId !== 'string' || !ID.test(deviceId)) return null;
+            typeof deviceId !== 'string' || !ID.test(deviceId) ||
+            typeof userId !== 'string' || !ID.test(userId)) return null;
         if (receipt && (input.payload.device_id !== deviceId || !input.userId ||
             (input.payload.user_id !== undefined && input.payload.user_id !== input.userId))) return null;
 
@@ -47,7 +49,7 @@ export function observeTransport(input: TransportObservation) {
             schema_version: 1,
             timestamp_utc,
         };
-        void captureTransport(input.stage, sanitizeTransportEvent(input.stage, event));
+        void captureTransport(input.stage, sanitizeTransportEvent(input.stage, event), userId);
         return event;
     } catch {
         // Telemetry must never affect command handling.

@@ -1,4 +1,5 @@
 import { connect, type IClientOptions, type MqttClient } from "mqtt";
+import { observeTransport } from "../transport-telemetry.js";
 
 // Ids become literal topic segments; reject separators and MQTT wildcards.
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -212,6 +213,7 @@ export class MqttTransport {
 					invalid();
 					return;
 				}
+				observeTransport({ stage: 'received_from_backend', callId:payload.call_id, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
 				const keys =
 					payload && typeof payload === "object" ? Object.keys(payload) : [];
 				const hasExecutionFlag = keys.includes("IS_MQTT_EXECUTION_ENABLED");
@@ -279,7 +281,9 @@ export class MqttTransport {
 						if (messageId !== undefined)
 							client.removeOutgoingMessage(messageId);
 						reject(error);
-					} else resolve();
+					} else {
+						resolve();
+					}
 				};
 				const onClose = () =>
 					finish(new Error("MQTT disconnected before result acknowledgement"));
@@ -305,6 +309,7 @@ export class MqttTransport {
 				client.once("close", onClose);
 				client.on("packetsend", onPacket);
 				try {
+					observeTransport({ stage: 'publish_from_device', callId, deviceId: this.deviceId, userId: this.userId, transport:'mqtt' });
 					client.publish(topic, payload, { qos: 1, retain: false }, (error) =>
 						finish(error ? new Error("MQTT result publish failed") : undefined),
 					);

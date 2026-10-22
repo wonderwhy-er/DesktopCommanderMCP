@@ -31,6 +31,7 @@ async function handle(callId, { toolThrows = false, saveThrows = false, executio
         },
     };
     device.remoteChannel = {
+        user: { id: 'user-1' },
         markCallExecuting: async () => true,
         updateCallResult: async (id, status) => {
             writes.push(`${id}:${status}`);
@@ -49,6 +50,10 @@ async function handle(callId, { toolThrows = false, saveThrows = false, executio
     await new Promise(resolve => setTimeout(resolve, 200));
     for (const event of sent.flatMap(body => body.events).filter(event => event.params?.call_id === callId)) {
         assert.equal(event.params.IS_MQTT_EXECUTION_ENABLED, execution);
+    }
+    for (const body of sent.filter(body => body.events.some(event => event.params?.call_id === callId))) {
+        assert.equal(body.telemetry_type, 'transport');
+        assert.equal(body.user_id, 'user-1');
     }
     return { stages: stagesOf(callId), writes };
 }

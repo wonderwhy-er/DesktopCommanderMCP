@@ -612,7 +612,7 @@ export class MCPDevice {
             return;
         }
 
-        const observation = { callId: call_id, deviceId: this.deviceId, toolName: tool_name, ...mqttFlags };
+        const observation = { callId: call_id, deviceId: this.deviceId, userId: this.remoteChannel.user?.id, toolName: tool_name, ...mqttFlags };
 
         // Count every targeted delivery, including duplicates, before the local claim.
         observeTransport({ stage: 'device_call_received', ...observation });
