@@ -2,7 +2,7 @@
 
 These scripts start Remote Desktop Commander on your computer. If Node.js cannot be found, they explain what will be installed and ask you to type **Yes** or **No**. Yes installs Node.js 24, then downloads and starts Remote Desktop Commander. No, an empty answer, or an unrecognized answer stops without installing or starting anything. It shows two options: first, download Node.js using a direct link for your computer; second, run the command yourself in a new terminal if Node.js is already installed. If compatible Node.js is found, setup starts Remote Desktop Commander without asking again.
 
-The manual links point directly to Node.js v24.22.1 files, so showing them needs no internet connection. macOS gets a universal installer; Windows and supported Linux computers get the matching processor version. Opening a link downloads the file. macOS and Windows users can open it to install Node.js; Linux users must install the downloaded archive themselves. Unsupported processors receive a link to [all Node.js releases](https://nodejs.org/en/about/previous-releases) instead of an incompatible file. Keep these pinned links in sync with the onboarding page's manual downloads.
+The manual links point directly to Node.js v24.22.1 files, so showing them needs no internet connection. macOS gets a universal installer; Windows and supported Linux computers get the matching processor version. Opening a link downloads the file. macOS and Windows users can open it to install Node.js; Linux users must install the downloaded archive themselves. Unsupported processors receive a link to [the Node.js download page](https://nodejs.org/en/download) instead of an incompatible file. Keep these pinned links in sync with the onboarding page's manual downloads.
 
 Inspect the source: [macOS](remote-macos.sh), [Linux](remote-linux.sh), [PowerShell](remote-windows.ps1), [CMD wrapper](remote-windows.cmd).
 
@@ -28,7 +28,7 @@ powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol 
 
 Alternatively, save and run [remote-windows.cmd](remote-windows.cmd). Press **Ctrl+C** to stop; run the same command again to reconnect. Your computer may ask you to confirm during installation. Open a terminal window to answer the setup question; setup will not install Node.js if it cannot read your answer.
 
-Node.js 22.12+ is reused. Messages asking users to upgrade, reinstall or manually install Node.js include the same manual download link. Unknown processors and Linux systems that cannot run the downloaded binary receive the all-releases page instead. When Node is absent and you choose Yes, the launcher downloads the latest Node 24 from `nodejs.org` and verifies SHA-256 before installing:
+Node.js 22.12+ is reused. Messages asking users to upgrade, reinstall or manually install Node.js include the same manual download link. Unknown processors and Linux systems that cannot run the downloaded binary receive the Node.js download page instead. When Node is absent and you choose Yes, the launcher downloads the latest Node 24 from `nodejs.org` and verifies SHA-256 before installing:
 
 - **macOS:** the official `.pkg` through `installer -target /`, placing Node.js and npm under `/usr/local`.
 - **Windows:** the official `.msi` with its normal installation directory, usually `C:\Program Files\nodejs`.

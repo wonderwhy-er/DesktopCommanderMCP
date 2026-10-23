@@ -246,9 +246,9 @@ try {
             Assert ($script:hostMessages[-4] -eq $expectedDownload) 'The direct link must match the native Windows architecture.'
         }
         else {
-            $expectedDownload = 'https://nodejs.org/en/about/previous-releases'
-            Assert ($script:hostMessages[-4] -eq '1. Browse all Node.js versions and downloads here:') 'Unknown architectures must offer the list of Node.js downloads first.'
-            Assert ($script:hostMessages[-3] -eq $expectedDownload) 'Unknown architectures must link to the official Node.js releases page.'
+            $expectedDownload = 'https://nodejs.org/en/download'
+            Assert ($script:hostMessages[-4] -eq '1. Choose a Node.js download for your computer here:') 'Unknown architectures must offer the Node.js download selection first.'
+            Assert ($script:hostMessages[-3] -eq $expectedDownload) 'Unknown architectures must link to the official Node.js download page.'
             Assert (-not ($guidance -match '^https://nodejs.org/dist/')) 'Unknown architectures must not default to an x64 download.'
         }
 

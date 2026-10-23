@@ -145,7 +145,7 @@ esac`,
                 const result = run({ TEST_ARCH: architecture, TEST_NODE_VERSION: version });
                 expect(result, 1);
                 assert.match(result.stderr, /Your Node\.js version is too old/);
-                assert.ok(result.stderr.includes(downloadUrl || "https://nodejs.org/en/about/previous-releases"));
+                assert.ok(result.stderr.includes(downloadUrl || "https://nodejs.org/en/download"));
                 assert.doesNotMatch(result.stdout, /Would you like to continue/);
             }
         }
@@ -154,7 +154,7 @@ esac`,
             const missingNpx = run({ TEST_ARCH: architecture });
             expect(missingNpx, 1);
             assert.match(missingNpx.stderr, /Your Node\.js installation is incomplete/);
-            assert.ok(missingNpx.stderr.includes(downloadUrl || "https://nodejs.org/en/about/previous-releases"));
+            assert.ok(missingNpx.stderr.includes(downloadUrl || "https://nodejs.org/en/download"));
             assert.doesNotMatch(missingNpx.stdout, /Would you like to continue/);
         }
         assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeFailure);
@@ -197,8 +197,8 @@ esac`,
                         ? "Open the downloaded file to install Node.js. Then open a new Terminal window and run the command below."
                         : "After installing Node.js, open a new Terminal window and run the command below."));
                 } else {
-                    assert.ok(lines.includes("1. Browse all Node.js versions and downloads here:"));
-                    assert.ok(lines.includes("https://nodejs.org/en/about/previous-releases"));
+                    assert.ok(lines.includes("1. Choose a Node.js download for your computer here:"));
+                    assert.ok(lines.includes("https://nodejs.org/en/download"));
                     assert.doesNotMatch(declined.stdout, /https:\/\/nodejs\.org\/dist\//, "Unknown CPUs must not receive an incompatible download");
                 }
                 assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
@@ -247,7 +247,7 @@ esac`,
                 const incompatible = run({ ...archEnv, TEST_BINARY_FAIL: "1" });
                 expect(incompatible, 1);
                 assert.match(incompatible.stderr, /This computer cannot run the downloaded Node\.js version/);
-                assert.ok(incompatible.stderr.includes("https://nodejs.org/en/about/previous-releases"));
+                assert.ok(incompatible.stderr.includes("https://nodejs.org/en/download"));
                 assert.doesNotMatch(incompatible.stderr, /https:\/\/nodejs\.org\/dist\//, "Do not recommend another incompatible binary");
                 assert.equal(existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "", elevations);
                 assert.equal(existsSync(installed), false, "Unsupported Linux must fail before system writes");
@@ -305,7 +305,7 @@ esac`,
         assert.equal(existsSync(installed), false);
         const unsupported = run({ TEST_ARCH: "unsupported" });
         expect(unsupported, 1);
-        assert.ok(unsupported.stderr.includes("https://nodejs.org/en/about/previous-releases"));
+        assert.ok(unsupported.stderr.includes("https://nodejs.org/en/download"));
         writeFileSync(env.TEST_MANIFEST, "no matching archive\n");
         const invalidManifest = run();
         expect(invalidManifest, 1);

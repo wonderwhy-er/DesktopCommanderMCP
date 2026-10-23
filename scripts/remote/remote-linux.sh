@@ -31,7 +31,7 @@
         # Pin the official archive so showing help needs no network lookup: https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
         manual_download_url="https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz"
     else
-        manual_download_url=https://nodejs.org/en/about/previous-releases
+        manual_download_url=https://nodejs.org/en/download
     fi
 
     # Find Node: prefer the user's PATH, then check the standard installation directory.
@@ -67,7 +67,7 @@
                             'After installing Node.js, open a new Terminal window and run the command below.'
                     else
                         printf '\n%s\n' \
-                            '1. Browse all Node.js versions and downloads here:' \
+                            '1. Choose a Node.js download for your computer here:' \
                             "$manual_download_url"
                     fi
                     printf '\n%s\n' \
@@ -140,7 +140,7 @@
                     --strip-components=1 2>/dev/null ||
                     fail 'We could not prepare the Node.js download. Please run this command again.' "$?"
                 if ! "$temp_dir/node/bin/node" --version >/dev/null 2>&1; then
-                    fail 'This computer cannot run the downloaded Node.js version. Please install a compatible version from https://nodejs.org/en/about/previous-releases, then run this command again.'
+                    fail 'This computer cannot run the downloaded Node.js version. Please install a compatible version from https://nodejs.org/en/download, then run this command again.'
                 fi
 
                 # Copy only Node's installation directories; do not change unrelated system files.

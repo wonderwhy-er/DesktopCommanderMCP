@@ -33,7 +33,7 @@
             $manualDownloadUrl = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$arch.msi"
         }
         else {
-            $manualDownloadUrl = 'https://nodejs.org/en/about/previous-releases'
+            $manualDownloadUrl = 'https://nodejs.org/en/download'
         }
 
         # Find existing Node.js before downloading anything.
@@ -65,7 +65,7 @@
                     Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command below.'
                 }
                 else {
-                    Write-Host '1. Browse all Node.js versions and downloads here:'
+                    Write-Host '1. Choose a Node.js download for your computer here:'
                     Write-Host $manualDownloadUrl
                 }
                 Write-Host '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'

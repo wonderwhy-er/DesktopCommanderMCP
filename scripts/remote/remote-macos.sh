@@ -23,7 +23,7 @@
             manual_download_url=https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg
             ;;
         *)
-            manual_download_url=https://nodejs.org/en/about/previous-releases
+            manual_download_url=https://nodejs.org/en/download
             ;;
     esac
 
@@ -63,7 +63,7 @@
                             ;;
                         *)
                             printf '\n%s\n' \
-                                '1. Browse all Node.js versions and downloads here:' \
+                                '1. Choose a Node.js download for your computer here:' \
                                 "$manual_download_url"
                             ;;
                     esac
