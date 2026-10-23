@@ -10,7 +10,7 @@ export type ConfigFieldDefinition = {
 export const CONFIG_FIELD_DEFINITIONS = {
   blockedCommands: {
     label: 'Blocked Commands',
-    description: 'This is your personal safety blocklist. If a command appears here, Desktop Commander will refuse to run it even if a prompt asks for it. Add risky commands you never want executed by mistake.',
+    description: 'Best-effort safety guardrail for shell command names detected by Desktop Commander\'s command parser. It is not a sandbox, does not parse every shell construct, and does not inspect arbitrary code executed inside interpreters or nested shells. Use it to reduce accidental direct execution of risky commands.',
     valueType: 'array',
   },
   allowedDirectories: {
