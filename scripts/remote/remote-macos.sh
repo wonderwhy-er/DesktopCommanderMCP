@@ -6,12 +6,13 @@
     set -eu
 
     fail() {
-        printf 'Error: %s\n' "$*" >&2
-        exit 1
+        printf 'Error: %s\n' "$1" >&2
+        # Keep a failed download or installer's exit status when one is supplied.
+        exit "${2:-1}"
     }
 
     if [ "$(uname -s)" != Darwin ]; then
-        fail 'Use remote-linux.sh on Linux or remote-windows.ps1 on Windows.'
+        fail 'This command is for macOS. Please use the setup command for your computer.'
     fi
 
     # Find Node: prefer the user's PATH, then check the standard installation directory.
@@ -25,17 +26,37 @@
 
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
+            # Ask before changing the computer; stdin may still contain the piped script.
+            printf '%s\n' \
+                'Remote Desktop Commander needs Node.js, which is not installed on this computer.' \
+                'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
+            if ! ( : </dev/tty ) 2>/dev/null; then
+                fail 'We could not read your answer. Please open Terminal and run this command again.'
+            fi
+            printf '%s' 'Would you like to continue? Type Yes or No (press Enter for No): '
+            if ! IFS= read -r answer </dev/tty; then
+                answer=
+            fi
+            case "$answer" in
+                [yY]|[yY][eE][sS])
+                    ;;
+                *)
+                    printf '\n%s\n' 'Nothing was installed. You can run this command again whenever you are ready.'
+                    exit 0
+                    ;;
+            esac
+
             # Check prerequisites: the official .pkg supports both Mac architectures.
             case "$(uname -m)" in
                 arm64|x86_64)
                     ;;
                 *)
-                    fail 'Automatic installation supports Apple Silicon and Intel Macs.'
+                    fail 'This computer cannot use the automatic installer. Please install Node.js from https://nodejs.org, then run this command again.'
                     ;;
             esac
             for tool in curl shasum awk mktemp installer; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
-                    fail "Required tool is missing: $tool"
+                    fail 'We could not set up Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
                 fi
             done
 
@@ -49,7 +70,8 @@
 
             # Select the latest Node 24 installer from the checksum manifest's filename column ($2).
             curl -fsSL https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt \
-                -o "$temp_dir/SHASUMS256.txt"
+                -o "$temp_dir/SHASUMS256.txt" 2>/dev/null ||
+                fail 'We could not download Node.js. Check your internet connection and try again.' "$?"
             package=$(
                 awk '
                     $2 ~ /^node-v24\.[0-9]+\.[0-9]+\.pkg$/ {
@@ -58,37 +80,39 @@
                 ' "$temp_dir/SHASUMS256.txt"
             )
             if [ -z "$package" ]; then
-                fail 'No matching Node.js download was found.'
+                fail 'We could not find the Node.js download. Please try again later.'
             fi
 
             # Remove the filename prefix (#) and suffix (%) to get the download's version directory.
             version=${package#node-}
             version=${version%.pkg}
-            printf 'Installing Node.js %s in %s. Administrator access may be requested.\n' \
-                "$version" "$install_prefix"
+            printf '%s\n' 'Installing Node.js...'
 
             # Download and verify: check the selected package before requesting administrator access.
             curl -fsSL "https://nodejs.org/dist/$version/$package" \
-                -o "$temp_dir/$package"
+                -o "$temp_dir/$package" 2>/dev/null ||
+                fail 'We could not download Node.js. Check your internet connection and try again.' "$?"
             awk -v package="$package" '
                 $2 == package { print }
             ' "$temp_dir/SHASUMS256.txt" > "$temp_dir/checksum.txt"
             if ! (
                 # Node's SHASUMS256.txt publishes SHA-256 hashes; -a 256 selects that algorithm.
-                cd "$temp_dir" && shasum -a 256 -c checksum.txt
+                cd "$temp_dir" && shasum -a 256 -c checksum.txt >/dev/null 2>&1
             ); then
-                fail 'Node.js checksum verification failed.'
+                fail 'The Node.js download could not be verified. Please run this command again to download a fresh copy.'
             fi
 
             # Install system-wide: only the official installer runs with administrator privileges.
             if [ "$(id -u)" = 0 ]; then
-                installer -pkg "$temp_dir/$package" -target /
+                installer -pkg "$temp_dir/$package" -target / >/dev/null ||
+                    fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
             else
                 if ! command -v sudo >/dev/null 2>&1; then
-                    fail 'sudo is required to install Node.js. Install Node.js manually and retry.'
+                    fail 'We could not install Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
                 fi
                 # sudo reads passwords from /dev/tty even when this script is piped to sh.
-                sudo installer -pkg "$temp_dir/$package" -target /
+                sudo installer -pkg "$temp_dir/$package" -target / >/dev/null ||
+                    fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
             fi
 
             # Clean up: remove successful downloads and clear the now-unneeded exit/signal traps.
@@ -99,23 +123,22 @@
 
     # Validate: report an incomplete installation or unsupported version instead of replacing it.
     if ! command -v node >/dev/null 2>&1; then
-        fail 'Node.js installation did not provide node. Install Node.js manually and retry.'
+        fail 'We could not finish installing Node.js. Please install it from https://nodejs.org, then run this command again.'
     fi
     if ! node -e '
         const [major, minor] = process.versions.node.split(".").map(Number);
         // Package engines require Node >=22.12.0: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
         const supported = major > 22 || (major === 22 && minor >= 12);
         process.exit(supported ? 0 : 1);
-    '; then
-        fail 'Node.js 22.12+ is required. Upgrade your existing Node.js installation and rerun this command.'
+    ' 2>/dev/null; then
+        fail 'Your Node.js version is too old. Please install a newer version from https://nodejs.org, then run this command again.'
     fi
     if ! command -v npx >/dev/null 2>&1; then
-        fail 'npx is missing. Install npm for your existing Node.js installation and retry.'
+        fail 'Your Node.js installation is incomplete. Please reinstall Node.js from https://nodejs.org, then run this command again.'
     fi
 
     # Start as the original user: --yes accepts npm's package-download prompt.
-    printf 'Starting Desktop Commander with Node.js %s. Press Ctrl+C to stop; rerun this command to start again.\n' \
-        "$(node --version)"
+    printf '%s\n' 'Starting Remote Desktop Commander. To stop it, press Ctrl+C. To start it again, run this command again.'
     # -t 0 checks whether stdin is a terminal. A curl | sh pipe needs /dev/tty for interactive input.
     # The isolated ':' command checks that /dev/tty can be opened without consuming any input.
     # exec replaces this launcher process, preserving the device command's exit status and Ctrl+C behavior.

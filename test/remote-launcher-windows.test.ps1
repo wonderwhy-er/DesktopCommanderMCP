@@ -24,6 +24,11 @@ $script:installerFailure = $false
 $script:missingInstalledNode = $false
 $script:installations = 0
 $script:downloadPaths = @()
+$script:consentAnswer = 'yes'
+$script:promptFailure = $false
+$script:prompts = 0
+$script:createdDirectories = 0
+$script:hostMessages = @()
 $refreshedPath = @($savedPath, [Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
 $script:checks = 0
 
@@ -33,6 +38,30 @@ function Assert($Condition, [string]$Message) {
 }
 
 # Stub network, MSI execution, and device commands; never install software on the test host.
+function Write-Host {
+    param($Object)
+    $script:hostMessages += [string]$Object
+    Microsoft.PowerShell.Utility\Write-Host $Object
+}
+
+function Read-Host {
+    param($Prompt)
+    $script:prompts++
+    Assert ($script:hostMessages[-2] -eq 'Remote Desktop Commander needs Node.js, which is not installed on this computer.') 'Explain why Node.js is needed before asking for consent.'
+    Assert ($script:hostMessages[-1] -eq 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.') 'Explain both installation and device startup before asking for consent.'
+    Assert ($Prompt -eq 'Would you like to continue? Type Yes or No (press Enter for No)') 'Consent must offer Yes/No with No as the default.'
+    if ($script:promptFailure) { throw 'Fixture prompt unavailable' }
+    # Read-Host at EOF produces no pipeline value, which differs from an explicit null result.
+    if ($null -eq $script:consentAnswer) { return }
+    return $script:consentAnswer
+}
+
+function New-Item {
+    param($ItemType, $Path)
+    $script:createdDirectories++
+    Microsoft.PowerShell.Management\New-Item -ItemType $ItemType -Path $Path
+}
+
 function Get-Command {
     param($Name, $CommandType, $ErrorAction)
     if ($Name -eq 'node.exe') {
@@ -120,6 +149,7 @@ try {
     Run-Launcher
     Assert ($script:downloads -eq 0) 'Existing Node must not trigger downloads.'
     Assert ($script:installations -eq 0) 'Existing Node must not trigger an installer.'
+    Assert ($script:prompts -eq 0) 'Existing Node must not trigger a consent prompt.'
     Assert ($script:calls[0] -eq '--yes @wonderwhy-er/desktop-commander@latest remote') 'Wrong remote command.'
     $wrapper = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../scripts/remote/remote-windows.cmd')
     $bootstrap = [regex]::Match($wrapper, 'powershell\.exe -NoProfile -Command "([^"]+)"')
@@ -129,23 +159,72 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
     foreach ($v in @('20.19.0', '22.11.0')) {
         $script:version = $v
-        Run-Launcher '22.12+ is required'
+        Run-Launcher 'Your Node.js version is too old'
     }
     foreach ($v in @('22.12.0', '24.0.0')) {
         $script:version = $v
         Run-Launcher
     }
     $script:missingNpx = $true
-    Run-Launcher 'npx.cmd is missing'
+    Run-Launcher 'Your Node.js installation is incomplete'
     $script:missingNpx = $false
     $script:commandExit = 7
-    Run-Launcher 'exited with code 7'
+    Run-Launcher 'Remote Desktop Commander stopped unexpectedly'
     $script:commandExit = 0
     $script:existingNode = $false
     $script:systemNode = $true
     Run-Launcher
     Assert ($script:downloads -eq 0) 'A standard installation on persisted PATH must be reused without downloads.'
     Assert ($script:installations -eq 0) 'A standard installation on persisted PATH must not be reinstalled.'
+    Assert ($script:prompts -eq 0) 'Node on persisted PATH must not trigger a consent prompt.'
+
+    $script:systemNode = $false
+    $downloadsBeforeConsent = $script:downloads
+    $installationsBeforeConsent = $script:installations
+    $callsBeforeConsent = $script:calls.Count
+    $directoriesBeforeConsent = $script:createdDirectories
+    # Null models end-of-input; every answer except y/yes must cancel.
+    foreach ($answer in @('n', 'no', 'No', '', 'maybe', 'yes ', $null)) {
+        $script:consentAnswer = $answer
+        $promptsBeforeRun = $script:prompts
+        Run-Launcher
+        Assert ($script:prompts -eq $promptsBeforeRun + 1) 'Missing Node must prompt exactly once.'
+        Assert ($script:hostMessages[-1] -eq 'Nothing was installed. You can run this command again whenever you are ready.') 'Declined or absent consent must report cancellation.'
+        Assert ($script:downloads -eq $downloadsBeforeConsent) 'Cancellation must not download anything.'
+        Assert ($script:installations -eq $installationsBeforeConsent) 'Cancellation must not install anything.'
+        Assert ($script:calls.Count -eq $callsBeforeConsent) 'Cancellation must not start remote.'
+        Assert ($script:createdDirectories -eq $directoriesBeforeConsent) 'Cancellation must not create a temporary directory.'
+    }
+    $script:promptFailure = $true
+    Run-Launcher 'We could not read your answer'
+    Assert ($script:downloads -eq $downloadsBeforeConsent) 'An unavailable prompt must not download anything.'
+    Assert ($script:installations -eq $installationsBeforeConsent) 'An unavailable prompt must not install anything.'
+    Assert ($script:calls.Count -eq $callsBeforeConsent) 'An unavailable prompt must not start remote.'
+    Assert ($script:createdDirectories -eq $directoriesBeforeConsent) 'An unavailable prompt must not create a temporary directory.'
+    $script:promptFailure = $false
+
+    $script:consentAnswer = 'no'
+    $promptsBeforeWrapper = $script:prompts
+    Invoke-Expression $bootstrap.Groups[1].Value
+    [Net.ServicePointManager]::SecurityProtocol = $savedTls
+    Assert ($script:prompts -eq $promptsBeforeWrapper + 1) 'CMD must delegate exactly one confirmation to the PowerShell launcher.'
+    Assert ($script:downloads -eq $downloadsBeforeConsent) 'Declining from CMD must not download Node.js.'
+    Assert ($script:installations -eq $installationsBeforeConsent) 'Declining from CMD must not install Node.js.'
+    Assert ($script:calls.Count -eq $callsBeforeConsent) 'Declining from CMD must not start remote.'
+    Assert ($script:createdDirectories -eq $directoriesBeforeConsent) 'Declining from CMD must not create a temporary directory.'
+
+    foreach ($answer in @('y', 'Y', 'yes', 'YeS')) {
+        $script:consentAnswer = $answer
+        $script:systemNode = $false
+        $promptsBeforeRun = $script:prompts
+        $installationsBeforeRun = $script:installations
+        $callsBeforeRun = $script:calls.Count
+        Run-Launcher
+        Assert ($script:prompts -eq $promptsBeforeRun + 1) 'Accepted consent must prompt exactly once.'
+        Assert ($script:installations -eq $installationsBeforeRun + 1) 'Explicit y/yes consent must install Node.'
+        Assert ($script:calls.Count -eq $callsBeforeRun + 1) 'Successful installation after consent must start remote.'
+    }
+
     foreach ($arch in @('AMD64', 'ARM64')) {
         $script:systemNode = $false
         $env:PROCESSOR_ARCHITECTURE = $arch
@@ -153,34 +232,36 @@ try {
         Run-Launcher
         Assert ($script:installations -eq $installationsBeforeRun + 1) 'Node MSI must run once.'
         $downloadsBeforeRepeat = $script:downloads
+        $promptsBeforeRepeat = $script:prompts
         Run-Launcher
         Assert ($script:downloads -eq $downloadsBeforeRepeat) 'Repeat runs must reuse standard Node from persisted PATH.'
         Assert ($script:installations -eq $installationsBeforeRun + 1) 'Repeat runs must not reinstall Node.'
+        Assert ($script:prompts -eq $promptsBeforeRepeat) 'Repeat runs must not ask for installation consent again.'
     }
     $script:systemNode = $false
     $script:badChecksum = $true
     $callsBeforeFailure = $script:calls.Count
     $installationsBeforeFailure = $script:installations
-    Run-Launcher 'checksum verification failed'
+    Run-Launcher 'The Node.js download could not be verified'
     Assert ($script:installations -eq $installationsBeforeFailure) 'Corrupt downloads must not be installed.'
     Assert ($script:calls.Count -eq $callsBeforeFailure) 'Failed installation must not launch remote.'
     $script:badChecksum = $false
     $script:downloadFailure = $true
-    Run-Launcher 'Fixture network failure'
+    Run-Launcher 'We could not download Node.js'
     $script:downloadFailure = $false
     # MSI failures: 1602 canceled, 1603 fatal error, 1618 another install running; https://learn.microsoft.com/windows/win32/msi/error-codes
     foreach ($exitCode in @(1602, 1603, 1618)) {
         $script:installerExit = $exitCode
-        Run-Launcher "Windows Installer code $exitCode"
+        Run-Launcher 'Node.js could not be installed'
         Assert ($script:calls.Count -eq $callsBeforeFailure) 'Failed MSI must not launch remote.'
     }
     $script:installerExit = 0
     $script:installerFailure = $true
-    Run-Launcher 'Fixture UAC cancellation'
+    Run-Launcher 'Node.js was not installed'
     Assert ($script:calls.Count -eq $callsBeforeFailure) 'Canceled elevation must not launch remote.'
     $script:installerFailure = $false
     $script:missingInstalledNode = $true
-    Run-Launcher 'not on PATH'
+    Run-Launcher 'Please open a new PowerShell or Command Prompt window'
     Assert ($script:calls.Count -eq $callsBeforeFailure) 'Missing installed Node must not launch remote.'
     $script:missingInstalledNode = $false
     # MSI success with reboot required (3010) or initiated (1641): https://learn.microsoft.com/windows/win32/msi/error-codes
@@ -193,12 +274,12 @@ try {
     $script:installerExit = 0
     $script:systemNode = $false
     $env:PROCESSOR_ARCHITECTURE = 'x86'
-    Run-Launcher 'supports 64-bit Windows'
+    Run-Launcher 'This computer cannot use the automatic Node.js installer'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
     Run-Launcher
     Assert $script:systemNode '32-bit PowerShell must detect and install for the 64-bit OS.'
     $env:OS = 'Linux'
-    Run-Launcher 'Use remote-macos.sh'
+    Run-Launcher 'Please use the macOS or Linux command'
     Write-Host "PASS Windows launcher: $script:checks checks (network, MSI installer, and device command stubbed)"
 } finally {
     $env:PATH = $savedPath

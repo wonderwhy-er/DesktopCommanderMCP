@@ -25,11 +25,14 @@ try {
         mkdirSync(bin, { recursive: true });
         mkdirSync(home);
         const installed = path.join(dir, "system prefix");
+        const terminalInput = path.join(dir, "terminal input");
         const source = readFileSync(original, "utf8");
         assert.equal(source.split("install_prefix=/usr/local").length, 2);
-        // Only fixture copies get a replacement prefix; no test options reach production scripts.
+        // Only fixture copies replace system paths and terminal reads; production gets no test options.
         const script = path.join(dir, "launcher.sh");
-        writeFileSync(script, source.replace("install_prefix=/usr/local", `install_prefix=${quote(installed)}`));
+        writeFileSync(script, source
+            .replace("install_prefix=/usr/local", `install_prefix=${quote(installed)}`)
+            .replaceAll("</dev/tty", `<${quote(terminalInput)}`));
         for (const tool of ["awk", "mkdir", "dirname", "mktemp", "rm", "mv", "tar", "shasum", "sha256sum", "cp"]) {
             const found = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" });
             if (found.status === 0) {
@@ -40,6 +43,10 @@ try {
         if (!existsSync(path.join(bin, "sha256sum"))) {
             executable(path.join(bin, "sha256sum"), 'exec shasum -a 256 "$@"');
         }
+        const realMktemp = spawnSync("/bin/sh", ["-c", "command -v mktemp"], { encoding: "utf8" }).stdout.trim();
+        rmSync(path.join(bin, "mktemp"));
+        executable(path.join(bin, "mktemp"), `printf '%s\\n' "$*" >> "$TEST_TEMP_CREATIONS"
+exec ${quote(realMktemp)} "$@"`);
         // Protect the host even if a regression stops respecting the fixture's installation prefix.
         for (const tool of ["cp", "mkdir"]) {
             const real = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
@@ -92,6 +99,7 @@ esac`,
             TEST_PREFIX: installed,
             TEST_ORIGINAL_PATH: bin,
             TEST_ELEVATIONS: path.join(dir, "elevations"),
+            TEST_TEMP_CREATIONS: path.join(dir, "temporary-directory-creations"),
             TEST_CALLS: path.join(dir, "calls"),
             TEST_DOWNLOADS: path.join(dir, "downloads"),
             TEST_MANIFEST: path.join(dir, "SHASUMS256.txt"),
@@ -105,7 +113,9 @@ esac`,
         };
         for (const shell of ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash"].filter(existsSync)) {
             expect(spawnSync(shell, ["-n", original], { encoding: "utf8" }), 0);
-            expect(run({}, shell), 0);
+            const existing = run({}, shell);
+            expect(existing, 0);
+            assert.doesNotMatch(existing.stdout, /Would you like to continue/);
         }
         expect(run({}, "/bin/sh", readFileSync(script, "utf8")), 0);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing Node must not trigger a download");
@@ -123,12 +133,12 @@ esac`,
         for (const version of ["20.19.0", "22.11.0"]) {
             const result = run({ TEST_NODE_VERSION: version });
             expect(result, 1);
-            assert.match(result.stderr, /22\.12\+ is required/);
+            assert.match(result.stderr, /Your Node\.js version is too old/);
         }
         rmSync(path.join(bin, "npx"));
         const missingNpx = run();
         expect(missingNpx, 1);
-        assert.match(missingNpx.stderr, /npx is missing/);
+        assert.match(missingNpx.stderr, /Your Node\.js installation is incomplete/);
         assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeFailure);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing incompatible or incomplete Node must not be replaced");
         rmSync(path.join(bin, "node"));
@@ -136,13 +146,47 @@ esac`,
         mkdirSync(path.join(installed, "bin"), { recursive: true });
         executable(path.join(installed, "bin/node"), nodeStub);
         executable(path.join(installed, "bin/npx"), npxStub);
-        expect(run(), 0);
+        const standardInstallation = run();
+        expect(standardInstallation, 0);
+        assert.doesNotMatch(standardInstallation.stdout, /Would you like to continue/);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "An installed Node outside PATH must be reused");
         assert.equal(existsSync(env.TEST_ELEVATIONS), false);
         rmSync(installed, { recursive: true });
         const previousPrivateNode = path.join(home, ".local/share/desktop-commander/node/bin");
         mkdirSync(previousPrivateNode, { recursive: true });
         executable(path.join(previousPrivateNode, "node"), nodeStub);
+
+        const callsBeforeConsent = readFileSync(env.TEST_CALLS, "utf8");
+        for (const answer of ["n\n", "No\n", "\n", "maybe\n", " yes \n", "", "yes"]) {
+            writeFileSync(terminalInput, answer);
+            const declined = run({}, "/bin/sh", readFileSync(script, "utf8"));
+            expect(declined, 0);
+            assert.match(declined.stdout, /Remote Desktop Commander needs Node\.js, which is not installed on this computer\./);
+            assert.match(declined.stdout, /If you choose Yes, we will install Node\.js 24, then download and start Remote Desktop Commander\./);
+            assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
+            assert.match(declined.stdout, /Nothing was installed\. You can run this command again whenever you are ready\./);
+            assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
+            assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Declining must not request administrator access");
+            assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false, "Declining must not create a temporary directory");
+            assert.equal(existsSync(installed), false, "Declining must not install Node");
+            assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeConsent, "Declining must not start Desktop Commander");
+        }
+        rmSync(terminalInput);
+        const noTerminal = run({}, "/bin/sh", readFileSync(script, "utf8"));
+        expect(noTerminal, 1);
+        assert.match(noTerminal.stderr, /We could not read your answer\. Please open Terminal and run this command again\./);
+        assert.equal(existsSync(env.TEST_DOWNLOADS), false);
+        assert.equal(existsSync(env.TEST_ELEVATIONS), false);
+        assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false);
+        assert.equal(existsSync(installed), false);
+        assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeConsent);
+
+        // Acceptance reaches the first download; the existing fixtures below exercise full installation.
+        for (const answer of ["y\n", "Y\n", "yes\n", "YES\n", "yEs\n"]) {
+            writeFileSync(terminalInput, answer);
+            expect(run({ TEST_DOWNLOAD_FAIL: "1" }, "/bin/sh", readFileSync(script, "utf8")), 22);
+        }
+        writeFileSync(terminalInput, "YeS\n");
 
         for (const arch of ["x64", "arm64"]) {
             const archiveRoot = `node-v24.0.0-${platform === "macos" ? "darwin" : "linux"}-${arch}`;
@@ -165,7 +209,7 @@ esac`,
                 const elevations = existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "";
                 const incompatible = run({ ...archEnv, TEST_BINARY_FAIL: "1" });
                 expect(incompatible, 1);
-                assert.match(incompatible.stderr, /cannot run on your OS/);
+                assert.match(incompatible.stderr, /This computer cannot run the downloaded Node\.js version/);
                 assert.equal(existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "", elevations);
                 assert.equal(existsSync(installed), false, "Unsupported Linux must fail before system writes");
             }
@@ -173,7 +217,7 @@ esac`,
             assert.equal(existsSync(installed), false);
             const emptyInstall = run({ ...archEnv, TEST_INSTALL_EMPTY: "1" });
             expect(emptyInstall, 1);
-            assert.match(emptyInstall.stderr, /installation did not provide node/);
+            assert.match(emptyInstall.stderr, /We could not finish installing Node\.js/);
             assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeInstall, "Failed installs must not launch Desktop Commander");
             mkdirSync(installed);
             writeFileSync(path.join(installed, "unrelated-file"), "keep existing system files");
@@ -201,7 +245,7 @@ esac`,
             writeFileSync(env.TEST_MANIFEST, manifest.replaceAll(checksum, "0".repeat(64)));
             const corrupt = run(archEnv);
             assert.notEqual(corrupt.status, 0);
-            assert.match(corrupt.stderr, /checksum verification failed/);
+            assert.match(corrupt.stderr, /The Node\.js download could not be verified/);
             assert.equal(existsSync(installed), false);
             assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations, "Checksum failure must precede elevation");
             checks++;
@@ -221,14 +265,14 @@ esac`,
         writeFileSync(env.TEST_MANIFEST, "no matching archive\n");
         const invalidManifest = run();
         expect(invalidManifest, 1);
-        assert.match(invalidManifest.stderr, /No matching Node.js download/);
+        assert.match(invalidManifest.stderr, /We could not find the Node\.js download/);
         assert.equal(existsSync(installed), false);
         assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations);
         writeFileSync(env.TEST_MANIFEST, validManifest);
         rmSync(path.join(bin, "sudo"));
         const missingSudo = run({ TEST_ARCH: "arm64" });
         expect(missingSudo, 1);
-        assert.match(missingSudo.stderr, /sudo is required/);
+        assert.match(missingSudo.stderr, /We could not install Node\.js automatically/);
         if (platform === "linux") {
             expect(run({ TEST_ARCH: "arm64", TEST_UID: "0", TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);
             assert.equal(statSync(installed).mode & 0o777, 0o755, "Direct root installation must create an accessible prefix");

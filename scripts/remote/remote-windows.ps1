@@ -4,7 +4,7 @@
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     if ($env:OS -ne 'Windows_NT') {
-        throw 'Use remote-macos.sh on macOS or remote-linux.sh on Linux.'
+        throw 'Please use the macOS or Linux command for this computer.'
     }
 
     $originalPath = $env:PATH
@@ -24,6 +24,20 @@
         }
 
         if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
+            # Confirm before downloading or installing anything; only an explicit Yes continues.
+            Write-Host 'Remote Desktop Commander needs Node.js, which is not installed on this computer.'
+            Write-Host 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
+            try {
+                $installConsent = Read-Host 'Would you like to continue? Type Yes or No (press Enter for No)'
+            }
+            catch {
+                throw 'We could not read your answer. Please open PowerShell or Command Prompt and run this command again.'
+            }
+            if ($installConsent -notin @('y', 'yes')) {
+                Write-Host 'Nothing was installed. You can run this command again whenever you are ready.'
+                return
+            }
+
             # Choose the installer for Windows itself, even from a 32-bit PowerShell.
             $architecture = $env:PROCESSOR_ARCHITECTURE
             if ($env:PROCESSOR_ARCHITEW6432) {
@@ -37,7 +51,7 @@
                     $arch = 'arm64'
                 }
                 default {
-                    throw 'Automatic installation supports 64-bit Windows on x64 and ARM64.'
+                    throw 'This computer cannot use the automatic Node.js installer. Please install Node.js from https://nodejs.org, then run this command again.'
                 }
             }
 
@@ -47,48 +61,63 @@
             New-Item -ItemType Directory -Path $tempDir | Out-Null
 
             # The manifest supplies the checksum, file name, and exact Node 24 version.
-            $manifest = (
-                Invoke-WebRequest -UseBasicParsing `
-                    'https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt'
-            ).Content
+            try {
+                $manifest = (
+                    Invoke-WebRequest -UseBasicParsing `
+                        'https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt'
+                ).Content
+            }
+            catch {
+                throw 'We could not download Node.js. Check your internet connection and run this command again.'
+            }
             $entry = [regex]::Match(
                 $manifest,
                 # Node SHASUMS256.txt uses 256-bit SHA-256: 256 / 4 bits per hex digit = 64 characters.
                 "(?m)^([a-f0-9]{64})\s+(node-(v24\.\d+\.\d+)-$arch\.msi)\r?$"
             )
             if (-not $entry.Success) {
-                throw 'No matching Node.js download was found.'
+                throw 'We could not find a Node.js installer for this computer. Please install Node.js from https://nodejs.org, then run this command again.'
             }
             # Regex groups contain the checksum (1), full installer file name (2), and version (3).
             $package = $entry.Groups[2].Value
             $version = $entry.Groups[3].Value
             $packagePath = Join-Path $tempDir $package
-            Invoke-WebRequest -UseBasicParsing `
-                "https://nodejs.org/dist/$version/$package" `
-                -OutFile $packagePath
+            try {
+                Invoke-WebRequest -UseBasicParsing `
+                    "https://nodejs.org/dist/$version/$package" `
+                    -OutFile $packagePath
+            }
+            catch {
+                throw 'We could not download Node.js. Check your internet connection and run this command again.'
+            }
 
             # Verify the downloaded bytes before asking Windows to install them.
             if ((Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash -ne $entry.Groups[1].Value) {
-                throw 'Node.js checksum verification failed.'
+                throw 'The Node.js download could not be verified. Please run this command again.'
             }
 
             # Install: use the standard Node.js destination and wait for MSI to finish.
-            Write-Host "Installing Node.js $version with the standard Windows installer. Approve its administrator prompt to continue."
+            Write-Host 'Installing Node.js...'
             # Elevate only MSI; /norestart prevents reboots: https://learn.microsoft.com/windows/win32/msi/standard-installer-command-line-options
-            $installer = Start-Process `
-                -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') `
-                -ArgumentList "/i `"$packagePath`" /passive /norestart" `
-                -Verb RunAs `
-                -Wait `
-                -PassThru
+            try {
+                $installer = Start-Process `
+                    -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') `
+                    -ArgumentList "/i `"$packagePath`" /passive /norestart" `
+                    -Verb RunAs `
+                    -Wait `
+                    -PassThru
+            }
+            catch {
+                throw 'Node.js was not installed. Please run this command again and allow the installer to continue.'
+            }
 
             # MSI success codes 1641 (reboot initiated) and 3010 (reboot required): https://learn.microsoft.com/windows/win32/msi/error-codes
             if ($installer.ExitCode -in @(1641, 3010)) {
-                Write-Host 'Node.js was installed. Restart Windows, then run this command again to start Desktop Commander.'
+                Write-Host 'Node.js is installed. Restart your computer, then run this command again.'
                 return
             }
             if ($installer.ExitCode -ne 0) {
-                throw "Node.js installation failed with Windows Installer code $($installer.ExitCode)."
+                throw 'Node.js could not be installed. Please install it from https://nodejs.org, then run this command again.'
             }
 
             # Load the installer's PATH update so this same invocation can start Node.js.
@@ -98,7 +127,7 @@
                 [Environment]::GetEnvironmentVariable('Path', 'User')
             ) -join ';'
             if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
-                throw 'Node.js was installed but is not on PATH. Open a new terminal and run this command again.'
+                throw 'Node.js is installed. Please open a new PowerShell or Command Prompt window and run this command again.'
             }
         }
 
@@ -111,17 +140,17 @@
             );
         "
         if ($LASTEXITCODE -ne 0) {
-            throw 'Node.js 22.12+ is required. Upgrade your existing Node.js installation and rerun this command.'
+            throw 'Your Node.js version is too old. Please install a newer version from https://nodejs.org, then run this command again.'
         }
         if (-not (Get-Command npx.cmd -CommandType Application -ErrorAction SilentlyContinue)) {
-            throw 'npx.cmd is missing. Install npm for your existing Node.js installation and retry.'
+            throw 'Your Node.js installation is incomplete. Please reinstall Node.js from https://nodejs.org, then run this command again.'
         }
 
         # Start Desktop Commander in this shell, without elevating the device command.
-        Write-Host "Starting Desktop Commander with Node.js $(& node.exe --version). Press Ctrl+C to stop; rerun this command to start again."
+        Write-Host 'Starting Remote Desktop Commander. To stop it, press Ctrl+C. To start it again, run this command again.'
         & npx.cmd --yes '@wonderwhy-er/desktop-commander@latest' remote
         if ($LASTEXITCODE -ne 0) {
-            throw "Desktop Commander exited with code $LASTEXITCODE."
+            throw 'Remote Desktop Commander stopped unexpectedly. Please run this command again.'
         }
     }
     finally {
