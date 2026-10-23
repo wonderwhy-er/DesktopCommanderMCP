@@ -2,10 +2,56 @@ import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 
+const UNRESOLVED_DYNAMIC_COMMAND = '<dynamic-command>';
+
 class CommandManager {
 
     getBaseCommand(command: string) {
         return command.split(' ')[0].toLowerCase().trim();
+    }
+
+    private classifyCallOperatorTarget(commandString: string, ampersandIndex: number, asTyped: boolean) {
+        let next = ampersandIndex + 1;
+        while (next < commandString.length && /\s/.test(commandString[next])) next++;
+        if (next >= commandString.length) return { unresolved: false, command: null as string | null };
+
+        const first = commandString[next];
+        if (first === '$' || first === '(' || first === '{' || first === '@' || first === '[') {
+            return { unresolved: true, command: null as string | null };
+        }
+
+        if (first !== '"' && first !== "'") {
+            return { unresolved: false, command: null as string | null };
+        }
+
+        const quote = first;
+        let end = next + 1;
+        while (end < commandString.length) {
+            if (quote === '"' && commandString[end] === '`') {
+                end += 2;
+                continue;
+            }
+            if (commandString[end] === quote) {
+                if (quote === "'" && commandString[end + 1] === "'") {
+                    end += 2;
+                    continue;
+                }
+                break;
+            }
+            end++;
+        }
+
+        if (end >= commandString.length) {
+            return { unresolved: true, command: null as string | null };
+        }
+
+        const literal = commandString.slice(next + 1, end);
+        if (!literal || (quote === '"' && literal.includes('$'))) {
+            return { unresolved: true, command: null as string | null };
+        }
+
+        const command = asTyped ? literal : path.basename(literal);
+        return { unresolved: false, command: command.toLowerCase() };
     }
 
     /**
@@ -29,6 +75,7 @@ class CommandManager {
             let quoteChar = '';
             let currentCmd = '';
             let escaped = false;
+            let skipCurrentBaseCommand = false;
 
             for (let i = 0; i < commandString.length; i++) {
                 const char = commandString[i];
@@ -139,15 +186,38 @@ class CommandManager {
                 let isSeparator = false;
                 for (const separator of separators) {
                     if (commandString.startsWith(separator, i)) {
-                        // We found a separator - extract the command before it
-                        if (currentCmd.trim()) {
+                        let startsDynamicCall = false;
+
+                        // PowerShell's call operator can invoke either a static quoted command
+                        // or an executable expression. Resolve only the static quoted form;
+                        // variable/parenthesized/scriptblock targets remain fail-closed.
+                        if (separator === '&' && !currentCmd.trim()) {
+                            const target = this.classifyCallOperatorTarget(commandString, i, asTyped);
+                            if (target.unresolved) {
+                                commands.push(UNRESOLVED_DYNAMIC_COMMAND);
+                                skipCurrentBaseCommand = true;
+                                startsDynamicCall = true;
+                            } else if (target.command) {
+                                commands.push(target.command);
+                                skipCurrentBaseCommand = true;
+                                startsDynamicCall = true;
+                            }
+                        }
+
+                        // We found a separator - extract the command before it, unless this
+                        // segment is the unresolved target of a dynamic call operator.
+                        if (currentCmd.trim() && !skipCurrentBaseCommand) {
                             const baseCommand = this.extractBaseCommand(currentCmd.trim(), asTyped);
                             if (baseCommand) commands.push(baseCommand);
                         }
 
-                        // Move past the separator
+                        // Move past the separator. Only the `&` that started the dynamic
+                        // invocation carries the skip state into the following segment.
                         i += separator.length - 1;
                         currentCmd = '';
+                        if (!startsDynamicCall) {
+                            skipCurrentBaseCommand = false;
+                        }
                         isSeparator = true;
                         break;
                     }
@@ -159,7 +229,7 @@ class CommandManager {
             }
 
             // Don't forget to add the last command
-            if (currentCmd.trim()) {
+            if (currentCmd.trim() && !skipCurrentBaseCommand) {
                 const baseCommand = this.extractBaseCommand(currentCmd.trim(), asTyped);
                 if (baseCommand) commands.push(baseCommand);
             }
@@ -233,12 +303,19 @@ class CommandManager {
 
     async validateCommand(command: string): Promise<boolean> {
         try {
+            // Extract all commands from the command string.
+            const allCommands = this.extractCommands(command);
+
+            // A PowerShell call operator whose target comes from a variable cannot be
+            // resolved safely by this static parser. Fail closed instead of treating the
+            // first argument as if it were the executable name.
+            if (allCommands.includes(UNRESOLVED_DYNAMIC_COMMAND)) {
+                return false;
+            }
+
             // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
-            
-            // Extract all commands from the command string
-            const allCommands = this.extractCommands(command);
             
             // If there are no commands extracted, fall back to base command
             if (allCommands.length === 0) {
