@@ -186,8 +186,9 @@ esac`,
                         ? "Open the downloaded file to install Node.js. Then open a new Terminal window and run the command above."
                         : "After installing Node.js, open a new Terminal window and run the command above."));
                 } else {
-                    assert.ok(lines.includes("2. We do not have a compatible Node.js download link for this computer."));
-                    assert.doesNotMatch(declined.stdout, /https:\/\/nodejs\.org/, "Unknown CPUs must not receive an incompatible download");
+                    assert.ok(lines.includes("2. Browse all Node.js versions and downloads here:"));
+                    assert.ok(lines.includes("https://nodejs.org/en/about/previous-releases"));
+                    assert.doesNotMatch(declined.stdout, /https:\/\/nodejs\.org\/dist\//, "Unknown CPUs must not receive an incompatible download");
                 }
                 assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
                 assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Declining must not request administrator access");

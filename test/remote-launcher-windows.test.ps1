@@ -245,7 +245,8 @@ try {
             Assert ($script:hostMessages[-2] -eq $expectedDownload) 'The direct link must match the native Windows architecture.'
         }
         else {
-            Assert ($script:hostMessages[-1] -eq '2. We do not have a Node.js 24 download link for this type of computer. You can still try the command above.') 'Unknown architectures must explain that no download is available.'
+            Assert ($script:hostMessages[-2] -eq '2. Browse all Node.js versions and downloads here:') 'Unknown architectures must offer the list of Node.js downloads.'
+            Assert ($script:hostMessages[-1] -eq 'https://nodejs.org/en/about/previous-releases') 'Unknown architectures must link to the official Node.js releases page.'
             Assert (-not ($guidance -match '^https://nodejs.org/dist/')) 'Unknown architectures must not default to an x64 download.'
         }
         Assert ($script:downloads -eq $downloadsBeforeConsent) 'Showing an architecture-specific link must not download anything.'

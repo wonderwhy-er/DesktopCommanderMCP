@@ -61,7 +61,8 @@
                     Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command above.'
                 }
                 else {
-                    Write-Host '2. We do not have a Node.js 24 download link for this type of computer. You can still try the command above.'
+                    Write-Host '2. Browse all Node.js versions and downloads here:'
+                    Write-Host 'https://nodejs.org/en/about/previous-releases'
                 }
                 return
             }

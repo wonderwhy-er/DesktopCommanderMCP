@@ -57,7 +57,9 @@
                                 'Open the downloaded file to install Node.js. Then open a new Terminal window and run the command above.'
                             ;;
                         *)
-                            printf '\n%s\n' '2. We do not have a compatible Node.js download link for this computer.'
+                            printf '\n%s\n' \
+                                '2. Browse all Node.js versions and downloads here:' \
+                                'https://nodejs.org/en/about/previous-releases'
                             ;;
                     esac
                     exit 0

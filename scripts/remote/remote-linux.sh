@@ -64,7 +64,9 @@
                             "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz" \
                             'After installing Node.js, open a new Terminal window and run the command above.'
                     else
-                        printf '\n%s\n' '2. We do not have a compatible Node.js download link for this computer.'
+                        printf '\n%s\n' \
+                            '2. Browse all Node.js versions and downloads here:' \
+                            'https://nodejs.org/en/about/previous-releases'
                     fi
                     exit 0
                     ;;
