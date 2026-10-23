@@ -111,6 +111,7 @@ The `-h` alias is also supported.
 | `--logout` | Remove saved local Remote MCP credentials and exit |
 | `--no-persist-session` | Do not reuse or save authentication for this run |
 | `--disable-no-sleep` | Do not prevent sleep while the Remote Device is running |
+| `--no-sleep-ac-only` | Prevent sleep only on AC power (macOS); allow sleep on battery |
 | `--debug` | Enable verbose debug logging |
 | `-h`, `--help` | Show CLI help |
 
@@ -139,6 +140,16 @@ By default, the Remote Device uses macOS `caffeinate` while it is running so the
 ```bash
 npx @wonderwhy-er/desktop-commander@latest remote --disable-no-sleep
 ```
+
+To keep the device available while plugged in but allow sleep on battery:
+
+```bash
+npx @wonderwhy-er/desktop-commander@latest remote --no-sleep-ac-only
+```
+
+This uses `caffeinate -s`, whose system-sleep assertion applies only on AC power.
+The display can still sleep. `--disable-no-sleep` takes precedence if both flags
+are supplied. These options have no effect on other operating systems.
 
 ## Troubleshooting
 
