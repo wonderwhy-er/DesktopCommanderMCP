@@ -82,6 +82,8 @@ Execute long-running terminal commands on your computer and manage processes thr
 
 ## How to install
 
+For ChatGPT, Claude web, and other remote clients, see the [Remote device launchers](scripts/remote/README.md). They install Node.js when missing and run Desktop Commander Remote on macOS, Linux, or Windows.
+
 ### Install in Claude Desktop
 
 Desktop Commander offers multiple installation methods for Claude Desktop.
