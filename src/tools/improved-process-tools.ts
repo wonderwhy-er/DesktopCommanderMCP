@@ -220,6 +220,7 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     return {
       content: [{ type: "text", text: result.output }],
       isError: true,
+      ...(result.spawnError ? { structuredContent: { spawnError: result.spawnError } } : {}),
     };
   }
 

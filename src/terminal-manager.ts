@@ -79,10 +79,37 @@ export function getProcessWaitLimit(timeoutMs: number, capMs: number = MAX_PROCE
   return { waitMs: Math.min(timeoutMs, capMs), capMs, capped: timeoutMs > capMs };
 }
 
+export interface SpawnErrorDetails {
+  name: string;
+  message: string;
+  code?: string;
+  errno?: number;
+  syscall?: string;
+  path?: string;
+}
+
 /** executeCommand result: CommandExecutionResult plus the process state and whether the wait ceiling ended the wait. */
 export interface ProcessStartResult extends CommandExecutionResult {
   processState: ProcessState;  // State of the process when the wait ended (see getProcessState)
   waitCappedAtMs?: number;     // Set when the wait stopped at the wait ceiling before timeout_ms; the process keeps running
+  spawnError?: SpawnErrorDetails; // Present when the child executable could not be started
+}
+
+function getSpawnErrorDetails(error: Error): SpawnErrorDetails {
+  const nodeError = error as NodeJS.ErrnoException;
+  // Keep this deliberately narrower than the original Node error. In
+  // particular, do not forward `spawnargs` (which can contain the complete
+  // command and secrets) or `stack` (which can expose local source paths).
+  // These fields are enough to distinguish common launch failures such as
+  // ENOENT, EACCES and EPERM without echoing the command payload.
+  return {
+    name: error.name,
+    message: error.message,
+    ...(typeof nodeError.code === 'string' ? { code: nodeError.code } : {}),
+    ...(typeof nodeError.errno === 'number' ? { errno: nodeError.errno } : {}),
+    ...(typeof nodeError.syscall === 'string' ? { syscall: nodeError.syscall } : {}),
+    ...(typeof nodeError.path === 'string' ? { path: nodeError.path } : {}),
+  };
 }
 
 /**
@@ -216,15 +243,36 @@ export class TerminalManager {
       }
     });
 
+    // A failed spawn reports its real reason asynchronously on the next tick.
+    // If no PID was assigned synchronously, wait for the startup outcome instead
+    // of returning the generic "Failed to get process ID" message first.
+    if (!childProcess.pid && !pendingProcessError) {
+      await new Promise<void>((resolve) => {
+        const onSpawn = () => {
+          childProcess.off('error', onStartupError);
+          resolve();
+        };
+        const onStartupError = () => {
+          childProcess.off('spawn', onSpawn);
+          resolve();
+        };
+        childProcess.once('spawn', onSpawn);
+        childProcess.once('error', onStartupError);
+      });
+    }
+
     // Ensure childProcess.pid is defined before proceeding
     if (!childProcess.pid) {
-      // Return a consistent error object instead of throwing
-      const output = 'Error: Failed to get process ID. The command could not be executed.';
+      const spawnError = pendingProcessError ? getSpawnErrorDetails(pendingProcessError) : undefined;
+      const output = spawnError
+        ? `Error: ${spawnError.message}`
+        : 'Error: Failed to get process ID. The command could not be executed.';
       return {
         pid: -1,  // Use -1 to indicate an error state
         output,
         isBlocked: false,
-        processState: analyzeProcessState(output)
+        processState: analyzeProcessState(output),
+        ...(spawnError ? { spawnError } : {}),
       };
     }
 
