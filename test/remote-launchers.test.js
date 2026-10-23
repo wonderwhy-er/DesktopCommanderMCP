@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,12 +18,18 @@ function executable(file, source) {
 
 try {
     for (const platform of ["macos", "linux"]) {
-        const script = path.join(root, "scripts/remote", `remote-${platform}.sh`);
+        const original = path.join(root, "scripts/remote", `remote-${platform}.sh`);
         const dir = path.join(temp, platform);
         const bin = path.join(dir, "bin");
         const home = path.join(dir, "user home");
         mkdirSync(bin, { recursive: true });
         mkdirSync(home);
+        const installed = path.join(dir, "system prefix");
+        const source = readFileSync(original, "utf8");
+        assert.equal(source.split("install_prefix=/usr/local").length, 2);
+        // Only fixture copies get a replacement prefix; no test options reach production scripts.
+        const script = path.join(dir, "launcher.sh");
+        writeFileSync(script, source.replace("install_prefix=/usr/local", `install_prefix=${quote(installed)}`));
         for (const tool of ["awk", "mkdir", "dirname", "mktemp", "rm", "mv", "tar", "shasum", "sha256sum", "cp"]) {
             const found = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" });
             if (found.status === 0) {
@@ -34,13 +40,36 @@ try {
         if (!existsSync(path.join(bin, "sha256sum"))) {
             executable(path.join(bin, "sha256sum"), 'exec shasum -a 256 "$@"');
         }
+        // Protect the host even if a regression stops respecting the fixture's installation prefix.
+        for (const tool of ["cp", "mkdir"]) {
+            const real = spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim();
+            rmSync(path.join(bin, tool));
+            executable(path.join(bin, tool), `for argument do destination=$argument; done
+case "$destination" in "$TEST_ROOT"/*) ;; *) echo "Unsafe fixture destination: $destination" >&2; exit 98 ;; esac
+exec ${quote(real)} "$@"`);
+        }
+        executable(path.join(bin, "id"), 'echo "${TEST_UID:-1000}"');
+        executable(path.join(bin, "sudo"), `printf '%s\\n' "$*" >> "$TEST_ELEVATIONS"
+case "$1" in installer|mkdir|cp) ;; *) echo "Unexpected elevated command: $1" >&2; exit 97 ;; esac
+[ "\${TEST_INSTALL_FAIL:-0}" = 0 ] || exit "$TEST_INSTALL_FAIL"
+[ "\${TEST_INSTALL_EMPTY:-0}" = 0 ] || exit 0
+TEST_ELEVATED=1; export TEST_ELEVATED
+exec "$@"`);
+        executable(path.join(bin, "installer"), `[ "$1" = -pkg ] && [ -f "$2" ] && [ "$3" = -target ] && [ "$4" = / ] || exit 95
+mkdir -p "$TEST_PREFIX"
+tar -xzf "$2" -C "$TEST_PREFIX" --strip-components=1`);
         executable(
             path.join(bin, "uname"),
             `case "$1" in -s) echo '${platform === "macos" ? "Darwin" : "Linux"}' ;; -m) echo "\${TEST_ARCH:-x86_64}" ;; esac`,
         );
-        const nodeStub = `if [ "$1" = --version ]; then echo "v\${TEST_NODE_VERSION:-22.12.0}"; exit 0; fi
+        const nodeStub = `if [ "$1" = --version ]; then
+[ "\${TEST_BINARY_FAIL:-0}" = 0 ] || exit 1
+echo "v\${TEST_NODE_VERSION:-22.12.0}"; exit 0; fi
 exec ${quote(process.execPath)} -e 'Object.defineProperty(process.versions, "node", {value: process.env.TEST_NODE_VERSION || "22.12.0"}); eval(process.argv[1])' "$2"`;
-        const npxStub = 'printf "%s\\n" "$@" >> "$TEST_CALLS"; exit "${TEST_EXIT:-0}"';
+        const npxStub = `[ "\${TEST_ELEVATED:-0}" = 0 ] || { echo 'npx must not be elevated' >&2; exit 96; }
+case "$PATH" in "$TEST_ORIGINAL_PATH"|"$TEST_ORIGINAL_PATH:$TEST_PREFIX/bin") ;; *) echo 'Original PATH priority changed' >&2; exit 94 ;; esac
+[ -z "\${TEST_EXPECT_UMASK:-}" ] || [ "$(umask)" = "$TEST_EXPECT_UMASK" ] || { echo 'Caller umask changed' >&2; exit 93; }
+printf "%s\\n" "$@" >> "$TEST_CALLS"; exit "\${TEST_EXIT:-0}"`;
         executable(path.join(bin, "node"), nodeStub);
         executable(path.join(bin, "npx"), npxStub);
         executable(
@@ -49,7 +78,7 @@ exec ${quote(process.execPath)} -e 'Object.defineProperty(process.versions, "nod
 [ "\${TEST_DOWNLOAD_FAIL:-0}" = 0 ] || exit 22
 case "$2" in
     https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt) cp "$TEST_MANIFEST" "$4" ;;
-    https://nodejs.org/dist/v24.0.0/node-v24.0.0-*.tar.gz) cp "$TEST_ARCHIVE" "$4" ;;
+    https://nodejs.org/dist/v24.0.0/node-v24.0.0-*.tar.gz|https://nodejs.org/dist/v24.0.0/node-v24.0.0.pkg) cp "$TEST_ARCHIVE" "$4" ;;
     *) exit 99 ;;
 esac`,
         );
@@ -58,6 +87,11 @@ esac`,
             ...process.env,
             HOME: home,
             PATH: bin,
+            TMPDIR: dir,
+            TEST_ROOT: dir,
+            TEST_PREFIX: installed,
+            TEST_ORIGINAL_PATH: bin,
+            TEST_ELEVATIONS: path.join(dir, "elevations"),
             TEST_CALLS: path.join(dir, "calls"),
             TEST_DOWNLOADS: path.join(dir, "downloads"),
             TEST_MANIFEST: path.join(dir, "SHASUMS256.txt"),
@@ -70,10 +104,12 @@ esac`,
             checks++;
         };
         for (const shell of ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash"].filter(existsSync)) {
+            expect(spawnSync(shell, ["-n", original], { encoding: "utf8" }), 0);
             expect(run({}, shell), 0);
         }
         expect(run({}, "/bin/sh", readFileSync(script, "utf8")), 0);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing Node must not trigger a download");
+        assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Existing Node must not request administrator access");
         assert.deepEqual(readFileSync(env.TEST_CALLS, "utf8").trim().split("\n").slice(0, 3), [
             "--yes",
             "@wonderwhy-er/desktop-commander@latest",
@@ -94,26 +130,72 @@ esac`,
         expect(missingNpx, 1);
         assert.match(missingNpx.stderr, /npx is missing/);
         assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeFailure);
+        assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing incompatible or incomplete Node must not be replaced");
         rmSync(path.join(bin, "node"));
 
-        const installed = path.join(home, ".local/share/desktop-commander/node");
+        mkdirSync(path.join(installed, "bin"), { recursive: true });
+        executable(path.join(installed, "bin/node"), nodeStub);
+        executable(path.join(installed, "bin/npx"), npxStub);
+        expect(run(), 0);
+        assert.equal(existsSync(env.TEST_DOWNLOADS), false, "An installed Node outside PATH must be reused");
+        assert.equal(existsSync(env.TEST_ELEVATIONS), false);
+        rmSync(installed, { recursive: true });
+        const previousPrivateNode = path.join(home, ".local/share/desktop-commander/node/bin");
+        mkdirSync(previousPrivateNode, { recursive: true });
+        executable(path.join(previousPrivateNode, "node"), nodeStub);
+
         for (const arch of ["x64", "arm64"]) {
             const archiveRoot = `node-v24.0.0-${platform === "macos" ? "darwin" : "linux"}-${arch}`;
             const archiveBin = path.join(dir, archiveRoot, "bin");
             mkdirSync(archiveBin, { recursive: true });
+            for (const part of ["include", "lib", "share"]) mkdirSync(path.join(dir, archiveRoot, part), { recursive: true });
+            mkdirSync(path.join(dir, archiveRoot, "lib/node_modules/npm"), { recursive: true });
+            writeFileSync(path.join(dir, archiveRoot, "lib/node_modules/npm/package.json"), '{"name":"npm"}\n', { mode: 0o644 });
             executable(path.join(archiveBin, "node"), nodeStub);
             executable(path.join(archiveBin, "npx"), npxStub);
             const tar = spawnSync("tar", ["-czf", env.TEST_ARCHIVE, "-C", dir, archiveRoot]);
             assert.equal(tar.status, 0);
             const checksum = createHash("sha256").update(readFileSync(env.TEST_ARCHIVE)).digest("hex");
-            const manifest = `${checksum}  ${archiveRoot.replace("v24.0.0", "v22.23.4")}.tar.gz\n${checksum}  ${archiveRoot}.tar.gz\n`;
+            const filename = platform === "macos" ? "node-v24.0.0.pkg" : `${archiveRoot}.tar.gz`;
+            const manifest = `${checksum}  ${filename.replace("v24.0.0", "v22.23.4")}\n${checksum}  ${filename}\n`;
             writeFileSync(env.TEST_MANIFEST, manifest);
             const archEnv = { TEST_ARCH: arch === "x64" ? "x86_64" : platform === "macos" ? "arm64" : "aarch64" };
-            expect(run(archEnv), 0);
+            const callsBeforeInstall = readFileSync(env.TEST_CALLS, "utf8");
+            if (platform === "linux") {
+                const elevations = existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "";
+                const incompatible = run({ ...archEnv, TEST_BINARY_FAIL: "1" });
+                expect(incompatible, 1);
+                assert.match(incompatible.stderr, /cannot run on your OS/);
+                assert.equal(existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "", elevations);
+                assert.equal(existsSync(installed), false, "Unsupported Linux must fail before system writes");
+            }
+            expect(run({ ...archEnv, TEST_INSTALL_FAIL: "9" }), 9);
+            assert.equal(existsSync(installed), false);
+            const emptyInstall = run({ ...archEnv, TEST_INSTALL_EMPTY: "1" });
+            expect(emptyInstall, 1);
+            assert.match(emptyInstall.stderr, /installation did not provide node/);
+            assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeInstall, "Failed installs must not launch Desktop Commander");
+            mkdirSync(installed);
+            writeFileSync(path.join(installed, "unrelated-file"), "keep existing system files");
+            chmodSync(path.join(installed, "unrelated-file"), 0o600);
+            if (platform === "linux") {
+                expect(run({ ...archEnv, TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);
+                for (const installedPath of ["bin", "bin/node", "bin/npx", "lib", "lib/node_modules/npm", "include", "share"]) {
+                    assert.equal(statSync(path.join(installed, installedPath)).mode & 0o777, 0o755, `${installedPath} must be usable beyond root`);
+                }
+                assert.equal(statSync(path.join(installed, "lib/node_modules/npm/package.json")).mode & 0o777, 0o644, "npm files must stay readable beyond root");
+            } else {
+                expect(run(archEnv), 0);
+            }
             assert.ok(existsSync(path.join(installed, "bin/node")));
+            assert.equal(readFileSync(path.join(installed, "unrelated-file"), "utf8"), "keep existing system files");
+            assert.equal(statSync(path.join(installed, "unrelated-file")).mode & 0o777, 0o600, "Do not change existing system-file permissions");
+            const elevations = readFileSync(env.TEST_ELEVATIONS, "utf8");
+            assert.match(elevations, platform === "macos" ? /installer -pkg .*\.pkg -target \/\n/ : /cp -R /);
             const downloads = readFileSync(env.TEST_DOWNLOADS, "utf8");
-            expect(run(archEnv), 0);
-            assert.equal(readFileSync(env.TEST_DOWNLOADS, "utf8"), downloads, "Repeat runs must reuse private Node");
+            expect(run(archEnv, "/bin/sh", readFileSync(script, "utf8")), 0);
+            assert.equal(readFileSync(env.TEST_DOWNLOADS, "utf8"), downloads, "Repeat runs must reuse standard Node");
+            assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations, "Repeat runs must not elevate");
             rmSync(installed, { recursive: true });
 
             writeFileSync(env.TEST_MANIFEST, manifest.replaceAll(checksum, "0".repeat(64)));
@@ -121,8 +203,17 @@ esac`,
             assert.notEqual(corrupt.status, 0);
             assert.match(corrupt.stderr, /checksum verification failed/);
             assert.equal(existsSync(installed), false);
+            assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations, "Checksum failure must precede elevation");
             checks++;
+            writeFileSync(env.TEST_MANIFEST, manifest);
+            if (platform === "linux") {
+                expect(run({ ...archEnv, TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);
+                assert.equal(statSync(installed).mode & 0o777, 0o755, "A new system prefix must be accessible beyond root");
+                rmSync(installed, { recursive: true });
+            }
         }
+        const elevations = readFileSync(env.TEST_ELEVATIONS, "utf8");
+        const validManifest = readFileSync(env.TEST_MANIFEST, "utf8");
         const failedDownload = run({ TEST_DOWNLOAD_FAIL: "1" });
         expect(failedDownload, 22);
         assert.equal(existsSync(installed), false);
@@ -132,8 +223,22 @@ esac`,
         expect(invalidManifest, 1);
         assert.match(invalidManifest.stderr, /No matching Node.js download/);
         assert.equal(existsSync(installed), false);
+        assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations);
+        writeFileSync(env.TEST_MANIFEST, validManifest);
+        rmSync(path.join(bin, "sudo"));
+        const missingSudo = run({ TEST_ARCH: "arm64" });
+        expect(missingSudo, 1);
+        assert.match(missingSudo.stderr, /sudo is required/);
+        if (platform === "linux") {
+            expect(run({ TEST_ARCH: "arm64", TEST_UID: "0", TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);
+            assert.equal(statSync(installed).mode & 0o777, 0o755, "Direct root installation must create an accessible prefix");
+        } else {
+            expect(run({ TEST_ARCH: "arm64", TEST_UID: "0" }), 0);
+        }
+        assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations, "An originally root caller needs no sudo");
+        assert.equal(readFileSync(path.join(previousPrivateNode, "node"), "utf8"), `#!/bin/sh\n${nodeStub}\n`, "Previous private installations remain untouched");
     }
-    console.log(`PASS remote launchers: ${checks} shell checks (downloads and device command stubbed)`);
+    console.log(`PASS remote launchers: ${checks} shell checks (downloads, elevation, system installs, and device commands stubbed)`);
 } finally {
     rmSync(temp, { recursive: true, force: true });
 }

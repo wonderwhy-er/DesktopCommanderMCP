@@ -6,10 +6,12 @@
     fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
     [ "$(uname -s)" = Linux ] || fail 'Use remote-macos.sh on macOS or remote-windows.ps1 on Windows.'
 
-    install_dir="${HOME:?HOME is not set}/.local/share/desktop-commander/node"
+    # Node's default installation prefix: https://github.com/nodejs/node/blob/v24.x/configure.py (the --prefix option).
+    install_prefix=/usr/local
     if ! command -v node >/dev/null 2>&1; then
-        if [ ! -x "$install_dir/bin/node" ]; then
-            [ ! -e "$install_dir" ] || fail "Incomplete Node.js installation at $install_dir. Remove that directory and retry."
+        PATH="$PATH:$install_prefix/bin"
+        export PATH
+        if ! command -v node >/dev/null 2>&1; then
             case "$(uname -m)" in
                 aarch64|arm64) arch=arm64 ;;
                 x86_64) arch=x64 ;;
@@ -19,8 +21,7 @@
                 command -v "$tool" >/dev/null 2>&1 || fail "Required tool is missing: $tool"
             done
 
-            mkdir -p "$(dirname "$install_dir")"
-            temp_dir=$(mktemp -d "$(dirname "$install_dir")/.node-XXXXXX")
+            temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dc-node-XXXXXX")
             trap 'rm -rf "$temp_dir"' 0
             trap 'exit 130' INT # Shell signal status: 128 + SIGINT (2).
             trap 'exit 143' TERM # Shell signal status: 128 + SIGTERM (15).
@@ -31,21 +32,32 @@
             [ -n "$archive" ] || fail 'No matching Node.js download was found.'
             version=${archive#node-}
             version=${version%-linux-*}
-            printf 'Installing Node.js %s in %s\n' "$version" "$install_dir"
+            printf 'Installing Node.js %s in %s. Administrator access may be requested.\n' "$version" "$install_prefix"
             curl -fsSL "https://nodejs.org/dist/$version/$archive" -o "$temp_dir/$archive"
             awk -v archive="$archive" '$2 == archive {print}' "$temp_dir/SHASUMS256.txt" > "$temp_dir/checksum.txt"
             (cd "$temp_dir" && sha256sum -c checksum.txt) || fail 'Node.js checksum verification failed.'
-            mkdir "$temp_dir/node"
-            tar -xzf "$temp_dir/$archive" -C "$temp_dir/node" --strip-components=1
-            "$temp_dir/node/bin/node" --version >/dev/null || fail 'This Node.js build cannot run on your OS. Install a supported Node.js version manually.'
-            mv "$temp_dir/node" "$install_dir"
+            (
+                # POSIX umask: deny group/other write (0020 + 0002), keeping Node usable system-wide without changing the caller's mask.
+                umask 022
+                mkdir "$temp_dir/node"
+                tar -xzf "$temp_dir/$archive" -C "$temp_dir/node" --strip-components=1
+                "$temp_dir/node/bin/node" --version >/dev/null || fail 'This Node.js build cannot run on your OS. Install a supported Node.js version manually.'
+                if [ "$(id -u)" = 0 ]; then
+                    mkdir -p "$install_prefix"
+                    cp -R "$temp_dir/node/bin" "$temp_dir/node/include" "$temp_dir/node/lib" "$temp_dir/node/share" "$install_prefix"
+                else
+                    command -v sudo >/dev/null 2>&1 || fail 'sudo is required to install Node.js. Install Node.js manually and retry.'
+                    # sudo reads passwords from /dev/tty even when this script is piped to sh.
+                    sudo mkdir -p "$install_prefix"
+                    sudo cp -R "$temp_dir/node/bin" "$temp_dir/node/include" "$temp_dir/node/lib" "$temp_dir/node/share" "$install_prefix"
+                fi
+            )
             rm -rf "$temp_dir"
             trap - 0 INT TERM HUP
         fi
-        PATH="$install_dir/bin:$PATH"
-        export PATH
     fi
 
+    command -v node >/dev/null 2>&1 || fail 'Node.js installation did not provide node. Install Node.js manually and retry.'
     # Package engines require Node >=22.12.0: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
     node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)' ||
         fail 'Node.js 22.12+ is required. Upgrade your existing Node.js installation and rerun this command.'

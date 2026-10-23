@@ -5,7 +5,7 @@ $launcher = Join-Path $PSScriptRoot '../scripts/remote/remote-windows.ps1'
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('dc-launcher-test-' + [Guid]::NewGuid().ToString('N'))
 $savedPath = $env:PATH
 $savedOs = $env:OS
-$savedLocalAppData = $env:LOCALAPPDATA
+$savedWindir = $env:WINDIR
 $savedArchitecture = $env:PROCESSOR_ARCHITECTURE
 $savedWowArchitecture = $env:PROCESSOR_ARCHITEW6432
 $savedTls = [Net.ServicePointManager]::SecurityProtocol
@@ -13,11 +13,18 @@ $savedErrorPreference = $ErrorActionPreference
 $script:downloads = 0
 $script:calls = @()
 $script:existingNode = $true
+$script:systemNode = $false
 $script:missingNpx = $false
 $script:version = '22.12.0'
 $script:commandExit = 0
 $script:badChecksum = $false
 $script:downloadFailure = $false
+$script:installerExit = 0
+$script:installerFailure = $false
+$script:missingInstalledNode = $false
+$script:installations = 0
+$script:downloadPaths = @()
+$refreshedPath = @($savedPath, [Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User')) -join ';'
 $script:checks = 0
 
 function Assert($Condition, [string]$Message) {
@@ -25,11 +32,11 @@ function Assert($Condition, [string]$Message) {
     $script:checks++
 }
 
-# Stub only the network and device command; extraction uses the host's real Node binary.
+# Stub network, MSI execution, and device commands; never install software on the test host.
 function Get-Command {
     param($Name, $CommandType, $ErrorAction)
     if ($Name -eq 'node.exe') {
-        if ($script:existingNode) { return @{ Source = $NodePath } }
+        if ($script:existingNode -or ($script:systemNode -and $env:PATH -eq $refreshedPath)) { return @{ Source = $NodePath } }
     } elseif ($Name -eq 'npx.cmd') {
         if (-not $script:missingNpx) { return @{ Source = 'fixture-npx.cmd' } }
     } else { throw "Unexpected command lookup: $Name" }
@@ -43,6 +50,7 @@ function node.exe {
 }
 
 function npx.cmd {
+    if (-not $script:existingNode) { Assert ($env:PATH -eq $refreshedPath) 'Remote must retain original PATH priority and include persisted Machine/User PATH.' }
     $script:calls += ($args -join ' ')
     $global:LASTEXITCODE = $script:commandExit
 }
@@ -53,12 +61,13 @@ function Invoke-WebRequest {
     $script:downloads++
     if ($script:downloadFailure) { throw 'Fixture network failure' }
     if ($Uri -eq 'https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt') {
-        $hash = (Get-FileHash -LiteralPath (Join-Path $temp 'fixture.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hash = (Get-FileHash -LiteralPath (Join-Path $temp 'fixture.msi') -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($script:badChecksum) { $hash = '0' * 64 }
-        return @{ Content = "$hash  node-v22.23.4-win-x64.zip`n$hash  node-v22.23.4-win-arm64.zip`n$hash  node-v24.0.0-win-x64.zip`n$hash  node-v24.0.0-win-arm64.zip`n" }
+        return @{ Content = "$hash  node-v22.23.4-x64.msi`n$hash  node-v22.23.4-arm64.msi`n$hash  node-v24.0.0-x64.msi`n$hash  node-v24.0.0-arm64.msi`n" }
     }
-    Assert ($Uri -match '^https://nodejs.org/dist/v24\.0\.0/node-v24\.0\.0-win-(x64|arm64)\.zip$') 'Unexpected download URL.'
-    Copy-Item -LiteralPath (Join-Path $temp 'fixture.zip') -Destination $OutFile
+    Assert ($Uri -match '^https://nodejs.org/dist/v24\.0\.0/node-v24\.0\.0-(x64|arm64)\.msi$') 'Unexpected download URL.'
+    $script:downloadPaths += $OutFile
+    Copy-Item -LiteralPath (Join-Path $temp 'fixture.msi') -Destination $OutFile
 }
 
 function Invoke-RestMethod {
@@ -69,16 +78,19 @@ function Invoke-RestMethod {
     Get-Content -Raw -LiteralPath $launcher
 }
 
-function Expand-Archive {
-    param($LiteralPath, $DestinationPath)
-    $name = [IO.Path]::GetFileNameWithoutExtension($LiteralPath)
-    $folder = Join-Path $DestinationPath $name
-    New-Item -ItemType Directory -Path $folder | Out-Null
-    if ($PSVersionTable.Platform -eq 'Unix') {
-        New-Item -ItemType SymbolicLink -Path (Join-Path $folder 'node.exe') -Target $NodePath | Out-Null
-    } else {
-        Copy-Item -LiteralPath $NodePath -Destination (Join-Path $folder 'node.exe')
-    }
+function Start-Process {
+    param($FilePath, $ArgumentList, $Verb, [switch]$Wait, [switch]$PassThru)
+    Assert ($FilePath -eq (Join-Path $env:WINDIR 'System32\msiexec.exe')) 'Only the Windows installer may be launched in an elevated process.'
+    Assert ($Verb -eq 'RunAs') 'MSI must request elevation.'
+    Assert ($Wait -and $PassThru) 'Launcher must wait for and inspect the installer result.'
+    $packagePath = $script:downloadPaths[-1]
+    Assert ($ArgumentList -eq "/i `"$packagePath`" /passive /norestart") 'Use the quoted verified package, default install directory, and suppress restarts.'
+    Assert ((Get-FileHash -LiteralPath $packagePath).Hash -eq (Get-FileHash -LiteralPath (Join-Path $temp 'fixture.msi')).Hash) 'Installer package must match the verified download.'
+    $script:installations++
+    if ($script:installerFailure) { throw 'Fixture UAC cancellation' }
+    # MSI success codes: 0 complete, 1641 reboot initiated, 3010 reboot required; https://learn.microsoft.com/windows/win32/msi/error-codes
+    $script:systemNode = ($script:installerExit -in @(0, 1641, 3010)) -and -not $script:missingInstalledNode
+    return @{ ExitCode = $script:installerExit }
 }
 
 function Run-Launcher([string]$ExpectedError = '') {
@@ -92,17 +104,22 @@ function Run-Launcher([string]$ExpectedError = '') {
     Assert ($env:PATH -eq $savedPath) 'Launcher must restore the caller PATH.'
     Assert ([Net.ServicePointManager]::SecurityProtocol -eq $savedTls) 'Launcher must restore TLS settings.'
     Assert ($ErrorActionPreference -eq $savedErrorPreference) 'Launcher must preserve caller error preferences.'
+    foreach ($packagePath in $script:downloadPaths) {
+        Assert (-not (Test-Path -LiteralPath (Split-Path $packagePath -Parent))) 'Downloaded installer directory must be cleaned up.'
+    }
+    $script:downloadPaths = @()
 }
 
 try {
     New-Item -ItemType Directory -Path $temp | Out-Null
-    Set-Content -LiteralPath (Join-Path $temp 'fixture.zip') -Value 'fixture archive'
+    Set-Content -LiteralPath (Join-Path $temp 'fixture.msi') -Value 'fixture installer'
     $env:OS = 'Windows_NT'
-    $env:LOCALAPPDATA = Join-Path $temp 'user data'
+    $env:WINDIR = Join-Path $temp 'Windows'
     $env:PROCESSOR_ARCHITECTURE = 'AMD64'
     $env:PROCESSOR_ARCHITEW6432 = ''
     Run-Launcher
     Assert ($script:downloads -eq 0) 'Existing Node must not trigger downloads.'
+    Assert ($script:installations -eq 0) 'Existing Node must not trigger an installer.'
     Assert ($script:calls[0] -eq '--yes @wonderwhy-er/desktop-commander@latest remote') 'Wrong remote command.'
     $wrapper = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../scripts/remote/remote-windows.cmd')
     $bootstrap = [regex]::Match($wrapper, 'powershell\.exe -NoProfile -Command "([^"]+)"')
@@ -125,37 +142,68 @@ try {
     Run-Launcher 'exited with code 7'
     $script:commandExit = 0
     $script:existingNode = $false
-    $installed = Join-Path $env:LOCALAPPDATA 'DesktopCommander/node'
+    $script:systemNode = $true
+    Run-Launcher
+    Assert ($script:downloads -eq 0) 'A standard installation on persisted PATH must be reused without downloads.'
+    Assert ($script:installations -eq 0) 'A standard installation on persisted PATH must not be reinstalled.'
     foreach ($arch in @('AMD64', 'ARM64')) {
+        $script:systemNode = $false
         $env:PROCESSOR_ARCHITECTURE = $arch
+        $installationsBeforeRun = $script:installations
         Run-Launcher
-        Assert (Test-Path -LiteralPath (Join-Path $installed 'node.exe')) 'Node must be installed.'
+        Assert ($script:installations -eq $installationsBeforeRun + 1) 'Node MSI must run once.'
         $downloadsBeforeRepeat = $script:downloads
         Run-Launcher
-        Assert ($script:downloads -eq $downloadsBeforeRepeat) 'Repeat runs must reuse private Node.'
-        Remove-Item -LiteralPath $installed -Recurse -Force
+        Assert ($script:downloads -eq $downloadsBeforeRepeat) 'Repeat runs must reuse standard Node from persisted PATH.'
+        Assert ($script:installations -eq $installationsBeforeRun + 1) 'Repeat runs must not reinstall Node.'
     }
+    $script:systemNode = $false
     $script:badChecksum = $true
     $callsBeforeFailure = $script:calls.Count
+    $installationsBeforeFailure = $script:installations
     Run-Launcher 'checksum verification failed'
-    Assert (-not (Test-Path -LiteralPath $installed)) 'Corrupt downloads must not be installed.'
+    Assert ($script:installations -eq $installationsBeforeFailure) 'Corrupt downloads must not be installed.'
     Assert ($script:calls.Count -eq $callsBeforeFailure) 'Failed installation must not launch remote.'
     $script:badChecksum = $false
     $script:downloadFailure = $true
     Run-Launcher 'Fixture network failure'
     $script:downloadFailure = $false
+    # MSI failures: 1602 canceled, 1603 fatal error, 1618 another install running; https://learn.microsoft.com/windows/win32/msi/error-codes
+    foreach ($exitCode in @(1602, 1603, 1618)) {
+        $script:installerExit = $exitCode
+        Run-Launcher "Windows Installer code $exitCode"
+        Assert ($script:calls.Count -eq $callsBeforeFailure) 'Failed MSI must not launch remote.'
+    }
+    $script:installerExit = 0
+    $script:installerFailure = $true
+    Run-Launcher 'Fixture UAC cancellation'
+    Assert ($script:calls.Count -eq $callsBeforeFailure) 'Canceled elevation must not launch remote.'
+    $script:installerFailure = $false
+    $script:missingInstalledNode = $true
+    Run-Launcher 'not on PATH'
+    Assert ($script:calls.Count -eq $callsBeforeFailure) 'Missing installed Node must not launch remote.'
+    $script:missingInstalledNode = $false
+    # MSI success with reboot required (3010) or initiated (1641): https://learn.microsoft.com/windows/win32/msi/error-codes
+    foreach ($exitCode in @(3010, 1641)) {
+        $script:systemNode = $false
+        $script:installerExit = $exitCode
+        Run-Launcher
+        Assert ($script:calls.Count -eq $callsBeforeFailure) 'Reboot-required MSI success must not launch remote before a restart.'
+    }
+    $script:installerExit = 0
+    $script:systemNode = $false
     $env:PROCESSOR_ARCHITECTURE = 'x86'
     Run-Launcher 'supports 64-bit Windows'
     $env:PROCESSOR_ARCHITEW6432 = 'AMD64'
     Run-Launcher
-    Assert (Test-Path -LiteralPath (Join-Path $installed 'node.exe')) '32-bit PowerShell must detect the 64-bit OS.'
+    Assert $script:systemNode '32-bit PowerShell must detect and install for the 64-bit OS.'
     $env:OS = 'Linux'
     Run-Launcher 'Use remote-macos.sh'
-    Write-Host "PASS Windows launcher: $script:checks checks (network, extraction, and device command stubbed)"
+    Write-Host "PASS Windows launcher: $script:checks checks (network, MSI installer, and device command stubbed)"
 } finally {
     $env:PATH = $savedPath
     $env:OS = $savedOs
-    $env:LOCALAPPDATA = $savedLocalAppData
+    $env:WINDIR = $savedWindir
     $env:PROCESSOR_ARCHITECTURE = $savedArchitecture
     $env:PROCESSOR_ARCHITEW6432 = $savedWowArchitecture
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
