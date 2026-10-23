@@ -5,6 +5,8 @@ import { App } from '@modelcontextprotocol/ext-apps';
 import { createCompactRowShellController, type ToolShellController } from '../../shared/tool-shell.js';
 import { createWidgetStateStorage } from '../../shared/widget-state.js';
 import { renderCompactRow } from '../../shared/compact-row.js';
+import { escapeHtml } from '../../shared/escape-html.js';
+import { createLazyPreviewState, createLazyStateFromLegacy, isLazyPreviewState, type LazyPreviewState } from './lazy-preview-state.js';
 import { connectWithSharedHostContext, type UiChromeState } from '../../shared/host-context.js';
 import { createUiEventTracker } from '../../shared/ui-event-tracker.js';
 import { attachDirectoryHandlers } from './directory-controller.js';
@@ -34,6 +36,7 @@ let rpcUpdateContext: ((text: string) => void) | undefined;
 let openExternalLink: ((url: string) => Promise<boolean>) | undefined;
 let requestDisplayMode: ((mode: 'inline' | 'fullscreen') => Promise<string | null>) | undefined;
 let shellController: ToolShellController | undefined;
+let unloadPreview: (() => void) | undefined;
 let currentPayload: RenderPayload | undefined;
 let currentHtmlMode: HtmlPreviewMode = 'rendered';
 let currentHostContext: Record<string, unknown> | undefined;
@@ -289,6 +292,17 @@ function renderLoadingState(container: HTMLElement): void {
     }, PREVIEW_WATCHDOG_MS);
 }
 
+function ensureConflictDialogController(): void {
+    if (conflictDialogController) return;
+    if (!document.getElementById('md-conflict-modal')) {
+        const dialogHost = document.createElement('div');
+        dialogHost.innerHTML = renderConflictDialogMarkup();
+        const dialogRoot = dialogHost.firstElementChild;
+        if (dialogRoot) document.body.appendChild(dialogRoot);
+    }
+    conflictDialogController = createConflictDialogController({ container: document });
+}
+
 export function renderApp(
     container: HTMLElement,
     payload?: RenderPayload,
@@ -317,6 +331,7 @@ export function renderApp(
     }
 
     currentPayload = payload;
+    if (payload.fileType === 'markdown') ensureConflictDialogController();
     const capabilities = getFileTypeCapabilities(payload);
     if (!capabilities.supportsPreview && hideSummaryRow) {
         isExpanded = false;
@@ -384,6 +399,14 @@ export function renderApp(
         markdownController,
     });
 
+    const closePreview = (): void => {
+        const workspace = payload.fileType === 'markdown' ? markdownController.getState(payload) : undefined;
+        if (workspace?.dirty || workspace?.saving) return;
+        unloadPreview?.();
+    };
+    document.getElementById('close-preview')?.addEventListener('click', closePreview);
+    document.getElementById('close-preview-outer')?.addEventListener('click', closePreview);
+
     if (payload.fileType === 'markdown') {
         markdownController.attachHandlers(payload);
     }
@@ -404,7 +427,7 @@ export function renderApp(
             buildOpenInFolderCommand: (filePath) => buildOpenInFolderCommand(filePath, isLikelyUrl),
             onOpenPayload: (nextPayload) => {
                 directoryBackPayload = payload;
-                renderApp(container, nextPayload, 'rendered', true);
+                syncPayload?.(nextPayload);
             },
         });
     }
@@ -414,7 +437,7 @@ export function renderApp(
         const savedPayload = directoryBackPayload;
         backBtn.addEventListener('click', () => {
             directoryBackPayload = undefined;
-            renderApp(container, savedPayload, 'rendered', true);
+            syncPayload?.(savedPayload);
         });
     }
     if (payload.fileType === 'directory') {
@@ -428,6 +451,15 @@ export function renderApp(
         initialExpanded: layout.effectiveExpanded,
         onToggle: (expanded) => {
             isExpanded = expanded;
+            if (!expanded) {
+                const workspace = payload.fileType === 'markdown' ? markdownController.getState(payload) : undefined;
+                if (workspace?.dirty || workspace?.saving) {
+                    isExpanded = true;
+                    shellController?.setExpanded(true);
+                    return;
+                }
+                unloadPreview?.();
+            }
             trackUiEvent?.(expanded ? 'expand' : 'collapse', {
                 file_type: payload.fileType,
                 file_extension: fileExtension,
@@ -444,27 +476,16 @@ export function renderApp(
     onRender?.();
 }
 
-export function bootstrapApp(): void {
+export function bootstrapApp(hostApp?: App, alreadyConnected = false, openOnStart = false): void {
     const container = document.getElementById('app');
     if (!container) {
         return;
     }
     renderLoadingState(container);
 
-    // Mount the conflict dialog once at body level. It's position: fixed and
-    // must live outside the app container so that re-renders of the document
-    // body never wipe it while it's open.
-    if (!document.getElementById('md-conflict-modal')) {
-        const dialogHost = document.createElement('div');
-        dialogHost.innerHTML = renderConflictDialogMarkup();
-        const dialogRoot = dialogHost.firstElementChild;
-        if (dialogRoot) {
-            document.body.appendChild(dialogRoot);
-        }
-    }
-    conflictDialogController = createConflictDialogController({ container: document });
+    // Markdown conflict dialogs mount on first user expansion, not on every idle card.
 
-    const app = new App(
+    const app = hostApp ?? new App(
         { name: 'Desktop Commander File Preview', version: '1.0.0' },
         { updateModelContext: { text: {} } },
         { autoResize: true },
@@ -479,69 +500,123 @@ export function bootstrapApp(): void {
         hideSummaryRow = chrome.hideSummaryRow;
     };
 
-    const widgetState = createWidgetStateStorage<RenderPayload>(
-        (value): value is RenderPayload => isPreviewStructuredContent(value) && typeof (value as any).content === 'string'
+    const widgetState = createWidgetStateStorage<LazyPreviewState | RenderPayload>(
+        (value) => isLazyPreviewState(value)
+            || (isPreviewStructuredContent(value) && typeof (value as RenderPayload).content === 'string'),
     );
+    let lazyState: LazyPreviewState | undefined;
+    let loadEpoch = 0;
+    let awaitingMutation = false;
+    let mutationWatchdogId: ReturnType<typeof setTimeout> | undefined;
+    const clearMutationWatchdog = (): void => {
+        if (mutationWatchdogId !== undefined) clearTimeout(mutationWatchdogId);
+        mutationWatchdogId = undefined;
+    };
 
     const renderAndSync = (payload?: RenderPayload): void => {
-        if (payload) {
-            widgetState.write(payload);
+        if (!payload) {
+            renderStatusState(container, 'No preview available for this response.');
+            return;
         }
-        renderApp(container, payload, 'rendered', isExpanded);
+        const readArgs = lazyState?.readArgs.path === payload.filePath
+            ? lazyState.readArgs : { path: payload.filePath };
+        lazyState = createLazyPreviewState(readArgs, lazyState?.sourceTool);
+        // Only small metadata is stored in host widget state, never file contents.
+        widgetState.write(lazyState);
+        currentPayload = payload;
+        isExpanded = true;
+        renderApp(container, payload, 'rendered', true);
     };
+
+    const showLazyPreview = (state: LazyPreviewState, retry = false, pending = false): void => {
+        ++loadEpoch;
+        clearPreviewWatchdog();
+        shellController?.dispose();
+        shellController = undefined;
+        markdownController.clear();
+        selectionAbortController?.abort();
+        selectionAbortController = null;
+        currentPayload = undefined;
+        hostPayload = undefined;
+        localPayloadOverride = undefined;
+        inlinePayloadBeforeFullscreen = undefined;
+        directoryBackPayload = undefined;
+        isExpanded = false;
+        lazyState = state;
+
+        const filePath = state.readArgs.path as string;
+        const filename = filePath.split(/[\\/]/).pop() || filePath;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'compact-row compact-row--ready lazy-preview-open';
+        button.title = filePath;
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = (retry ? 'Retry preview: ' : 'View preview: ') + filename;
+        if (pending) {
+            button.disabled = true;
+            button.textContent = 'Waiting for file update: ' + filename;
+        }
+        const shell = document.createElement('main');
+        shell.className = 'shell lazy-preview-shell';
+        shell.append(button);
+        container.replaceChildren(shell);
+        document.body.classList.add('dc-ready');
+        onRender?.();
+
+        button.addEventListener('click', () => {
+            if (button.disabled) return;
+            button.disabled = true;
+            button.textContent = 'Loading preview: ' + filename;
+            const token = ++loadEpoch;
+            // Only a user click may issue the UI-origin read.
+            void pullPayloadByArgs(
+                { ...state.readArgs, origin: 'ui' },
+                (pulled) => {
+                    if (token !== loadEpoch) return;
+                    const stamped = state.sourceTool === 'edit_block' || state.sourceTool === 'write_file'
+                        ? { ...pulled, sourceTool: state.sourceTool }
+                        : pulled;
+                    const payload = stamped;
+                    hostPayload = payload;
+                    renderAndSync(payload);
+                    if (payload.fileType === 'markdown' && getCurrentDisplayMode() === 'fullscreen') {
+                        void markdownController.requestEditMode(payload);
+                    }
+                },
+                () => {
+                    if (token === loadEpoch) showLazyPreview(state, true);
+                },
+            );
+        });
+    };
+
     const syncFromPersistedWidgetState = (): void => {
-        const persistedPayload = widgetState.read();
-        if (!persistedPayload) {
-            return;
+        const saved = widgetState.read();
+        if (!saved) return;
+        const state = isLazyPreviewState(saved) ? saved : createLazyStateFromLegacy(saved);
+        // Replace old persisted full-payload widgets with metadata-only state.
+        if (!isLazyPreviewState(saved)) widgetState.write(state);
+        if (!lazyState || JSON.stringify(lazyState) !== JSON.stringify(state)) {
+            showLazyPreview(state);
         }
-
-        if (
-            currentPayload
-            && currentPayload.filePath === persistedPayload.filePath
-            && stripReadStatusLine(currentPayload.content) === stripReadStatusLine(persistedPayload.content)
-        ) {
-            return;
-        }
-
-        renderAndSync(persistedPayload);
     };
 
     syncPayload = renderAndSync;
     persistPayload = (payload: RenderPayload) => {
-        widgetState.write(payload);
+        const args = lazyState?.readArgs.path === payload.filePath
+            ? lazyState.readArgs : { path: payload.filePath };
+        lazyState = createLazyPreviewState(args, lazyState?.sourceTool);
+        widgetState.write(lazyState);
     };
     rerenderCurrent = () => {
-        renderApp(container, currentPayload, currentHtmlMode, isExpanded);
+        if (currentPayload) renderApp(container, currentPayload, currentHtmlMode, isExpanded);
+        else if (lazyState) showLazyPreview(lazyState);
     };
-
-    let pendingCachedPayload: RenderPayload | undefined;
-    let lastToolInputArgs: Record<string, unknown> | undefined;
-    // The mutation tool that produced the current tool call, if any — stamped
-    // onto the pulled payload so telemetry attributes to write_file/edit_block
-    // rather than the read_file pull that rendered it.
-    let lastMutationTool: 'write_file' | 'edit_block' | undefined;
-    // True once the current tool call has been rendered (via the input-time pull),
-    // so a late tool-result notification doesn't trigger a redundant second pull.
-    let renderedForCurrentInput = false;
-    let initialStateResolved = false;
-    const resolveInitialState = (payload?: RenderPayload, message?: string): void => {
-        if (initialStateResolved) {
-            return;
+    unloadPreview = () => {
+        if (lazyState) {
+            widgetState.write(lazyState);
+            showLazyPreview(lazyState);
         }
-        initialStateResolved = true;
-        if (payload) {
-            hostPayload = payload;
-            renderAndSync(payload);
-            if (payload.fileType === 'markdown' && getCurrentDisplayMode() === 'fullscreen') {
-                void markdownController.requestEditMode(payload);
-            }
-            if (payload.fileType === 'markdown') {
-                void markdownController.refreshFromDisk(payload);
-            }
-            return;
-        }
-        renderStatusState(container, message ?? 'No preview available for this response.');
-        onRender?.();
     };
 
     onRender = () => {};
@@ -577,103 +652,58 @@ export function bootstrapApp(): void {
     });
 
     app.ontoolinput = (params) => {
-        const requestedPath = typeof params.arguments?.path === 'string' ? params.arguments.path : undefined;
+        clearMutationWatchdog();
+        awaitingMutation = false;
         const readArgs = pickReadArgs(params.arguments);
-        lastMutationTool = inferMutationTool(params.arguments);
-        if (readArgs) {
-            // Retained so mutations (which pull at tool-result time) know what
-            // to re-read — faithfully reproducing offset/length/sheet/range.
-            lastToolInputArgs = readArgs;
-        }
-        if (
-            !initialStateResolved
-            && pendingCachedPayload
-            && requestedPath
-            && pendingCachedPayload.filePath === requestedPath
-        ) {
-            const cached = pendingCachedPayload;
-            pendingCachedPayload = undefined;
-            resolveInitialState(cached);
+        if (!readArgs) {
+            renderStatusState(container, 'No file preview for this tool.');
             return;
         }
-
-        renderLoadingState(container);
-        onRender?.();
-        renderedForCurrentInput = false;
-
-        // All previews render from the widget's own origin:'ui' RPC read — the
-        // notification channel is unreliable (the host strips structuredContent,
-        // and for images swallows the tool-result entirely to inline-render).
-        // tool-input always fires and carries the path + read args, so pull here.
-        // Exception: mutations (write_file/edit_block) — their tool-input arrives
-        // before the file changes, so they pull at tool-result time instead.
-        if (readArgs && !lastMutationTool) {
-            void pullPayloadByArgs(
-                readArgs,
-                (p) => {
-                    renderedForCurrentInput = true;
-                    if (initialStateResolved) {
-                        renderAndSync(getEffectiveIncomingPayload(p));
-                    } else {
-                        resolveInitialState(getEffectiveIncomingPayload(p));
-                    }
-                },
-                // Pull failed/timed out — the loading watchdog shows the failure row.
-                () => {},
-            );
+        const mutationTool = inferMutationTool(params.arguments);
+        const state = createLazyPreviewState(readArgs, mutationTool ?? 'read_file');
+        // Wait for write_file/edit_block completion before exposing the on-demand read.
+        clearMutationWatchdog();
+        awaitingMutation = !!mutationTool;
+        lazyState = state;
+        widgetState.write(state);
+        showLazyPreview(state, false, awaitingMutation);
+        if (awaitingMutation) {
+            // Some hosts omit tool-result notifications. Offer manual retry after
+            // the watchdog rather than leaving the preview disabled indefinitely.
+            mutationWatchdogId = setTimeout(() => {
+                mutationWatchdogId = undefined;
+                if (awaitingMutation && lazyState === state) {
+                    awaitingMutation = false;
+                    showLazyPreview(state, true);
+                }
+            }, PREVIEW_WATCHDOG_MS);
         }
     };
 
     app.ontoolresult = (result) => {
-        pendingCachedPayload = undefined;
-
-        // Host-facing responses carry no structuredContent, so this notification
-        // only signals completion. Reads already rendered from their input-time
-        // pull; mutations (write_file/edit_block) pull now that the file changed.
-        if (renderedForCurrentInput) {
+        clearMutationWatchdog();
+        // The model-facing tool result remains unchanged. A result notification
+        // must never trigger a UI-origin file read or rebuild a large DOM.
+        if ((result as { isError?: boolean })?.isError !== true) {
+            if (awaitingMutation && lazyState) {
+                awaitingMutation = false;
+                showLazyPreview(lazyState);
+            }
             return;
         }
-
+        awaitingMutation = false;
         const message = extractToolText(result as unknown as Record<string, unknown>);
-        const isError = (result as { isError?: boolean })?.isError === true;
-        const pullArgs = lastToolInputArgs
-            ?? (currentPayload?.filePath ? { path: currentPayload.filePath } : undefined);
-
-        const deliver = (pulled: RenderPayload): void => {
-            renderedForCurrentInput = true;
-            // The pull is always a read_file; re-stamp the originating mutation
-            // tool so telemetry attributes to write_file/edit_block.
-            const p = lastMutationTool ? { ...pulled, sourceTool: lastMutationTool } : pulled;
-            if (initialStateResolved) {
-                renderAndSync(getEffectiveIncomingPayload(p));
-            } else {
-                resolveInitialState(getEffectiveIncomingPayload(p));
-            }
-        };
-        const renderMessageFallback = (): void => {
-            if (!message) {
-                return;
-            }
-            if (!initialStateResolved) {
-                resolveInitialState(undefined, message);
-            } else {
-                renderStatusState(container, message);
-                onRender?.();
-            }
-        };
-
-        // A failed tool call has nothing worth re-reading — show its message.
-        if (!isError && pullArgs) {
-            renderLoadingState(container);
-            onRender?.();
-            void pullPayloadByArgs(pullArgs, deliver, renderMessageFallback);
-            return;
-        }
-        renderMessageFallback();
+        ++loadEpoch;
+        renderStatusState(container, message || 'Tool failed; no preview available.');
+        onRender?.();
     };
 
     app.ontoolcancelled = (params) => {
-        resolveInitialState(undefined, params.reason ?? 'Tool was cancelled.');
+        clearMutationWatchdog();
+        awaitingMutation = false;
+        ++loadEpoch;
+        renderStatusState(container, params.reason ?? 'Tool was cancelled.');
+        onRender?.();
     };
 
     const handleVisibilitySync = (): void => {
@@ -691,6 +721,7 @@ export function bootstrapApp(): void {
     };
 
     const teardown = (): void => {
+        clearMutationWatchdog();
         clearPreviewWatchdog();
         shellController?.dispose();
         shellController = undefined;
@@ -711,6 +742,7 @@ export function bootstrapApp(): void {
 
     void connectWithSharedHostContext({
         app,
+        alreadyConnected,
         chrome,
         onContextApplied: () => {
             const previousDisplayMode = getCurrentDisplayMode();
@@ -757,13 +789,16 @@ export function bootstrapApp(): void {
                     void markdownController.requestEditMode(currentPayload);
                 }
             }
-            if (initialStateResolved && displayModeChanged) {
+            if (currentPayload && displayModeChanged) {
                 rerenderCurrent?.();
             }
         },
         onConnected: () => {
             currentHostContext = app.getHostContext() as Record<string, unknown> | undefined;
-            pendingCachedPayload = widgetState.read() ?? undefined;
+            syncFromPersistedWidgetState();
+            if (openOnStart) {
+                container.querySelector<HTMLButtonElement>('.lazy-preview-open')?.click();
+            }
         },
     }).catch(() => {
         renderStatusState(container, 'Failed to connect to host.');

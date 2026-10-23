@@ -10,7 +10,9 @@ const target = process.argv[2];
 
 const TARGETS = {
   'file-preview': {
-    entry: 'src/ui/file-preview/src/main.ts',
+    entry: 'src/ui/file-preview/src/light-main.ts',
+    fullEntry: 'src/ui/file-preview/src/heavy-main.ts',
+    fullOutput: 'dist/ui/file-preview/preview-full-runtime.js',
     output: 'dist/ui/file-preview/preview-runtime.js',
     staticDir: 'src/ui/file-preview',
     styleLayers: [
@@ -47,7 +49,7 @@ if (target && !TARGETS[target]) {
 }
 
 async function buildTarget(targetName) {
-  const { entry, output, staticDir, styleLayers } = TARGETS[targetName];
+  const { entry, output, staticDir, styleLayers, fullEntry, fullOutput } = TARGETS[targetName];
   const outputPath = path.join(projectRoot, output);
   const outputDir = path.dirname(outputPath);
 
@@ -75,6 +77,19 @@ async function buildTarget(targetName) {
     minify: true,
     sourcemap: false
   });
+
+  if (fullEntry && fullOutput) {
+    await build({
+      entryPoints: [path.join(projectRoot, fullEntry)],
+      bundle: true,
+      format: 'iife',
+      platform: 'browser',
+      target: ['es2020'],
+      outfile: path.join(projectRoot, fullOutput),
+      minify: true,
+      sourcemap: false
+    });
+  }
 }
 
 async function main() {

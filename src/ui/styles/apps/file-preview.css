@@ -1486,3 +1486,37 @@ html:has(.fullscreen) #app {
 .md-conflict-btn--primary:hover {
   background: color-mix(in srgb, var(--accent, #4a8cff) 88%, black 12%);
 }
+
+/* Closed preview cards allocate just one accessible button, not a hidden document. */
+.lazy-preview-shell { min-width: 0; }
+.lazy-preview-open {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.45;
+}
+.lazy-preview-open:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
+}
+.lazy-preview-open:disabled { cursor: progress; opacity: 0.7; }
+
+/* A visible close action for touch devices when the host hides its own row. */
+.tool-shell.host-framed .preview-unload-outer {
+  display: block;
+  margin: 0 0 4px auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
