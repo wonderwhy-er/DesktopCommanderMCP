@@ -157,21 +157,44 @@ esac`,
         executable(path.join(previousPrivateNode, "node"), nodeStub);
 
         const callsBeforeConsent = readFileSync(env.TEST_CALLS, "utf8");
-        for (const answer of ["n\n", "No\n", "\n", "maybe\n", " yes \n", "", "yes"]) {
-            writeFileSync(terminalInput, answer);
-            const declined = run({}, "/bin/sh", readFileSync(script, "utf8"));
-            expect(declined, 0);
-            assert.match(declined.stdout, /Remote Desktop Commander needs Node\.js, which is not installed on this computer\./);
-            assert.match(declined.stdout, /If you choose Yes, we will install Node\.js 24, then download and start Remote Desktop Commander\./);
-            assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
-            assert.match(declined.stdout, /To use Remote Desktop Commander later, first install Node\.js 24 from https:\/\/nodejs\.org\./);
-            assert.match(declined.stdout, /Then open Terminal and run this command yourself:/);
-            assert.ok(declined.stdout.split("\n").includes("npx @wonderwhy-er/desktop-commander@latest remote"));
-            assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
-            assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Declining must not request administrator access");
-            assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false, "Declining must not create a temporary directory");
-            assert.equal(existsSync(installed), false, "Declining must not install Node");
-            assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeConsent, "Declining must not start Desktop Commander");
+        const manualDownloads = platform === "macos" ? {
+            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
+            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
+            unsupported: null,
+        } : {
+            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
+            aarch64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
+            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
+            unsupported: null,
+        };
+        for (const [architecture, downloadUrl] of Object.entries(manualDownloads)) {
+            for (const answer of ["n\n", "No\n", "\n", "maybe\n", " yes \n", "", "yes"]) {
+                writeFileSync(terminalInput, answer);
+                const declined = run({ TEST_ARCH: architecture }, "/bin/sh", readFileSync(script, "utf8"));
+                expect(declined, 0);
+                assert.match(declined.stdout, /Remote Desktop Commander needs Node\.js, which could not be found on this computer\./);
+                assert.match(declined.stdout, /If you choose Yes, we will install Node\.js 24, then download and start Remote Desktop Commander\./);
+                assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
+                const lines = declined.stdout.split("\n");
+                assert.ok(lines.includes("Node.js could not be found. You can choose either option:"));
+                assert.ok(lines.includes("1. If Node.js is already installed, open a new Terminal window and run:"));
+                assert.ok(lines.includes("npx @wonderwhy-er/desktop-commander@latest remote"));
+                if (downloadUrl) {
+                    assert.ok(lines.includes("2. To install Node.js yourself, use this download link:"));
+                    assert.ok(lines.includes(downloadUrl), `${architecture} must get the matching direct download`);
+                    assert.ok(lines.includes(platform === "macos"
+                        ? "Open the downloaded file to install Node.js. Then open a new Terminal window and run the command above."
+                        : "After installing Node.js, open a new Terminal window and run the command above."));
+                } else {
+                    assert.ok(lines.includes("2. We do not have a compatible Node.js download link for this computer."));
+                    assert.doesNotMatch(declined.stdout, /https:\/\/nodejs\.org/, "Unknown CPUs must not receive an incompatible download");
+                }
+                assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
+                assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Declining must not request administrator access");
+                assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false, "Declining must not create a temporary directory");
+                assert.equal(existsSync(installed), false, "Declining must not install Node");
+                assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeConsent, "Declining must not start Desktop Commander");
+            }
         }
         rmSync(terminalInput);
         const noTerminal = run({}, "/bin/sh", readFileSync(script, "utf8"));

@@ -26,9 +26,12 @@
 
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
+            # Use the same CPU check for manual download advice and automatic installation.
+            architecture=$(uname -m)
+
             # Ask before changing the computer; stdin may still contain the piped script.
             printf '%s\n' \
-                'Remote Desktop Commander needs Node.js, which is not installed on this computer.' \
+                'Remote Desktop Commander needs Node.js, which could not be found on this computer.' \
                 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
             if ! ( : </dev/tty ) 2>/dev/null; then
                 fail 'We could not read your answer. Please open Terminal and run this command again.'
@@ -42,15 +45,27 @@
                     ;;
                 *)
                     printf '\n%s\n' \
-                        'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.' \
-                        'Then open Terminal and run this command yourself:' \
+                        'Node.js could not be found. You can choose either option:' \
+                        '1. If Node.js is already installed, open a new Terminal window and run:' \
                         'npx @wonderwhy-er/desktop-commander@latest remote'
+                    case "$architecture" in
+                        arm64|x86_64)
+                            # Pin the manual link so declining needs no network lookup and works offline.
+                            printf '\n%s\n' \
+                                '2. To install Node.js yourself, use this download link:' \
+                                'https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg' \
+                                'Open the downloaded file to install Node.js. Then open a new Terminal window and run the command above.'
+                            ;;
+                        *)
+                            printf '\n%s\n' '2. We do not have a compatible Node.js download link for this computer.'
+                            ;;
+                    esac
                     exit 0
                     ;;
             esac
 
             # Check prerequisites: the official .pkg supports both Mac architectures.
-            case "$(uname -m)" in
+            case "$architecture" in
                 arm64|x86_64)
                     ;;
                 *)

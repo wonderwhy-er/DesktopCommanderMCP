@@ -24,22 +24,6 @@
         }
 
         if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
-            # Confirm before downloading or installing anything; only an explicit Yes continues.
-            Write-Host 'Remote Desktop Commander needs Node.js, which is not installed on this computer.'
-            Write-Host 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
-            try {
-                $installConsent = Read-Host 'Would you like to continue? Type Yes or No (press Enter for No)'
-            }
-            catch {
-                throw 'We could not read your answer. Please open PowerShell or Command Prompt and run this command again.'
-            }
-            if ($installConsent -notin @('y', 'yes')) {
-                Write-Host 'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.'
-                Write-Host 'Then open PowerShell or Command Prompt and run this command yourself:'
-                Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
-                return
-            }
-
             # Choose the installer for Windows itself, even from a 32-bit PowerShell.
             $architecture = $env:PROCESSOR_ARCHITECTURE
             if ($env:PROCESSOR_ARCHITEW6432) {
@@ -53,8 +37,37 @@
                     $arch = 'arm64'
                 }
                 default {
-                    throw 'This computer cannot use the automatic Node.js installer. Please install Node.js from https://nodejs.org, then run this command again.'
+                    $arch = $null
                 }
+            }
+
+            # Confirm before downloading or installing anything; only an explicit Yes continues.
+            Write-Host 'Remote Desktop Commander needs Node.js, which could not be found on this computer.'
+            Write-Host 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
+            try {
+                $installConsent = Read-Host 'Would you like to continue? Type Yes or No (press Enter for No)'
+            }
+            catch {
+                throw 'We could not read your answer. Please open PowerShell or Command Prompt and run this command again.'
+            }
+            if ($installConsent -notin @('y', 'yes')) {
+                Write-Host 'Node.js could not be found. You can choose either option:'
+                Write-Host '1. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'
+                Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
+                if ($arch) {
+                    Write-Host '2. To install Node.js yourself, use this download link:'
+                    # Pin the manual link to https://nodejs.org/dist/v24.22.1/SHASUMS256.txt so declining makes no network requests.
+                    Write-Host "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$arch.msi"
+                    Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command above.'
+                }
+                else {
+                    Write-Host '2. We do not have a Node.js 24 download link for this type of computer. You can still try the command above.'
+                }
+                return
+            }
+
+            if (-not $arch) {
+                throw 'This computer cannot use the automatic Node.js installer. Please install Node.js from https://nodejs.org, then run this command again.'
             }
 
             # Download: enable TLS for older PowerShell and use a temporary directory.

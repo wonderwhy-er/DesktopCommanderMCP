@@ -25,9 +25,22 @@
 
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
+            # Map the CPU once for both manual downloads and automatic installation.
+            case "$(uname -m)" in
+                aarch64|arm64)
+                    arch=arm64
+                    ;;
+                x86_64)
+                    arch=x64
+                    ;;
+                *)
+                    arch=
+                    ;;
+            esac
+
             # Ask before changing the computer; stdin may still contain the piped script.
             printf '%s\n' \
-                'Remote Desktop Commander needs Node.js, which is not installed on this computer.' \
+                'Remote Desktop Commander needs Node.js, which could not be found on this computer.' \
                 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
             if ! ( : </dev/tty ) 2>/dev/null; then
                 fail 'We could not read your answer. Please open Terminal and run this command again.'
@@ -41,25 +54,26 @@
                     ;;
                 *)
                     printf '\n%s\n' \
-                        'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.' \
-                        'Then open Terminal and run this command yourself:' \
+                        'Node.js could not be found. You can choose either option:' \
+                        '1. If Node.js is already installed, open a new Terminal window and run:' \
                         'npx @wonderwhy-er/desktop-commander@latest remote'
+                    if [ -n "$arch" ]; then
+                        # Pin the manual link so declining needs no network lookup and works offline.
+                        printf '\n%s\n' \
+                            '2. To install Node.js yourself, use this download link:' \
+                            "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz" \
+                            'After installing Node.js, open a new Terminal window and run the command above.'
+                    else
+                        printf '\n%s\n' '2. We do not have a compatible Node.js download link for this computer.'
+                    fi
                     exit 0
                     ;;
             esac
 
-            # Check prerequisites: map the machine's architecture to the official archive name.
-            case "$(uname -m)" in
-                aarch64|arm64)
-                    arch=arm64
-                    ;;
-                x86_64)
-                    arch=x64
-                    ;;
-                *)
-                    fail 'This computer cannot use the automatic installer. Please install Node.js from https://nodejs.org, then run this command again.'
-                    ;;
-            esac
+            # Check prerequisites only after consent; unsupported CPUs still receive the manual command above.
+            if [ -z "$arch" ]; then
+                fail 'This computer cannot use the automatic installer. Please install Node.js from https://nodejs.org, then run this command again.'
+            fi
             for tool in curl tar sha256sum awk mktemp; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
                     fail 'We could not set up Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
