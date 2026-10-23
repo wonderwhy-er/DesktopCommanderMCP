@@ -177,16 +177,17 @@ esac`,
                 assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
                 const lines = declined.stdout.split("\n");
                 assert.ok(lines.includes("Node.js could not be found. You can choose either option:"));
-                assert.ok(lines.includes("1. If Node.js is already installed, open a new Terminal window and run:"));
+                assert.ok(lines.includes("2. If Node.js is already installed, open a new Terminal window and run:"));
                 assert.ok(lines.includes("npx @wonderwhy-er/desktop-commander@latest remote"));
+                assert.ok(lines.findIndex((line) => line.startsWith("1. ")) < lines.findIndex((line) => line.startsWith("2. ")), "Download guidance must appear before the manual command");
                 if (downloadUrl) {
-                    assert.ok(lines.includes("2. To install Node.js yourself, use this download link:"));
+                    assert.ok(lines.includes("1. To install Node.js yourself, use this download link:"));
                     assert.ok(lines.includes(downloadUrl), `${architecture} must get the matching direct download`);
                     assert.ok(lines.includes(platform === "macos"
-                        ? "Open the downloaded file to install Node.js. Then open a new Terminal window and run the command above."
-                        : "After installing Node.js, open a new Terminal window and run the command above."));
+                        ? "Open the downloaded file to install Node.js. Then open a new Terminal window and run the command below."
+                        : "After installing Node.js, open a new Terminal window and run the command below."));
                 } else {
-                    assert.ok(lines.includes("2. Browse all Node.js versions and downloads here:"));
+                    assert.ok(lines.includes("1. Browse all Node.js versions and downloads here:"));
                     assert.ok(lines.includes("https://nodejs.org/en/about/previous-releases"));
                     assert.doesNotMatch(declined.stdout, /https:\/\/nodejs\.org\/dist\//, "Unknown CPUs must not receive an incompatible download");
                 }

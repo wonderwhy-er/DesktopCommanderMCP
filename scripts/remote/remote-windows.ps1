@@ -52,18 +52,18 @@
             }
             if ($installConsent -notin @('y', 'yes')) {
                 Write-Host 'Node.js could not be found. You can choose either option:'
-                Write-Host '1. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'
-                Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
                 if ($arch) {
-                    Write-Host '2. To install Node.js yourself, use this download link:'
+                    Write-Host '1. To install Node.js yourself, use this download link:'
                     # Pin the manual link to https://nodejs.org/dist/v24.22.1/SHASUMS256.txt so declining makes no network requests.
                     Write-Host "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$arch.msi"
-                    Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command above.'
+                    Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command below.'
                 }
                 else {
-                    Write-Host '2. Browse all Node.js versions and downloads here:'
+                    Write-Host '1. Browse all Node.js versions and downloads here:'
                     Write-Host 'https://nodejs.org/en/about/previous-releases'
                 }
+                Write-Host '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'
+                Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
                 return
             }
 

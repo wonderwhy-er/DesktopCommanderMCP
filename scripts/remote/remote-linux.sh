@@ -53,21 +53,21 @@
                 [yY]|[yY][eE][sS])
                     ;;
                 *)
-                    printf '\n%s\n' \
-                        'Node.js could not be found. You can choose either option:' \
-                        '1. If Node.js is already installed, open a new Terminal window and run:' \
-                        'npx @wonderwhy-er/desktop-commander@latest remote'
+                    printf '\n%s\n' 'Node.js could not be found. You can choose either option:'
                     if [ -n "$arch" ]; then
                         # Pin the manual link so declining needs no network lookup and works offline.
                         printf '\n%s\n' \
-                            '2. To install Node.js yourself, use this download link:' \
+                            '1. To install Node.js yourself, use this download link:' \
                             "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz" \
-                            'After installing Node.js, open a new Terminal window and run the command above.'
+                            'After installing Node.js, open a new Terminal window and run the command below.'
                     else
                         printf '\n%s\n' \
-                            '2. Browse all Node.js versions and downloads here:' \
+                            '1. Browse all Node.js versions and downloads here:' \
                             'https://nodejs.org/en/about/previous-releases'
                     fi
+                    printf '\n%s\n' \
+                        '2. If Node.js is already installed, open a new Terminal window and run:' \
+                        'npx @wonderwhy-er/desktop-commander@latest remote'
                     exit 0
                     ;;
             esac
