@@ -189,7 +189,9 @@ try {
         $promptsBeforeRun = $script:prompts
         Run-Launcher
         Assert ($script:prompts -eq $promptsBeforeRun + 1) 'Missing Node must prompt exactly once.'
-        Assert ($script:hostMessages[-1] -eq 'Nothing was installed. You can run this command again whenever you are ready.') 'Declined or absent consent must report cancellation.'
+        Assert ($script:hostMessages[-3] -eq 'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.') 'Declined or absent consent must explain how to install Node.js manually.'
+        Assert ($script:hostMessages[-2] -eq 'Then open PowerShell or Command Prompt and run this command yourself:') 'Declined or absent consent must explain where to run the manual command.'
+        Assert ($script:hostMessages[-1] -eq 'npx.cmd @wonderwhy-er/desktop-commander@latest remote') 'Declined or absent consent must show the exact manual command.'
         Assert ($script:downloads -eq $downloadsBeforeConsent) 'Cancellation must not download anything.'
         Assert ($script:installations -eq $installationsBeforeConsent) 'Cancellation must not install anything.'
         Assert ($script:calls.Count -eq $callsBeforeConsent) 'Cancellation must not start remote.'
@@ -208,6 +210,9 @@ try {
     Invoke-Expression $bootstrap.Groups[1].Value
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
     Assert ($script:prompts -eq $promptsBeforeWrapper + 1) 'CMD must delegate exactly one confirmation to the PowerShell launcher.'
+    Assert ($script:hostMessages[-3] -eq 'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.') 'Declining from CMD must explain how to install Node.js manually.'
+    Assert ($script:hostMessages[-2] -eq 'Then open PowerShell or Command Prompt and run this command yourself:') 'Declining from CMD must explain where to run the manual command.'
+    Assert ($script:hostMessages[-1] -eq 'npx.cmd @wonderwhy-er/desktop-commander@latest remote') 'Declining from CMD must show the exact manual command.'
     Assert ($script:downloads -eq $downloadsBeforeConsent) 'Declining from CMD must not download Node.js.'
     Assert ($script:installations -eq $installationsBeforeConsent) 'Declining from CMD must not install Node.js.'
     Assert ($script:calls.Count -eq $callsBeforeConsent) 'Declining from CMD must not start remote.'

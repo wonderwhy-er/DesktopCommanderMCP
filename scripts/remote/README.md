@@ -1,6 +1,6 @@
 # Remote device launchers
 
-These scripts start Remote Desktop Commander on your computer. If Node.js is missing, they explain what will be installed and ask you to type **Yes** or **No**. Yes installs Node.js 24, then downloads and starts Remote Desktop Commander. No, an empty answer, or an unrecognized answer stops without installing or starting anything. If Node.js is already installed and compatible, setup starts Remote Desktop Commander without asking again.
+These scripts start Remote Desktop Commander on your computer. If Node.js is missing, they explain what will be installed and ask you to type **Yes** or **No**. Yes installs Node.js 24, then downloads and starts Remote Desktop Commander. No, an empty answer, or an unrecognized answer stops without installing or starting anything, and shows the command to run yourself after installing Node.js. If Node.js is already installed and compatible, setup starts Remote Desktop Commander without asking again.
 
 Inspect the source: [macOS](remote-macos.sh), [Linux](remote-linux.sh), [PowerShell](remote-windows.ps1), [CMD wrapper](remote-windows.cmd).
 

@@ -41,7 +41,10 @@
                 [yY]|[yY][eE][sS])
                     ;;
                 *)
-                    printf '\n%s\n' 'Nothing was installed. You can run this command again whenever you are ready.'
+                    printf '\n%s\n' \
+                        'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.' \
+                        'Then open Terminal and run this command yourself:' \
+                        'npx @wonderwhy-er/desktop-commander@latest remote'
                     exit 0
                     ;;
             esac

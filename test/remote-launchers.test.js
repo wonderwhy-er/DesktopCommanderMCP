@@ -164,7 +164,9 @@ esac`,
             assert.match(declined.stdout, /Remote Desktop Commander needs Node\.js, which is not installed on this computer\./);
             assert.match(declined.stdout, /If you choose Yes, we will install Node\.js 24, then download and start Remote Desktop Commander\./);
             assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
-            assert.match(declined.stdout, /Nothing was installed\. You can run this command again whenever you are ready\./);
+            assert.match(declined.stdout, /To use Remote Desktop Commander later, first install Node\.js 24 from https:\/\/nodejs\.org\./);
+            assert.match(declined.stdout, /Then open Terminal and run this command yourself:/);
+            assert.ok(declined.stdout.split("\n").includes("npx @wonderwhy-er/desktop-commander@latest remote"));
             assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Declining must not download Node");
             assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Declining must not request administrator access");
             assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false, "Declining must not create a temporary directory");

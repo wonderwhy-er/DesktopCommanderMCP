@@ -34,7 +34,9 @@
                 throw 'We could not read your answer. Please open PowerShell or Command Prompt and run this command again.'
             }
             if ($installConsent -notin @('y', 'yes')) {
-                Write-Host 'Nothing was installed. You can run this command again whenever you are ready.'
+                Write-Host 'To use Remote Desktop Commander later, first install Node.js 24 from https://nodejs.org.'
+                Write-Host 'Then open PowerShell or Command Prompt and run this command yourself:'
+                Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
                 return
             }
 
