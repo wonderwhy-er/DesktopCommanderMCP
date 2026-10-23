@@ -246,14 +246,27 @@ try {
             Assert ($script:hostMessages[-4] -eq $expectedDownload) 'The direct link must match the native Windows architecture.'
         }
         else {
+            $expectedDownload = 'https://nodejs.org/en/about/previous-releases'
             Assert ($script:hostMessages[-4] -eq '1. Browse all Node.js versions and downloads here:') 'Unknown architectures must offer the list of Node.js downloads first.'
-            Assert ($script:hostMessages[-3] -eq 'https://nodejs.org/en/about/previous-releases') 'Unknown architectures must link to the official Node.js releases page.'
+            Assert ($script:hostMessages[-3] -eq $expectedDownload) 'Unknown architectures must link to the official Node.js releases page.'
             Assert (-not ($guidance -match '^https://nodejs.org/dist/')) 'Unknown architectures must not default to an x64 download.'
         }
-        Assert ($script:downloads -eq $downloadsBeforeConsent) 'Showing an architecture-specific link must not download anything.'
-        Assert ($script:installations -eq $installationsBeforeConsent) 'Showing an architecture-specific link must not install anything.'
-        Assert ($script:calls.Count -eq $callsBeforeConsent) 'Showing an architecture-specific link must not start remote.'
-        Assert ($script:createdDirectories -eq $directoriesBeforeConsent) 'Showing an architecture-specific link must not create a temporary directory.'
+
+        # Existing installations need the same native download link, without prompting or installing.
+        $promptsBeforeErrors = $script:prompts
+        $script:existingNode = $true
+        $script:version = '22.11.0'
+        Run-Launcher "Your Node.js version is too old. Please install a newer version from $expectedDownload, then run this command again."
+        $script:version = '24.0.0'
+        $script:missingNpx = $true
+        Run-Launcher "Your Node.js installation is incomplete. Please reinstall Node.js from $expectedDownload, then run this command again."
+        $script:missingNpx = $false
+        $script:existingNode = $false
+        Assert ($script:prompts -eq $promptsBeforeErrors) 'Old or incomplete existing Node must not prompt for installation.'
+        Assert ($script:downloads -eq $downloadsBeforeConsent) 'Manual download guidance must not download anything.'
+        Assert ($script:installations -eq $installationsBeforeConsent) 'Manual download guidance must not install anything.'
+        Assert ($script:calls.Count -eq $callsBeforeConsent) 'Manual download guidance must not start remote.'
+        Assert ($script:createdDirectories -eq $directoriesBeforeConsent) 'Manual download guidance must not create a temporary directory.'
     }
     $env:PROCESSOR_ARCHITECTURE = 'AMD64'
     $env:PROCESSOR_ARCHITEW6432 = ''

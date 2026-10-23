@@ -28,7 +28,7 @@ powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol 
 
 Alternatively, save and run [remote-windows.cmd](remote-windows.cmd). Press **Ctrl+C** to stop; run the same command again to reconnect. Your computer may ask you to confirm during installation. Open a terminal window to answer the setup question; setup will not install Node.js if it cannot read your answer.
 
-Node.js 22.12+ is reused. Older or incomplete installations produce an upgrade/repair message. When Node is absent and you choose Yes, the launcher downloads the latest Node 24 from `nodejs.org` and verifies SHA-256 before installing:
+Node.js 22.12+ is reused. Messages asking users to upgrade, reinstall or manually install Node.js include the same manual download link. Unknown processors and Linux systems that cannot run the downloaded binary receive the all-releases page instead. When Node is absent and you choose Yes, the launcher downloads the latest Node 24 from `nodejs.org` and verifies SHA-256 before installing:
 
 - **macOS:** the official `.pkg` through `installer -target /`, placing Node.js and npm under `/usr/local`.
 - **Windows:** the official `.msi` with its normal installation directory, usually `C:\Program Files\nodejs`.

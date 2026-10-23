@@ -12,6 +12,30 @@
     $tempDir = $null
 
     try {
+        # Choose the installer for Windows itself, even from a 32-bit PowerShell.
+        $architecture = $env:PROCESSOR_ARCHITECTURE
+        if ($env:PROCESSOR_ARCHITEW6432) {
+            $architecture = $env:PROCESSOR_ARCHITEW6432
+        }
+        switch ($architecture) {
+            'AMD64' {
+                $arch = 'x64'
+            }
+            'ARM64' {
+                $arch = 'arm64'
+            }
+            default {
+                $arch = $null
+            }
+        }
+        if ($arch) {
+            # Pin the manual link to https://nodejs.org/dist/v24.22.1/SHASUMS256.txt so guidance makes no network requests.
+            $manualDownloadUrl = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$arch.msi"
+        }
+        else {
+            $manualDownloadUrl = 'https://nodejs.org/en/about/previous-releases'
+        }
+
         # Find existing Node.js before downloading anything.
         if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
             # A previous installer may have updated PATH after this terminal was opened.
@@ -24,23 +48,6 @@
         }
 
         if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
-            # Choose the installer for Windows itself, even from a 32-bit PowerShell.
-            $architecture = $env:PROCESSOR_ARCHITECTURE
-            if ($env:PROCESSOR_ARCHITEW6432) {
-                $architecture = $env:PROCESSOR_ARCHITEW6432
-            }
-            switch ($architecture) {
-                'AMD64' {
-                    $arch = 'x64'
-                }
-                'ARM64' {
-                    $arch = 'arm64'
-                }
-                default {
-                    $arch = $null
-                }
-            }
-
             # Confirm before downloading or installing anything; only an explicit Yes continues.
             Write-Host 'Remote Desktop Commander needs Node.js, which could not be found on this computer.'
             Write-Host 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
@@ -54,13 +61,12 @@
                 Write-Host 'Node.js could not be found. You can choose either option:'
                 if ($arch) {
                     Write-Host '1. To install Node.js yourself, use this download link:'
-                    # Pin the manual link to https://nodejs.org/dist/v24.22.1/SHASUMS256.txt so declining makes no network requests.
-                    Write-Host "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$arch.msi"
+                    Write-Host $manualDownloadUrl
                     Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command below.'
                 }
                 else {
                     Write-Host '1. Browse all Node.js versions and downloads here:'
-                    Write-Host 'https://nodejs.org/en/about/previous-releases'
+                    Write-Host $manualDownloadUrl
                 }
                 Write-Host '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'
                 Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
@@ -68,7 +74,7 @@
             }
 
             if (-not $arch) {
-                throw 'This computer cannot use the automatic Node.js installer. Please install Node.js from https://nodejs.org, then run this command again.'
+                throw "This computer cannot use the automatic Node.js installer. Please install Node.js from $manualDownloadUrl, then run this command again."
             }
 
             # Download: enable TLS for older PowerShell and use a temporary directory.
@@ -92,7 +98,7 @@
                 "(?m)^([a-f0-9]{64})\s+(node-(v24\.\d+\.\d+)-$arch\.msi)\r?$"
             )
             if (-not $entry.Success) {
-                throw 'We could not find a Node.js installer for this computer. Please install Node.js from https://nodejs.org, then run this command again.'
+                throw "We could not find a Node.js installer for this computer. Please install Node.js from $manualDownloadUrl, then run this command again."
             }
             # Regex groups contain the checksum (1), full installer file name (2), and version (3).
             $package = $entry.Groups[2].Value
@@ -133,7 +139,7 @@
                 return
             }
             if ($installer.ExitCode -ne 0) {
-                throw 'Node.js could not be installed. Please install it from https://nodejs.org, then run this command again.'
+                throw "Node.js could not be installed. Please install it from $manualDownloadUrl, then run this command again."
             }
 
             # Load the installer's PATH update so this same invocation can start Node.js.
@@ -156,10 +162,10 @@
             );
         "
         if ($LASTEXITCODE -ne 0) {
-            throw 'Your Node.js version is too old. Please install a newer version from https://nodejs.org, then run this command again.'
+            throw "Your Node.js version is too old. Please install a newer version from $manualDownloadUrl, then run this command again."
         }
         if (-not (Get-Command npx.cmd -CommandType Application -ErrorAction SilentlyContinue)) {
-            throw 'Your Node.js installation is incomplete. Please reinstall Node.js from https://nodejs.org, then run this command again.'
+            throw "Your Node.js installation is incomplete. Please reinstall Node.js from $manualDownloadUrl, then run this command again."
         }
 
         # Start Desktop Commander in this shell, without elevating the device command.

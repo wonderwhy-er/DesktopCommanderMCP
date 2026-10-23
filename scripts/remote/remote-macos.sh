@@ -15,6 +15,18 @@
         fail 'This command is for macOS. Please use the setup command for your computer.'
     fi
 
+    # Choose manual guidance before checking Node so upgrade and repair errors have a link too.
+    architecture=$(uname -m)
+    case "$architecture" in
+        arm64|x86_64)
+            # Pin the official package so showing help needs no network lookup: https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+            manual_download_url=https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg
+            ;;
+        *)
+            manual_download_url=https://nodejs.org/en/about/previous-releases
+            ;;
+    esac
+
     # Find Node: prefer the user's PATH, then check the standard installation directory.
     # The official macOS installer places Node and npm in /usr/local/bin:
     # https://github.com/nodejs/node/blob/v24.x/tools/macos-installer/productbuild/Resources/en.lproj/welcome.html.tmpl
@@ -26,9 +38,6 @@
 
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
-            # Use the same CPU check for manual download advice and automatic installation.
-            architecture=$(uname -m)
-
             # Ask before changing the computer; stdin may still contain the piped script.
             printf '%s\n' \
                 'Remote Desktop Commander needs Node.js, which could not be found on this computer.' \
@@ -47,16 +56,15 @@
                     printf '\n%s\n' 'Node.js could not be found. You can choose either option:'
                     case "$architecture" in
                         arm64|x86_64)
-                            # Pin the manual link so declining needs no network lookup and works offline.
                             printf '\n%s\n' \
                                 '1. To install Node.js yourself, use this download link:' \
-                                'https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg' \
+                                "$manual_download_url" \
                                 'Open the downloaded file to install Node.js. Then open a new Terminal window and run the command below.'
                             ;;
                         *)
                             printf '\n%s\n' \
                                 '1. Browse all Node.js versions and downloads here:' \
-                                'https://nodejs.org/en/about/previous-releases'
+                                "$manual_download_url"
                             ;;
                     esac
                     printf '\n%s\n' \
@@ -71,12 +79,12 @@
                 arm64|x86_64)
                     ;;
                 *)
-                    fail 'This computer cannot use the automatic installer. Please install Node.js from https://nodejs.org, then run this command again.'
+                    fail "This computer cannot use the automatic installer. Please install Node.js from $manual_download_url, then run this command again."
                     ;;
             esac
             for tool in curl shasum awk mktemp installer; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
-                    fail 'We could not set up Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
+                    fail "We could not set up Node.js automatically. Please install it from $manual_download_url, then run this command again."
                 fi
             done
 
@@ -125,14 +133,14 @@
             # Install system-wide: only the official installer runs with administrator privileges.
             if [ "$(id -u)" = 0 ]; then
                 installer -pkg "$temp_dir/$package" -target / >/dev/null ||
-                    fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                    fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
             else
                 if ! command -v sudo >/dev/null 2>&1; then
-                    fail 'We could not install Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
+                    fail "We could not install Node.js automatically. Please install it from $manual_download_url, then run this command again."
                 fi
                 # sudo reads passwords from /dev/tty even when this script is piped to sh.
                 sudo installer -pkg "$temp_dir/$package" -target / >/dev/null ||
-                    fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                    fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
             fi
 
             # Clean up: remove successful downloads and clear the now-unneeded exit/signal traps.
@@ -143,7 +151,7 @@
 
     # Validate: report an incomplete installation or unsupported version instead of replacing it.
     if ! command -v node >/dev/null 2>&1; then
-        fail 'We could not finish installing Node.js. Please install it from https://nodejs.org, then run this command again.'
+        fail "We could not finish installing Node.js. Please install it from $manual_download_url, then run this command again."
     fi
     if ! node -e '
         const [major, minor] = process.versions.node.split(".").map(Number);
@@ -151,10 +159,10 @@
         const supported = major > 22 || (major === 22 && minor >= 12);
         process.exit(supported ? 0 : 1);
     ' 2>/dev/null; then
-        fail 'Your Node.js version is too old. Please install a newer version from https://nodejs.org, then run this command again.'
+        fail "Your Node.js version is too old. Please install a newer version from $manual_download_url, then run this command again."
     fi
     if ! command -v npx >/dev/null 2>&1; then
-        fail 'Your Node.js installation is incomplete. Please reinstall Node.js from https://nodejs.org, then run this command again.'
+        fail "Your Node.js installation is incomplete. Please reinstall Node.js from $manual_download_url, then run this command again."
     fi
 
     # Start as the original user: --yes accepts npm's package-download prompt.

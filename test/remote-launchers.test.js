@@ -129,18 +129,38 @@ esac`,
         for (const version of ["22.12.0", "22.23.4", "24.0.0"]) {
             expect(run({ TEST_NODE_VERSION: version }), 0);
         }
+        const manualDownloads = platform === "macos" ? {
+            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
+            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
+            unsupported: null,
+        } : {
+            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
+            aarch64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
+            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
+            unsupported: null,
+        };
         const callsBeforeFailure = readFileSync(env.TEST_CALLS, "utf8");
-        for (const version of ["20.19.0", "22.11.0"]) {
-            const result = run({ TEST_NODE_VERSION: version });
-            expect(result, 1);
-            assert.match(result.stderr, /Your Node\.js version is too old/);
+        for (const [architecture, downloadUrl] of Object.entries(manualDownloads)) {
+            for (const version of ["20.19.0", "22.11.0"]) {
+                const result = run({ TEST_ARCH: architecture, TEST_NODE_VERSION: version });
+                expect(result, 1);
+                assert.match(result.stderr, /Your Node\.js version is too old/);
+                assert.ok(result.stderr.includes(downloadUrl || "https://nodejs.org/en/about/previous-releases"));
+                assert.doesNotMatch(result.stdout, /Would you like to continue/);
+            }
         }
         rmSync(path.join(bin, "npx"));
-        const missingNpx = run();
-        expect(missingNpx, 1);
-        assert.match(missingNpx.stderr, /Your Node\.js installation is incomplete/);
+        for (const [architecture, downloadUrl] of Object.entries(manualDownloads)) {
+            const missingNpx = run({ TEST_ARCH: architecture });
+            expect(missingNpx, 1);
+            assert.match(missingNpx.stderr, /Your Node\.js installation is incomplete/);
+            assert.ok(missingNpx.stderr.includes(downloadUrl || "https://nodejs.org/en/about/previous-releases"));
+            assert.doesNotMatch(missingNpx.stdout, /Would you like to continue/);
+        }
         assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeFailure);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing incompatible or incomplete Node must not be replaced");
+        assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Upgrade guidance must not request administrator access");
+        assert.equal(existsSync(env.TEST_TEMP_CREATIONS), false, "Upgrade guidance must not create temporary directories");
         rmSync(path.join(bin, "node"));
 
         mkdirSync(path.join(installed, "bin"), { recursive: true });
@@ -157,16 +177,6 @@ esac`,
         executable(path.join(previousPrivateNode, "node"), nodeStub);
 
         const callsBeforeConsent = readFileSync(env.TEST_CALLS, "utf8");
-        const manualDownloads = platform === "macos" ? {
-            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
-            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1.pkg",
-            unsupported: null,
-        } : {
-            x86_64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.gz",
-            aarch64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
-            arm64: "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-arm64.tar.gz",
-            unsupported: null,
-        };
         for (const [architecture, downloadUrl] of Object.entries(manualDownloads)) {
             for (const answer of ["n\n", "No\n", "\n", "maybe\n", " yes \n", "", "yes"]) {
                 writeFileSync(terminalInput, answer);
@@ -237,14 +247,19 @@ esac`,
                 const incompatible = run({ ...archEnv, TEST_BINARY_FAIL: "1" });
                 expect(incompatible, 1);
                 assert.match(incompatible.stderr, /This computer cannot run the downloaded Node\.js version/);
+                assert.ok(incompatible.stderr.includes("https://nodejs.org/en/about/previous-releases"));
+                assert.doesNotMatch(incompatible.stderr, /https:\/\/nodejs\.org\/dist\//, "Do not recommend another incompatible binary");
                 assert.equal(existsSync(env.TEST_ELEVATIONS) ? readFileSync(env.TEST_ELEVATIONS, "utf8") : "", elevations);
                 assert.equal(existsSync(installed), false, "Unsupported Linux must fail before system writes");
             }
-            expect(run({ ...archEnv, TEST_INSTALL_FAIL: "9" }), 9);
+            const failedInstall = run({ ...archEnv, TEST_INSTALL_FAIL: "9" });
+            expect(failedInstall, 9);
+            assert.ok(failedInstall.stderr.includes(manualDownloads[archEnv.TEST_ARCH]));
             assert.equal(existsSync(installed), false);
             const emptyInstall = run({ ...archEnv, TEST_INSTALL_EMPTY: "1" });
             expect(emptyInstall, 1);
             assert.match(emptyInstall.stderr, /We could not finish installing Node\.js/);
+            assert.ok(emptyInstall.stderr.includes(manualDownloads[archEnv.TEST_ARCH]));
             assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeInstall, "Failed installs must not launch Desktop Commander");
             mkdirSync(installed);
             writeFileSync(path.join(installed, "unrelated-file"), "keep existing system files");
@@ -288,7 +303,9 @@ esac`,
         const failedDownload = run({ TEST_DOWNLOAD_FAIL: "1" });
         expect(failedDownload, 22);
         assert.equal(existsSync(installed), false);
-        expect(run({ TEST_ARCH: "unsupported" }), 1);
+        const unsupported = run({ TEST_ARCH: "unsupported" });
+        expect(unsupported, 1);
+        assert.ok(unsupported.stderr.includes("https://nodejs.org/en/about/previous-releases"));
         writeFileSync(env.TEST_MANIFEST, "no matching archive\n");
         const invalidManifest = run();
         expect(invalidManifest, 1);
@@ -300,6 +317,7 @@ esac`,
         const missingSudo = run({ TEST_ARCH: "arm64" });
         expect(missingSudo, 1);
         assert.match(missingSudo.stderr, /We could not install Node\.js automatically/);
+        assert.ok(missingSudo.stderr.includes(manualDownloads.arm64));
         if (platform === "linux") {
             expect(run({ TEST_ARCH: "arm64", TEST_UID: "0", TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);
             assert.equal(statSync(installed).mode & 0o777, 0o755, "Direct root installation must create an accessible prefix");

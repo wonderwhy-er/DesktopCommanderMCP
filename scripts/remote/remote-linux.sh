@@ -15,6 +15,25 @@
         fail 'This command is for Linux. Please use the setup command for your computer.'
     fi
 
+    # Map the CPU before checking Node so upgrade and repair errors have the right link too.
+    case "$(uname -m)" in
+        aarch64|arm64)
+            arch=arm64
+            ;;
+        x86_64)
+            arch=x64
+            ;;
+        *)
+            arch=
+            ;;
+    esac
+    if [ -n "$arch" ]; then
+        # Pin the official archive so showing help needs no network lookup: https://nodejs.org/dist/v24.22.1/SHASUMS256.txt
+        manual_download_url="https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz"
+    else
+        manual_download_url=https://nodejs.org/en/about/previous-releases
+    fi
+
     # Find Node: prefer the user's PATH, then check the standard installation directory.
     # Node's default installation prefix: https://github.com/nodejs/node/blob/v24.x/configure.py (the --prefix option).
     install_prefix=/usr/local
@@ -25,19 +44,6 @@
 
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
-            # Map the CPU once for both manual downloads and automatic installation.
-            case "$(uname -m)" in
-                aarch64|arm64)
-                    arch=arm64
-                    ;;
-                x86_64)
-                    arch=x64
-                    ;;
-                *)
-                    arch=
-                    ;;
-            esac
-
             # Ask before changing the computer; stdin may still contain the piped script.
             printf '%s\n' \
                 'Remote Desktop Commander needs Node.js, which could not be found on this computer.' \
@@ -55,15 +61,14 @@
                 *)
                     printf '\n%s\n' 'Node.js could not be found. You can choose either option:'
                     if [ -n "$arch" ]; then
-                        # Pin the manual link so declining needs no network lookup and works offline.
                         printf '\n%s\n' \
                             '1. To install Node.js yourself, use this download link:' \
-                            "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-$arch.tar.gz" \
+                            "$manual_download_url" \
                             'After installing Node.js, open a new Terminal window and run the command below.'
                     else
                         printf '\n%s\n' \
                             '1. Browse all Node.js versions and downloads here:' \
-                            'https://nodejs.org/en/about/previous-releases'
+                            "$manual_download_url"
                     fi
                     printf '\n%s\n' \
                         '2. If Node.js is already installed, open a new Terminal window and run:' \
@@ -74,11 +79,11 @@
 
             # Check prerequisites only after consent; unsupported CPUs still receive the manual command above.
             if [ -z "$arch" ]; then
-                fail 'This computer cannot use the automatic installer. Please install Node.js from https://nodejs.org, then run this command again.'
+                fail "This computer cannot use the automatic installer. Please install Node.js from $manual_download_url, then run this command again."
             fi
             for tool in curl tar sha256sum awk mktemp; do
                 if ! command -v "$tool" >/dev/null 2>&1; then
-                    fail 'We could not set up Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
+                    fail "We could not set up Node.js automatically. Please install it from $manual_download_url, then run this command again."
                 fi
             done
 
@@ -135,34 +140,34 @@
                     --strip-components=1 2>/dev/null ||
                     fail 'We could not prepare the Node.js download. Please run this command again.' "$?"
                 if ! "$temp_dir/node/bin/node" --version >/dev/null 2>&1; then
-                    fail 'This computer cannot run the downloaded Node.js version. Please install a compatible version from https://nodejs.org, then run this command again.'
+                    fail 'This computer cannot run the downloaded Node.js version. Please install a compatible version from https://nodejs.org/en/about/previous-releases, then run this command again.'
                 fi
 
                 # Copy only Node's installation directories; do not change unrelated system files.
                 if [ "$(id -u)" = 0 ]; then
                     mkdir -p "$install_prefix" ||
-                        fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                        fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
                     cp -R \
                         "$temp_dir/node/bin" \
                         "$temp_dir/node/include" \
                         "$temp_dir/node/lib" \
                         "$temp_dir/node/share" \
                         "$install_prefix" ||
-                        fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                        fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
                 else
                     if ! command -v sudo >/dev/null 2>&1; then
-                        fail 'We could not install Node.js automatically. Please install it from https://nodejs.org, then run this command again.'
+                        fail "We could not install Node.js automatically. Please install it from $manual_download_url, then run this command again."
                     fi
                     # sudo reads passwords from /dev/tty even when this script is piped to sh.
                     sudo mkdir -p "$install_prefix" ||
-                        fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                        fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
                     sudo cp -R \
                         "$temp_dir/node/bin" \
                         "$temp_dir/node/include" \
                         "$temp_dir/node/lib" \
                         "$temp_dir/node/share" \
                         "$install_prefix" ||
-                        fail 'We could not finish installing Node.js. Please try again, or install it from https://nodejs.org.' "$?"
+                        fail "We could not finish installing Node.js. Please try again, or install it from $manual_download_url." "$?"
                 fi
             )
 
@@ -174,7 +179,7 @@
 
     # Validate: report an incomplete installation or unsupported version instead of replacing it.
     if ! command -v node >/dev/null 2>&1; then
-        fail 'We could not finish installing Node.js. Please install it from https://nodejs.org, then run this command again.'
+        fail "We could not finish installing Node.js. Please install it from $manual_download_url, then run this command again."
     fi
     if ! node -e '
         const [major, minor] = process.versions.node.split(".").map(Number);
@@ -182,10 +187,10 @@
         const supported = major > 22 || (major === 22 && minor >= 12);
         process.exit(supported ? 0 : 1);
     ' 2>/dev/null; then
-        fail 'Your Node.js version is too old. Please install a newer version from https://nodejs.org, then run this command again.'
+        fail "Your Node.js version is too old. Please install a newer version from $manual_download_url, then run this command again."
     fi
     if ! command -v npx >/dev/null 2>&1; then
-        fail 'Your Node.js installation is incomplete. Please reinstall Node.js from https://nodejs.org, then run this command again.'
+        fail "Your Node.js installation is incomplete. Please reinstall Node.js from $manual_download_url, then run this command again."
     fi
 
     # Start as the original user: --yes accepts npm's package-download prompt.
