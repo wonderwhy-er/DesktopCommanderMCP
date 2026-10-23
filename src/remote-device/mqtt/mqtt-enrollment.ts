@@ -1,0 +1,342 @@
+import {
+	createPrivateKey,
+	generateKeyPair,
+	X509Certificate,
+} from "node:crypto";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import forge from "node-forge";
+import lockfile from "proper-lockfile";
+import { writeFileAtomic } from "../../utils/atomic-write.js";
+import { getRemoteDeviceConfigDirectory, isBackendLocal } from "../remote-utils.js";
+import { createMqttConfig, type MqttConfig } from "./mqtt-transport.js";
+import { getMqttBrokerUrl } from "./config.js";
+
+const generateRsaKeyPair = promisify(generateKeyPair);
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
+// Leave network headroom above the backend's 20-second AWS setup deadline.
+const ENROLLMENT_TIMEOUT_MS = 30_000;
+
+interface EnrollmentOptions {
+	serverUrl: string;
+	userId: string;
+	deviceId: string;
+	accessToken: string;
+	/** RemoteChannel invalidates asynchronous enrollment when sign-out or shutdown occurs. */
+	assertSessionStillActive?: () => void;
+}
+
+/** Read only existing credentials; a damaged file must never trigger silent key replacement. */
+async function readCache(file: string): Promise<any | null> {
+	try {
+		const value = JSON.parse(await readFile(file, "utf8"));
+		if (!value || typeof value !== "object" || Array.isArray(value))
+			throw new Error();
+		return value;
+	} catch (error: any) {
+		if (error.code === "ENOENT") return null;
+		throw new Error(
+			"MQTT credential cache cannot be read; inspect the profile MQTT folder before restarting",
+		);
+	}
+}
+
+/** Exclusive creation preserves the winner's private key if two processes use the same profile. */
+async function writePrivateCache(file: string, value: unknown): Promise<void> {
+	try {
+		const handle = await open(file, "wx", 0o600);
+		try {
+			await handle.writeFile(JSON.stringify(value));
+		} finally {
+			await handle.close();
+		}
+	} catch {
+		// Do not include filesystem/provider errors: startup errors also go to telemetry.
+		throw new Error(
+			"MQTT credentials could not be saved; use one connector process per profile and check folder permissions",
+		);
+	}
+}
+
+/** Validate issued/cached material before it can authenticate this device to the broker. */
+function validateCertificate(
+	value: any,
+	privateKey: string,
+	brokerUrl: string,
+): void {
+	try {
+		if (
+			!value ||
+			typeof value.certificate_pem !== "string" ||
+			value.certificate_pem.length > 16_384 ||
+			typeof value.certificate_id !== "string" ||
+			!/^[a-fA-F0-9]{64}$/.test(value.certificate_id) ||
+			typeof value.broker_url !== "string"
+		)
+			throw new Error();
+		const broker = new URL(value.broker_url);
+		if (
+			broker.protocol !== "mqtts:" ||
+			!broker.hostname ||
+			broker.username ||
+			broker.password ||
+			broker.search ||
+			broker.hash ||
+			(broker.pathname && broker.pathname !== "/")
+		)
+			throw new Error();
+		if (broker.href !== new URL(brokerUrl).href) throw new Error();
+		const certificate = new X509Certificate(value.certificate_pem);
+		const now = Date.now();
+		if (
+			certificate.ca ||
+			!certificate.checkPrivateKey(createPrivateKey(privateKey)) ||
+			!Number.isFinite(Date.parse(certificate.validFrom)) ||
+			!Number.isFinite(Date.parse(certificate.validTo)) ||
+			Date.parse(certificate.validFrom) > now ||
+			Date.parse(certificate.validTo) <= now
+		)
+			throw new Error();
+	} catch {
+		throw new Error(
+			"MQTT certificate is invalid, expired, or does not match this device key and configured broker",
+		);
+	}
+}
+
+/**
+ * Enroll once using the existing authenticated session, or reuse this profile's credentials.
+ * Only the CSR leaves the device. The backend owns authorization and AWS policy attachment.
+ */
+export async function enrollMqttDevice(
+	options: EnrollmentOptions,
+): Promise<MqttConfig> {
+	const { serverUrl, userId, deviceId, accessToken } = options;
+	if (!ID.test(userId) || !ID.test(deviceId) || !accessToken) {
+		throw new Error("MQTT enrollment requires an authenticated device");
+	}
+	let backend: URL;
+	try {
+		backend = new URL(serverUrl);
+	} catch {
+		throw new Error("MQTT enrollment requires a valid MCP_SERVER_URL");
+	}
+	if (
+		(backend.protocol !== "https:" && !isBackendLocal(backend)) ||
+		backend.username ||
+		backend.password ||
+		backend.search ||
+		backend.hash ||
+		(backend.pathname && backend.pathname !== "/")
+	) {
+		throw new Error(
+			"MQTT enrollment requires HTTPS or local HTTP, without credentials, paths, or query parameters",
+		);
+	}
+	console.debug('Start MQTT enrollment for userId:', userId, 'deviceId:', deviceId);
+	const brokerUrl = getMqttBrokerUrl();
+	options.assertSessionStillActive?.();
+	const folder = path.join(getRemoteDeviceConfigDirectory(), ".mqtt");
+	await mkdir(folder, { recursive: true, mode: 0o700 });
+	let lockLost = false;
+	const release = await lockfile.lock(folder, {
+		stale: 30_000,
+		update: 10_000,
+		onCompromised: () => {
+			lockLost = true;
+		},
+	}).catch(() => {
+		throw new Error(
+			"MQTT credentials are in use or inaccessible; use one connector process per profile and check folder permissions",
+		);
+	});
+	const assertCurrent = () => {
+		if (lockLost) throw new Error("MQTT credential lock was lost; restart the connector");
+		options.assertSessionStillActive?.();
+	};
+	try {
+		assertCurrent();
+		const identityFile = path.join(folder, "identity.json");
+		const certificateFile = path.join(folder, "certificate.json");
+		let identity = await readCache(identityFile);
+		let certificate = null;
+		if (identity) {
+			// A cached origin is not trusted with the current session token.
+			const previousDeviceId =
+				identity.backend_origin === backend.origin &&
+				typeof identity.device_id === "string" &&
+				ID.test(identity.device_id) &&
+				identity.device_id.length <= 118
+					? identity.device_id
+					: null;
+			let key;
+			try {
+				if (typeof identity.private_key === "string") {
+					const parsed = createPrivateKey(identity.private_key);
+					if (
+						parsed.asymmetricKeyType === "rsa" &&
+						parsed.asymmetricKeyDetails?.modulusLength === 2048
+					) {
+						key = parsed;
+					}
+				}
+			} catch {
+				// Invalid keys are replaced below.
+			}
+			let replaceIdentity =
+				!previousDeviceId ||
+				identity.reset_pending === true ||
+				identity.user_id !== userId ||
+				identity.device_id !== deviceId ||
+				!key;
+			if (!replaceIdentity && key) {
+				certificate = await readCache(certificateFile);
+				if (certificate) {
+					try {
+						replaceIdentity = !new X509Certificate(certificate.certificate_pem).checkPrivateKey(key);
+					} catch {
+						throw new Error(
+							"MQTT cached certificate is invalid; inspect the profile MQTT folder before restarting",
+						);
+					}
+				}
+			}
+			if (replaceIdentity) {
+				// Revoke by the old Thing even when its key or certificate response was lost.
+				assertCurrent();
+				if (previousDeviceId) {
+					try {
+						const response = await fetch(new URL("/device/mqtt/revoke", backend), {
+							method: "POST",
+							headers: {
+								Authorization: `Bearer ${accessToken}`,
+								"Content-Type": "application/json",
+							},
+							body: JSON.stringify({ device_id: deviceId, previous_device_id: previousDeviceId }),
+							redirect: "error",
+							signal: AbortSignal.timeout(ENROLLMENT_TIMEOUT_MS),
+						});
+						if (!response.ok || (await response.json())?.revoked !== true) throw new Error();
+					} catch {
+						console.warn(
+							"[MQTT] Previous certificate revocation failed; continuing with fresh enrollment. The old certificate may remain active.",
+						);
+					}
+				} else {
+					console.warn(
+						"[MQTT] Previous credentials cannot be identified on this backend; continuing with fresh enrollment. The old certificate may remain active.",
+					);
+				}
+				assertCurrent();
+				try {
+					// Preserve the reset across interruption between certificate and identity deletion.
+					await writeFileAtomic(identityFile, JSON.stringify({ ...identity, reset_pending: true }), {
+						mode: 0o600,
+						beforeCommit: assertCurrent,
+					});
+					assertCurrent();
+					// Keep the old identity until its certificate is removed, so interruption is retryable.
+					await rm(certificateFile, { force: true });
+					assertCurrent();
+					await rm(identityFile);
+				} catch {
+					throw new Error(
+						"MQTT credentials could not be reset; check folder permissions and restart the connector",
+					);
+				}
+				identity = null;
+				certificate = null;
+			}
+		}
+		if (!identity) {
+			certificate = await readCache(certificateFile);
+			if (certificate)
+				throw new Error("MQTT certificate exists without its device private key");
+			// Node generates RSA asynchronously; forge only encodes and signs the CSR below.
+			const keys = await generateRsaKeyPair("rsa", {
+				modulusLength: 2048,
+				privateKeyEncoding: { type: "pkcs8", format: "pem" },
+				publicKeyEncoding: { type: "spki", format: "pem" },
+			});
+			identity = {
+				backend_origin: backend.origin,
+				user_id: userId,
+				device_id: deviceId,
+				private_key: keys.privateKey,
+			};
+			assertCurrent();
+			await writePrivateCache(identityFile, identity);
+		}
+		let privateKey: forge.pki.rsa.PrivateKey;
+		try {
+			const key = createPrivateKey(identity.private_key);
+			if (
+				key.asymmetricKeyType !== "rsa" ||
+				key.asymmetricKeyDetails?.modulusLength !== 2048
+			)
+				throw new Error();
+			privateKey = forge.pki.privateKeyFromPem(identity.private_key);
+		} catch {
+			throw new Error(
+				"MQTT device private key is invalid; inspect the profile MQTT folder before restarting",
+			);
+		}
+		if (!certificate) {
+			const csr = forge.pki.createCertificationRequest();
+			csr.publicKey = forge.pki.setRsaPublicKey(privateKey.n, privateKey.e);
+			csr.setSubject([{ name: "commonName", value: `dc-device-${deviceId}` }]);
+			csr.sign(privateKey, forge.md.sha256.create());
+			assertCurrent();
+			try {
+				// One bounded request: redirects are forbidden so the bearer token cannot follow another origin.
+				const response = await fetch(new URL("/device/mqtt/enroll", backend), {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${accessToken}`,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						device_id: deviceId,
+						csr: forge.pki.certificationRequestToPem(csr),
+					}),
+					redirect: "error",
+					signal: AbortSignal.timeout(ENROLLMENT_TIMEOUT_MS),
+				});
+				if (!response.ok) {
+					throw new Error(
+						`MQTT enrollment was refused (HTTP ${response.status}); check backend configuration and device access, then restart`,
+					);
+				}
+				certificate = await response.json();
+			} catch (error: any) {
+				if (error.message?.startsWith("MQTT enrollment was refused")) throw error;
+				throw new Error(
+					"MQTT enrollment request failed or timed out; check connectivity and restart the connector",
+				);
+			}
+			validateCertificate(certificate, identity.private_key, brokerUrl);
+			assertCurrent();
+			// shortcut: a lost enrollment response needs server reconciliation; automatic renewal is a separate change.
+			await writePrivateCache(certificateFile, certificate);
+		}
+		validateCertificate(certificate, identity.private_key, brokerUrl);
+		assertCurrent();
+		// Pass credentials to this connection only; another profile in the process must not inherit them via env.
+		return createMqttConfig({
+			url: brokerUrl,
+			cert: certificate.certificate_pem,
+			key: identity.private_key,
+		});
+	} finally {
+		if (!lockLost) {
+			try {
+				await release();
+			} catch {
+				throw new Error(
+					"MQTT credential lock could not be released; restart the connector",
+				);
+			}
+		}
+	}
+}

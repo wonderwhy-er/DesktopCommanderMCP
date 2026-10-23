@@ -22,6 +22,17 @@ assert.equal(remote.events[0].params.arrival_gap_ms, -5);
 assert.equal(remote.events[0].params.raw_args, undefined);
 const device = parseDeviceTransportPayload({ client_id: "installation-1", events: [event] });
 assert.equal(device.events[0].params.source, "device");
+{
+    const key = "IS_MQTT_EXECUTION_ENABLED";
+    for (const value of [true, false, "true", "false", null, 0, 1]) {
+        const flaggedEvent = { ...event, params: { ...event.params, [key]: value } };
+        const remoteFlags = parseRemoteTransportPayload({ user_id: "user-1", events: [flaggedEvent] });
+        const deviceFlags = parseDeviceTransportPayload({ client_id: "installation-1", events: [flaggedEvent] });
+        for (const parsed of [remoteFlags, deviceFlags]) {
+            assert.equal(parsed.events[0].params[key], typeof value === "boolean" ? value : undefined);
+        }
+    }
+}
 const withoutMonotonic = { ...event, params: { ...event.params } };
 delete withoutMonotonic.params.monotonic_ms;
 assert.equal(

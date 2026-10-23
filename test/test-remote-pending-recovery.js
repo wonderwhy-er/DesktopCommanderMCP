@@ -10,6 +10,7 @@
 
 import assert from 'node:assert';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { rolloutManager } from '../dist/remote-device/rollouts.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -20,7 +21,7 @@ const OTHER_DEVICE_ID = 'device-2';
 function makeClient(rows) {
   const calls = [];
 
-  function matches(row, filters, gtFilters) {
+  function matches(row, filters, gtFilters, transportFilter) {
     for (const [key, value] of Object.entries(filters)) {
       if (row[key] !== value) return false;
     }
@@ -30,6 +31,8 @@ function makeClient(rows) {
       const serverValue = value === 'now' ? new Date(now).toISOString() : value;
       if (!(row[key] > serverValue)) return false;
     }
+    if (transportFilter === 'metadata->>transport.eq.mqtt_v1' && row.metadata?.transport !== 'mqtt_v1') return false;
+    if (transportFilter === 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1' && row.metadata?.transport === 'mqtt_v1') return false;
     return true;
   }
 
@@ -40,6 +43,7 @@ function makeClient(rows) {
     let updatePayload = null;
     const filters = {};
     const gtFilters = {};
+    let transportFilter;
     let limitValue = null;
 
     const execute = async () => {
@@ -49,11 +53,12 @@ function makeClient(rows) {
         updatePayload,
         filters: { ...filters },
         gtFilters: { ...gtFilters },
+        transportFilter,
         limit: limitValue,
       });
 
       if (mode === 'update') {
-        const row = rows.find((candidate) => matches(candidate, filters, gtFilters));
+        const row = rows.find((candidate) => matches(candidate, filters, gtFilters, transportFilter));
         if (!row) return { data: [], error: null };
         Object.assign(row, updatePayload);
         return {
@@ -62,11 +67,11 @@ function makeClient(rows) {
         };
       }
 
-      let data = rows.filter((row) => matches(row, filters, gtFilters));
+      let data = rows.filter((row) => matches(row, filters, gtFilters, transportFilter));
       data = data.sort((a, b) => a.created_at.localeCompare(b.created_at));
       if (limitValue !== null) data = data.slice(0, limitValue);
-      if (selectColumns === 'id,device_id') {
-        data = data.map(({ id, device_id }) => ({ id, device_id }));
+      if (selectColumns === 'id,device_id,metadata') {
+        data = data.map(({ id, device_id, metadata }) => ({ id, device_id, metadata }));
       } else {
         data = data.map((row) => ({ ...row }));
       }
@@ -89,6 +94,11 @@ function makeClient(rows) {
       },
       gt(key, value) {
         gtFilters[key] = value;
+        return builder;
+      },
+      or(value) {
+        assert(['metadata->>transport.eq.mqtt_v1', 'metadata->>transport.is.null,metadata->>transport.neq.mqtt_v1'].includes(value));
+        transportFilter = value;
         return builder;
       },
       order() {
@@ -141,6 +151,26 @@ const baseRow = (id, overrides = {}) => ({
 });
 
 async function runTests() {
+  for (const execution of [false, true]) {
+    rolloutManager.update({ IS_MQTT_EXECUTION_ENABLED: execution });
+    const rows = [
+      baseRow('mqtt', { metadata: { transport: 'mqtt_v1' } }),
+      baseRow('broadcast', { metadata: { transport: 'broadcast_v1' } }),
+      baseRow('legacy'),
+    ];
+    const { rc, delivered } = makeRemoteChannel(rows);
+    await rc.recoverPendingCalls();
+    assert.deepEqual(delivered.map(payload => payload.new.id), ['broadcast', 'legacy']);
+    assert.equal(rows[0].status, 'pending', 'shadow recovery skips MQTT-selected rows');
+    rc.mqttReady = true;
+    await Promise.all([
+      rc.recoverPendingCalls(),
+      rc.onMqttDoorbell({ call_id: 'mqtt', device_id: DEVICE_ID, user_id: 'user-1', IS_MQTT_EXECUTION_ENABLED: true }),
+    ]);
+    assert.deepEqual(delivered.map(payload => payload.new.id).sort(), ['broadcast', 'legacy']);
+    assert.equal(rows[0].status, 'pending', 'MQTT readiness and packets cannot enable execution on a shadow device');
+  }
+  rolloutManager.update({});
   {
     const rows = [
       baseRow('live-old', { created_at: iso(-10_000) }),

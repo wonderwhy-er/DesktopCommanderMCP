@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * `remote --logout` removes device.json, the saved Remote MCP credentials. A
- * device that is running keeps its session in memory, but must not write the
+ * `remote --logout` revokes server access and removes the saved credentials. A
+ * device that is still stopping may hold its session in memory, but must not write the
  * file back, or the next start restores the session instead of asking to log
  * in. (The rotation and shutdown saves are covered by
  * test/integration/remote-device-restart.js.) Here:
@@ -27,6 +27,7 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import path from 'node:path';
 import lockfile from 'proper-lockfile';
 import { MCPDevice } from '../dist/remote-device/device.js';
 import { deviceConfigPath, runLogout, startDevice, stopHard, tail, waitFor, writeDeviceConfig } from './helpers/remote-device.js';
@@ -104,8 +105,8 @@ async function runTests() {
       + `Its output:\n${tail(device.output)}`);
   });
 
-  await test('remote --logout waits for a save in progress instead of removing device.json in the middle of it', async ({ env, home }) => {
-    writeDeviceConfig(home, { deviceId: 'device-1', session: { access_token: 'a', refresh_token: 'r' } });
+  await test('remote --logout waits for a save in progress instead of removing device.json in the middle of it', async ({ standIn, env, home }) => {
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
     // What a device's save holds while it checks that device.json is still there and writes it
     const release = await lockfile.lock(deviceConfigPath(home), { realpath: false });
     let logout;
@@ -123,14 +124,14 @@ async function runTests() {
       `once the save was done, remote --logout should have removed device.json (exit ${code}):\n${tail(output)}`);
   });
 
-  await test('a logout that lands while the device reads the session to save is not undone', async ({ env, home }) => {
+  await test('a logout that lands while the device reads the session to save is not undone', async ({ standIn, env, home }) => {
     const configPath = deviceConfigPath(home);
-    writeDeviceConfig(home, { deviceId: 'device-1', session: { access_token: 'a0', refresh_token: 'r0' } });
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
     const device = new MCPDevice();
     device.configPath = configPath;
     await device.loadPersistedConfig();
     const rc = device.remoteChannel;
-    rc.getSession = async () => ({ data: { session: { access_token: 'a1', refresh_token: 'r1' } } });
+    rc.getSession = async () => ({ data: { session: standIn.login() } });
     await device.savePersistedConfig(); // the device has saved device.json this run
     assert.ok(fs.existsSync(configPath), 'setup: the first save should have written device.json');
 
@@ -148,14 +149,101 @@ async function runTests() {
       + `was still there, exit ${logout?.code}), and the save wrote device.json back: the logout did not stick`);
   });
 
-  await test('a login after the logout is not written over by the device that was logged out', async ({ env, home }) => {
+  await test('logout before the first ever save prevents credentials from being created', async ({ env, home }) => {
+    const device = new MCPDevice();
+    device.configPath = deviceConfigPath(home);
+    device.deviceId = 'device-1';
+    device.remoteChannel.getSession = async () => {
+      const logout = await runLogout(env);
+      assert.equal(logout.code, 0, logout.output);
+      return { data: { session: { access_token: 'a', refresh_token: 'r' } } };
+    };
+    await device.savePersistedConfig();
+    assert.ok(!fs.existsSync(device.configPath), 'the first save must not undo logout');
+  });
+
+  await test('logout revokes the device, removes all local credentials, and requires fresh pairing', async ({ standIn, env, home, start }) => {
     const configPath = deviceConfigPath(home);
-    writeDeviceConfig(home, { deviceId: 'device-1', session: { access_token: 'a0', refresh_token: 'r0' } });
+    const folder = path.join(path.dirname(configPath), '.mqtt');
+    {
+      writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, 'identity.json'), JSON.stringify({ private_key: 'synthetic-secret' }));
+      fs.writeFileSync(path.join(folder, 'certificate.json'), '{}');
+      fs.writeFileSync(path.join(folder, 'unrelated.txt'), 'keep');
+      const logout = await runLogout(env);
+      assert.equal(logout.code, 0, logout.output);
+      for (const file of [configPath, path.join(folder, 'identity.json'), path.join(folder, 'certificate.json')]) {
+        assert.ok(!fs.existsSync(file), `logout left ${file}`);
+      }
+      assert.equal(fs.readFileSync(path.join(folder, 'unrelated.txt'), 'utf8'), 'keep');
+      assert.match(logout.output, /Saved device and MQTT credentials were removed/);
+      assert.deepEqual(standIn.revocations, [standIn.deviceId]);
+    }
+    assert.equal((await runLogout(env)).code, 0);
+    const restarted = start();
+    await waitFor(restarted, () => standIn.deviceFlowRequests > 0, START_DEADLINE_MS);
+    assert.ok(standIn.deviceFlowRequests > 0, 'the next start must enter device identification again');
+  });
+
+  await test('a credential deletion failure is reported and releases the locks for a retry', async ({ standIn, env, home }) => {
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    const identity = path.join(path.dirname(deviceConfigPath(home)), '.mqtt', 'identity.json');
+    fs.mkdirSync(identity, { recursive: true }); // A malformed cache path that rm(file) cannot delete
+    const failed = await runLogout(env);
+    assert.equal(failed.code, 1, failed.output);
+    assert.match(failed.output, /Logout did not complete/);
+    assert.doesNotMatch(failed.output, /Logged out\./);
+    fs.rmdirSync(identity);
+    const retried = await runLogout(env);
+    assert.equal(retried.code, 0, retried.output);
+  });
+
+  await test('failed or unconfirmed revocation keeps every credential for retry', async ({ standIn, env, home }) => {
+    const configPath = deviceConfigPath(home);
+    const folder = path.join(path.dirname(configPath), '.mqtt');
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, 'identity.json'), 'private-key-fixture');
+    fs.writeFileSync(path.join(folder, 'certificate.json'), 'certificate-fixture');
+    const before = fs.readFileSync(configPath, 'utf8');
+    for (const status of [502, 404, 200]) {
+      standIn.revokeStatus = status;
+      standIn.confirmMqttRevocation = false;
+      const logout = await runLogout(env);
+      assert.equal(logout.code, 1, logout.output);
+      assert.equal(fs.readFileSync(configPath, 'utf8'), before);
+      assert.equal(fs.readFileSync(path.join(folder, 'identity.json'), 'utf8'), 'private-key-fixture');
+      assert.equal(fs.readFileSync(path.join(folder, 'certificate.json'), 'utf8'), 'certificate-fixture');
+      assert.doesNotMatch(logout.output, /Logged out\./);
+    }
+    standIn.confirmMqttRevocation = true;
+    assert.equal((await runLogout(env)).code, 0);
+  });
+
+  await test('logout refreshes an expired session and keeps the rotated token if revocation fails', async ({ standIn, env, home }) => {
+    const session = standIn.login({ accessExpiresInSec: -60 });
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
+    standIn.revokeStatus = 502;
+    const failed = await runLogout(env);
+    assert.equal(failed.code, 1, failed.output);
+    const saved = JSON.parse(fs.readFileSync(deviceConfigPath(home), 'utf8'));
+    assert.notEqual(saved.session.refresh_token, session.refresh_token);
+    standIn.revokeStatus = 200;
+    const logout = await runLogout(env);
+    assert.equal(logout.code, 0, logout.output);
+    assert.ok(!fs.existsSync(deviceConfigPath(home)));
+    assert.deepEqual(standIn.revocations, [standIn.deviceId]);
+  });
+
+  await test('a login after the logout is not written over by the device that was logged out', async ({ standIn, env, home }) => {
+    const configPath = deviceConfigPath(home);
+    writeDeviceConfig(home, { deviceId: standIn.deviceId, session: standIn.login() });
     const device = new MCPDevice();
     device.configPath = configPath;
     await device.loadPersistedConfig();
     const rc = device.remoteChannel;
-    rc.getSession = async () => ({ data: { session: { access_token: 'a1', refresh_token: 'r1' } } });
+    rc.getSession = async () => ({ data: { session: standIn.login() } });
     await device.savePersistedConfig(); // the device has saved device.json this run
 
     const logout = await runLogout(env);

@@ -114,7 +114,7 @@ async function runTests() {
     try {
         // --- the planted home ---------------------------------------------------------
 
-        const deviceDir = path.join(home, '.desktop-commander-device');
+        const deviceDir = path.dirname(deviceConfigPath(home));
         const configDir = path.join(home, '.claude-server-commander');
         const session = standIn.login();
         writeDeviceConfig(home, { deviceId: standIn.deviceId, session });
@@ -301,7 +301,7 @@ async function runTests() {
             const names = deviceLogNames();
             assert.strictEqual(names.length, 21, 'the files the report must pack');
             await inOtherHome(async (other) => {
-                const logDir = path.join(other.home, '.desktop-commander-device');
+                const logDir = path.dirname(deviceConfigPath(other.home));
                 fs.mkdirSync(logDir, { recursive: true });
                 // Written in an order that is not the names' order: every 8th name, wrapping, oldest first
                 const order = names.map((_, k) => names[(k * 8) % names.length]);
