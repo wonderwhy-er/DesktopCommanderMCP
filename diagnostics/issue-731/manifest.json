@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Unchanged public parser diagnostic reproduction only",
+  "upstreamRepository": "https://github.com/wonderwhy-er/DesktopCommanderMCP",
+  "upstreamRevision": "ea3ed35a7be9f2a3ea3e89185ff9bbb03fe5ab57",
+  "sourceProvenance": "Copied byte-for-byte from the existing public upstream baseline snapshot; no network fetch performed by this kit",
+  "files": {
+    "upstream/command-manager.ts": "43d8badc0218b8da1ceb73de02ad99158bdce8cd1ae21d46ea1aef1af922f3ba",
+    "upstream/LICENSE": "e77cff545e0506903bf6a4bf29169fa40911eb76d70d239267df10c5c59370dd",
+    "fixtures.json": "543fa5911dab6ba7de9c808a608cd44e2db7349b302e4316960002d6b9218482"
+  },
+  "fixtureCount": 16,
+  "nodeMajor": 24
+}
