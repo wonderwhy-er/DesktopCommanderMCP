@@ -26,9 +26,8 @@
             trap 'exit 143' TERM # Shell signal status: 128 + SIGTERM (15).
             trap 'exit 129' HUP # Shell signal status: 128 + SIGHUP (1).
 
-            # Node 22 matches the >=22.12.0 engine requirement: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
-            curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt -o "$temp_dir/SHASUMS256.txt"
-            archive=$(awk -v arch="$arch" '$2 ~ ("^node-v22\\.[0-9]+\\.[0-9]+-darwin-" arch "\\.tar\\.gz$") {print $2}' "$temp_dir/SHASUMS256.txt")
+            curl -fsSL https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt -o "$temp_dir/SHASUMS256.txt"
+            archive=$(awk -v arch="$arch" '$2 ~ ("^node-v24\\.[0-9]+\\.[0-9]+-darwin-" arch "\\.tar\\.gz$") {print $2}' "$temp_dir/SHASUMS256.txt")
             [ -n "$archive" ] || fail 'No matching Node.js download was found.'
             version=${archive#node-}
             version=${version%-darwin-*}

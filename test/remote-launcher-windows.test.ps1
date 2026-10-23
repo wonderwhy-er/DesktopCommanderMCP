@@ -52,12 +52,12 @@ function Invoke-WebRequest {
     Assert $UseBasicParsing 'PowerShell downloads must use basic parsing.'
     $script:downloads++
     if ($script:downloadFailure) { throw 'Fixture network failure' }
-    if ($Uri -eq 'https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt') {
+    if ($Uri -eq 'https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt') {
         $hash = (Get-FileHash -LiteralPath (Join-Path $temp 'fixture.zip') -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($script:badChecksum) { $hash = '0' * 64 }
-        return @{ Content = "$hash  node-v22.23.4-win-x64.zip`n$hash  node-v22.23.4-win-arm64.zip`n" }
+        return @{ Content = "$hash  node-v22.23.4-win-x64.zip`n$hash  node-v22.23.4-win-arm64.zip`n$hash  node-v24.0.0-win-x64.zip`n$hash  node-v24.0.0-win-arm64.zip`n" }
     }
-    Assert ($Uri -match '^https://nodejs.org/dist/v22\.23\.4/node-v22\.23\.4-win-(x64|arm64)\.zip$') 'Unexpected download URL.'
+    Assert ($Uri -match '^https://nodejs.org/dist/v24\.0\.0/node-v24\.0\.0-win-(x64|arm64)\.zip$') 'Unexpected download URL.'
     Copy-Item -LiteralPath (Join-Path $temp 'fixture.zip') -Destination $OutFile
 }
 

@@ -48,8 +48,8 @@ exec ${quote(process.execPath)} -e 'Object.defineProperty(process.versions, "nod
             `printf '%s\\n' "$2" >> "$TEST_DOWNLOADS"
 [ "\${TEST_DOWNLOAD_FAIL:-0}" = 0 ] || exit 22
 case "$2" in
-    https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt) cp "$TEST_MANIFEST" "$4" ;;
-    https://nodejs.org/dist/v22.23.4/node-v22.23.4-*.tar.gz) cp "$TEST_ARCHIVE" "$4" ;;
+    https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt) cp "$TEST_MANIFEST" "$4" ;;
+    https://nodejs.org/dist/v24.0.0/node-v24.0.0-*.tar.gz) cp "$TEST_ARCHIVE" "$4" ;;
     *) exit 99 ;;
 esac`,
         );
@@ -98,7 +98,7 @@ esac`,
 
         const installed = path.join(home, ".local/share/desktop-commander/node");
         for (const arch of ["x64", "arm64"]) {
-            const archiveRoot = `node-v22.23.4-${platform === "macos" ? "darwin" : "linux"}-${arch}`;
+            const archiveRoot = `node-v24.0.0-${platform === "macos" ? "darwin" : "linux"}-${arch}`;
             const archiveBin = path.join(dir, archiveRoot, "bin");
             mkdirSync(archiveBin, { recursive: true });
             executable(path.join(archiveBin, "node"), nodeStub);
@@ -106,7 +106,7 @@ esac`,
             const tar = spawnSync("tar", ["-czf", env.TEST_ARCHIVE, "-C", dir, archiveRoot]);
             assert.equal(tar.status, 0);
             const checksum = createHash("sha256").update(readFileSync(env.TEST_ARCHIVE)).digest("hex");
-            const manifest = `${checksum}  ${archiveRoot}.tar.gz\n`;
+            const manifest = `${checksum}  ${archiveRoot.replace("v24.0.0", "v22.23.4")}.tar.gz\n${checksum}  ${archiveRoot}.tar.gz\n`;
             writeFileSync(env.TEST_MANIFEST, manifest);
             const archEnv = { TEST_ARCH: arch === "x64" ? "x86_64" : platform === "macos" ? "arm64" : "aarch64" };
             expect(run(archEnv), 0);
@@ -116,7 +116,7 @@ esac`,
             assert.equal(readFileSync(env.TEST_DOWNLOADS, "utf8"), downloads, "Repeat runs must reuse private Node");
             rmSync(installed, { recursive: true });
 
-            writeFileSync(env.TEST_MANIFEST, manifest.replace(checksum, "0".repeat(64)));
+            writeFileSync(env.TEST_MANIFEST, manifest.replaceAll(checksum, "0".repeat(64)));
             const corrupt = run(archEnv);
             assert.notEqual(corrupt.status, 0);
             assert.match(corrupt.stderr, /checksum verification failed/);

@@ -24,8 +24,8 @@ powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol 
 
 Alternatively, save and run [remote-windows.cmd](remote-windows.cmd). Press **Ctrl+C** to stop; rerun the same command to reconnect. No administrator access, shell-profile changes, or execution-policy changes are needed for the one-liners.
 
-Node.js 22.12+ is reused. Older Node.js or missing npm/npx produces an upgrade/repair message. When Node is absent, the launcher downloads Node 22 from `nodejs.org`, verifies SHA-256, and saves it under `~/.local/share/desktop-commander/node` or `%LOCALAPPDATA%\DesktopCommander\node`. Subsequent runs reuse it; PATH changes last only while the launcher runs.
+Node.js 22.12+ is reused. Older Node.js or missing npm/npx produces an upgrade/repair message. When Node is absent, the launcher downloads the latest Node 24 from `nodejs.org`, verifies SHA-256, and saves it under `~/.local/share/desktop-commander/node` or `%LOCALAPPDATA%\DesktopCommander\node`. Subsequent runs reuse it; PATH changes last only while the launcher runs.
 
-Automatic installation supports Intel/Apple Silicon Macs and x64/ARM64 Windows and glibc Linux supported by Node 22. Other systems need compatible Node.js and npm installed first. Internet access is required; Unix also needs `curl`, `tar`, and `shasum` (macOS) or `sha256sum` (Linux).
+Automatic installation supports Intel/Apple Silicon Macs and x64/ARM64 Windows and glibc Linux supported by Node 24. Other systems need compatible Node.js and npm installed first. Internet access is required; Unix also needs `curl`, `tar`, and `shasum` (macOS) or `sha256sum` (Linux).
 
 Checks: `node test/remote-launchers.test.js` and `pwsh -NoProfile -File test/remote-launcher-windows.test.ps1` (use `powershell` on Windows). Downloads and device commands are stubbed; the PowerShell test also stubs ZIP extraction.

@@ -30,10 +30,9 @@
                 $tempDir = Join-Path $installParent ('.node-' + [Guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
-                # Node 22 matches the >=22.12.0 engine requirement: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander
-                $manifest = (Invoke-WebRequest -UseBasicParsing 'https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt').Content
+                $manifest = (Invoke-WebRequest -UseBasicParsing 'https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt').Content
                 # Node SHASUMS256.txt uses 256-bit SHA-256: 256 / 4 bits per hex digit = 64 characters.
-                $entry = [regex]::Match($manifest, "(?m)^([a-f0-9]{64})\s+(node-(v22\.\d+\.\d+)-win-$arch\.zip)\r?$")
+                $entry = [regex]::Match($manifest, "(?m)^([a-f0-9]{64})\s+(node-(v24\.\d+\.\d+)-win-$arch\.zip)\r?$")
                 if (-not $entry.Success) { throw 'No matching Node.js download was found.' }
                 $archive = $entry.Groups[2].Value
                 $version = $entry.Groups[3].Value
