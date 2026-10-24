@@ -933,21 +933,23 @@ You can specify which shell to use for command execution:
 
 ```javascript
 // Using default shell (bash or system default)
-execute_command({ "command": "echo $SHELL" })
+start_process({ "command": "echo $SHELL", "timeout_ms": 5000 })
 
 // Using zsh specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/zsh" })
+start_process({ "command": "echo $SHELL", "timeout_ms": 5000, "shell": "/bin/zsh" })
 
 // Using bash specifically
-execute_command({ "command": "echo $SHELL", "shell": "/bin/bash" })
+start_process({ "command": "echo $SHELL", "timeout_ms": 5000, "shell": "/bin/bash" })
 ```
 
 This allows you to use shell-specific features or maintain consistent environments across commands.
 
-1. `execute_command` returns after timeout with initial output
-2. Command continues in background
-3. Use `read_output` with PID to get new output
-4. Use `force_terminate` to stop if needed
+1. `start_process` waits for a bounded period and may return earlier when smart detection identifies completion or a ready/interactive state
+2. If the call returns while the command is still running, including after `timeout_ms` is reached, it continues in the background under the current Desktop Commander server instance
+3. Use `read_process_output` with the returned PID to get new output while that managed session still exists
+4. Use `force_terminate` to stop the managed session if needed
+
+"Background" here is not a persistence guarantee. Process/session tracking is in memory, so a Desktop Commander server exit or restart loses the managed-session handle even if an OS child process happens to survive. Depending on the MCP host or service manager, the child process tree may also be terminated. Jobs that must outlive Desktop Commander should be launched under a separately owned OS-level service or supervisor.
 
 ## Debugging
 
