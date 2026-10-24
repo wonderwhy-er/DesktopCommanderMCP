@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { TerminalSession, CommandExecutionResult, ActiveSession, TimingInfo, OutputEvent } from './types.js';
 import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
@@ -228,6 +229,11 @@ export class TerminalManager {
       };
     }
 
+    // Decode each pipe incrementally so a UTF-8 sequence split across stream
+    // chunks is reconstructed instead of producing replacement characters (#628).
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
+
     const session: ManagedSession = {
       pid: childProcess.pid,
       process: childProcess,
@@ -315,7 +321,7 @@ export class TerminalManager {
       }
 
       childProcess.stdout.on('data', (data: any) => {
-        const text = data.toString();
+        const text = stdoutDecoder.write(data);
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -359,7 +365,7 @@ export class TerminalManager {
       });
 
       childProcess.stderr.on('data', (data: any) => {
-        const text = data.toString();
+        const text = stderrDecoder.write(data);
         const now = Date.now();
 
         if (!firstOutputTime) firstOutputTime = now;
@@ -382,6 +388,24 @@ export class TerminalManager {
             length: text.length,
             snippet: text.slice(0, 50).replace(/\n/g, '\\n')
           });
+        }
+      });
+
+      // Flush a truly incomplete trailing sequence when each pipe ends. Valid
+      // split UTF-8 normally leaves nothing here; an invalid final sequence is
+      // represented rather than silently dropped.
+      childProcess.stdout.on('end', () => {
+        const text = stdoutDecoder.end();
+        if (text) {
+          if (!resolved) output += text;
+          this.recordOutput(session, 'stdout', text);
+        }
+      });
+      childProcess.stderr.on('end', () => {
+        const text = stderrDecoder.end();
+        if (text) {
+          if (!resolved) output += text;
+          this.recordOutput(session, 'stderr', text);
         }
       });
 
@@ -442,6 +466,11 @@ export class TerminalManager {
    * buffer, and to that stream's tail for state detection.
    */
   private recordOutput(session: ManagedSession, stream: OutputStream, text: string): void {
+    // StringDecoder.write() returns an empty string while buffering an
+    // incomplete multibyte sequence. That is not delivered text and must not
+    // advance this stream's delivery turn for process-state detection.
+    if (!text) return;
+
     this.appendToLineBuffer(session, text);
     const tail = session.streams[stream];
     tail.text = (text.length >= STATE_DETECTION_TAIL_CHARS ? text : tail.text + text).slice(-STATE_DETECTION_TAIL_CHARS);
