@@ -27,6 +27,7 @@ export const ListProcessesArgsSchema = z.object({});
 export const StartProcessArgsSchema = z.object({
   command: z.string(),
   timeout_ms: z.number(),
+  stdin: z.string().optional().describe('Optional exact initial stdin text. Sent without a newline and followed by EOF. Omit for an interactive process.'),
   shell: z.string().optional(),
   verbose_timing: z.boolean().optional(),
   // 'ui' marks widget-fired calls (e.g. open-in-folder/editor buttons);
