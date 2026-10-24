@@ -245,6 +245,38 @@ async function testMixedLineEndings() {
     await assertFileContent(MIXED_FILE,
       'First line with LF\nSecond line with CRLF\r\nREPLACED LINE IN MIXED FILE\nFourth line with CR\rFifth line with LF\n',
       'Mixed file should contain the replacement and keep each line ending');
+
+    // A raw multi-line match later in a mixed file must win over global
+    // line-ending normalization. Otherwise the fuzzy fallback reports this
+    // byte-for-byte match as "100% similarity" without applying the edit.
+    await fs.writeFile(MIXED_FILE, 'header\r\nbefore\nTARGET\nafter\n', 'utf8');
+    const rawExactResult = await handleEditBlock({
+      file_path: MIXED_FILE,
+      old_string: 'before\nTARGET',
+      new_string: 'before\nREPLACED',
+      expected_replacements: 1
+    });
+    assertEditBlockSuccess(rawExactResult, 'Should prefer a raw exact match in a mixed-line-ending file');
+    await assertFileContent(MIXED_FILE,
+      'header\r\nbefore\nREPLACED\nafter\n',
+      'Raw exact mixed-line-ending edit should preserve the matched block line ending');
+
+    // If the raw form exists but does not match expected_replacements, keep the
+    // previous normalized behavior when the normalized form has the requested count.
+    await fs.writeFile(MIXED_FILE,
+      'head\r\nbefore\nTARGET\na\r\nbefore\r\nTARGET\r\nb\r\nbefore\r\nTARGET\r\n',
+      'utf8');
+    const normalizedCountResult = await handleEditBlock({
+      file_path: MIXED_FILE,
+      old_string: 'before\nTARGET',
+      new_string: 'before\nREPLACED',
+      expected_replacements: 2
+    });
+    assertEditBlockSuccess(normalizedCountResult,
+      'Should preserve normalized multi-replacement behavior when raw count differs');
+    await assertFileContent(MIXED_FILE,
+      'head\r\nbefore\nTARGET\na\r\nbefore\r\nREPLACED\r\nb\r\nbefore\r\nREPLACED\r\n',
+      'Normalized fallback should replace the requested CRLF occurrences only');
     
     console.log('✓ Mixed line endings test passed');
   } catch (error) {
