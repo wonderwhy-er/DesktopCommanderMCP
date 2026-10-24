@@ -655,20 +655,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - searchType="content": Search inside files for text patterns
                         
                         PATTERN MATCHING MODES:
-                        - Default (literalSearch=false): Patterns are treated as regular expressions
-                        - Literal (literalSearch=true): Patterns are treated as exact strings
-                        
-                        literalSearch=true is useful for code patterns with special characters:
-                        - Function calls with parentheses and quotes
-                        - Array access with brackets
-                        - Object methods with dots and parentheses
-                        - File paths with backslashes
-                        - Any pattern containing: . * + ? ^ $ { } [ ] | \\ ( )
+                        - File-name search (searchType="files") is glob-based, not regex-based:
+                          - pattern="package.json" → exact filename match
+                          - pattern="*.ts" → glob match
+                          - pattern="auth" → filename substring match
+                          - pattern="report[1].txt", literalSearch=true → treats [ and ] as literal filename characters
+                        - With literalSearch=false, glob-looking file patterns use glob syntax; plain names are substrings.
+                        - With literalSearch=true, glob metacharacters in file-name patterns are treated literally.
+                        - Text content search uses regular expressions by default and fixed-string matching when
+                          literalSearch=true.
+                        - Excel and DOCX content search is always literal substring matching, regardless of
+                          literalSearch, to avoid unsafe regular-expression evaluation in document content.
+
+                        Do not use regex syntax for file-name searches. For example, pattern="target-.*\\.txt$"
+                        is not a filename regex; use an appropriate glob such as pattern="target-*.txt" instead.
                         
                         IMPORTANT PARAMETERS:
                         - pattern: What to search for (file names OR content text)
-                        - literalSearch: Use exact string matching instead of regex (default: false)
-                        - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
+                        - literalSearch: Controls literal matching as described above (default: false)
+                        - filePattern: Optional glob filter; supports | separated alternatives and ripgrep-style ! exclusions (e.g., "*.js|*.ts|!*.test.ts")
                         - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         - earlyTermination: Stop search early when exact filename match is found (optional: defaults to true for file searches, false for content searches)
                         

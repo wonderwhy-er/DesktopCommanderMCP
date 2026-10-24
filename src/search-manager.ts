@@ -104,7 +104,7 @@ export interface SearchSessionOptions {
   contextLines?: number;
   timeout?: number;
   earlyTermination?: boolean;  // Stop search early when exact filename match is found
-  literalSearch?: boolean;     // Force literal string matching (-F flag) instead of regex
+  literalSearch?: boolean;     // Text content: fixed-string (-F); file names: escape glob metacharacters; Office content is always literal
 }
 
 /**
