@@ -419,6 +419,38 @@ await test('a completed call writes exactly one completed result row', async () 
   assert(writes.join(',') === 'call-result:completed', `expected one completed write — got ${writes.join(',')}`);
 });
 
+await test('a completed call preserves structured spawn diagnostics in the remote result', async () => {
+  const spawnError = {
+    name: 'Error',
+    message: 'spawn powershell.exe EPERM',
+    code: 'EPERM',
+    errno: -4048,
+    syscall: 'spawn powershell.exe',
+    path: 'powershell.exe',
+  };
+  const toolResult = {
+    content: [{ type: 'text', text: `Error: ${spawnError.message}` }],
+    isError: true,
+    structuredContent: { spawnError },
+  };
+  const { device } = makeDevice();
+  let writtenResult = null;
+  device.desktop.callClientTool = async () => toolResult;
+  device.remoteChannel.updateCallResult = async (_id, status, result) => {
+    assert(status === 'completed', `tool-returned error result is still a completed MCP call, got ${status}`);
+    writtenResult = result;
+  };
+
+  await device.handleNewToolCall(payloadFor('call-spawn-error-details'));
+
+  assert(writtenResult !== null, 'remote device should write the local MCP result');
+  assert(writtenResult.structuredContent?.spawnError?.code === 'EPERM', 'spawn error code should survive remote forwarding');
+  assert(writtenResult.structuredContent?.spawnError?.errno === -4048, 'numeric errno should survive remote forwarding');
+  assert(writtenResult.structuredContent?.spawnError?.syscall === 'spawn powershell.exe', 'spawn syscall should survive remote forwarding');
+  assert(!('spawnargs' in writtenResult.structuredContent.spawnError), 'remote result must not gain spawnargs');
+  assert(!('stack' in writtenResult.structuredContent.spawnError), 'remote result must not gain a stack');
+});
+
 // --- 4. Heartbeat cadence ---------------------------------------------------
 // One cadence for every device: the server sweeps a row offline after 15 min
 // without a heartbeat, and the dashboard's dot trusts a row's 'online' only
