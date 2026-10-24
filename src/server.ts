@@ -44,6 +44,7 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
+    CopyFileExclusiveArgsSchema,
     GetFileInfoArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
@@ -620,6 +621,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Move/Rename File",
                     readOnlyHint: false,
                     destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "copy_file_exclusive",
+                description: `
+                        Copy one regular file to a new destination without overwriting.
+
+                        Requires exact expected_size and expected_sha256. The destination
+                        is created exclusively, fsynced, read back and verified, and must
+                        have an inode distinct from the source. Partial output created by
+                        the call is removed on failure only when it is still the same file.
+                        Maximum file size is 16 MiB.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(CopyFileExclusiveArgsSchema),
+                annotations: {
+                    title: "Exclusive Verified File Copy",
+                    readOnlyHint: false,
+                    destructiveHint: false,
+                    idempotentHint: false,
                     openWorldHint: false,
                 },
             },
@@ -1392,6 +1415,10 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
                 result = await handlers.handleMoveFile(args);
                 break;
 
+            case "copy_file_exclusive":
+                result = await handlers.handleCopyFileExclusive(args);
+                break;
+
             case "start_search":
                 result = await handlers.handleStartSearch(args);
                 break;
@@ -1550,3 +1577,5 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
 // Add no-op handlers so Visual Studio initialization succeeds
 server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]

@@ -139,6 +139,13 @@ export const MoveFileArgsSchema = z.object({
   destination: z.string(),
 });
 
+export const CopyFileExclusiveArgsSchema = z.object({
+  source: z.string(),
+  destination: z.string(),
+  expected_size: z.number().int().min(0).max(16 * 1024 * 1024),
+  expected_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 export const GetFileInfoArgsSchema = z.object({
   path: z.string(),
 });
@@ -258,6 +265,7 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   create_directory: CreateDirectoryArgsSchema,
   list_directory: ListDirectoryArgsSchema,
   move_file: MoveFileArgsSchema,
+  copy_file_exclusive: CopyFileExclusiveArgsSchema,
   start_search: StartSearchArgsSchema,
   get_more_search_results: GetMoreSearchResultsArgsSchema,
   stop_search: StopSearchArgsSchema,
@@ -276,3 +284,5 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
+
+[executed on device: trinity-do-engineering (c0baae6a-077b-4bca-854d-44acc8b544ea)]
