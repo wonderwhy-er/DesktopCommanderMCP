@@ -350,6 +350,23 @@ See [VS Code MCP docs](https://code.visualstudio.com/docs/copilot/chat/mcp-serve
 </details>
 
 <details>
+<summary><b>Raycast</b></summary>
+
+Raycast currently lists MCP as a Pro feature.
+
+On Raycast Desktop, run **Install MCP Server** (or **Manage MCP Servers** → **Install New Server**) and choose **Standard Input/Output**. Use:
+
+- **Name:** `Desktop Commander`
+- **Command:** `npx`
+- **Arguments:** `-y @wonderwhy-er/desktop-commander@latest`
+
+Raycast starts stdio MCP servers after installation and loads their tools automatically. If `npx` was added to your `PATH` while Raycast was already running, restart Raycast so it picks up the updated environment.
+
+See the official [Raycast MCP docs](https://manual.raycast.com/ai/model-context-protocol) for transport, permissions, and troubleshooting details.
+
+</details>
+
+<details>
 <summary><b>Cline</b></summary>
 
 Configure through the Cline extension settings in VS Code. Open the Cline sidebar, click the MCP Servers icon, and add the JSON configuration above. See [Cline MCP docs](https://docs.cline.bot/mcp/configuring-mcp-servers) for more info.
