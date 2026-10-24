@@ -20,9 +20,17 @@ Linux, using POSIX `sh`:
 curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/scripts/remote/remote-linux.sh | sh
 ```
 
-Windows PowerShell 5.1 or newer, or Command Prompt (enables TLS 1.2 in a child PowerShell before downloading):
+### Windows PowerShell 5.1 or newer
 
 ```powershell
+irm -ErrorAction Stop https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/scripts/remote/remote-windows.ps1 | iex
+```
+
+The first download uses [PowerShell's TLS defaults](https://learn.microsoft.com/en-us/dotnet/framework/network-programming/tls). If an older Windows configuration cannot connect, use the Command Prompt command below; it enables TLS 1.2 before downloading.
+
+### Windows Command Prompt
+
+```cmd
 powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod -ErrorAction Stop 'https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/scripts/remote/remote-windows.ps1' | Invoke-Expression"
 ```
 
