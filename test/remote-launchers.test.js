@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 const temp = mkdtempSync(path.join(tmpdir(), "dc-launcher-test-"));
+const supportMessage = "If you have any questions or problems with installation, email support@desktopcommander.app. We're happy to help.";
 let checks = 0;
 
 function executable(file, source) {
@@ -46,6 +47,7 @@ try {
         const realMktemp = spawnSync("/bin/sh", ["-c", "command -v mktemp"], { encoding: "utf8" }).stdout.trim();
         rmSync(path.join(bin, "mktemp"));
         executable(path.join(bin, "mktemp"), `printf '%s\\n' "$*" >> "$TEST_TEMP_CREATIONS"
+[ "\${TEST_MKTEMP_FAIL:-0}" = 0 ] || { echo 'Fixture temporary-directory failure' >&2; exit "$TEST_MKTEMP_FAIL"; }
 exec ${quote(realMktemp)} "$@"`);
         // Protect the host even if a regression stops respecting the fixture's installation prefix.
         for (const tool of ["cp", "mkdir"]) {
@@ -67,7 +69,7 @@ mkdir -p "$TEST_PREFIX"
 tar -xzf "$2" -C "$TEST_PREFIX" --strip-components=1`);
         executable(
             path.join(bin, "uname"),
-            `case "$1" in -s) echo '${platform === "macos" ? "Darwin" : "Linux"}' ;; -m) echo "\${TEST_ARCH:-x86_64}" ;; esac`,
+            `case "$1" in -s) echo "\${TEST_OS:-${platform === "macos" ? "Darwin" : "Linux"}}" ;; -m) echo "\${TEST_ARCH:-x86_64}" ;; esac`,
         );
         const nodeStub = `if [ "$1" = --version ]; then
 [ "\${TEST_BINARY_FAIL:-0}" = 0 ] || exit 1
@@ -109,6 +111,14 @@ esac`,
             spawnSync(shell, input === undefined ? [script] : [], { env: { ...env, ...extra }, encoding: "utf8", input, timeout: 10000 });
         const expect = (result, status) => {
             assert.equal(result.status, status, result.stderr || result.error?.message);
+            const output = result.stdout + result.stderr;
+            if (status !== 0 && status !== 130) {
+                assert.ok(result.stderr.endsWith(`\n${supportMessage}\n`), "Errors must end with a blank-line support footer");
+                assert.equal(output.split(supportMessage).length - 1, 1, "Show support once per failed run");
+            } else {
+                assert.ok(!output.includes(supportMessage), "Success, decline, and Ctrl+C must not show an error footer");
+            }
+            assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith("dc-node-")), [], "Every completed run must clean up its temporary downloads");
             checks++;
         };
         for (const shell of ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash"].filter(existsSync)) {
@@ -116,8 +126,12 @@ esac`,
             const existing = run({}, shell);
             expect(existing, 0);
             assert.doesNotMatch(existing.stdout, /Would you like to continue/);
+            expect(run({ TEST_EXIT: "7" }, shell), 7);
+            expect(run({ TEST_EXIT: "130" }, shell), 130);
+            expect(run({ TEST_OS: "unsupported" }, shell), 1);
         }
         expect(run({}, "/bin/sh", readFileSync(script, "utf8")), 0);
+        expect(run({ TEST_EXIT: "7" }, "/bin/sh", `set -e\n${readFileSync(script, "utf8")}`), 7);
         assert.equal(existsSync(env.TEST_DOWNLOADS), false, "Existing Node must not trigger a download");
         assert.equal(existsSync(env.TEST_ELEVATIONS), false, "Existing Node must not request administrator access");
         assert.deepEqual(readFileSync(env.TEST_CALLS, "utf8").trim().split("\n").slice(0, 3), [
@@ -125,7 +139,6 @@ esac`,
             "@wonderwhy-er/desktop-commander@latest",
             "remote",
         ]);
-        expect(run({ TEST_EXIT: "7" }), 7);
         for (const version of ["22.12.0", "22.23.4", "24.0.0"]) {
             expect(run({ TEST_NODE_VERSION: version }), 0);
         }
@@ -226,6 +239,7 @@ esac`,
             expect(run({ TEST_DOWNLOAD_FAIL: "1" }, "/bin/sh", readFileSync(script, "utf8")), 22);
         }
         writeFileSync(terminalInput, "\n");
+        expect(run({ TEST_MKTEMP_FAIL: "23" }), 23);
 
         for (const arch of ["x64", "arm64"]) {
             const archiveRoot = `node-v24.0.0-${platform === "macos" ? "darwin" : "linux"}-${arch}`;
@@ -288,11 +302,10 @@ esac`,
 
             writeFileSync(env.TEST_MANIFEST, manifest.replaceAll(checksum, "0".repeat(64)));
             const corrupt = run(archEnv);
-            assert.notEqual(corrupt.status, 0);
+            expect(corrupt, 1);
             assert.match(corrupt.stderr, /The Node\.js download could not be verified/);
             assert.equal(existsSync(installed), false);
             assert.equal(readFileSync(env.TEST_ELEVATIONS, "utf8"), elevations, "Checksum failure must precede elevation");
-            checks++;
             writeFileSync(env.TEST_MANIFEST, manifest);
             if (platform === "linux") {
                 expect(run({ ...archEnv, TEST_EXPECT_UMASK: "0077" }, "/bin/sh", `umask 077\n${readFileSync(script, "utf8")}`), 0);

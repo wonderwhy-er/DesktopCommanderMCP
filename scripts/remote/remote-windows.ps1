@@ -1,5 +1,18 @@
 # Run in a child scope: Invoke-Expression must not close or reconfigure the caller's shell.
 & {
+    # Add support details once to any final error, including platform and cleanup failures.
+    trap {
+        # A stopped pipeline is an interruption, such as Ctrl+C, rather than an installation failure.
+        if ($_.Exception -is [System.Management.Automation.PipelineStoppedException]) {
+            break
+        }
+        $_.ErrorDetails = [System.Management.Automation.ErrorDetails]::new(
+            "$($_.ToString())`n`nIf you have any questions or problems with installation, email support@desktopcommander.app. We're happy to help."
+        )
+        # Rethrow the original error record to preserve failure status and caller control.
+        throw $_
+    }
+
     # Prepare: stop on errors, check the platform, and save settings to restore later.
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
@@ -180,6 +193,11 @@
         # Start Desktop Commander in this shell, without elevating the device command.
         Write-Host 'Starting Remote Desktop Commander. To stop it, press Ctrl+C. To start it again, run this command again.'
         & npx.cmd --yes '@wonderwhy-er/desktop-commander@latest' remote
+        # Node signal exits use 128 + signal number: SIGINT (2) gives 130; https://nodejs.org/api/process.html#exit-codes
+        # Windows Ctrl+C is STATUS_CONTROL_C_EXIT (0xC000013A); https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+        if ($LASTEXITCODE -in @(130, 0xC000013A)) {
+            return
+        }
         if ($LASTEXITCODE -ne 0) {
             throw 'Remote Desktop Commander stopped unexpectedly. Please run this command again.'
         }

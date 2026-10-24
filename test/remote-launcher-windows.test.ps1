@@ -10,6 +10,7 @@ $savedArchitecture = $env:PROCESSOR_ARCHITECTURE
 $savedWowArchitecture = $env:PROCESSOR_ARCHITEW6432
 $savedTls = [Net.ServicePointManager]::SecurityProtocol
 $savedErrorPreference = $ErrorActionPreference
+$supportMessage = "If you have any questions or problems with installation, email support@desktopcommander.app. We're happy to help."
 $script:downloads = 0
 $script:calls = @()
 $script:existingNode = $true
@@ -17,6 +18,8 @@ $script:systemNode = $false
 $script:missingNpx = $false
 $script:version = '22.12.0'
 $script:commandExit = 0
+$script:commandFailure = $false
+$script:cleanupFailure = $false
 $script:badChecksum = $false
 $script:downloadFailure = $false
 $script:installerExit = 0
@@ -82,8 +85,15 @@ function node.exe {
 
 function npx.cmd {
     if (-not $script:existingNode) { Assert ($env:PATH -eq $refreshedPath) 'Remote must retain original PATH priority and include persisted Machine/User PATH.' }
+    if ($script:commandFailure) { throw 'Fixture unexpected command failure' }
     $script:calls += ($args -join ' ')
     $global:LASTEXITCODE = $script:commandExit
+}
+
+function Remove-Item {
+    param($LiteralPath, [switch]$Recurse, [switch]$Force)
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Recurse:$Recurse -Force:$Force
+    if ($script:cleanupFailure) { throw 'Fixture cleanup failure' }
 }
 
 function Invoke-WebRequest {
@@ -126,12 +136,19 @@ function Start-Process {
 
 function Run-Launcher([string]$ExpectedError = '') {
     $message = ''
+    $messagesBeforeRun = $script:hostMessages.Count
     try {
         # Exercise the documented Invoke-Expression path, including its child scope.
         Invoke-Expression (Get-Content -Raw -LiteralPath $launcher)
-    } catch { $message = $_.Exception.Message }
-    if ($ExpectedError) { Assert ($message -like "*$ExpectedError*") "Expected '$ExpectedError'; got '$message'." }
+    } catch { $message = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { $_.Exception.Message } }
+    if ($ExpectedError) {
+        Assert ($message -like "*$ExpectedError*") "Expected '$ExpectedError'; got '$message'."
+        Assert ($message.EndsWith("`n`n$supportMessage")) 'Every final error must end with a blank line and the exact support message.'
+        Assert ([regex]::Matches($message, [regex]::Escape($supportMessage)).Count -eq 1) 'Each error must include support details exactly once.'
+    }
     else { Assert (-not $message) "Unexpected launcher failure: $message" }
+    $newHostMessages = @($script:hostMessages | Select-Object -Skip $messagesBeforeRun)
+    Assert (-not ($newHostMessages -match [regex]::Escape($supportMessage))) 'Support details belong only to the final error, never normal output.'
     Assert ($env:PATH -eq $savedPath) 'Launcher must restore the caller PATH.'
     Assert ([Net.ServicePointManager]::SecurityProtocol -eq $savedTls) 'Launcher must restore TLS settings.'
     Assert ($ErrorActionPreference -eq $savedErrorPreference) 'Launcher must preserve caller error preferences.'
@@ -175,7 +192,16 @@ try {
     $script:missingNpx = $false
     $script:commandExit = 7
     Run-Launcher 'Remote Desktop Commander stopped unexpectedly'
+    # Node SIGINT is 128 + 2 = 130; https://nodejs.org/api/process.html#exit-codes
+    # Windows Ctrl+C is STATUS_CONTROL_C_EXIT (0xC000013A); https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+    foreach ($exitCode in @(130, 0xC000013A)) {
+        $script:commandExit = $exitCode
+        Run-Launcher
+    }
     $script:commandExit = 0
+    $script:commandFailure = $true
+    Run-Launcher 'Fixture unexpected command failure'
+    $script:commandFailure = $false
     $script:existingNode = $false
     $script:systemNode = $true
     Run-Launcher
@@ -332,6 +358,11 @@ try {
     $script:downloadFailure = $true
     Run-Launcher 'We could not download Node.js'
     $script:downloadFailure = $false
+    $script:cleanupFailure = $true
+    Run-Launcher 'Fixture cleanup failure'
+    $script:cleanupFailure = $false
+    $script:systemNode = $false
+    $callsBeforeFailure = $script:calls.Count
     # MSI failures: 1602 canceled, 1603 fatal error, 1618 another install running; https://learn.microsoft.com/windows/win32/msi/error-codes
     foreach ($exitCode in @(1602, 1603, 1618)) {
         $script:installerExit = $exitCode

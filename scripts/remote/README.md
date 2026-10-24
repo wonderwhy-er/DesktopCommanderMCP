@@ -6,6 +6,8 @@ The manual links point directly to Node.js v24.22.1 files, so showing them needs
 
 Inspect the source: [macOS](remote-macos.sh), [Linux](remote-linux.sh), [PowerShell](remote-windows.ps1), [CMD wrapper](remote-windows.cmd).
 
+Errors inside a downloaded launcher end with a blank line and: "If you have any questions or problems with installation, email support@desktopcommander.app. We're happy to help." Success, declining installation, and recognized Ctrl+C stops do not show this message. The script cannot add it if the initial download fails before the script runs; PowerShell controls how line breaks in its errors appear.
+
 The commands below always use the public scripts from `main`.
 
 macOS, including zsh, bash, and fish:
