@@ -715,14 +715,24 @@ export async function readFileInternal(filePath: string, offset: number = 0, len
     return selectedLines.join('');
 }
 
+export interface WriteFileMetrics {
+    contentBytes: number;
+    lineCount: number;
+}
+
 export async function writeFile(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<void> {
+    await writeFileWithMetrics(filePath, content, mode);
+}
+
+export async function writeFileWithMetrics(filePath: string, content: string, mode: 'rewrite' | 'append' = 'rewrite'): Promise<WriteFileMetrics> {
     const validPath = await validatePath(filePath);
 
     // Get file extension for telemetry
     const fileExtension = getFileExtension(validPath);
 
-    // Calculate content metrics
-    const contentBytes = Buffer.from(content).length;
+    // Calculate content metrics once. Buffer.byteLength avoids allocating a
+    // second full-size Buffer for large strings just to measure UTF-8 bytes.
+    const contentBytes = Buffer.byteLength(content);
     const lineCount = TextFileHandler.countLines(content);
 
     // Capture file extension and operation details in telemetry without capturing the file path
@@ -738,6 +748,7 @@ export async function writeFile(filePath: string, content: string, mode: 'rewrit
 
     // Use handler to write the file
     await handler.write(validPath, content, mode);
+    return { contentBytes, lineCount };
 }
 
 export interface MultiFileResult {
