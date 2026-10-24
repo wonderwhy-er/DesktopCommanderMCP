@@ -82,10 +82,25 @@ async function removeRemoteDeviceFile(configPath: string): Promise<void> {
  */
 export async function removeRemoteDeviceConfig(configPath?: string): Promise<void> {
     const activePath = configPath ?? getRemoteDeviceConfigPath();
-    await removeRemoteDeviceFile(activePath);
+    const paths = [activePath];
     if (configPath === undefined) {
         const legacyPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
-        if (legacyPath !== activePath) await removeRemoteDeviceFile(legacyPath);
+        if (legacyPath !== activePath) paths.push(legacyPath);
+    }
+
+    // Failure to remove one file must not leave the other session usable.
+    const errors: unknown[] = [];
+    for (const credentialPath of paths) {
+        try {
+            await removeRemoteDeviceFile(credentialPath);
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+        const details = errors.map((error) => error instanceof Error ? error.message : String(error)).join('; ');
+        throw new Error(`Failed to remove saved Remote MCP credentials: ${details}`);
     }
 }
 

@@ -52,7 +52,7 @@ Note:
     if (process.argv.includes('--logout')) {
         const configPath = getRemoteDeviceConfigPath();
         try {
-            await removeRemoteDeviceConfig(configPath);
+            await removeRemoteDeviceConfig();
             console.log('🔓 Logged out locally. Saved Remote MCP device credentials were removed.');
             console.log(`   ${configPath}`);
         } catch (error: any) {
