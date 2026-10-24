@@ -44,6 +44,7 @@ import {
     CreateDirectoryArgsSchema,
     ListDirectoryArgsSchema,
     MoveFileArgsSchema,
+    CopyFileArgsSchema,
     GetFileInfoArgsSchema,
     GetConfigArgsSchema,
     SetConfigValueArgsSchema,
@@ -609,6 +610,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "move_file",
                 description: `
                         Move or rename files and directories.
+                        This removes the original path; use copy_file instead if the source must remain.
                         
                         Can move files between directories and rename them in a single operation.
                         Both source and destination must be within allowed directories.
@@ -620,6 +622,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     title: "Move/Rename File",
                     readOnlyHint: false,
                     destructiveHint: true,
+                    openWorldHint: false,
+                },
+            },
+            {
+                name: "copy_file",
+                description: `Copy a regular file without removing the source. Both paths must be allowed. The destination must not exist and its parent must already exist.`,
+                inputSchema: zodToJsonSchema(CopyFileArgsSchema),
+                annotations: {
+                    title: "Copy File",
+                    readOnlyHint: false,
+                    destructiveHint: false,
                     openWorldHint: false,
                 },
             },
@@ -1390,6 +1403,10 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
 
             case "move_file":
                 result = await handlers.handleMoveFile(args);
+                break;
+
+            case "copy_file":
+                result = await handlers.handleCopyFile(args);
                 break;
 
             case "start_search":
