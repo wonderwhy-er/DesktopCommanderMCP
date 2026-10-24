@@ -11,6 +11,7 @@ import PizZip from 'pizzip';
 import { parseConfig } from '../../config-manager.js';
 import { VERSION } from '../../version.js';
 import { deviceLogNames, getDeviceLogDir, cleanLine } from './device-log.js';
+import { remoteDeviceDir } from '../../utils/data-paths.js';
 import { redact } from './redact.js';
 import { savedUserId, uploadReport } from './upload.js';
 
@@ -444,7 +445,7 @@ function proxySet(...names: string[]): boolean {
 // --- device state, settings, device log --------------------------------------------------
 
 function deviceState(home: string): DiagnosticsReport['device'] {
-    const file = path.join(home, '.desktop-commander-device', 'device.json');
+    const file = path.join(remoteDeviceDir(home), 'device.json');
     const state: DiagnosticsReport['device'] = {
         deviceJson: false, parses: false, id: null, session: false,
         accessToken: false, refreshToken: false, savedAt: null,

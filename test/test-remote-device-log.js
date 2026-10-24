@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * The remote device log (~/.desktop-commander-device/remote-<day>.log): the
+ * The remote device log (new: ~/.claude-server-commander/device/remote-<day>.log): the
  * device's history that `remote --report` packs. `remote` passes the device's
  * console output through it. Every line is written, with a UTC timestamp and
  * masked by redact(); only the private kinds are dropped. Each UTC weekday has
@@ -86,8 +86,8 @@ async function runTests() {
     }
 
     try {
-        await test('the log folder defaults to ~/.desktop-commander-device', () => {
-            assert.strictEqual(getDeviceLogDir(), path.join(os.homedir(), '.desktop-commander-device'));
+        await test('the log folder defaults to ~/.claude-server-commander/device', () => {
+            assert.strictEqual(getDeviceLogDir(), path.join(os.homedir(), '.claude-server-commander', 'device'));
         });
 
         await test('lines are kept, one per line, with a UTC timestamp and without the leading emoji', () => {

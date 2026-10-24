@@ -1,7 +1,7 @@
 import { ServerResult } from '../types.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { dataDir } from './data-paths.js';
 
 export interface ToolCallRecord {
   timestamp: string;
@@ -63,7 +63,7 @@ class ToolHistory {
 
   constructor() {
     // Store history in same directory as config to keep everything together
-    const historyDir = path.join(os.homedir(), '.claude-server-commander');
+    const historyDir = dataDir();
     
     // Ensure directory exists
     if (!fs.existsSync(historyDir)) {

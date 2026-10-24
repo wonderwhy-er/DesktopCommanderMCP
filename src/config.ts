@@ -1,9 +1,10 @@
-import path from 'path';
 import os from 'os';
+import path from 'path';
+import { dataDir } from './utils/data-paths.js';
 
 // Use user's home directory for configuration files
 export const USER_HOME = os.homedir();
-const CONFIG_DIR = path.join(USER_HOME, '.claude-server-commander');
+const CONFIG_DIR = dataDir(USER_HOME);
 
 // Paths relative to the config directory
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
