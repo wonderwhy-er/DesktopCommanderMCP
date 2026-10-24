@@ -28,6 +28,41 @@ const blockBefore = (content, index) => (index > 0 && content[index - 1].type ==
 /** Whether that block names `file` and no other of `files` (the summary at the top names them all) */
 const namesOnly = (text, file, files) => text.includes(file) && files.every((other) => other === file || !text.includes(other));
 
+async function testTextFilesShareOneModelVisibleBlock(dir) {
+  const first = path.join(dir, 'first.txt');
+  const second = path.join(dir, 'second.txt');
+  await fs.writeFile(first, 'ALPHA291');
+  await fs.writeFile(second, 'BETA291');
+
+  const { content } = await handleReadMultipleFiles({ paths: [first, second] });
+  check(content.length === 1 && content[0].type === 'text',
+    `two text files should be returned in one text block, got ${content.length} blocks`);
+  check(content[0].text.includes(`${first}: text/plain (text)`)
+    && content[0].text.includes(`--- ${first} contents: ---`)
+    && content[0].text.includes('ALPHA291')
+    && content[0].text.includes(`${second}: text/plain (text)`)
+    && content[0].text.includes(`--- ${second} contents: ---`)
+    && content[0].text.includes('BETA291'),
+    `the single text block should contain both metadata and file contents, got: ${JSON.stringify(content[0].text)}`);
+}
+
+async function testPdfAndTextKeepSeparateBlocks(dir) {
+  const pdf = path.join(dir, 'text-only.pdf');
+  const note = path.join(dir, 'pdf-note.txt');
+  await fs.copyFile(SAMPLE_PDF, pdf);
+  await fs.writeFile(note, 'PDF-NOTE-291');
+
+  const { content } = await handleReadMultipleFiles({ paths: [pdf, note] });
+  const page = content.findIndex((block) => block.type === 'text' && block.text.includes('Hello World'));
+  check(content.length > 1, `PDF + text should preserve separate content blocks, got ${content.length}`);
+  check(page > 0 && blockBefore(content, page).includes(`--- ${pdf} contents: ---`),
+    `the PDF page should remain a separate block associated with its path, got: ${JSON.stringify(content)}`);
+  check(content.some((block) => block.type === 'text'
+    && block.text.includes(`--- ${note} contents: ---`)
+    && block.text.includes('PDF-NOTE-291')),
+    'the text file should remain a separate path-qualified block when batched with a PDF');
+}
+
 async function testImagesAndPdfCarryTheirPath(dir) {
   const red = path.join(dir, 'red.png');
   const blue = path.join(dir, 'blue.png');
@@ -57,6 +92,8 @@ async function testImagesAndPdfCarryTheirPath(dir) {
 }
 
 const CASES = [
+  ['text files share one model-visible text block', testTextFilesShareOneModelVisibleBlock],
+  ['PDF and text keep separate blocks', testPdfAndTextKeepSeparateBlocks],
   ['images and PDF pages come with their file\'s path', testImagesAndPdfCarryTheirPath],
 ];
 
