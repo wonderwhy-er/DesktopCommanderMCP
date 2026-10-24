@@ -203,16 +203,29 @@ export interface ShellSpawnConfig {
   windowsVerbatim?: boolean;
 }
 
+type ShellKind = 'bash-or-zsh' | 'pwsh' | 'powershell' | 'cmd' | 'fish' | 'other';
+
+// Which kind of shell a path names: it decides how the shell is started
+function getShellKind(shellPath: string): ShellKind {
+  const shellName = path.basename(shellPath).toLowerCase();
+  if (shellName.includes('bash') || shellName.includes('zsh')) return 'bash-or-zsh';
+  if (shellName === 'pwsh' || shellName === 'pwsh.exe') return 'pwsh';
+  if (shellName === 'powershell' || shellName === 'powershell.exe') return 'powershell';
+  if (shellName === 'cmd' || shellName === 'cmd.exe') return 'cmd';
+  if (shellName.includes('fish')) return 'fish';
+  return 'other';
+}
+
 /**
  * Get the appropriate spawn configuration for a given shell
  * This handles login shell flags for different shell types
  */
 export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
-  const shellName = path.basename(shellPath).toLowerCase();
+  const kind = getShellKind(shellPath);
   const executable = resolveProgramPath(shellPath);
 
   // Unix shells with login flag support
-  if (shellName.includes('bash') || shellName.includes('zsh')) {
+  if (kind === 'bash-or-zsh') {
     return {
       executable,
       args: ['-l', '-c', command],
@@ -221,7 +234,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // PowerShell Core (cross-platform, supports -Login)
-  if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
+  if (kind === 'pwsh') {
     return {
       executable,
       args: ['-Login', '-Command', command],
@@ -230,7 +243,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // Windows PowerShell 5.1 (no login flag support)
-  if (shellName === 'powershell' || shellName === 'powershell.exe') {
+  if (kind === 'powershell') {
     return {
       executable,
       args: ['-Command', command],
@@ -239,7 +252,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // CMD
-  if (shellName === 'cmd' || shellName === 'cmd.exe') {
+  if (kind === 'cmd') {
     return {
       executable,
       args: ['/c', command],
@@ -249,7 +262,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // Fish shell (uses -l for login, -c for command)
-  if (shellName.includes('fish')) {
+  if (kind === 'fish') {
     return {
       executable,
       args: ['-l', '-c', command],
