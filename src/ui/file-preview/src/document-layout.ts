@@ -107,11 +107,13 @@ export function buildDocumentLayout(options: {
         html: `
           <main id="tool-shell" class="shell tool-shell ${effectiveExpanded ? 'expanded' : 'collapsed'}${options.hideSummaryRow ? ' host-framed' : ''}${isFullscreen ? ' fullscreen' : ''}">
             ${isFullscreen ? '' : renderCompactRow({ id: 'compact-toggle', label: compactLabel, filename: options.payload.fileName, variant: 'ready', expandable: true, expanded: options.isExpanded, interactive: true })}
+            ${options.hideSummaryRow && !isFullscreen ? '<button id="close-preview-outer" class="preview-unload-outer" type="button">Close preview</button>' : ''}
             <section class="panel">
               <div class="panel-topbar">
                 ${backButton}
                 ${options.hideSummaryRow ? '' : `<span class="panel-breadcrumb" title="${escapeHtml(options.payload.filePath)}">${breadcrumb}</span>`}
                 <span class="panel-topbar-actions">
+                    <button class="panel-action" id="close-preview" type="button" title="Unload preview" aria-label="Unload preview">Close</button>
                     ${isMarkdownEdit ? renderMarkdownSaveStatus(options.markdownWorkspace!) : ''}
                     ${htmlToggle}
                     ${isMarkdownEdit && isFullscreen ? renderMarkdownModeToggle(options.markdownWorkspace!.editorView) : ''}

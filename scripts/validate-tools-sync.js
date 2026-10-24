@@ -10,6 +10,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import { listModelVisibleServerTools } from './model-tools-client.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -27,98 +28,22 @@ const colors = {
 
 async function extractToolsFromManifest() {
   const manifestPath = join(rootDir, 'mcpb-bundle', 'manifest.json');
-  const content = await readFile(manifestPath, 'utf-8');
+  // A source checkout contains the template; a packaged build contains manifest.json.
+  let content;
+  try {
+    content = await readFile(manifestPath, 'utf-8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    content = await readFile(join(rootDir, 'manifest.template.json'), 'utf-8');
+  }
   const manifest = JSON.parse(content);
   
   return manifest.tools.map(tool => tool.name).sort();
 }
 
 async function extractToolsFromServer() {
-  return new Promise((resolve, reject) => {
-    // Start the MCP server
-    const serverPath = join(rootDir, 'dist', 'index.js');
-    const server = spawn('node', [serverPath], {
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    let output = '';
-    let errorOutput = '';
-    const messages = [];
-
-    server.stdout.on('data', (data) => {
-      output += data.toString();
-      
-      // Try to parse each line as JSON-RPC message
-      const lines = output.split('\n');
-      output = lines.pop() || ''; // Keep incomplete line
-      
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            messages.push(JSON.parse(line));
-          } catch (e) {
-            // Not JSON, might be debug output
-          }
-        }
-      }
-    });
-
-    server.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    // Step 1: Send initialize request
-    const initRequest = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: {
-          name: 'validate-tools-sync',
-          version: '1.0.0'
-        }
-      }
-    };
-
-    server.stdin.write(JSON.stringify(initRequest) + '\n');
-
-    // Wait for initialize response, then send tools/list
-    setTimeout(() => {
-      // Step 2: Send tools/list request
-      const toolsRequest = {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/list',
-        params: {}
-      };
-
-      server.stdin.write(JSON.stringify(toolsRequest) + '\n');
-
-      // Wait for tools/list response
-      setTimeout(() => {
-        server.kill();
-
-        // Find the tools/list response
-        const toolsResponse = messages.find(msg => msg.id === 2 && msg.result);
-
-        if (!toolsResponse) {
-          reject(new Error('No tools/list response received'));
-          return;
-        }
-
-        const tools = toolsResponse.result.tools.map(tool => tool.name).sort();
-        resolve(tools);
-      }, 1000);
-    }, 500);
-
-    server.on('error', (error) => {
-      reject(new Error(`Failed to start server: ${error.message}`));
-    });
-  });
+  return listModelVisibleServerTools(join(rootDir, 'dist', 'index.js'));
 }
-
 async function main() {
   console.log(`${colors.cyan}🔍 Validating tool synchronization...${colors.reset}\n`);
   

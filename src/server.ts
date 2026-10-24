@@ -81,7 +81,7 @@ import {
     CONFIG_EDITOR_RESOURCE_URI,
     FILE_PREVIEW_RESOURCE_URI,
 } from './ui/contracts.js';
-import { listUiResources, readUiResource } from './ui/resources.js';
+import { getCompressedFilePreviewRuntime, listUiResources, readUiResource } from './ui/resources.js';
 import { shouldShowMcpUiPreviews } from './utils/mcp-ui-ab-test.js';
 
 // Store startup messages to send after initialization
@@ -310,6 +310,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
         // Build complete tools array
         const allTools = [
+            // Internal viewer runtime: accessible to MCP Apps, not to the model.
+            {
+                name: 'get_file_preview_runtime',
+                description: 'Load the fixed, compressed Desktop Commander viewer runtime after a preview click.',
+                inputSchema: {
+                    type: 'object',
+                    properties: { origin: { type: 'string', enum: ['ui'] } },
+                    required: ['origin'],
+                    additionalProperties: false,
+                },
+                _meta: { ui: { visibility: ['app'] } },
+                annotations: { title: 'Load Preview Viewer', readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+            },
             // Configuration tools
             {
                 name: "get_config",
@@ -1254,6 +1267,22 @@ async function handleCallToolRequest(request: CallToolRequest): Promise<ServerRe
         // (result is declared above so the finally block can read execution status)
 
         switch (name) {
+            case 'get_file_preview_runtime': {
+                // Never accept arbitrary file paths, code or a model-origin request.
+                // The public schema is strict, but enforce that boundary here too in
+                // case a client sends a hand-crafted tools/call request.
+                const runtimeArgsValid = !!args
+                    && typeof args === 'object'
+                    && !Array.isArray(args)
+                    && args.origin === 'ui'
+                    && Object.keys(args).length === 1;
+                if (!runtimeArgsValid) {
+                    result = { content: [{ type: 'text', text: 'UI-only operation' }], isError: true };
+                } else {
+                    result = { content: [{ type: 'text', text: await getCompressedFilePreviewRuntime() }] };
+                }
+                break;
+            }
             // Config tools
             case "get_config":
                 try {
