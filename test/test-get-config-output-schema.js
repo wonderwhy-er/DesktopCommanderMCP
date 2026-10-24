@@ -19,6 +19,14 @@ export default async function runTests() {
     assert.equal(advertised.properties.uiHints.properties.availableShells.items.type, 'string');
     assert.ok(advertised.properties.entries.items.properties.key.enum.includes('defaultShell'));
     assert.equal(advertised.properties.entries.items.properties.editable.const, true);
+    // A sparse config yields an entry with value: undefined, omitted over JSON.
+    // The published JSON schema must accept the serialized form.
+    const sparseEntry = JSON.parse(JSON.stringify({
+      key: 'defaultShell', value: undefined, valueType: 'string', editable: true,
+    }));
+    assert.equal(Object.hasOwn(sparseEntry, 'value'), false);
+    assert.ok(!advertised.properties.entries.items.required.includes('value'),
+      'get_config output schema must not require values omitted by JSON serialization');
 
     const result = await client.callTool({ name: 'get_config', arguments: {} });
     assert.notEqual(result.isError, true, JSON.stringify(result.content));
@@ -26,6 +34,10 @@ export default async function runTests() {
     assert.ok(result.structuredContent, 'get_config must preserve its existing structuredContent');
 
     const { GetConfigOutputSchema } = await import('../dist/tools/output-schemas.js');
+    assert.equal(GetConfigOutputSchema.safeParse({
+      ...result.structuredContent,
+      entries: [sparseEntry],
+    }).success, true, 'serialized sparse config entries must validate without a value property');
     assert.equal(GetConfigOutputSchema.safeParse(result.structuredContent).success, true,
       'actual structured result must conform to its declared output schema');
     assert.equal(GetConfigOutputSchema.safeParse({
