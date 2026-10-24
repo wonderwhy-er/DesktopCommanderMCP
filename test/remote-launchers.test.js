@@ -178,13 +178,15 @@ esac`,
 
         const callsBeforeConsent = readFileSync(env.TEST_CALLS, "utf8");
         for (const [architecture, downloadUrl] of Object.entries(manualDownloads)) {
-            for (const answer of ["n\n", "No\n", "\n", "maybe\n", " yes \n", "", "yes"]) {
+            for (const answer of ["n\n", "No\n", "maybe\n", " yes \n", "", "yes"]) {
                 writeFileSync(terminalInput, answer);
                 const declined = run({ TEST_ARCH: architecture }, "/bin/sh", readFileSync(script, "utf8"));
                 expect(declined, 0);
-                assert.match(declined.stdout, /Remote Desktop Commander needs Node\.js, which could not be found on this computer\./);
-                assert.match(declined.stdout, /If you choose Yes, we will install Node\.js 24, then download and start Remote Desktop Commander\./);
-                assert.match(declined.stdout, /Would you like to continue\? Type Yes or No \(press Enter for No\): /);
+                assert.ok(declined.stdout.startsWith(
+                    "\nRemote Desktop Commander needs Node.js, which could not be found on this computer.\n\n" +
+                    "If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.\n\n" +
+                    "Would you like to continue? Type Yes or No (press Enter for Yes): "
+                ), "Leave a blank line between each explanation and before the question");
                 const lines = declined.stdout.split("\n");
                 assert.ok(lines.includes("Node.js could not be found. You can choose either option:"));
                 assert.ok(lines.includes("2. If Node.js is already installed, open a new Terminal window and run:"));
@@ -219,11 +221,11 @@ esac`,
         assert.equal(readFileSync(env.TEST_CALLS, "utf8"), callsBeforeConsent);
 
         // Acceptance reaches the first download; the existing fixtures below exercise full installation.
-        for (const answer of ["y\n", "Y\n", "yes\n", "YES\n", "yEs\n"]) {
+        for (const answer of ["\n", "y\n", "Y\n", "yes\n", "YES\n", "yEs\n"]) {
             writeFileSync(terminalInput, answer);
             expect(run({ TEST_DOWNLOAD_FAIL: "1" }, "/bin/sh", readFileSync(script, "utf8")), 22);
         }
-        writeFileSync(terminalInput, "YeS\n");
+        writeFileSync(terminalInput, "\n");
 
         for (const arch of ["x64", "arm64"]) {
             const archiveRoot = `node-v24.0.0-${platform === "macos" ? "darwin" : "linux"}-${arch}`;

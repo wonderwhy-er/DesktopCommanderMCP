@@ -47,9 +47,11 @@ function Write-Host {
 function Read-Host {
     param($Prompt)
     $script:prompts++
-    Assert ($script:hostMessages[-2] -eq 'Remote Desktop Commander needs Node.js, which could not be found on this computer.') 'Explain why Node.js is needed without assuming it is not installed.'
-    Assert ($script:hostMessages[-1] -eq 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.') 'Explain both installation and device startup before asking for consent.'
-    Assert ($Prompt -eq 'Would you like to continue? Type Yes or No (press Enter for No)') 'Consent must offer Yes/No with No as the default.'
+    Assert ($script:hostMessages[-4] -eq 'Remote Desktop Commander needs Node.js, which could not be found on this computer.') 'Explain why Node.js is needed without assuming it is not installed.'
+    Assert ($script:hostMessages[-3] -eq '') 'Separate the Node.js explanation from the Yes explanation with a blank line.'
+    Assert ($script:hostMessages[-2] -eq 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.') 'Explain both installation and device startup before asking for consent.'
+    Assert ($script:hostMessages[-1] -eq '') 'Separate the Yes explanation from the prompt with a blank line.'
+    Assert ($Prompt -eq 'Would you like to continue? Type Yes or No (press Enter for Yes)') 'Consent must offer Yes/No with Yes as the Enter default.'
     if ($script:promptFailure) { throw 'Fixture prompt unavailable' }
     # Read-Host at EOF produces no pipeline value, which differs from an explicit null result.
     if ($null -eq $script:consentAnswer) { return }
@@ -183,19 +185,29 @@ try {
     $installationsBeforeConsent = $script:installations
     $callsBeforeConsent = $script:calls.Count
     $directoriesBeforeConsent = $script:createdDirectories
-    # Null models end-of-input; every answer except y/yes must cancel.
-    foreach ($answer in @('n', 'no', 'No', '', 'maybe', 'yes ', $null)) {
+    $expectedDeclineMessages = @(
+        '',
+        'Node.js could not be found. You can choose either option:',
+        '',
+        '1. To install Node.js yourself, use this download link:',
+        '',
+        # The offline manual link is pinned to the release in https://nodejs.org/dist/v24.22.1/SHASUMS256.txt.
+        'https://nodejs.org/dist/v24.22.1/node-v24.22.1-x64.msi',
+        '',
+        'Open the downloaded file to install Node.js. Then open a new window and run the command below.',
+        '',
+        '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:',
+        '',
+        'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
+    )
+    # Null models end-of-input; No, invalid text, and missing input must cancel.
+    foreach ($answer in @('n', 'no', 'No', 'maybe', 'yes ', $null)) {
         $script:consentAnswer = $answer
         $promptsBeforeRun = $script:prompts
         Run-Launcher
         Assert ($script:prompts -eq $promptsBeforeRun + 1) 'Missing Node must prompt exactly once.'
-        Assert ($script:hostMessages[-6] -eq 'Node.js could not be found. You can choose either option:') 'Declined or absent consent must offer both manual options.'
-        Assert ($script:hostMessages[-5] -eq '1. To install Node.js yourself, use this download link:') 'Declined or absent consent must offer a direct download first.'
-        # The offline manual link is pinned to the release in https://nodejs.org/dist/v24.22.1/SHASUMS256.txt.
-        Assert ($script:hostMessages[-4] -eq 'https://nodejs.org/dist/v24.22.1/node-v24.22.1-x64.msi') 'Declined or absent consent must show the direct x64 installer URL.'
-        Assert ($script:hostMessages[-3] -eq 'Open the downloaded file to install Node.js. Then open a new window and run the command below.') 'Declined or absent consent must point to the manual command below.'
-        Assert ($script:hostMessages[-2] -eq '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:') 'Declined or absent consent must offer the existing Node.js option second.'
-        Assert ($script:hostMessages[-1] -eq 'npx.cmd @wonderwhy-er/desktop-commander@latest remote') 'Declined or absent consent must show the exact manual command.'
+        $actualDeclineMessages = $script:hostMessages[(-$expectedDeclineMessages.Count)..-1]
+        Assert (($actualDeclineMessages -join "`n") -eq ($expectedDeclineMessages -join "`n")) 'Declined or absent consent must preserve both options, URL, exact command, and blank lines between them.'
         Assert ($script:downloads -eq $downloadsBeforeConsent) 'Cancellation must not download anything.'
         Assert ($script:installations -eq $installationsBeforeConsent) 'Cancellation must not install anything.'
         Assert ($script:calls.Count -eq $callsBeforeConsent) 'Cancellation must not start remote.'
@@ -214,13 +226,8 @@ try {
     Invoke-Expression $bootstrap.Groups[1].Value
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
     Assert ($script:prompts -eq $promptsBeforeWrapper + 1) 'CMD must delegate exactly one confirmation to the PowerShell launcher.'
-    Assert ($script:hostMessages[-6] -eq 'Node.js could not be found. You can choose either option:') 'Declining from CMD must offer both manual options.'
-    Assert ($script:hostMessages[-5] -eq '1. To install Node.js yourself, use this download link:') 'Declining from CMD must offer a direct download first.'
-    # The offline manual link is pinned to the release in https://nodejs.org/dist/v24.22.1/SHASUMS256.txt.
-    Assert ($script:hostMessages[-4] -eq 'https://nodejs.org/dist/v24.22.1/node-v24.22.1-x64.msi') 'Declining from CMD must show the direct x64 installer URL.'
-    Assert ($script:hostMessages[-3] -eq 'Open the downloaded file to install Node.js. Then open a new window and run the command below.') 'Declining from CMD must point to the manual command below.'
-    Assert ($script:hostMessages[-2] -eq '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:') 'Declining from CMD must offer the existing Node.js option second.'
-    Assert ($script:hostMessages[-1] -eq 'npx.cmd @wonderwhy-er/desktop-commander@latest remote') 'Declining from CMD must show the exact manual command.'
+    $actualDeclineMessages = $script:hostMessages[(-$expectedDeclineMessages.Count)..-1]
+    Assert (($actualDeclineMessages -join "`n") -eq ($expectedDeclineMessages -join "`n")) 'Declining from CMD must preserve both options, URL, exact command, and blank lines between them.'
     Assert ($script:downloads -eq $downloadsBeforeConsent) 'Declining from CMD must not download Node.js.'
     Assert ($script:installations -eq $installationsBeforeConsent) 'Declining from CMD must not install Node.js.'
     Assert ($script:calls.Count -eq $callsBeforeConsent) 'Declining from CMD must not start remote.'
@@ -239,16 +246,29 @@ try {
         Run-Launcher
         $guidance = $script:hostMessages[$messagesBeforeRun..($script:hostMessages.Count - 1)]
         Assert ($guidance -contains 'npx.cmd @wonderwhy-er/desktop-commander@latest remote') 'Every Windows architecture must retain the manual command.'
-        Assert ($guidance[3] -like '1. *' -and $guidance[-2] -like '2. *') 'Option 1 must appear before option 2 on every Windows architecture.'
+        Assert ($guidance[7] -like '1. *' -and $guidance[-3] -like '2. *') 'Option 1 must appear before option 2 on every Windows architecture.'
         if ($platform.Download) {
             # The offline manual link is pinned to the release in https://nodejs.org/dist/v24.22.1/SHASUMS256.txt.
             $expectedDownload = "https://nodejs.org/dist/v24.22.1/node-v24.22.1-$($platform.Download).msi"
-            Assert ($script:hostMessages[-4] -eq $expectedDownload) 'The direct link must match the native Windows architecture.'
+            Assert ($script:hostMessages[-7] -eq $expectedDownload) 'The direct link must match the native Windows architecture.'
+            Assert ($script:hostMessages[-8] -eq '' -and $script:hostMessages[-6] -eq '') 'Separate the direct installer URL from surrounding text with blank lines.'
         }
         else {
             $expectedDownload = 'https://nodejs.org/en/download'
-            Assert ($script:hostMessages[-4] -eq '1. Choose a Node.js download for your computer here:') 'Unknown architectures must offer the Node.js download selection first.'
-            Assert ($script:hostMessages[-3] -eq $expectedDownload) 'Unknown architectures must link to the official Node.js download page.'
+            $expectedFallbackMessages = @(
+                '',
+                'Node.js could not be found. You can choose either option:',
+                '',
+                '1. Choose a Node.js download for your computer here:',
+                '',
+                $expectedDownload,
+                '',
+                '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:',
+                '',
+                'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
+            )
+            $actualFallbackMessages = $script:hostMessages[(-$expectedFallbackMessages.Count)..-1]
+            Assert (($actualFallbackMessages -join "`n") -eq ($expectedFallbackMessages -join "`n")) 'Unknown architectures must preserve fallback guidance, the official URL, command, and blank lines.'
             Assert (-not ($guidance -match '^https://nodejs.org/dist/')) 'Unknown architectures must not default to an x64 download.'
         }
 
@@ -271,7 +291,7 @@ try {
     $env:PROCESSOR_ARCHITECTURE = 'AMD64'
     $env:PROCESSOR_ARCHITEW6432 = ''
 
-    foreach ($answer in @('y', 'Y', 'yes', 'YeS')) {
+    foreach ($answer in @('', 'y', 'Y', 'yes', 'YeS')) {
         $script:consentAnswer = $answer
         $script:systemNode = $false
         $promptsBeforeRun = $script:prompts
@@ -279,7 +299,7 @@ try {
         $callsBeforeRun = $script:calls.Count
         Run-Launcher
         Assert ($script:prompts -eq $promptsBeforeRun + 1) 'Accepted consent must prompt exactly once.'
-        Assert ($script:installations -eq $installationsBeforeRun + 1) 'Explicit y/yes consent must install Node.'
+        Assert ($script:installations -eq $installationsBeforeRun + 1) 'Pressing Enter or entering y/yes must install Node.'
         Assert ($script:calls.Count -eq $callsBeforeRun + 1) 'Successful installation after consent must start remote.'
     }
 

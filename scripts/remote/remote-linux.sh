@@ -45,18 +45,19 @@
         # Install only when neither location has Node; existing versions are validated below.
         if ! command -v node >/dev/null 2>&1; then
             # Ask before changing the computer; stdin may still contain the piped script.
-            printf '%s\n' \
+            printf '\n%s\n' \
                 'Remote Desktop Commander needs Node.js, which could not be found on this computer.' \
                 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
             if ! ( : </dev/tty ) 2>/dev/null; then
                 fail 'We could not read your answer. Please open Terminal and run this command again.'
             fi
-            printf '%s' 'Would you like to continue? Type Yes or No (press Enter for No): '
+            printf '\n%s' 'Would you like to continue? Type Yes or No (press Enter for Yes): '
             if ! IFS= read -r answer </dev/tty; then
-                answer=
+                # End-of-input is not the same as pressing Enter.
+                answer=No
             fi
             case "$answer" in
-                [yY]|[yY][eE][sS])
+                ''|[yY]|[yY][eE][sS])
                     ;;
                 *)
                     printf '\n%s\n' 'Node.js could not be found. You can choose either option:'

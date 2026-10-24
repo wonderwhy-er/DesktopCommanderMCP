@@ -48,27 +48,36 @@
         }
 
         if (-not (Get-Command node.exe -CommandType Application -ErrorAction SilentlyContinue)) {
-            # Confirm before downloading or installing anything; only an explicit Yes continues.
+            # Confirm before downloading or installing anything; Enter chooses Yes, but missing input does not.
             Write-Host 'Remote Desktop Commander needs Node.js, which could not be found on this computer.'
+            Write-Host
             Write-Host 'If you choose Yes, we will install Node.js 24, then download and start Remote Desktop Commander.'
+            Write-Host
             try {
-                $installConsent = Read-Host 'Would you like to continue? Type Yes or No (press Enter for No)'
+                $installConsent = Read-Host 'Would you like to continue? Type Yes or No (press Enter for Yes)'
             }
             catch {
                 throw 'We could not read your answer. Please open PowerShell or Command Prompt and run this command again.'
             }
-            if ($installConsent -notin @('y', 'yes')) {
+            Write-Host
+            if ($null -eq $installConsent -or $installConsent -notin @('', 'y', 'yes')) {
                 Write-Host 'Node.js could not be found. You can choose either option:'
+                Write-Host
                 if ($arch) {
                     Write-Host '1. To install Node.js yourself, use this download link:'
+                    Write-Host
                     Write-Host $manualDownloadUrl
+                    Write-Host
                     Write-Host 'Open the downloaded file to install Node.js. Then open a new window and run the command below.'
                 }
                 else {
                     Write-Host '1. Choose a Node.js download for your computer here:'
+                    Write-Host
                     Write-Host $manualDownloadUrl
                 }
+                Write-Host
                 Write-Host '2. If Node.js is already installed, open a new PowerShell or Command Prompt window and run:'
+                Write-Host
                 Write-Host 'npx.cmd @wonderwhy-er/desktop-commander@latest remote'
                 return
             }

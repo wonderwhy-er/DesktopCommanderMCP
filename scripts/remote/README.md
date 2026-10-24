@@ -1,12 +1,12 @@
 # Remote device launchers
 
-These scripts start Remote Desktop Commander on your computer. If Node.js cannot be found, they explain what will be installed and ask you to type **Yes** or **No**. Yes installs Node.js 24, then downloads and starts Remote Desktop Commander. No, an empty answer, or an unrecognized answer stops without installing or starting anything. It shows two options: first, download Node.js using a direct link for your computer; second, run the command yourself in a new terminal if Node.js is already installed. If compatible Node.js is found, setup starts Remote Desktop Commander without asking again.
+These scripts start Remote Desktop Commander on your computer. If Node.js cannot be found, they explain what will be installed and ask you to type **Yes** or **No**. Yes or pressing Enter installs Node.js 24, then downloads and starts Remote Desktop Commander. No or an unrecognized answer stops without installing or starting anything. It shows two options: first, download Node.js using a direct link for your computer; second, run the command yourself in a new terminal if Node.js is already installed. If an answer cannot be read, nothing is installed. If compatible Node.js is found, setup starts Remote Desktop Commander without asking again.
 
 The manual links point directly to Node.js v24.22.1 files, so showing them needs no internet connection. macOS gets a universal installer; Windows and supported Linux computers get the matching processor version. Opening a link downloads the file. macOS and Windows users can open it to install Node.js; Linux users must install the downloaded archive themselves. Unsupported processors receive a link to [the Node.js download page](https://nodejs.org/en/download) instead of an incompatible file. Keep these pinned links in sync with the onboarding page's manual downloads.
 
 Inspect the source: [macOS](remote-macos.sh), [Linux](remote-linux.sh), [PowerShell](remote-windows.ps1), [CMD wrapper](remote-windows.cmd).
 
-For a fixed revision, replace `refs/heads/main` in the URLs below with its commit SHA.
+The commands below always use the public scripts from `main`.
 
 macOS, including zsh, bash, and fish:
 
