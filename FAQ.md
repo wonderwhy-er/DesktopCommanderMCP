@@ -52,6 +52,7 @@ This document provides answers to the most commonly asked questions about Claude
 
 - [Troubleshooting](#troubleshooting)
   - [Claude says it doesn't have permission to access my files/directories](#claude-says-it-doesnt-have-permission-to-access-my-filesdirectories)
+  - [A specific iCloud Drive folder returns `[DENIED]` on macOS](#a-specific-icloud-drive-folder-returns-denied-on-macos)
   - [Claude keeps hitting token/output limits](#claude-keeps-hitting-tokenoutput-limits)
   - [Installation fails on my system](#installation-fails-on-my-system)
 
@@ -479,11 +480,19 @@ Before diving into specific issues, check the [GitHub issues page](https://githu
 
 ### Claude says it doesn't have permission to access my files/directories
 
-Recent updates have removed directory restrictions. If you're still experiencing this issue:
+If you're experiencing this issue:
 1. Make sure you've installed the latest version
 2. Restart Claude Desktop completely
 3. When Claude asks for permission to use tools, approve for the entire chat
 4. Check if there are any specific permission issues with the directory in question (file permissions, etc.)
+
+### A specific iCloud Drive folder returns `[DENIED]` on macOS
+
+If Desktop Commander can access other folders but one iCloud Drive folder consistently returns `[DENIED]`, first confirm in Finder that the folder is downloaded to the Mac (or marked Keep Downloaded) and review the relevant macOS Privacy & Security permissions for the application that launches Desktop Commander. Desktop Commander cannot grant itself additional filesystem or macOS privacy access.
+
+Issue #388 reports a folder-specific case where those checks were already satisfied for a folder originally created in the iOS Files app. A reported workaround was to copy the folder's contents to a separate location, verify that copy, recreate the folder from macOS, and then restore the contents. Deleting an iCloud Drive folder can propagate to other devices, so do not remove the original until you have verified an independent copy or backup. Update `allowedDirectories` only if the effective path changes.
+
+The report does not establish which iCloud or filesystem metadata caused the difference, so recreating the folder should be treated as a troubleshooting workaround rather than a general fix for every iCloud permission error.
 
 ### Claude keeps hitting token/output limits
 
