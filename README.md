@@ -773,8 +773,10 @@ Every fuzzy search operation logs:
 ### Log Location
 
 Logs are automatically saved to:
-- **macOS/Linux**: `~/.claude-server-commander-logs/fuzzy-search.log`
-- **Windows**: `%USERPROFILE%\.claude-server-commander-logs\fuzzy-search.log`
+- **macOS/Linux**: `~/.claude-server-commander/logs/fuzzy-search.log`
+- **Windows**: `%USERPROFILE%\.claude-server-commander\logs\fuzzy-search.log`
+
+Existing logs in `~/.claude-server-commander-logs/fuzzy-search.log` continue to be used until they are moved explicitly; Desktop Commander does not overwrite or delete existing logs during upgrades.
 
 ### What You'll Learn
 

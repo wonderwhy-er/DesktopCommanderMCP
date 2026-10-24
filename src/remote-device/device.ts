@@ -15,6 +15,7 @@ import { observeTransport } from './transport-telemetry.js';
 import { startTerminalTimestamps } from '../utils/terminal-timestamps.js';
 import { VERSION } from '../version.js';
 import { rolloutManager } from './rollouts.js';
+import { remoteDeviceDir } from '../utils/data-paths.js';
 
 export interface MCPDeviceOptions {
     persistSession?: boolean;
@@ -38,7 +39,7 @@ const PERSISTED_DEVICE_LOOKUP_RETRY_MS = 250;
 const RECOVERY_MIN_DELAY_MS = 1000;
 
 export function getRemoteDeviceConfigPath() {
-    return path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+    return path.join(remoteDeviceDir(), 'device.json');
 }
 
 /**
@@ -58,8 +59,8 @@ function lockRemoteDeviceConfig(configPath: string): Promise<() => Promise<void>
     });
 }
 
-/** `remote --logout`: removes device.json, under the lock a running device's save takes. */
-export async function removeRemoteDeviceConfig(configPath = getRemoteDeviceConfigPath()): Promise<void> {
+/** Delete one device.json under the same cross-process lock used for rotation saves. */
+async function removeRemoteDeviceFile(configPath: string): Promise<void> {
     let release: (() => Promise<void>) | undefined;
     try {
         release = await lockRemoteDeviceConfig(configPath);
@@ -71,6 +72,35 @@ export async function removeRemoteDeviceConfig(configPath = getRemoteDeviceConfi
         await fs.rm(configPath, { force: true });
     } finally {
         await release?.();
+    }
+}
+
+/**
+ * remote --logout must clear both possible saved sessions: leaving an old
+ * device.json behind would silently reauthorize on the next start. Explicit
+ * test callers passing a path still remove only that path.
+ */
+export async function removeRemoteDeviceConfig(configPath?: string): Promise<void> {
+    const activePath = configPath ?? getRemoteDeviceConfigPath();
+    const paths = [activePath];
+    if (configPath === undefined) {
+        const legacyPath = path.join(os.homedir(), '.desktop-commander-device', 'device.json');
+        if (legacyPath !== activePath) paths.push(legacyPath);
+    }
+
+    // Failure to remove one file must not leave the other session usable.
+    const errors: unknown[] = [];
+    for (const credentialPath of paths) {
+        try {
+            await removeRemoteDeviceFile(credentialPath);
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) {
+        const details = errors.map((error) => error instanceof Error ? error.message : String(error)).join('; ');
+        throw new Error(`Failed to remove saved Remote MCP credentials: ${details}`);
     }
 }
 
