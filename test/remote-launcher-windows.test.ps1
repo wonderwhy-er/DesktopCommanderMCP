@@ -103,9 +103,9 @@ function Invoke-WebRequest {
 
 function Invoke-RestMethod {
     param($Uri, $ErrorAction)
-    Assert ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12) 'Bootstrap must enable TLS 1.2 before its first download.'
+    Assert ([Net.ServicePointManager]::SecurityProtocol -eq [Net.SecurityProtocolType]::SystemDefault) 'Bootstrap must preserve the default TLS settings before its first download.'
     Assert ($ErrorAction -eq 'Stop') 'Bootstrap download failures must stop execution.'
-    Assert ($Uri -eq 'https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/scripts/remote/remote-windows.ps1') 'Bootstrap must use the public launcher source.'
+    Assert ($Uri -eq 'https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/scripts/remote/remote-windows.ps1') 'Bootstrap must use the public launcher source.'
     Get-Content -Raw -LiteralPath $launcher
 }
 
@@ -156,8 +156,11 @@ try {
     $wrapper = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '../scripts/remote/remote-windows.cmd')
     $bootstrap = [regex]::Match($wrapper, 'powershell\.exe -NoProfile -Command "([^"]+)"')
     Assert $bootstrap.Success 'CMD wrapper must invoke a child PowerShell.'
+    Assert ($bootstrap.Groups[1].Value -eq 'irm -ErrorAction Stop https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/scripts/remote/remote-windows.ps1 | iex') 'CMD must use the same short download-and-run payload as PowerShell.'
+    Assert ($wrapper -match '(?m)^exit /b %ERRORLEVEL%\r?$') 'CMD must return the PowerShell exit status without closing the caller.'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::SystemDefault
     Invoke-Expression $bootstrap.Groups[1].Value
+    Assert ([Net.ServicePointManager]::SecurityProtocol -eq [Net.SecurityProtocolType]::SystemDefault) 'CMD payload must preserve the TLS defaults after running.'
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
     foreach ($v in @('20.19.0', '22.11.0')) {
         $script:version = $v
@@ -223,7 +226,9 @@ try {
 
     $script:consentAnswer = 'no'
     $promptsBeforeWrapper = $script:prompts
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::SystemDefault
     Invoke-Expression $bootstrap.Groups[1].Value
+    Assert ([Net.ServicePointManager]::SecurityProtocol -eq [Net.SecurityProtocolType]::SystemDefault) 'Declining from CMD must preserve the TLS defaults.'
     [Net.ServicePointManager]::SecurityProtocol = $savedTls
     Assert ($script:prompts -eq $promptsBeforeWrapper + 1) 'CMD must delegate exactly one confirmation to the PowerShell launcher.'
     $actualDeclineMessages = $script:hostMessages[(-$expectedDeclineMessages.Count)..-1]

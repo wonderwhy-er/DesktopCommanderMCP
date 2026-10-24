@@ -26,12 +26,12 @@ curl -fsSL https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/re
 irm -ErrorAction Stop https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/scripts/remote/remote-windows.ps1 | iex
 ```
 
-The first download uses [PowerShell's TLS defaults](https://learn.microsoft.com/en-us/dotnet/framework/network-programming/tls). If an older Windows configuration cannot connect, use the Command Prompt command below; it enables TLS 1.2 before downloading.
+Both Windows commands use [PowerShell's TLS defaults](https://learn.microsoft.com/en-us/dotnet/framework/network-programming/tls) for the first download, which can fail on older Windows configurations.
 
 ### Windows Command Prompt
 
 ```cmd
-powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod -ErrorAction Stop 'https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/refs/heads/main/scripts/remote/remote-windows.ps1' | Invoke-Expression"
+powershell.exe -NoProfile -Command "irm -ErrorAction Stop https://raw.githubusercontent.com/wonderwhy-er/DesktopCommanderMCP/main/scripts/remote/remote-windows.ps1 | iex"
 ```
 
 Alternatively, save and run [remote-windows.cmd](remote-windows.cmd). Press **Ctrl+C** to stop; run the same command again to reconnect. Your computer may ask you to confirm during installation. Open a terminal window to answer the setup question; setup will not install Node.js if it cannot read your answer.
