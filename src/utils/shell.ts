@@ -220,12 +220,15 @@ function getShellKind(shellPath: string): ShellKind {
   return 'other';
 }
 
-/** The command languages the command check reads with their own grammar */
-export type ShellSyntax = 'posix';
+/**
+ * The command languages the command check reads with their own grammar. Windows
+ * PowerShell (5.1) and PowerShell (6 and later) decode some escapes differently.
+ */
+export type ShellSyntax = 'posix' | 'windows-powershell' | 'powershell';
 
 /**
  * The language a shell reads a command in, when the command check has a parser
- * for it; undefined for the others (PowerShell, cmd, fish, unknown shells).
+ * for it; undefined for the others (cmd, fish, unknown shells).
  */
 export function getShellSyntax(shellPath: string): ShellSyntax | undefined {
   const kind = getShellKind(shellPath);
@@ -233,8 +236,10 @@ export function getShellSyntax(shellPath: string): ShellSyntax | undefined {
     case 'bash-or-zsh':
     case 'sh-family':
       return 'posix';
-    case 'pwsh':
     case 'powershell':
+      return 'windows-powershell';
+    case 'pwsh':
+      return 'powershell';
     case 'cmd':
     case 'fish':
     case 'other':

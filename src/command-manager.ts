@@ -3,9 +3,12 @@ import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import {getShellSyntax, ShellSyntax} from './utils/shell.js';
 import {posixCommandWords} from './utils/posix-commands.js';
+import {powershellCommandWords} from './utils/powershell-commands.js';
 
 const COMMAND_WORDS: Record<ShellSyntax, (script: string) => string[]> = {
     posix: posixCommandWords,
+    'windows-powershell': (script) => powershellCommandWords(script, 'windows-powershell'),
+    powershell: (script) => powershellCommandWords(script, 'powershell'),
 };
 
 class CommandManager {
@@ -18,9 +21,9 @@ class CommandManager {
      * The command name of each command in a command line (chained, piped, in $(), ...).
      * asTyped: each first word as typed instead of its base name, for telemetry,
      * which then replaces a path whole (a base name alone can't be told from one).
-     * shell: the shell that will run the line. A POSIX shell line is read with that
-     * grammar; any other shell's, or a line without one, with the shell-agnostic scan
-     * below.
+     * shell: the shell that will run the line. A POSIX shell or PowerShell line is
+     * read with that shell's grammar; any other shell's, or a line without one, with
+     * the shell-agnostic scan below.
      */
     extractCommands(commandString: string, asTyped: boolean, shell: string | undefined): string[] {
         const syntax = shell === undefined ? undefined : getShellSyntax(shell);
