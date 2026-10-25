@@ -173,9 +173,11 @@ const runAllTests = async () => {
     }) && allPassed;
 
     // start_process sends the command's first word(s), as typed: a path there is replaced
-    // whole, a plain command name is kept. The values come from the real command manager.
+    // whole, a plain command name is kept. The values come from the real command manager,
+    // reading the command with the shell start_process would run it in.
     allPassed = await runTest('Integration - a command that starts with a path is redacted', async () => {
         const { commandManager } = await import('../dist/command-manager.js');
+        const { getDefaultShell } = await import('../dist/utils/shell.js');
         const spaced = path.join(root, 'Users', 'John Smith', 'bin', 'run.sh');
         const cases = [
             [`${spaced} --flag`, { command: '[PATH]', commands: '[PATH]' }],
@@ -186,7 +188,7 @@ const runAllTests = async () => {
         for (const [line, expected] of cases) {
             const sent = await buildEventProperties({
                 command: commandManager.getBaseCommand(line),
-                commands: commandManager.extractCommands(line, true).join(', '),
+                commands: commandManager.extractCommands(line, true, getDefaultShell()).join(', '),
             });
             const actual = { command: sent.command, commands: sent.commands };
             if (JSON.stringify(actual) !== JSON.stringify(expected)) wrong.push({ line, expected, actual });

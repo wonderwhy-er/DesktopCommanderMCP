@@ -203,9 +203,12 @@ export interface ShellSpawnConfig {
   windowsVerbatim?: boolean;
 }
 
-type ShellKind = 'bash-or-zsh' | 'pwsh' | 'powershell' | 'cmd' | 'fish' | 'other';
+// Started through the fallback below, which runs `<shell> -c <command>`: these read it as POSIX sh
+const SH_FAMILY = new Set(['sh', 'dash', 'ash', 'ksh', 'mksh', 'pdksh', 'yash', 'posh']);
 
-// Which kind of shell a path names: it decides how the shell is started
+type ShellKind = 'bash-or-zsh' | 'pwsh' | 'powershell' | 'cmd' | 'fish' | 'sh-family' | 'other';
+
+// One answer for how a shell is started and for the language it reads commands in
 function getShellKind(shellPath: string): ShellKind {
   const shellName = path.basename(shellPath).toLowerCase();
   if (shellName.includes('bash') || shellName.includes('zsh')) return 'bash-or-zsh';
@@ -213,7 +216,34 @@ function getShellKind(shellPath: string): ShellKind {
   if (shellName === 'powershell' || shellName === 'powershell.exe') return 'powershell';
   if (shellName === 'cmd' || shellName === 'cmd.exe') return 'cmd';
   if (shellName.includes('fish')) return 'fish';
+  if (SH_FAMILY.has(shellName.replace(/\.exe$/, ''))) return 'sh-family';
   return 'other';
+}
+
+/** The command languages the command check reads with their own grammar */
+export type ShellSyntax = 'posix';
+
+/**
+ * The language a shell reads a command in, when the command check has a parser
+ * for it; undefined for the others (PowerShell, cmd, fish, unknown shells).
+ */
+export function getShellSyntax(shellPath: string): ShellSyntax | undefined {
+  const kind = getShellKind(shellPath);
+  switch (kind) {
+    case 'bash-or-zsh':
+    case 'sh-family':
+      return 'posix';
+    case 'pwsh':
+    case 'powershell':
+    case 'cmd':
+    case 'fish':
+    case 'other':
+      return undefined;
+    default: {
+      const unhandled: never = kind;
+      throw new Error(`No command syntax decided for shell kind ${unhandled}`);
+    }
+  }
 }
 
 /**
