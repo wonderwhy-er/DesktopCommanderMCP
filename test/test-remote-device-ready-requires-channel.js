@@ -8,11 +8,9 @@
  * users) had at least one dispatch refused and not one single success — 118 of
  * them on 0.2.50 and 66 on 0.2.51, so this is not an old-client problem.
  *
- * The refusal is `not_broadcast_capable` in the hosted tool-call processor: the
- * device row says `status: 'online'`, so dispatch picks it, but the row carries
- * no `transport_broadcast_v1` capability, so the call cannot be delivered and
- * is failed fast with "has no live connection ... Restart the terminal".
- * Restarting lands in the same state, which is exactly what the reporter saw.
+ * The hosted service dispatches to any row that says `status: 'online'`, so a
+ * row may say so only once the channel can deliver; until then every call is
+ * handed to a device with no delivery path.
  *
  * Both halves of that state are written here, in registerDevice():
  *
@@ -23,7 +21,7 @@
  *   - it swallows a createChannel() rejection into console.debug, so device.ts
  *     prints "Device ready" over a device that cannot receive anything
  *
- * createChannel() already resolves only once presence lands, and says why:
+ * createChannel() already resolves only once the row advertises the channel, and says why:
  * "otherwise registerDevice() reports Device ready while still undispatchable".
  * The last mile is missing — the rejection never reaches the caller.
  *
@@ -35,6 +33,7 @@
  */
 import assert from 'node:assert';
 import { ChannelUnreachableError, RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
@@ -128,17 +127,12 @@ class FakeClient {
     statusWrites = []; // just the `status` values, in order
     channelJoins = true;
     presenceAcks = true; // does the channel acknowledge track()?
-    failCapabilityWrite = false; // does the capability write reach the row?
-    holdCapabilityWrite = false; // leave the capability write in flight, forever
-    /** Resolves once the capability write has been issued and is hanging. */
-    capabilityWriteIssued = deferred();
+    failOnlineWrite = false; // is the join's 'online' write refused?
+    holdOnlineWrite = false; // leave the join's 'online' write in flight, forever
+    /** Resolves once the 'online' write has been issued and is hanging. */
+    onlineWriteIssued = deferred();
     deviceExists = true; // is there a row for this device id at all?
     statusWritesBeforeJoin = null;
-
-    /** True once a write advertised the capability dispatch requires. */
-    advertisedBroadcast() {
-        return this.writes.some((w) => w.capabilities?.transport_broadcast_v1 === true);
-    }
 
     channel() {
         const ch = new FakeChannel(this);
@@ -166,22 +160,25 @@ class FakeClient {
                 if (typeof updates.status === 'string') client.statusWrites.push(updates.status);
                 // Supabase reports a refused write in the result, not by
                 // throwing — which is how it reaches code that ignores it.
-                if (updates.capabilities?.transport_broadcast_v1 === true) {
-                    if (client.failCapabilityWrite) {
-                        result = { data: null, error: { message: 'capability write refused' } };
+                if (updates.status === 'online') {
+                    if (client.failOnlineWrite) {
+                        result = { data: null, error: { message: 'status write refused' } };
                     }
-                    if (client.holdCapabilityWrite) {
+                    if (client.holdOnlineWrite) {
                         // A PATCH that is simply slow. Everything the device does
-                        // in this window happens while the row still has no
-                        // capability recorded.
+                        // in this window happens before the join is recorded.
+                        // Only the first one: a later write must still settle.
+                        client.holdOnlineWrite = false;
                         result = new Promise(() => {});
-                        client.capabilityWriteIssued.resolve();
+                        client.onlineWriteIssued.resolve();
                     }
                 }
                 return node;
             },
             insert: () => node,
             eq: () => node,
+            // The device bounds its row writes; no case here runs into that bound
+            abortSignal: () => node,
             maybeSingle: () =>
                 Promise.resolve({
                     data: client.deviceExists ? { id: DEVICE_ID, device_name: 'test-device' } : null,
@@ -294,40 +291,26 @@ await test('registration does not claim the device is online before the channel 
     );
 });
 
-// The join is only half of what dispatch needs: the server refuses the call
-// without the capability, and the capability is written only once presence is
-// published. A join whose presence is never acknowledged therefore produces
-// exactly the state measured in production — the row online, the capability
-// explicitly withdrawn — and it is the likelier of the two, because it happens
-// AFTER a successful join rather than instead of one.
-await test('a joined channel whose presence is never acknowledged is not ready', async () => {
+// Presence only feeds the dashboard: doorbells arrive over the joined channel,
+// and dispatch reads the row. A join whose presence is never acknowledged is
+// therefore ready — on 2026-10-13 that state took tool calls down fleet-wide.
+await test('a joined channel whose presence is never acknowledged is still ready', async () => {
     const { rc, client } = makeRemoteChannel(true, { presenceAcks: false });
 
-    await assert.rejects(
-        () => register(rc),
-        'registerDevice() resolved after presence failed. The channel is joined but the device ' +
-            'never published itself, so the capability is withdrawn and the hosted service ' +
-            'refuses every call — while the user is told the device is ready.'
-    );
+    await register(rc);
     await flush(10);
 
-    assert.ok(
-        !client.statusWrites.includes('online'),
-        `the row claimed ${JSON.stringify(client.statusWrites)} although presence never landed; ` +
-            'dispatch selects by `status`, so this is the row that gets the undeliverable calls'
-    );
-    assert.ok(
-        !client.advertisedBroadcast(),
-        'precondition: the capability must stay withdrawn when presence fails'
-    );
+    assert.strictEqual(client.statusWrites.at(-1), 'online',
+        `the row ended ${JSON.stringify(client.statusWrites)}, so the server never picks a device ` +
+            'whose only failure is the dashboard signal');
 });
 
-// Presence landing is not the end of it: it only matters because it writes the
-// capability, and Supabase reports a refused write in the result rather than by
-// throwing. A device that publishes presence but cannot record it is in the same
-// place as one that never published — the server will not dispatch to it.
+// The join is not the end of it: it only matters once the row records it, and
+// Supabase reports a refused write in the result rather than by throwing. A
+// device that joined but cannot record it is in the same place as one that
+// never joined — the server will not dispatch to it.
 await test('a device whose readiness write is refused is not ready', async () => {
-    const { rc, client } = makeRemoteChannel(true, { failCapabilityWrite: true });
+    const { rc, client } = makeRemoteChannel(true, { failOnlineWrite: true });
 
     await assert.rejects(
         () => register(rc),
@@ -338,39 +321,44 @@ await test('a device whose readiness write is refused is not ready', async () =>
             );
             return true;
         },
-        'registerDevice() resolved although the capability write was refused. Presence was ' +
-            'published, so the device believes it is ready, while the row carries neither the ' +
-            'capability nor online — and the server refuses every call to it.'
+        'registerDevice() resolved although the status write was refused. The channel ' +
+            'joined, so the device believes it is ready, while the row never said online — ' +
+            'and the server sends it nothing.'
     );
     await flush(10);
 
-    assert.ok(
-        !client.statusWrites.includes('online'),
-        `the row claimed ${JSON.stringify(client.statusWrites)} although its capability never landed`
+    // Not ready, so only a readiness retry may claim online, not the heartbeat.
+    const before = client.statusWrites.length;
+    await rc.updateHeartbeat();
+    assert.equal(
+        client.statusWrites.length,
+        before,
+        `the heartbeat wrote ${JSON.stringify(client.statusWrites.slice(before))} over a join whose own ` +
+            'status write was refused'
     );
 });
 
 // The heartbeat does not go through createChannel(): it decides on its own,
-// from isReachable(), whether to assert `status: 'online'`. So the readiness
-// sequence is not the only writer, and while it is still in flight the device
-// must not yet count as reachable — otherwise a heartbeat firing in that window
-// publishes online over a row whose capability has not landed, which is the
-// state this file exists to forbid. Reported on #724 by wonderwhy-er, who
-// reproduced it by holding the capability PATCH pending.
+// from isReachable(), whether to assert `status: 'online'`. So while the join's
+// own write is in flight the device must not yet count as reachable — otherwise
+// the heartbeat's 'online' queues behind that write and lands even if it is refused.
 await test('the heartbeat cannot advertise online while readiness is still being written', async () => {
-    const { rc, client } = makeRemoteChannel(true, { holdCapabilityWrite: true });
+    const { rc, client } = makeRemoteChannel(true, { holdOnlineWrite: true });
 
-    const registration = register(rc); // parks inside the capability write
-    registration.catch(() => { /* never settles here; the case below owns it */ });
-    await client.capabilityWriteIssued.promise;
+    const registration = register(rc); // parks inside the join's status write
+    registration.catch(() => { /* never settles here */ });
+    await client.onlineWriteIssued.promise;
+    const queued = rc.statusWriteChain;
 
-    await rc.updateHeartbeat(DEVICE_ID);
+    // Not awaited: a write queued behind the held one never settles.
+    rc.updateHeartbeat().catch(() => { /* logged inside */ });
+    await flush(10);
 
-    assert.ok(
-        !client.statusWrites.includes('online'),
-        `the heartbeat wrote ${JSON.stringify(client.statusWrites)} while the capability write was ` +
-            'still in flight. For that window the row is online with no transport capability — the ' +
-            'exact state the server refuses as not_broadcast_capable.'
+    assert.equal(
+        rc.statusWriteChain,
+        queued,
+        "the heartbeat queued an 'online' behind the join's own status write, which is still in " +
+            'flight; it would land even if that write is refused'
     );
 });
 
@@ -397,4 +385,4 @@ await test('a missing device row is a startup failure, not a retryable channel f
 });
 
 out(`\ndevice readiness requires the channel: ${failures} failing test(s).`);
-process.exitCode = failures ? 1 : 0;
+exitProcess(failures ? 1 : 0);

@@ -7,22 +7,24 @@
  *   1. Exactly-once execution under dual delivery
  *   2. Doorbell routing and row fetch
  *   3. Result write ordering
- *   4. Heartbeat cadence tiers
+ *   4. Heartbeat cadence
  *   5. Reachability and status writes
- *   6. Capability withdrawal
+ *   6. Presence and readiness writes
  *   7. Shutdown
  *
  * Run: npm run build && node test/test-remote-transport.js
  */
 
 import { MCPDevice } from '../dist/remote-device/device.js';
-import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { HEARTBEAT_INTERVAL_MS, RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
-// Server-side thresholds this device must fit inside. Hand-copied from
-// remote-dc-mcp/src/server/constants.ts — the repos ship separately and nothing
-// enforces the copy, so change both together.
-const SERVER_LEGACY_OFFLINE_TIMEOUT_MS = 45 * 1000;
-const SERVER_CAPABLE_OFFLINE_TIMEOUT_MS = 15 * 60 * 1000;
+// Server-side windows this device's last_seen must fit inside: the offline
+// sweep (remote-dc-mcp src/server/constants.ts) and the dashboard's freshness
+// window for the online dot. Hand-copied — the repos ship separately and
+// nothing enforces the copy, so change both together.
+const SERVER_OFFLINE_TIMEOUT_MS = 15 * 60 * 1000;
+const DASHBOARD_FRESHNESS_MS = 7 * 60 * 1000;
 
 const DEVICE_ID = 'device-1';
 const OTHER_DEVICE = 'device-2';
@@ -45,9 +47,8 @@ function assert(condition, message) {
 
 const makeChannelState = (state) => ({ state });
 
-// Captured before any test runs: the heartbeat re-arm test monkeypatches
-// globalThis.setTimeout to never fire, and the fake client's write completion
-// must not silently depend on that.
+// Captured before any test runs, so the fake client's write completion never
+// depends on a timer a test has stubbed.
 const realSetTimeout = globalThis.setTimeout;
 
 /** MCPDevice with the network and desktop edges stubbed. */
@@ -138,6 +139,11 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
       return { data: row, error: null };
     };
     p.eq = () => result();
+    p.gt = (col, value) => {
+      assert(col === 'timeout_at', 'fallback must filter timeout_at');
+      assert(value === 'now', 'fallback read must compare against database time');
+      return result();
+    };
     p.select = () => result();
     return p;
   };
@@ -168,17 +174,29 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
           resolve({ data: null, error: null });
         };
         // Only defer when a test actually asked for latency, so every other
-        // test keeps the original resolve-immediately semantics.
+        // test keeps the original resolve-immediately semantics. 'never': a
+        // PATCH sent down a half-open connection, which nothing answers.
+        if (delay === 'never') return;
         if (delay > 0) realSetTimeout(settle, delay);
         else settle();
       });
       // markCallExecuting chains .eq().eq().select() off a single update(), so
       // this must stay chainable exactly like result() does — returning a bare
       // promise leaves that chain hanging forever.
-      p.eq = () => p;
-      p.select = () => p;
-      p.maybeSingle = async () => ({ data: null, error: null });
-      return p;
+      const chainable = (promise) => {
+        promise.eq = () => promise;
+        promise.select = () => promise;
+        promise.maybeSingle = async () => ({ data: null, error: null });
+        // As postgrest-js: the fetch is aborted and the result carries the
+        // error. A write the server already has may still complete above.
+        promise.abortSignal = (signal) => chainable(Promise.race([promise, new Promise((resolve) => {
+          const abort = () => resolve({ data: null, error: { message: `${signal.reason?.name ?? 'AbortError'}: aborted` } });
+          if (signal.aborted) abort();
+          else signal.addEventListener('abort', abort, { once: true });
+        })]));
+        return promise;
+      };
+      return chainable(p);
     },
   };
 
@@ -401,71 +419,29 @@ await test('a completed call writes exactly one completed result row', async () 
   assert(writes.join(',') === 'call-result:completed', `expected one completed write — got ${writes.join(',')}`);
 });
 
-// --- 4. Heartbeat cadence tiers ---------------------------------------------
-// The server tiers its offline sweep on the capability FLAG, not the app
-// version, and the flag is only set once presence is proven. So an unproven
-// device is judged by the fast 45s rule and must heartbeat fast enough to
-// survive it, or it is swept offline before it ever proves presence.
+// --- 4. Heartbeat cadence ---------------------------------------------------
+// One cadence for every device: the server sweeps a row offline after 15 min
+// without a heartbeat, and the dashboard's dot trusts a row's 'online' only
+// while last_seen is fresh.
 
-await test('unproven tier heartbeats inside the server 45s sweep threshold', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = null; // never written = unproven tier
-  const cadence = rc.heartbeatIntervalMs();
+await test('heartbeat cadence fits inside the server sweep and the dashboard window', async () => {
   assert(
-    cadence * 2 < SERVER_LEGACY_OFFLINE_TIMEOUT_MS,
-    `unproven-tier cadence ${cadence}ms must allow >=2 writes inside ${SERVER_LEGACY_OFFLINE_TIMEOUT_MS}ms`
+    HEARTBEAT_INTERVAL_MS * 2 < SERVER_OFFLINE_TIMEOUT_MS,
+    `cadence ${HEARTBEAT_INTERVAL_MS}ms must allow >=2 writes inside ${SERVER_OFFLINE_TIMEOUT_MS}ms`
   );
-  rc.transportCapableWritten = false; // explicitly withdrawn
-  assert(rc.heartbeatIntervalMs() === cadence, 'a withdrawn capability uses the fast cadence');
-});
-
-await test('capable tier heartbeats inside the server capable sweep threshold', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  const cadence = rc.heartbeatIntervalMs();
   assert(
-    cadence * 2 < SERVER_CAPABLE_OFFLINE_TIMEOUT_MS,
-    `capable cadence ${cadence}ms must allow >=2 writes inside ${SERVER_CAPABLE_OFFLINE_TIMEOUT_MS}ms`
+    HEARTBEAT_INTERVAL_MS < DASHBOARD_FRESHNESS_MS,
+    `cadence ${HEARTBEAT_INTERVAL_MS}ms must refresh last_seen inside ${DASHBOARD_FRESHNESS_MS}ms`
   );
-  assert(cadence > SERVER_LEGACY_OFFLINE_TIMEOUT_MS, 'capable cadence is the slow one');
 });
 
-await test('withdrawing the capability re-arms the heartbeat at the fast cadence', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.channel = makeChannelState('joined');
-  rc.startHeartbeat(DEVICE_ID);
-  try {
-    const armed = [];
-    const realSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = (fn, ms) => {
-      armed.push(ms);
-      return realSetTimeout(() => {}, 0); // never fire
-    };
-    try {
-      await rc.setTransportCapable(false);
-    } finally {
-      globalThis.setTimeout = realSetTimeout;
-    }
-    assert(armed.length > 0, 'withdrawing must re-arm the heartbeat timer');
-    assert(
-      armed[armed.length - 1] * 2 < SERVER_LEGACY_OFFLINE_TIMEOUT_MS,
-      `re-armed cadence ${armed[armed.length - 1]}ms must fit the 45s sweep`
-    );
-  } finally {
-    rc.stopHeartbeat();
-  }
-});
-
-await test('stopHeartbeat halts the self-rescheduling timer', async () => {
+await test('stopHeartbeat clears the heartbeat timers', async () => {
   const { rc } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
   rc.startHeartbeat(DEVICE_ID);
   rc.stopHeartbeat();
-  assert(rc.heartbeatInterval === null, 'timer handle cleared');
-  assert(rc.heartbeatDeviceId === null, 'device id cleared so re-arm is inert');
-  rc.scheduleHeartbeat(); // must be inert after stop
-  assert(rc.heartbeatInterval === null, 'scheduleHeartbeat after stop must not re-arm');
+  assert(rc.heartbeatInterval === null, 'heartbeat timer cleared');
+  assert(rc.connectionCheckInterval === null, 'health check timer cleared');
 });
 
 // --- 5. Reachability and status writes --------------------------------------
@@ -479,29 +455,28 @@ await test('stopHeartbeat halts the self-rescheduling timer', async () => {
 await test('heartbeat stays silent when no transport is joined', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('errored');
-  await rc.updateHeartbeat(DEVICE_ID);
+  await rc.updateHeartbeat();
   assert(client.writes.length === 0, 'a deaf device must let the sweep age its row out');
 });
 
-// Joined is only half of it. The capability the server checks before it will
-// dispatch is written when presence is published, so a joined channel whose
-// presence never landed is undispatchable — and a heartbeat there would keep
-// the row young and online, which is the one thing that stops the server's
-// sweep from correcting it. Reachability is now both.
-await test('heartbeat stays silent when joined but presence was never published', async () => {
+// Joined is only half of it. Until the join's own status write lands the
+// device is not ready, and the heartbeat must not mark the row online ahead of
+// it. Reachability is both.
+await test('heartbeat stays silent when joined but the row was never marked ready', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.presenceTracked = false;
-  await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 0, 'no presence = no delivery path = let the row age out');
+  rc.channelReady = false;
+  await rc.updateHeartbeat();
+  assert(client.writes.length === 0, 'no readiness write landed = not ready = no heartbeat');
 });
 
-await test('heartbeat writes when the channel is joined and presence is published', async () => {
+await test('heartbeat writes when the channel is joined and ready, with or without presence', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
-  rc.presenceTracked = true;
-  await rc.updateHeartbeat(DEVICE_ID);
-  assert(client.writes.length === 1, 'joined + presence published = reachable');
+  rc.channelReady = true;
+  rc.presenceTracked = false; // Presence only feeds the dashboard
+  await rc.updateHeartbeat();
+  assert(client.writes.length === 1, 'joined + ready = reachable');
 });
 
 await test('status goes offline when the private channel is not joined', async () => {
@@ -516,8 +491,8 @@ await test('concurrent status writes stay ordered', async () => {
   // The first write completes AFTER the second is issued. Without the
   // statusWriteChain serialisation the teardown's 'offline' then lands at the
   // DB after the re-join's 'online', leaving a healthy device undispatchable
-  // until the next heartbeat (up to 5 min on the capable tier). Assert on
-  // `completions`, not `writes` — see makeFakeClient.
+  // until the next heartbeat (up to 5 min). Assert on `completions`, not
+  // `writes` — see makeFakeClient.
   const { rc, client } = makeRemoteChannel({ writeLatencies: [20, 0] });
   rc.channel = makeChannelState('joined');
   rc.queueStatusWrite('offline'); // teardown
@@ -539,98 +514,61 @@ await test('concurrent status writes stay ordered', async () => {
   );
 });
 
-// --- 6. Capability withdrawal -----------------------------------------------
-// Presence is dashboard-authoritative, but server dispatch uses DB status +
-// transport_broadcast_v1. A joined broadcast channel therefore stays a valid
-// delivery path through a short Presence-only failure. Genuine channel failure
-// still withdraws after repeated recreate failures.
+await test("a heartbeat still in flight cannot land after a drop's 'offline'", async () => {
+  // The heartbeat's PATCH is slow and the channel drops meanwhile. Status is
+  // all dispatch reads, so a late 'online' would leave a deaf device picked.
+  const { rc, client } = makeRemoteChannel({ writeLatencies: [20, 0] });
+  rc.channel = makeChannelState('joined');
+  rc.channelReady = true;
+  const heartbeat = rc.updateHeartbeat();
+  rc.channel = makeChannelState('errored'); // the drop
+  rc.channelReady = false;
+  rc.syncReachabilityStatus();
+  await heartbeat;
+  await rc.statusWriteChain;
+  const deadline = Date.now() + 500;
+  while (client.completions.length < 2 && Date.now() < deadline) {
+    await new Promise((r) => realSetTimeout(r, 5));
+  }
+  assert(client.completions.length === 2, 'both writes completed');
+  assert(
+    client.completions.map((w) => w.status).join(',') === 'online,offline',
+    `the drop's 'offline' must land last, got ${client.completions.map((w) => w.status).join(',')}`
+  );
+});
 
-await test('transient Presence failure keeps a previously proven capability', async () => {
+// --- 6. Presence and readiness writes ----------------------------------------
+// Server dispatch reads only the row's status; Presence only feeds the
+// dashboard, so a Presence failure never writes the row.
+
+await test('a Presence failure never writes the device row', async () => {
   const { rc, client } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
   rc.channel = { state: 'joined', track: async () => 'timed out' };
 
-  await rc.trackPresenceInner(0, 1);
+  await rc.trackPresence(0);
 
-  assert(rc.transportCapableWritten === true, 'short Presence outage must keep broadcast capability');
-  assert(rc.presenceFailureStartedAt !== null, 'Presence grace timer should start');
-  assert(
-    !client.writes.some((w) => w.capabilities && w.capabilities.transport_broadcast_v1 === undefined),
-    'grace period must not write a withdrawn capability'
-  );
+  assert(client.writes.length === 0, `Presence must not write the row at all: ${JSON.stringify(client.writes)}`);
 });
 
-await test('sustained Presence failure withdraws after the grace period', async () => {
-  const { rc, client } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.channel = { state: 'joined', track: async () => 'timed out' };
-  rc.presenceFailureStartedAt = performance.now() - (6 * 60 * 1000);
+/** Resolves true once `promise` settles, false if it hasn't within `ms` */
+const settlesWithin = (promise, ms) => Promise.race([
+  promise.then(() => true, () => true),
+  new Promise((resolve) => realSetTimeout(() => resolve(false), ms)),
+]);
 
-  await rc.trackPresenceInner(0, 1);
+// A status PATCH sent down a half-open connection is never answered. It must
+// not keep readiness from being retried.
+await test('a status write nothing answers cannot keep readiness from being retried', async () => {
+  const { rc } = makeRemoteChannel({ writeLatencies: ['never'] }); // the first status write
+  rc.deviceRowWriteSignal = () => AbortSignal.timeout(50);
+  rc.channel = { state: 'joined' };
 
-  assert(rc.transportCapableWritten === false, 'sustained Presence outage must eventually withdraw');
-  const capWrite = client.writes.find((w) => w.capabilities);
-  assert(capWrite, 'withdrawal should write capabilities');
-  assert(
-    capWrite.capabilities.transport_broadcast_v1 === undefined,
-    'withdrawn payload must remove broadcast capability'
-  );
-});
-
-await test('Presence recovery clears the withdrawal grace timer', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.presenceFailureStartedAt = performance.now() - 30_000;
-  rc.channel = { state: 'joined', track: async () => 'ok' };
-
-  await rc.trackPresenceInner(0, 1);
-
-  assert(rc.presenceTracked === true, 'Presence should recover');
-  assert(rc.presenceFailureStartedAt === null, 'successful Presence must reset hysteresis');
-});
-
-await test('sustained recreate failure withdraws the transport capability', async () => {
-  const { rc, client } = makeRemoteChannel();
-  rc.transportCapableWritten = true; // previously proven
-  rc.sleep = () => Promise.resolve(); // skip the jittered backoff
-  rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
-  rc.channel = makeChannelState('errored');
-
-  for (let i = 0; i < 3; i++) await rc.recreateChannel();
-
-  assert(rc.transportCapableWritten === false, 'capability must be withdrawn');
-  const capWrite = client.writes.find((w) => w.capabilities);
-  assert(capWrite, 'a capabilities write should have been issued');
-  assert(
-    capWrite.capabilities.transport_broadcast_v1 === undefined,
-    'the withdrawn payload must not carry the flag'
-  );
-  assert(capWrite.capabilities.app_version !== undefined, 'app_version must survive');
-});
-
-await test('a single recreate failure does not withdraw the capability', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.sleep = () => Promise.resolve();
-  rc.createChannel = () => Promise.reject(new Error('transient'));
-  rc.channel = makeChannelState('errored');
-  await rc.recreateChannel();
-  assert(rc.transportCapableWritten === true, 'one blip must not withdraw');
-});
-
-await test('a hanging capability withdrawal cannot pin the recreate guard', async () => {
-  const { rc } = makeRemoteChannel();
-  rc.transportCapableWritten = true;
-  rc.sleep = () => Promise.resolve();
-  rc.createChannel = () => Promise.reject(new Error('Unauthorized'));
-  rc.channel = makeChannelState('errored');
-  rc.setTransportCapable = () => new Promise(() => {}); // never settles
-  const realWithTimeout = rc.withTimeout.bind(rc);
-  rc.withTimeout = (op, _ms, name) => realWithTimeout(op, 20, name);
-
-  for (let i = 0; i < 3; i++) await rc.recreateChannel();
-
-  assert(rc.isRecreatingChannel === false, 'the guard must be released even if the write hangs');
+  const firstReturned = await settlesWithin(rc.markChannelReady(), 2000);
+  const retried = firstReturned && await settlesWithin(rc.markChannelReady(), 2000);
+  assert(firstReturned && retried && rc.channelReady,
+    `a status write that was never answered ${firstReturned ? 'failed in time' : 'kept the readiness attempt waiting for 2 s'}`
+    + `${firstReturned ? `, and the retry after it ${retried ? 'finished' : 'waited behind it for 2 s'}` : ''}: `
+    + `ready ${rc.channelReady}. The health check retries readiness only once that attempt returns.`);
 });
 
 // --- 7. Shutdown ------------------------------------------------------------
@@ -651,7 +589,7 @@ await test('heartbeat is suppressed once shutting down', async () => {
   const { rc, client } = makeRemoteChannel();
   rc.channel = makeChannelState('joined');
   rc.shuttingDown = true;
-  await rc.updateHeartbeat(DEVICE_ID);
+  await rc.updateHeartbeat();
   assert(client.writes.length === 0, 'no heartbeat write during shutdown');
 });
 
@@ -686,4 +624,4 @@ await test('setOffline does not hang when getSession stalls', async () => {
 });
 
 console.log(`\n${failures ? '🔴' : '✅'} remote transport: ${failures} failing test(s).`);
-process.exit(failures ? 1 : 0);
+exitProcess(failures ? 1 : 0);

@@ -1,10 +1,9 @@
 import { configManager, ServerConfig } from '../config-manager.js';
 import { SetConfigValueArgsSchema } from './schemas.js';
 import { getSystemInfo } from '../utils/system-info.js';
+import { detectAvailableShells } from '../utils/shell.js';
 import { currentClient } from '../server.js';
 import { featureFlagManager } from '../utils/feature-flags.js';
-import { access, readFile } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
 import {
   CONFIG_FIELD_DEFINITIONS,
   CONFIG_FIELD_KEYS,
@@ -12,77 +11,6 @@ import {
 } from '../config-field-definitions.js';
 
 const ALLOWED_CONFIG_KEYS = new Set(CONFIG_FIELD_KEYS);
-
-async function pathExists(pathValue: string): Promise<boolean> {
-  try {
-    await access(pathValue, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function detectAvailableShells(systemInfo: ReturnType<typeof getSystemInfo>): Promise<string[]> {
-  const detected = new Set<string>();
-  const add = (shell: string): void => {
-    if (shell.trim().length > 0) {
-      detected.add(shell.trim());
-    }
-  };
-
-  add(systemInfo.defaultShell);
-
-  if (systemInfo.isWindows) {
-    add(process.env.ComSpec ?? '');
-    const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-    const candidates = [
-      `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
-      `${systemRoot}\\System32\\cmd.exe`,
-      `${systemRoot}\\System32\\bash.exe`,
-      'powershell.exe',
-      'pwsh.exe',
-      'cmd.exe',
-      'bash.exe',
-    ];
-
-    for (const shell of candidates) {
-      if (shell.includes('\\')) {
-        if (await pathExists(shell)) {
-          add(shell);
-        }
-      } else {
-        add(shell);
-      }
-    }
-
-    return [...detected];
-  }
-
-  add(process.env.SHELL ?? '');
-
-  const shellFiles = ['/etc/shells'];
-  for (const shellFile of shellFiles) {
-    try {
-      const content = await readFile(shellFile, 'utf8');
-      content
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0 && !line.startsWith('#'))
-        .forEach(add);
-    } catch {
-      // Best-effort discovery only.
-    }
-  }
-
-  const fallbackCandidates = ['/bin/zsh', '/bin/bash', '/bin/sh', '/usr/bin/fish'];
-  for (const shell of fallbackCandidates) {
-    if (await pathExists(shell)) {
-      add(shell);
-    }
-  }
-
-  return [...detected];
-}
 
 /**
  * Get the entire config including system information
@@ -114,7 +42,7 @@ export async function getConfig() {
         memory
       }
     };
-    const availableShells = await detectAvailableShells(systemInfo);
+    const availableShells = detectAvailableShells();
     
     console.error(`getConfig result: ${JSON.stringify(configWithSystemInfo, null, 2)}`);
     return {
@@ -215,8 +143,9 @@ export async function setConfigValue(args: unknown) {
           valueToStore = [String(valueToStore)];
         }
         
-        // Ensure the value is an array after all our conversions
-        if (!Array.isArray(valueToStore)) {
+        // Ensure the value is an array after all our conversions; null stays
+        // null and clears the value back to its default, as for number fields
+        if (valueToStore !== null && !Array.isArray(valueToStore)) {
           console.error(`Value for ${parsed.data.key} is still not an array, converting to array`);
           valueToStore = [String(valueToStore)];
         }
@@ -244,7 +173,23 @@ export async function setConfigValue(args: unknown) {
         }
       }
 
-      await configManager.setValue(parsed.data.key, valueToStore);
+      // Numbers may arrive as strings ("5000"); null clears the value back to its default.
+      if (fieldDefinition.valueType === 'number' && valueToStore !== null) {
+        const numeric = typeof valueToStore === 'string' && valueToStore.trim() !== '' ? Number(valueToStore) : valueToStore;
+        if (typeof numeric !== 'number' || !Number.isFinite(numeric)) {
+          return {
+            content: [{
+              type: "text",
+              text: `Value for ${parsed.data.key} must be a number.`
+            }],
+            isError: true
+          };
+        }
+        valueToStore = numeric;
+      }
+
+      // Not saved: in effect all the same, as the answer below says, and saved with the held changes
+      await configManager.setValue(parsed.data.key, valueToStore, { holdIfNotSaved: true });
       // Get the updated configuration to show the user
       const updatedConfig = await configManager.getConfig();
       console.error(`setConfigValue: Successfully set ${parsed.data.key} to ${JSON.stringify(valueToStore)}`);

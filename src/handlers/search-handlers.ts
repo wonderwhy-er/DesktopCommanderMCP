@@ -6,6 +6,7 @@ import {
 } from '../tools/schemas.js';
 import { ServerResult } from '../types.js';
 import { capture } from '../utils/capture.js';
+import { startSearchAnswer, searchResultsAnswer } from './search-answers.js';
 
 /**
  * Handle start_search command
@@ -34,40 +35,7 @@ export async function handleStartSearch(args: unknown): Promise<ServerResult> {
       literalSearch: parsed.data.literalSearch,
     });
 
-    const searchTypeText = parsed.data.searchType === 'content' ? 'content search' : 'file search';
-    
-    let output = `Started ${searchTypeText} session: ${result.sessionId}\n`;
-    output += `Pattern: "${parsed.data.pattern}"\n`;
-    output += `Path: ${parsed.data.path}\n`;
-    output += `Status: ${result.isComplete ? 'COMPLETED' : 'RUNNING'}\n`;
-    output += `Runtime: ${Math.round(result.runtime)}ms\n`;
-    output += `Total results: ${result.totalResults}\n\n`;
-
-    if (result.results.length > 0) {
-      output += "Initial results:\n";
-      
-      for (const searchResult of result.results.slice(0, 10)) {
-        if (searchResult.type === 'content') {
-          output += `📄 ${searchResult.file}:${searchResult.line} - ${searchResult.match?.substring(0, 100)}${searchResult.match && searchResult.match.length > 100 ? '...' : ''}\n`;
-        } else {
-          output += `📁 ${searchResult.file}\n`;
-        }
-      }
-      
-      if (result.results.length > 10) {
-        output += `... and ${result.results.length - 10} more results\n`;
-      }
-    }
-
-    if (result.isComplete) {
-      output += `\n✅ Search completed.`;
-    } else {
-      output += `\n🔄 Search in progress. Use get_more_search_results to get more results.`;
-    }
-
-    return {
-      content: [{ type: "text", text: output }],
-    };
+    return startSearchAnswer(result, parsed.data);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     capture('search_session_start_error', { error: errorMessage });
@@ -92,78 +60,13 @@ export async function handleGetMoreSearchResults(args: unknown): Promise<ServerR
   }
 
   try {
-    const results = searchManager.readSearchResults(
+    const page = searchManager.readSearchResults(
       parsed.data.sessionId,
       parsed.data.offset,
       parsed.data.length
     );
-    
-    // Only return error if we have no results AND there's an actual error
-    // Permission errors should not block returning found results
-    if (results.isError && results.totalResults === 0 && results.error?.trim()) {
-      return {
-        content: [{
-          type: "text",
-          text: `Search session ${parsed.data.sessionId} encountered an error: ${results.error}`
-        }],
-        isError: true,
-      };
-    }
 
-    // Format results for display
-    let output = `Search session: ${parsed.data.sessionId}\n`;
-    output += `Status: ${results.isComplete ? 'COMPLETED' : 'IN PROGRESS'}\n`;
-    output += `Runtime: ${Math.round(results.runtime / 1000)}s\n`;
-    output += `Total results found: ${results.totalResults} (${results.totalMatches} matches)\n`;
-    
-    const offset = parsed.data.offset;
-    
-    if (offset < 0) {
-      // Negative offset - tail behavior
-      output += `Showing last ${results.returnedCount} results\n\n`;
-    } else {
-      // Positive offset - range behavior
-      const startPos = offset;
-      const endPos = startPos + results.returnedCount - 1;
-      output += `Showing results ${startPos}-${endPos}\n\n`;
-    }
-
-    if (results.results.length === 0) {
-      if (results.isComplete) {
-        output += results.totalResults === 0 ? "No matches found." : "No results in this range.";
-      } else {
-        output += "No results yet, search is still running...";
-      }
-    } else {
-      output += "Results:\n";
-      
-      for (const result of results.results) {
-        if (result.type === 'content') {
-          output += `📄 ${result.file}:${result.line} - ${result.match?.substring(0, 100)}${result.match && result.match.length > 100 ? '...' : ''}\n`;
-        } else {
-          output += `📁 ${result.file}\n`;
-        }
-      }
-    }
-
-    // Add pagination hints
-    if (offset >= 0 && results.hasMoreResults) {
-      const nextOffset = offset + results.returnedCount;
-      output += `\n📖 More results available. Use get_more_search_results with offset: ${nextOffset}`;
-    }
-
-    if (results.isComplete) {
-      output += `\n✅ Search completed.`;
-      
-      // Warn users if search was incomplete due to permission issues
-      if (results.wasIncomplete) {
-        output += `\n⚠️  Warning: Some files were inaccessible due to permissions. Results may be incomplete.`;
-      }
-    }
-
-    return {
-      content: [{ type: "text", text: output }],
-    };
+    return searchResultsAnswer(page, parsed.data.offset);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     

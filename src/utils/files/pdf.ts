@@ -30,27 +30,9 @@ export class PdfFileHandler implements FileHandler {
 
         try {
             // Use existing PDF parser
-            // Ensure we pass a valid PageRange or number array
-            // If length is undefined, we assume "rest of file" which requires careful handling.
-            // If length is defined, we pass { offset, length }.
-            // If neither, we pass empty array (all pages).
+            // With no length, read from offset to the last page (all pages from offset 0)
             // Note: offset defaults to 0 if undefined.
-            
-            let range: any;
-            if (length !== undefined) {
-                range = { offset, length };
-            } else if (offset > 0) {
-                 // If offset provided but no length, try to read reasonable amount or all?
-                 // PageRange requires length. Let's assume 0 means "all" or use a large number?
-                 // Looking at pdf2md implementation, it uses generatePageNumbers(offset, length, total).
-                 // We'll pass 0 for length to imply "rest" if supported, or just undefined length if valid.
-                 // But typescript requires length.
-                 range = { offset, length: 0 }; 
-            } else {
-                range = [];
-            }
-
-            const pdfResult = await parsePdfToMarkdown(path, range);
+            const pdfResult = await parsePdfToMarkdown(path, { offset, length: length ?? Infinity });
 
             return {
                 content: '', // Main content is in metadata.pages
@@ -80,9 +62,14 @@ export class PdfFileHandler implements FileHandler {
      * Write PDF - creates from markdown or operations
      */
     async write(path: string, content: any, mode?: 'rewrite' | 'append'): Promise<void> {
+        // A PDF can't take text at its end: rendering the content would replace the file
+        if (mode === 'append') {
+            throw new Error('PDF append not supported. Use write_pdf to modify existing PDF files.');
+        }
         // If content is string, treat as markdown to convert
         if (typeof content === 'string') {
-            await parseMarkdownToPdf(content, path);
+            const pdfBuffer = await parseMarkdownToPdf(content);
+            await fs.writeFile(path, pdfBuffer);
         } else if (Array.isArray(content)) {
             // Array of operations - use editPdf
             const resultBuffer = await editPdf(path, content);
@@ -96,20 +83,16 @@ export class PdfFileHandler implements FileHandler {
      * Edit PDF by range/operations
      */
     async editRange(path: string, range: string, content: any, options?: Record<string, any>): Promise<EditResult> {
-        try {
-            // For PDF, range editing isn't directly supported
-            // Could interpret range as page numbers in future
-            const resultBuffer = await editPdf(path, content);
-            await fs.writeFile(options?.outputPath || path, resultBuffer);
-            return { success: true, editsApplied: 1 };
-        } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            return {
-                success: false,
-                editsApplied: 0,
-                errors: [{ location: range, error: errorMessage }]
-            };
-        }
+        // For PDF, range editing isn't directly supported
+        // Could interpret range as page numbers in future
+        // The output path and inserted PDFs are checked as write_pdf checks them.
+        // Errors reach edit_block (as the Excel handler's do), which answers with them.
+        // Imported when used: tools/filesystem.js loads this handler through the file handler factory
+        const { validatePdfOperationPaths } = await import('../../tools/filesystem.js');
+        const targetPath = await validatePdfOperationPaths(path, content, options?.outputPath);
+        const resultBuffer = await editPdf(path, content);
+        await fs.writeFile(targetPath, resultBuffer);
+        return { success: true, editsApplied: 1 };
     }
 
     /**
