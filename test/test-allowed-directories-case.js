@@ -50,9 +50,10 @@ async function differentlyCasedSiblingIsNotAllowed() {
                 'a differently-cased sibling directory must not be treated as allowed'
             );
         } finally {
-            if (Array.isArray(originalAllowedDirs)) {
-                await configManager.setValue('allowedDirectories', originalAllowedDirs);
-            }
+            // Always restore, also when the original value is undefined or not
+            // an array: setValue persists through JSON.stringify, which omits
+            // an undefined property and so restores its absence.
+            await configManager.setValue('allowedDirectories', originalAllowedDirs);
         }
     } finally {
         await fs.rm(base, { recursive: true, force: true });
