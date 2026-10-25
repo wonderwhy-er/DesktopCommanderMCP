@@ -2,6 +2,7 @@
 import { readFileInternal } from '../dist/tools/filesystem.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { exitProcess } from '../dist/utils/exit-process.js';
 
 // Get the test directory path
 const __filename = fileURLToPath(import.meta.url);
@@ -81,15 +82,15 @@ async function testEnhancedReading() {
         
         if (testsPassed === totalTests) {
             console.log('🎉 All tests PASSED!');
-            process.exit(0);
+            exitProcess(0);
         } else {
             console.log('❌ Some tests FAILED!');
-            process.exit(1);
+            exitProcess(1);
         }
         
     } catch (error) {
         console.error('❌ Test suite failed with error:', error);
-        process.exit(1);
+        exitProcess(1);
     }
 }
 

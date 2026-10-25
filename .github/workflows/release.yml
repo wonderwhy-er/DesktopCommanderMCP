@@ -1,0 +1,560 @@
+# Release pipeline for Desktop Commander.
+#
+# Two ways to start a release:
+#
+#   1. Terminal: `npm run release` locally — tests, bumps, commits, pushes the
+#      vX.Y.Z tag. The tag push triggers this workflow, which does all
+#      publishing.
+#   2. GitHub UI: Actions → Release → Run workflow → pick a `bump`
+#      (patch/minor/major). CI then runs the tests, bumps the version, commits
+#      and tags main itself, and continues straight into publishing — no local
+#      setup needed at all. (The tag is pushed with GITHUB_TOKEN, which never
+#      triggers a second run — this run carries on with the release.)
+#
+# Publishing = build MCPB → npm publish → GitHub release + .mcpb asset
+# (Anthropic's directory scanner ingests it from there) → MCP Registry publish
+# (OIDC, no secrets).
+#
+# TWO JOBS, split at the point of no return:
+#
+#   prepare  — tests, version bump, tag, MCPB build, and the single push that
+#              writes to origin. Everything before that push happens in the
+#              runner's own clone, so a failure here leaves origin untouched.
+#   publish  — npm, the GitHub release and the registry. Starts only once
+#              prepare has pushed, and receives the .mcpb plus the bumped
+#              version files as an artifact (a second runner shares no disk).
+#
+# ORDERING RULE: in cut mode the bump commit and tag are created in the
+# runner's clone and pushed only after the MCPB bundle is built and verified.
+# Everything that can fail cheaply — tests, version checks, the bundle — runs
+# before origin is touched, so a failed run leaves no orphan tag and a re-run
+# cuts the same version again. If a run does fail after the push, the next
+# cut-mode run detects the unpublished tag on HEAD and resumes it instead of
+# bumping.
+#
+# REHEARSAL MODE: a `test-vX.Y.Z` tag (or `npm run release:rehearsal`) runs the
+# whole pipeline with every publish neutered: npm publish --dry-run, the GitHub
+# release is created as a DRAFT (invisible without repo write access), and the
+# registry step validates + performs the OIDC login but never publishes.
+# Dispatching with `rehearsal` ticked does the same for cut mode, and also
+# skips the push — the only way to exercise the bump/tag path safely.
+# Use it to validate workflow changes end-to-end before a real release —
+# rehearsal tags run the workflow file at the tagged commit, so a feature
+# branch's copy can be tested before it ever reaches main. Clean up after:
+# delete the draft release and the test tag.
+#
+# Re-running after a mid-way failure: use the "Re-run failed jobs" button on
+# the failed run, or Run workflow with `tag` = the existing tag (dispatch from
+# main). A failure in publish re-runs that job alone — prepare's outputs and
+# artifact are reused, so the tests and the bundle build are not repeated.
+# Every publish step skips targets that already have the version, so re-runs
+# are safe. With several runs queued for the same tag, GitHub keeps only the
+# newest pending one.
+#
+# No secrets required. npm auth = OIDC trusted publishing (configured on
+# npmjs.com: package Settings → Trusted Publisher → this repo + release.yml).
+# MCP Registry auth = OIDC (grants io.github.wonderwhy-er/* to workflows
+# running in this repo automatically).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*', 'test-v*']
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Cut a NEW release from main with this version bump'
+        required: false
+        type: choice
+        options: ['none', 'patch', 'minor', 'major']
+        default: 'none'
+      tag:
+        description: 'OR: re-release an existing tag (e.g. v0.2.48) after a failed run'
+        required: false
+        type: string
+        default: ''
+      rehearsal:
+        description: 'Rehearse: run everything, push nothing, publish nothing'
+        required: false
+        type: boolean
+        default: false
+      skip_npm:
+        description: 'Skip npm publish (note: registry publish of a NEW version fails without the npm package)'
+        required: false
+        type: boolean
+        default: false
+      skip_registry:
+        description: 'Skip MCP Registry publish'
+        required: false
+        type: boolean
+        default: false
+      skip_github_release:
+        description: 'Skip GitHub release + MCPB asset (Claude directory will not see this version)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create the GitHub release + upload the .mcpb asset; push the bump commit/tag in cut mode
+  id-token: write   # MCP Registry OIDC login
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # @vscode/ripgrep's postinstall queries api.github.com; unauthenticated calls
+  # rate-limit on shared runner IPs. Also authenticates the gh CLI steps.
+  GITHUB_TOKEN: ${{ github.token }}
+  # Chrome is never launched in this workflow (puppeteer is a transitive dep).
+  PUPPETEER_SKIP_DOWNLOAD: '1'
+  REGISTRY_VERSION_URL: 'https://registry.modelcontextprotocol.io/v0.1/servers/io.github.wonderwhy-er%2Fdesktop-commander/versions'
+
+jobs:
+  # Everything that can fail without consequence, ending in the one push that
+  # writes to origin. The .mcpb and the bumped version files cross to the
+  # publish job as an artifact — a separate runner shares no filesystem.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+      rehearsal: ${{ steps.mode.outputs.rehearsal }}
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      publish_ref: ${{ steps.publishref.outputs.ref }}
+    steps:
+      # Four entry paths:
+      #   push of a v* tag         → mode=tag, release that tag
+      #   push of a test-v* tag    → mode=tag + rehearsal (nothing publishes)
+      #   dispatch with tag=vX.Y.Z → mode=tag, re-release that tag
+      #   dispatch with bump=...   → mode=cut, bump+tag main here in CI
+      - name: Resolve release mode
+        id: mode
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_REHEARSAL: ${{ inputs.rehearsal }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            MODE="tag"; TAG="$GITHUB_REF_NAME"
+          elif [ -n "$INPUT_TAG" ] && [ "${INPUT_BUMP:-none}" != "none" ]; then
+            echo "Provide either 'tag' (re-release) or 'bump' (new release), not both"; exit 1
+          elif [ -n "$INPUT_TAG" ]; then
+            MODE="tag"; TAG="$INPUT_TAG"
+          elif [ "${INPUT_BUMP:-none}" != "none" ]; then
+            MODE="cut"; TAG=""
+          else
+            echo "Provide 'tag' (re-release an existing tag) or 'bump' (cut a new release)"; exit 1
+          fi
+          REHEARSAL=false
+          case "$TAG" in
+            test-v*) REHEARSAL=true ;;
+          esac
+          if [ "$INPUT_REHEARSAL" = "true" ]; then REHEARSAL=true; fi
+          if [ "$MODE" = "tag" ]; then
+            if [ "$REHEARSAL" = "true" ]; then
+              case "$TAG" in
+                test-v[0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "'$TAG' is not a rehearsal tag (expected test-vX.Y.Z)"; exit 1 ;;
+              esac
+            else
+              case "$TAG" in
+                v[0-9]*.[0-9]*.[0-9]*) ;;
+                *) echo "'$TAG' is not a release tag (expected vX.Y.Z)"; exit 1 ;;
+              esac
+              case "$TAG" in
+                *-*) echo "'$TAG' looks like a pre-release; this workflow publishes stable releases only"; exit 1 ;;
+              esac
+            fi
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "::notice::REHEARSAL MODE — nothing will be published"
+          fi
+          {
+            echo "mode=$MODE"
+            echo "tag=$TAG"
+            echo "rehearsal=$REHEARSAL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.mode.outputs.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          # Caches the npm download cache keyed on package-lock.json, so
+          # npm ci (and the bundle install inside build:mcpb) pull packages
+          # from cache instead of the network on every release.
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Cut mode does in CI what the local script does locally: test first,
+      # then bump, commit, tag. Tag-push releases assume the local script
+      # already ran the tests before tagging.
+      - name: Run tests (cut mode)
+        if: steps.mode.outputs.mode == 'cut'
+        run: npm test
+
+      # Local only. The commit and tag stay in the runner's clone until the
+      # MCPB bundle has been built and verified, so a failed build leaves
+      # nothing behind on origin and a re-run cuts the same version again.
+      - name: Bump version, commit, tag locally (cut mode)
+        id: bump
+        if: steps.mode.outputs.mode == 'cut'
+        env:
+          BUMP: ${{ inputs.bump }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+          SKIP_NPM: ${{ inputs.skip_npm }}
+          SKIP_REGISTRY: ${{ inputs.skip_registry }}
+          SKIP_GH: ${{ inputs.skip_github_release }}
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          case "$CURRENT" in
+            *-*) echo "Current version $CURRENT is a pre-release; set a stable version first"; exit 1 ;;
+          esac
+          # Resume instead of bumping. A previous run can push the release
+          # commit and tag and then fail while publishing; re-running it must
+          # finish that version, not cut a second one. Only resume while the
+          # release is still incomplete — after a clean release main's HEAD is
+          # also a tagged release commit, and that must bump normally.
+          HEAD_SHA=$(git rev-parse HEAD)
+          REMOTE_SHA=$(git ls-remote --tags origin "refs/tags/v$CURRENT" | awk '{print $1}' | head -1)
+          if [ -n "$REMOTE_SHA" ] && [ "$REMOTE_SHA" = "$HEAD_SHA" ]; then
+            COMPLETE=true
+            if [ "$SKIP_NPM" != "true" ] && ! npm view "@wonderwhy-er/desktop-commander@$CURRENT" version >/dev/null 2>&1; then COMPLETE=false; fi
+            if [ "$SKIP_REGISTRY" != "true" ] && ! curl -fsS "$REGISTRY_VERSION_URL/$CURRENT" >/dev/null 2>&1; then COMPLETE=false; fi
+            if [ "$SKIP_GH" != "true" ] && ! gh release view "v$CURRENT" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then COMPLETE=false; fi
+            if [ "$COMPLETE" = "false" ]; then
+              echo "::notice::v$CURRENT is already tagged on origin at this commit but not fully published — resuming it instead of bumping"
+              echo "resumed=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "resumed=false" >> "$GITHUB_OUTPUT"
+          case "$BUMP" in
+            minor) npm run bump:minor ;;
+            major) npm run bump:major ;;
+            *)     npm run bump ;;
+          esac
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$REHEARSAL" = "true" ]; then TAG="test-v$VERSION"; else TAG="v$VERSION"; fi
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag $TAG already exists on origin"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json server.json src/version.ts
+          git commit -m "Release v$VERSION
+
+          Automated release commit with version bump from $CURRENT to $VERSION"
+          git tag "$TAG"
+          echo "Cut $TAG locally — it reaches origin only once the bundle is built"
+
+      # Single source of truth for the rest of the job. In tag mode this also
+      # asserts the tag was cut correctly — stop before anything publishes.
+      # A rehearsal tag test-vX.Y.Z must match version X.Y.Z the same way.
+      - name: Determine release version
+        id: ver
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          EXPECTED_TAG: ${{ steps.mode.outputs.tag }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$REHEARSAL" = "true" ]; then
+            TAG="test-v$VERSION"
+          else
+            TAG="v$VERSION"
+          fi
+          if [ "$MODE" = "tag" ] && [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "Version mismatch: tag=$EXPECTED_TAG but package.json=$VERSION"; exit 1
+          fi
+          SRV=$(node -p "require('./server.json').version")
+          SRV_PKG=$(node -p "require('./server.json').packages[0].version")
+          if [ "$SRV" != "$VERSION" ] || [ "$SRV_PKG" != "$VERSION" ]; then
+            echo "Version mismatch: package.json=$VERSION server.json=$SRV server.json.packages[0]=$SRV_PKG"; exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Self-contained: downloads all-platform ripgrep binaries, builds TS,
+      # stages prod-only deps, validates the manifest, packs.
+      # Output: desktop-commander-<version>.mcpb in the repo root.
+      # Known trade-off: sharp (PDF image extraction on read) only gets the
+      # linux-x64 binary here, so it stays inert in the MCPB on mac/win —
+      # accepted for now to keep the bundle at ~52 MB.
+      - name: Build MCPB bundle
+        run: npm run build:mcpb
+
+      # Last cheap failure. Everything after this either pushes a tag or
+      # publishes, so the bundle has to be proven correct here.
+      - name: Verify MCPB bundle
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          MCPB="desktop-commander-$VERSION.mcpb"
+          test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
+          MANIFEST_VERSION=$(node -p "require('./mcpb-bundle/manifest.json').version")
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "bundle manifest says $MANIFEST_VERSION but this release is $VERSION"; exit 1
+          fi
+          ls -l "$MCPB"
+
+      # Point of no return, and the only step that writes to origin. Tests,
+      # the version checks and the bundle build have all passed by now, so a
+      # tag can never outlive a broken release. --atomic keeps main and the
+      # tag from ever landing separately.
+      - name: Push release commit and tag (cut mode)
+        if: steps.mode.outputs.mode == 'cut' && steps.bump.outputs.resumed != 'true'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          REHEARSAL: ${{ steps.mode.outputs.rehearsal }}
+        run: |
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag $TAG appeared on origin during this run"; exit 1
+          fi
+          if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $VERSION — refusing to cut a tag for it"; exit 1
+          fi
+          if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
+            echo "registry already has $VERSION — refusing to cut a tag for it"; exit 1
+          fi
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: would push HEAD:main and $TAG, pushing nothing"; exit 0
+          fi
+          git push --atomic origin HEAD:main "refs/tags/$TAG"
+          echo "Pushed $TAG (a GITHUB_TOKEN push triggers nothing; this run continues the release)"
+
+      # A real release checks out the tag it just pushed. A cut-mode
+      # rehearsal never pushed one, so publish runs against main with the
+      # bumped version files from the artifact laid over it.
+      - name: Resolve publish ref
+        id: publishref
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG is not on origin — publish will run against main with the bumped version files overlaid"
+            echo "ref=main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            desktop-commander-*.mcpb
+            package.json
+            server.json
+            src/version.ts
+          if-no-files-found: error
+          retention-days: 7
+
+  # Nothing here can be undone, so it only starts once prepare has pushed.
+  # Re-running this job alone after an npm or registry flake skips the tests
+  # and the bundle build; every step below skips a target that already has
+  # the version, so a re-run never double-publishes.
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      MODE: ${{ needs.prepare.outputs.mode }}
+      REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.publish_ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      # Lands the .mcpb next to the checkout and overwrites package.json /
+      # server.json / src/version.ts with the exact files the bundle was built
+      # from. On a real release those are already identical; on a rehearsal
+      # this is what applies the bump.
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+
+      - name: Verify release assets
+        run: |
+          test -f "desktop-commander-$VERSION.mcpb" || { echo "bundle for $VERSION missing from the artifact"; exit 1; }
+          PKG=$(node -p "require('./package.json').version")
+          SRV=$(node -p "require('./server.json').version")
+          if [ "$PKG" != "$VERSION" ] || [ "$SRV" != "$VERSION" ]; then
+            echo "artifact version mismatch: package.json=$PKG server.json=$SRV expected=$VERSION"; exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      # npm auth: OIDC trusted publishing — no token, no secret. Configured on
+      # npmjs.com (package Settings → Trusted Publisher → this repo +
+      # release.yml). Needs npm >= 11.5.1; Node 22 bundles npm 10, so upgrade.
+      - name: Upgrade npm for OIDC trusted publishing
+        if: ${{ !inputs.skip_npm }}
+        run: npm install -g npm@latest && npm --version
+
+      - name: Publish to npm
+        if: ${{ !inputs.skip_npm }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+        run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: npm publish --dry-run (packs the tarball, uploads nothing)"
+            npm publish --dry-run
+            exit 0
+          fi
+          if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
+            echo "npm already has $VERSION — skipping publish"
+          else
+            npm publish
+          fi
+
+      - name: Verify npm publish
+        if: ${{ !inputs.skip_npm }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+        run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: nothing was published, skipping npm verification"; exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            if npm view "@wonderwhy-er/desktop-commander@$VERSION" version >/dev/null 2>&1; then
+              echo "npm has $VERSION"; exit 0
+            fi
+            echo "waiting for npm to list $VERSION (attempt $i)"; sleep 15
+          done
+          echo "npm never listed $VERSION"; exit 1
+
+      - name: Create GitHub release and attach MCPB
+        if: ${{ !inputs.skip_github_release }}
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+        run: |
+          MCPB="desktop-commander-$VERSION.mcpb"
+          test -f "$MCPB" || { echo "expected bundle $MCPB not found"; exit 1; }
+          if [ "$REHEARSAL" = "true" ]; then
+            if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+              echo "REHEARSAL: $TAG was never pushed, so there is no tag to draft a release against — skipping"
+              exit 0
+            fi
+            if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              # --generate-notes so the draft previews exactly what a real
+              # release's auto-generated notes would look like
+              gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+                --title "REHEARSAL — $TAG" --generate-notes
+            fi
+            gh release upload "$TAG" "$MCPB" --repo "$GITHUB_REPOSITORY" --clobber
+            echo "REHEARSAL: draft release with .mcpb at https://github.com/$GITHUB_REPOSITORY/releases (visible to repo collaborators only)"
+            exit 0
+          fi
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Release Notes — $TAG" --generate-notes --verify-tag
+          fi
+          gh release upload "$TAG" "$MCPB" --repo "$GITHUB_REPOSITORY" --clobber
+
+      # Unpinned on purpose: the registry docs recommend `latest`, and an
+      # outdated binary can fail OIDC with an audience error. Pin only if an
+      # upstream release ever breaks us.
+      - name: Install mcp-publisher
+        if: ${{ !inputs.skip_registry }}
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Publish to MCP Registry
+        if: ${{ !inputs.skip_registry }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+        run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: validate + OIDC login only, no publish"
+            ./mcp-publisher validate server.json
+            ./mcp-publisher login github-oidc
+            echo "REHEARSAL: OIDC login succeeded — skipping publish"
+            exit 0
+          fi
+          # Registry versions are immutable; a re-run after a successful publish
+          # must skip instead of failing on the duplicate. The exact-version
+          # endpoint returns 200 when the version exists, 404 when it doesn't.
+          if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
+            echo "registry already has $VERSION — skipping publish"
+            exit 0
+          fi
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      - name: Verify registry publish
+        if: ${{ !inputs.skip_registry }}
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+        run: |
+          if [ "$REHEARSAL" = "true" ]; then
+            echo "REHEARSAL: nothing was published, skipping registry verification"; exit 0
+          fi
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$REGISTRY_VERSION_URL/$VERSION" >/dev/null 2>&1; then
+              echo "registry has $VERSION"; exit 0
+            fi
+            echo "waiting for registry to list $VERSION (attempt $i)"; sleep 15
+          done
+          echo "registry never listed $VERSION"; exit 1
+
+      - name: Summary
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REHEARSAL: ${{ needs.prepare.outputs.rehearsal }}
+          MODE: ${{ needs.prepare.outputs.mode }}
+        run: |
+          {
+            if [ "$REHEARSAL" = "true" ]; then
+              echo "## 🎭 REHEARSAL $TAG — nothing was published"
+              echo "- npm: dry-run only (tarball contents in the publish step log)"
+              if [ "$MODE" = "cut" ]; then
+                echo "- git: the bump commit and $TAG were cut locally and never pushed — origin is untouched, nothing to clean up"
+                echo "- GitHub release: skipped (no pushed tag to draft against)"
+              else
+                echo "- GitHub release: DRAFT with the .mcpb asset — inspect, then delete it and the tag:"
+                echo "  \`gh release delete $TAG --yes && git push origin :refs/tags/$TAG\`"
+              fi
+              echo "- MCP Registry: validated + OIDC login proven, not published"
+            else
+              echo "## Release $TAG"
+              echo "- npm: https://www.npmjs.com/package/@wonderwhy-er/desktop-commander/v/$VERSION"
+              echo "- GitHub release: https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
+              echo "- MCPB asset: desktop-commander-$VERSION.mcpb (picked up by the Claude directory scanner)"
+              echo "- MCP Registry: io.github.wonderwhy-er/desktop-commander @ $VERSION"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

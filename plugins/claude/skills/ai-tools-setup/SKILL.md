@@ -63,18 +63,18 @@ known failure modes.
   servers, and inspecting / validating / repairing MCP config files
   (`claude_desktop_config.json`, `.claude/mcp.json`, `~/.lmstudio/mcp.json`,
   and similar). Also connection health checks.
-  → Read `references/claude-desktop-mcp.md`
+  → Read [`references/claude-desktop-mcp.md`](references/claude-desktop-mcp.md)
 
 - **OpenClaw** — a self-hosted multi-channel gateway for AI agents. Install,
   onboard, wire a model/provider, connect channels (Telegram, Slack, iMessage,
   etc.), diagnose the gateway, and uninstall.
-  → Read `references/openclaw.md`
+  → Read [`references/openclaw.md`](references/openclaw.md)
 
 - **Hermes** — disambiguate first: **Hermes Agent** (the Nous Research
   self-improving agent framework) vs. **Hermes 3** (just a local LLM you run via
   Ollama). Install, run `hermes setup --portal`, configure providers, personality
   (`SOUL.md`), memory/skills, MCP, and messaging.
-  → Read `references/hermes.md`
+  → Read [`references/hermes.md`](references/hermes.md)
 
 When in doubt about a tool's current behavior, fetch the official docs:
 OpenClaw — https://docs.openclaw.ai/ ·

@@ -49,7 +49,10 @@ export const ForceTerminateArgsSchema = z.object({
 export const ListSessionsArgsSchema = z.object({});
 
 export const KillProcessArgsSchema = z.object({
-  pid: z.number(),
+  // process.kill reads 0 and negative PIDs as process groups: 0 is the server's
+  // own (on Windows the server itself), -1 every process the user may signal.
+  // A refinement rather than .positive(), so the published schema is unchanged.
+  pid: z.number().refine((pid) => pid > 0, { message: 'Number must be greater than 0' }),
 });
 
 // Filesystem tools schemas
@@ -190,6 +193,13 @@ export const GiveFeedbackArgsSchema = z.object({
   // - client_id (auto)
 });
 
+/** A whole number (at least `min`, if given), rejected with a message that says so */
+function wholeNumber(name: string, min?: number) {
+  const message = `${name} must be a whole number${min === undefined ? '' : ` of at least ${min}`}`;
+  const number = z.number().int({ message });
+  return min === undefined ? number : number.min(min, { message });
+}
+
 // Search schemas (renamed for natural language)
 export const StartSearchArgsSchema = z.object({
   path: z.string(),
@@ -197,10 +207,10 @@ export const StartSearchArgsSchema = z.object({
   searchType: z.enum(['files', 'content']).default('files'),
   filePattern: z.string().optional(),
   ignoreCase: z.boolean().optional().default(true),
-  maxResults: z.number().optional(),
+  maxResults: wholeNumber('maxResults', 0).optional(), // 0: no limit
   includeHidden: z.boolean().optional().default(false),
-  contextLines: z.number().optional().default(5),
-  timeout_ms: z.number().optional(), // Match process naming convention
+  contextLines: wholeNumber('contextLines', 0).optional().default(5),
+  timeout_ms: wholeNumber('timeout_ms', 0).optional(), // Match process naming convention; 0: no time limit
   earlyTermination: z.boolean().optional(), // Stop search early when exact filename match is found (default: true for files, false for content)
   literalSearch: z.boolean().optional().default(false), // Force literal string matching (-F flag) instead of regex
   // 'ui' marks widget-fired calls (e.g. markdown link-target search);
@@ -210,8 +220,8 @@ export const StartSearchArgsSchema = z.object({
 
 export const GetMoreSearchResultsArgsSchema = z.object({
   sessionId: z.string(),
-  offset: z.number().optional().default(0),    // Same as file reading
-  length: z.number().optional().default(100),  // Same as file reading (but smaller default)
+  offset: wholeNumber('offset').optional().default(0),    // Same as file reading
+  length: wholeNumber('length', 1).optional().default(100),  // Same as file reading (but smaller default)
 });
 
 export const StopSearchArgsSchema = z.object({
@@ -219,14 +229,6 @@ export const StopSearchArgsSchema = z.object({
 });
 
 export const ListSearchesArgsSchema = z.object({});
-
-// Prompts tool schema - SIMPLIFIED (only get_prompt action)
-export const GetPromptsArgsSchema = z.object({
-  action: z.enum(['get_prompt']),
-  promptId: z.string(),
-  // Disabled to check if it makes sense or should be removed or changed
-  // anonymous_user_use_case: z.string().optional(),
-});
 
 // Tool history schema
 export const GetRecentToolCallsArgsSchema = z.object({
@@ -272,6 +274,5 @@ export const toolArgSchemas: Record<string, z.ZodTypeAny> = {
   get_usage_stats: GetUsageStatsArgsSchema,
   get_recent_tool_calls: GetRecentToolCallsArgsSchema,
   give_feedback_to_desktop_commander: GiveFeedbackArgsSchema,
-  get_prompts: GetPromptsArgsSchema,
   track_ui_event: TrackUiEventArgsSchema,
 };
