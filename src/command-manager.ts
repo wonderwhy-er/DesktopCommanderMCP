@@ -179,8 +179,14 @@ class CommandManager {
     // This extracts the actual command name from a command string (asTyped: see extractCommands)
     extractBaseCommand(commandStr: string, asTyped = false): string | null {
         try {
-            // Remove environment variables (patterns like KEY=value)
-            const withoutEnvVars = commandStr.replace(/\w+=\S+\s*/g, '').trim();
+            // Remove environment variables (patterns like KEY=value or KEY="quoted value").
+            // Quoted values are only stripped when the quote is closed: stripping the
+            // start of an unterminated string (a PowerShell hashtable literal, for one)
+            // would turn words inside that string into apparent commands.
+            // The + lets one assignment span adjacent quoted and unquoted value
+            // segments (X='a'b), so the whole assignment is removed, not just its
+            // quoted prefix.
+            const withoutEnvVars = commandStr.replace(/\w+=(?:"[^"]*"|'[^']*'|[^\s'"]\S*)+\s*/g, '').trim();
 
             // If nothing remains after removing env vars, return null
             if (!withoutEnvVars) return null;
