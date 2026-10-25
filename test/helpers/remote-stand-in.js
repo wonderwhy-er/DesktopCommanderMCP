@@ -304,6 +304,13 @@ export async function startRemoteStandIn({
         ? [200, USER]
         : [403, { code: 'bad_jwt', message: 'invalid JWT: token is expired or its session has ended' }];
     }
+    const claim = url.pathname.match(/^\/device\/([^/]+)\/calls\/([^/]+)\/claim$/);
+    if (request.method === 'POST' && claim) {
+      if (!sessionOfBearer(request)) return [401, { error: 'invalid token' }];
+      const call = standIn.calls.find((row) => row.id === decodeURIComponent(claim[2]) && row.device_id === decodeURIComponent(claim[1]) && row.status === 'pending');
+      if (call) call.status = 'executing';
+      return [200, { data: call ? [{ ...call }] : [], error: null }];
+    }
     if (url.pathname.startsWith('/rest/v1/')) {
       if (!sessionOfBearer(request)) {
         return [401, { code: 'PGRST301', message: 'JWT expired', details: null, hint: null }];

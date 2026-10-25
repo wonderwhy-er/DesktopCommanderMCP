@@ -31,6 +31,7 @@ const OTHER_DEVICE = 'device-2';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
 
+const originalFetch = globalThis.fetch;
 let failures = 0;
 async function test(name, fn) {
   try {
@@ -39,6 +40,8 @@ async function test(name, fn) {
   } catch (error) {
     failures++;
     console.error(`🔴 FAIL  ${name}\n     ${error.message}`);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 }
 function assert(condition, message) {
@@ -206,6 +209,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
     attempts: () => fetchAttempts,
     claims: () => claimAttempts,
     lastClaim: () => lastClaim,
+    claimCall: (callId, deviceId) => claim().eq('id', callId).eq('device_id', deviceId).eq('status', 'pending').select('*'),
     // Required by recreateChannel(); without them it dies on a TypeError before
     // reaching anything the recreate tests stub.
     removeChannel: () => Promise.resolve('ok'),
@@ -219,8 +223,18 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
 }
 
 function makeRemoteChannel(opts = {}) {
-  const rc = new RemoteChannel();
+  const rc = new RemoteChannel('https://backend.example/');
   const client = makeFakeClient(opts);
+  rc.getAccessToken = async () => 'device-token';
+  globalThis.fetch = async (url, init) => {
+    client.lastRequest = { url, ...init };
+    const match = new URL(url).pathname.match(/^\/device\/([^/]+)\/calls\/([^/]+)\/claim$/);
+    assert(match, `unexpected backend URL: ${url}`);
+    assert(init.method === 'POST');
+    assert(init.headers.Authorization === 'Bearer device-token');
+    const result = await client.claimCall(decodeURIComponent(match[2]), decodeURIComponent(match[1]));
+    return new Response(JSON.stringify(result), { status: result.error ? 503 : 200 });
+  };
   rc.client = client; // private in TS, plain property at runtime
   rc._user = { id: 'user-1', email: 'tester@example.com' };
   rc.deviceId = DEVICE_ID;
@@ -302,19 +316,17 @@ await test('doorbell delivers a pending row through the shared handler', async (
   rc.onToolCall = (p) => delivered.push(p);
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
   assert(delivered.length === 1, 'expected one delivery');
-  assert(delivered[0].new === row, 'must pass the claimed row as {new: row}');
+  assert(JSON.stringify(delivered[0].new) === JSON.stringify(row), 'must pass the returned row as {new: row}');
   assert(delivered[0].claimed === true, 'must mark the delivery claimed');
   assert(client.claims() === 1 && client.attempts() === 0, 'one claim, no separate fetch');
 });
 
-await test('the doorbell claim filters by id, device and pending status, and asks for the row', async () => {
+await test('the doorbell requests its call from the backend with the device token', async () => {
   const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' } });
   await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
-  const claim = client.lastClaim();
-  assert(claim.filters.id === 'x', `claim must filter on the call id: ${JSON.stringify(claim)}`);
-  assert(claim.filters.device_id === DEVICE_ID, `claim must filter on this device: ${JSON.stringify(claim)}`);
-  assert(claim.filters.status === 'pending', `claim must stay conditional on pending: ${JSON.stringify(claim)}`);
-  assert(claim.select === '*', 'claim must select the row, or PostgREST returns no representation');
+  assert(client.lastRequest.url === `https://backend.example/device/${DEVICE_ID}/calls/x/claim`);
+  assert(client.lastRequest.method === 'POST');
+  assert(client.lastRequest.headers.Authorization === 'Bearer device-token');
 });
 
 await test('a claim that does not match this device delivers nothing', async () => {
@@ -344,6 +356,22 @@ await test('doorbell claim retries a transient failure', async () => {
   assert(client.claims() === 3, `expected 3 attempts, got ${client.claims()}`);
   assert(delivered.length === 1, 'should deliver after the retry succeeds');
   assert(delivered[0].claimed === true, 'the successful retry claimed it');
+});
+
+await test('a backend connection failure uses the existing claim retry', async () => {
+  const { rc } = makeRemoteChannel({ row: { id: 'x', status: 'pending' } });
+  const backendFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (...args) => {
+    if (++requests === 1) throw new TypeError('connection lost');
+    return backendFetch(...args);
+  };
+  const delivered = [];
+  rc.onToolCall = (p) => delivered.push(p);
+  rc.sleep = () => Promise.resolve();
+  await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+  assert(requests === 2, 'retry the failed REST request');
+  assert(delivered.length === 1 && delivered[0].claimed === true);
 });
 
 await test('a claim that reads back executing is never delivered — the claimant is unknowable', async () => {

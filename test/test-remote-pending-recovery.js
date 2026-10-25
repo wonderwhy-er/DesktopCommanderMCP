@@ -109,8 +109,20 @@ function makeClient(rows) {
 }
 
 function makeRemoteChannel(rows) {
-  const rc = new RemoteChannel();
+  const rc = new RemoteChannel('https://backend.example');
   const client = makeClient(rows);
+  rc.getAccessToken = async () => 'device-token';
+  // Stand-in for the claim endpoint; the other queries still go directly to Supabase.
+  globalThis.fetch = async (url, init) => {
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers.Authorization, 'Bearer device-token');
+    const match = new URL(url).pathname.match(/^\/device\/([^/]+)\/calls\/([^/]+)\/claim$/);
+    assert(match, `unexpected backend URL: ${url}`);
+    const result = await client.from('mcp_remote_calls').update({ status: 'executing' })
+      .eq('id', decodeURIComponent(match[2])).eq('device_id', decodeURIComponent(match[1]))
+      .eq('status', 'pending').gt('timeout_at', 'now').select('*');
+    return new Response(JSON.stringify(result));
+  };
   const delivered = [];
 
   rc.client = client;
@@ -139,6 +151,8 @@ const baseRow = (id, overrides = {}) => ({
   timeout_at: iso(60_000),
   ...overrides,
 });
+
+const originalFetch = globalThis.fetch;
 
 async function runTests() {
   {
@@ -223,6 +237,7 @@ async function runTests() {
     assert.equal(recoveryCalls, 1, 'a join that becomes ready must trigger one pending-call recovery scan');
   }
 
+  globalThis.fetch = originalFetch;
   console.log('✅ Remote pending-call recovery tests passed');
 }
 

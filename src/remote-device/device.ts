@@ -102,7 +102,7 @@ export class MCPDevice {
 
     constructor(options: MCPDeviceOptions = {}) {
         this.baseServerUrl = process.env.MCP_SERVER_URL || 'https://mcp.desktopcommander.app';
-        this.remoteChannel = new RemoteChannel();
+        this.remoteChannel = new RemoteChannel(this.baseServerUrl);
         this.deviceId = undefined;
         this.isShuttingDown = false;
         this.configPath = getRemoteDeviceConfigPath();

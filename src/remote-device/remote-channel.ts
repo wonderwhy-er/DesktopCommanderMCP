@@ -289,6 +289,8 @@ export class RemoteChannel {
     get user(): User | null { return this._user; }
 
 
+    constructor(private readonly serverUrl: string) {}
+
     initialize(url: string, key: string): void {
         // autoRefreshToken:false — we drive refresh ourselves (startTokenRefresh(),
         // see TOKEN_REFRESH_INTERVAL_MS) instead of auth-js's local-clock-driven
@@ -937,22 +939,23 @@ export class RemoteChannel {
         let claimError: any = null;
         for (const delayMs of [0, 500, 1500]) {
             if (delayMs > 0) await this.sleep(delayMs);
-            const { data, error } = await this.client
-                .from('mcp_remote_calls')
-                .update({ status: 'executing' })
-                .eq('id', callId)
-                .eq('device_id', this.deviceId)
-                .eq('status', 'pending')
-                .gt('timeout_at', 'now')
-                .select('*');
-            if (!error) {
+            try {
+                const token = await this.getAccessToken();
+                if (!token) throw new Error('No access token for call claim');
+                const response = await clockAwareFetch(
+                    `${this.serverUrl.replace(/\/+$/, '')}/device/${encodeURIComponent(this.deviceId!)}/calls/${encodeURIComponent(callId)}/claim`,
+                    { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+                );
+                const { data } = await response.json();
+                if (!response.ok) throw new Error(`Call claim failed: HTTP ${response.status}`);
                 row = data?.[0] ?? null;
                 break;
+            } catch (error: any) {
+                // Left set on purpose: a later clean empty result may still mean our
+                // own attempt committed, so the read-back below must run.
+                claimError = error;
+                console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
             }
-            // Left set on purpose: a later clean empty result may still mean our
-            // own attempt committed, so the read-back below must run.
-            claimError = error;
-            console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
 
         if (row) {
