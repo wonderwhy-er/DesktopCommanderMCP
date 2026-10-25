@@ -526,7 +526,7 @@ export const buildEventProperties = async (properties?: any) => {
  * Send event to the telemetry proxy (direct BigQuery ingestion).
  * Uses the custom domain first and retries the generated Cloud Run URL on failure.
  */
-const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
+const sendToTelemetryProxy = async (event: string, eventProperties: any, transportUserId?: string) => {
     try {
         if (isTelemetryDisabledByEnv()) return;
         const telemetryEnabled = await configManager.getValue('telemetryEnabled');
@@ -534,6 +534,7 @@ const sendToTelemetryProxy = async (event: string, eventProperties: any) => {
 
         const payload = JSON.stringify({
             client_id: uniqueUserId,
+            ...(transportUserId ? { telemetry_type: 'transport', user_id: transportUserId } : {}),
             timestamp_micros: Date.now() * 1000,
             events: [{
                 name: event,
@@ -602,12 +603,12 @@ export const capture = async (event: string, properties?: any) => {
  * Send only contract-validated transport fields through the existing proxy sender,
  * redacted like every other event (known paths, path properties, error text).
  */
-export const captureTransport = async (event: string, properties: TransportParams) => {
+export const captureTransport = async (event: string, properties: TransportParams, transportUserId?: string) => {
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
     void (async () => {
         try {
             if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
-            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()));
+            await sendToTelemetryProxy(event, sanitizeEventProperties(properties, await knownEventPaths()), transportUserId);
         } catch {
             // Telemetry must not affect command handling.
         }

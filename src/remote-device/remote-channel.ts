@@ -942,6 +942,7 @@ export class RemoteChannel {
             try {
                 const token = await this.getAccessToken();
                 if (!token) throw new Error('No access token for call claim');
+                observeTransport({ stage: 'claim_after_doorbell_requested', callId, deviceId: this.deviceId, userId: this._user?.id });
                 const response = await clockAwareFetch(
                     `${this.serverUrl.replace(/\/+$/, '')}/device/${encodeURIComponent(this.deviceId!)}/calls/${encodeURIComponent(callId)}/claim`,
                     { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
