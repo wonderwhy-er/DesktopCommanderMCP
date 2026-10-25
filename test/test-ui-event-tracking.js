@@ -149,6 +149,37 @@ async function testUiEventCacheStaysBounded() {
   console.log('✓ unique-event bursts retain at most 100 dedupe keys');
 }
 
+async function testRefreshedUiEventRetainsRecency() {
+  console.log('\n--- Test: refreshed UI event retains cache recency ---');
+  const originalNow = Date.now;
+  let now = 1_000;
+  const calls = [];
+  Date.now = () => now;
+  try {
+    const track = createUiEventTracker(
+      async (_name, args) => { calls.push(args); return {}; },
+      { component: 'test-widget' },
+    );
+
+    // Fill the bounded cache with different timestamps so that only its
+    // oldest entries have expired when index 0 is refreshed.
+    for (let index = 0; index < 100; index++) {
+      track('click', { index });
+      now++;
+    }
+    now = 1_251;
+    track('click', { index: 0 }); // expired, accepted, now freshly recent
+    track('click', { index: 100 }); // expiry sweep drops the next old entry
+    track('click', { index: 101 }); // capacity eviction must spare index 0
+    const acceptedCalls = calls.length;
+    track('click', { index: 0 });
+    assert.strictEqual(calls.length, acceptedCalls, 'recently refreshed event must remain suppressed');
+  } finally {
+    Date.now = originalNow;
+  }
+  console.log('✓ renewed cache keys retain their recency during eviction');
+}
+
 export default async function runTests() {
   try {
     await testTrackUiEventCall();
@@ -158,6 +189,7 @@ export default async function runTests() {
     await testCanonicalWidgetCallKeys();
     await testDuplicateUiEventsAreSuppressed();
     await testUiEventCacheStaysBounded();
+    await testRefreshedUiEventRetainsRecency();
     console.log('\n✅ UI event tracking tests passed!');
     return true;
   } catch (error) {
