@@ -161,18 +161,16 @@ async function testRefreshedUiEventRetainsRecency() {
       { component: 'test-widget' },
     );
 
-    // Fill the bounded cache with different timestamps so that only its
-    // oldest entries have expired when index 0 is refreshed.
-    for (let index = 0; index < 100; index++) {
-      track('click', { index });
-      now++;
-    }
-    now = 1_251;
-    track('click', { index: 0 }); // expired, accepted, now freshly recent
-    track('click', { index: 100 }); // expiry sweep drops the next old entry
-    track('click', { index: 101 }); // capacity eviction must spare index 0
+    // The oldest key expires before any of the other 99 entries.
+    // After refreshing it, a 101st entry must evict an older key instead.
+    track('click', { index: 0 }); // t=1000
+    now = 1_100;
+    for (let index = 1; index < 100; index++) track('click', { index });
+    now = 1_251; // key 0 expired; keys 1-99 are still within the window
+    track('click', { index: 0 }); // refresh accepted, now should be newest
+    track('click', { index: 100 }); // capacity eviction must spare key 0
     const acceptedCalls = calls.length;
-    track('click', { index: 0 });
+    track('click', { index: 0 }); // immediate duplicate of refreshed entry
     assert.strictEqual(calls.length, acceptedCalls, 'recently refreshed event must remain suppressed');
   } finally {
     Date.now = originalNow;
