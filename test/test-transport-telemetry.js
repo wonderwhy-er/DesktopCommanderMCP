@@ -6,7 +6,6 @@ import { syncBuiltinESMExports } from 'node:module';
 import { parseDeviceTransportPayload } from '@desktop-commander/telemetry-contract/transport';
 import { configManager } from '../dist/config-manager.js';
 import { observeTransport } from '../dist/remote-device/transport-telemetry.js';
-import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
 import { capture } from '../dist/utils/capture.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -67,14 +66,13 @@ assert.equal(observeTransport({ stage: '', callId: 'call-1', deviceId: 'device-1
 
 // Capture the actual /mp/collect body without making a network request.
 const originalRequest = https.request;
-const originalFetch = globalThis.fetch;
 const originalGetValue = configManager.getValue;
 const originalGetOrCreateClientId = configManager.getOrCreateClientId;
 const originalDisableTelemetry = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
 const sent = [];
 let resolveSent;
 let sendTimeout;
-const allSent = new Promise(resolve => { resolveSent = resolve; });
+const bothSent = new Promise(resolve => { resolveSent = resolve; });
 try {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
@@ -91,7 +89,7 @@ try {
             response.resume = () => {};
             onResponse(response);
             queueMicrotask(() => response.emit('end'));
-            if (sent.length === 4) resolveSent();
+            if (sent.length === 2) resolveSent();
         };
         return request;
     };
@@ -99,20 +97,8 @@ try {
 
     const wireObservation = received({ ...target, call_id: 'call-wire' });
     void capture('ordinary_event', { custom_field: 'kept' });
-    const channel = new RemoteChannel('https://backend.example');
-    channel.client = {};
-    channel.deviceId = target.device_id;
-    channel._user = { id: target.user_id };
-    channel.getAccessToken = async () => 'device-token';
-    channel.sleep = async () => {};
-    let claimRequests = 0;
-    globalThis.fetch = async () => {
-        if (++claimRequests === 1) throw new TypeError('connection lost');
-        return new Response(JSON.stringify({ data: [{ id: target.call_id, status: 'executing' }] }));
-    };
-    await channel.onDoorbell(target);
     await Promise.race([
-        allSent,
+        bothSent,
         new Promise((_, reject) => {
             sendTimeout = setTimeout(() => reject(new Error('Telemetry requests were not sent')), 3000);
         }),
@@ -130,24 +116,9 @@ try {
     const ordinaryBody = sent.find(body => body.events[0].name === 'ordinary_event');
     assert.equal(ordinaryBody.events[0].params.custom_field, 'kept');
     assert.equal(typeof ordinaryBody.events[0].params.platform, 'string');
-    assert.equal(ordinaryBody.telemetry_type, undefined);
-    assert.equal(ordinaryBody.user_id, undefined);
     assert.throws(() => parseDeviceTransportPayload(ordinaryBody), /Invalid transport/);
-    const claims = sent.filter(body => body.events[0].name === 'claim_after_doorbell_requested');
-    assert.equal(claims.length, claimRequests, 'each HTTP attempt emits a request checkpoint, including the failed one');
-    assert.equal(claims.length, 2);
-    for (const body of claims) {
-        assert.equal(body.telemetry_type, 'transport');
-        assert.equal(body.user_id, target.user_id);
-        const params = parseDeviceTransportPayload(body).events[0].params;
-        assert.equal(params.stage, 'claim_after_doorbell_requested');
-        assert.equal(params.call_id, target.call_id);
-        assert.equal(params.device_id, target.device_id);
-        assert.equal(new Date(params.timestamp_utc).toISOString(), params.timestamp_utc);
-    }
 } finally {
     clearTimeout(sendTimeout);
-    globalThis.fetch = originalFetch;
     https.request = originalRequest;
     syncBuiltinESMExports();
     configManager.getValue = originalGetValue;

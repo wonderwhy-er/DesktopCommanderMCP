@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
+import { captureFeature } from '../feature-telemetry/capture-feature.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
@@ -942,7 +943,7 @@ export class RemoteChannel {
             try {
                 const token = await this.getAccessToken();
                 if (!token) throw new Error('No access token for call claim');
-                observeTransport({ stage: 'claim_after_doorbell_requested', callId, deviceId: this.deviceId, userId: this._user?.id });
+                void captureFeature('claim_after_doorbell_requested', this._user?.id ?? '', { call_id: callId, device_id: this.deviceId! });
                 const response = await clockAwareFetch(
                     `${this.serverUrl.replace(/\/+$/, '')}/device/${encodeURIComponent(this.deviceId!)}/calls/${encodeURIComponent(callId)}/claim`,
                     { method: 'POST', headers: { Authorization: `Bearer ${token}` } },

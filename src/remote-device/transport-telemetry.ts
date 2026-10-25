@@ -7,7 +7,7 @@ const PROCESS_ID = randomUUID();
 
 type TransportObservation = (
     | { stage: 'received'; payload: any; deviceId: string | null; userId: string | undefined }
-    | { stage: string; callId: string; deviceId: string | null | undefined; userId?: string; toolName?: string; operation?: string; operationId?: string }
+    | { stage: string; callId: string; deviceId: string | null | undefined; toolName?: string; operation?: string; operationId?: string }
 ) & { transport?: 'broadcast' | 'mqtt' };
 
 /** Record a device transport checkpoint without affecting command handling. */
@@ -44,8 +44,7 @@ export function observeTransport(input: TransportObservation) {
             schema_version: 1,
             timestamp_utc,
         };
-        // Keep legacy receipt routing; the claim checkpoint supplies user context for transport ingestion.
-        void captureTransport(input.stage, sanitizeTransportEvent(input.stage, event), receipt ? undefined : input.userId);
+        void captureTransport(input.stage, sanitizeTransportEvent(input.stage, event));
         return event;
     } catch {
         // Telemetry must never affect command handling.
