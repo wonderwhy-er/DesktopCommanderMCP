@@ -136,17 +136,23 @@ async function testDuplicateUiEventsAreSuppressed() {
 
 async function testUiEventCacheStaysBounded() {
   console.log('\n--- Test: UI event cache stays bounded ---');
-  const calls = [];
-  const track = createUiEventTracker(
-    async (_name, args) => { calls.push(args); return {}; },
-    { component: 'test-widget' },
-  );
+  const originalNow = Date.now;
+  Date.now = () => 1_000;
+  try {
+    const calls = [];
+    const track = createUiEventTracker(
+      async (_name, args) => { calls.push(args); return {}; },
+      { component: 'test-widget' },
+    );
 
-  for (let index = 0; index < 101; index++) track('click', { index });
-  track('click', { index: 0 });
-  await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let index = 0; index < 101; index++) track('click', { index });
+    track('click', { index: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.strictEqual(calls.length, 102, 'oldest unique event should be evicted once the cache exceeds 100');
+    assert.strictEqual(calls.length, 102, 'oldest unique event should be evicted once the cache exceeds 100');
+  } finally {
+    Date.now = originalNow;
+  }
   console.log('✓ unique-event bursts retain at most 100 dedupe keys');
 }
 
