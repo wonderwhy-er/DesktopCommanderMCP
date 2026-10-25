@@ -43,6 +43,9 @@ export function createUiEventTracker(callTool: ToolCaller, options: UiEventTrack
         if (lastSeen !== undefined && now - lastSeen < duplicateWindowMs) {
             return;
         }
+        // Refresh insertion order as well as the timestamp so a renewed
+        // key cannot be evicted ahead of older entries when the cache is full.
+        if (lastSeen !== undefined) recentEvents.delete(key);
         recentEvents.set(key, now);
         if (recentEvents.size > 100) {
             for (const [candidate, timestamp] of recentEvents) {
