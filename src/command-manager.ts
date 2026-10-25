@@ -183,7 +183,10 @@ class CommandManager {
             // Quoted values are only stripped when the quote is closed: stripping the
             // start of an unterminated string (a PowerShell hashtable literal, for one)
             // would turn words inside that string into apparent commands.
-            const withoutEnvVars = commandStr.replace(/\w+=(?:"[^"]*"|'[^']*'|[^\s'"]\S*)\s*/g, '').trim();
+            // The + lets one assignment span adjacent quoted and unquoted value
+            // segments (X='a'b), so the whole assignment is removed, not just its
+            // quoted prefix.
+            const withoutEnvVars = commandStr.replace(/\w+=(?:"[^"]*"|'[^']*'|[^\s'"]\S*)+\s*/g, '').trim();
 
             // If nothing remains after removing env vars, return null
             if (!withoutEnvVars) return null;

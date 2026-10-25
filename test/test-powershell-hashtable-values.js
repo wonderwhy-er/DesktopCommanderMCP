@@ -40,6 +40,16 @@ async function runTests() {
         assert.ok(commandManager.extractCommands(`Operation='$(init)'`).includes('init'),
             'FAIL: $() must still be extracted from a quoted value');
 
+        // Test 6: an assignment spanning adjacent quoted and unquoted value
+        // segments (X='a'b is a single assignment in shell, not assignment +
+        // command) must be stripped whole, so the real command is extracted
+        assert.ok(commandManager.extractCommands("X='a'b init").includes('init'),
+            'FAIL: adjacent single-quoted and unquoted assignment value must be stripped');
+        assert.ok(commandManager.extractCommands('X="a"b init').includes('init'),
+            'FAIL: adjacent double-quoted and unquoted assignment value must be stripped');
+        assert.ok(commandManager.extractCommands("X='a''b' init").includes('init'),
+            'FAIL: adjacent quoted segments must be stripped as one assignment');
+
         console.log('\nAll tests passed!');
     } catch (error) {
         console.error('Test failed:', error.message);
