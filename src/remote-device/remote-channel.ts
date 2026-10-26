@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient, Session, UserResponse, User, RealtimeChannel } from '@supabase/supabase-js';
 import { captureRemote } from '../utils/capture.js';
 import { observeTransport } from './transport-telemetry.js';
+import { captureFeature } from '../feature-telemetry/capture-feature.js';
 import { RealtimeHealthTelemetry } from './realtime-health-telemetry.js';
 import { rolloutManager } from './rollouts.js';
 import { VERSION } from '../version.js';
@@ -288,6 +289,8 @@ export class RemoteChannel {
     private _user: User | null = null;
     get user(): User | null { return this._user; }
 
+
+    constructor(private readonly serverUrl: string) {}
 
     initialize(url: string, key: string): void {
         // autoRefreshToken:false — we drive refresh ourselves (startTokenRefresh(),
@@ -935,24 +938,41 @@ export class RemoteChannel {
         // this atomically excludes expired rows despite client clock skew.
         let row: any = null;
         let claimError: any = null;
+        // Keep retries on the same path if rollouts refresh during this claim.
+        const useBackendClaim = rolloutManager.get('BACKEND_CALL_CLAIM_ENABLED');
         for (const delayMs of [0, 500, 1500]) {
             if (delayMs > 0) await this.sleep(delayMs);
-            const { data, error } = await this.client
-                .from('mcp_remote_calls')
-                .update({ status: 'executing' })
-                .eq('id', callId)
-                .eq('device_id', this.deviceId)
-                .eq('status', 'pending')
-                .gt('timeout_at', 'now')
-                .select('*');
-            if (!error) {
-                row = data?.[0] ?? null;
+            try {
+                if (useBackendClaim) {
+                    const token = await this.getAccessToken();
+                    if (!token) throw new Error('No access token for call claim');
+                    void captureFeature('claim_after_doorbell_requested', this._user?.id ?? '', { call_id: callId, device_id: this.deviceId! });
+                    const response = await clockAwareFetch(
+                        `${this.serverUrl.replace(/\/+$/, '')}/device/${encodeURIComponent(this.deviceId!)}/calls/${encodeURIComponent(callId)}/claim`,
+                        { method: 'POST', headers: { Authorization: `Bearer ${token}` } },
+                    );
+                    const { data } = await response.json();
+                    if (!response.ok) throw new Error(`Call claim failed: HTTP ${response.status}`);
+                    row = data?.[0] ?? null;
+                } else {
+                    const { data, error } = await this.client
+                        .from('mcp_remote_calls')
+                        .update({ status: 'executing' })
+                        .eq('id', callId)
+                        .eq('device_id', this.deviceId)
+                        .eq('status', 'pending')
+                        .gt('timeout_at', 'now')
+                        .select('*');
+                    if (error) throw error;
+                    row = data?.[0] ?? null;
+                }
                 break;
+            } catch (error: any) {
+                // Left set on purpose: a later clean empty result may still mean our
+                // own attempt committed, so the read-back below must run.
+                claimError = error;
+                console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
             }
-            // Left set on purpose: a later clean empty result may still mean our
-            // own attempt committed, so the read-back below must run.
-            claimError = error;
-            console.debug(`[DEBUG] Doorbell claim attempt failed for ${callId}: ${error.message} — retrying`);
         }
 
         if (row) {

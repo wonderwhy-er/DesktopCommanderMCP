@@ -65,6 +65,19 @@ AI client → Desktop Commander Remote MCP → Remote Device → local Desktop C
 
 The Remote MCP service forwards tool calls to the connected device. The local Desktop Commander MCP server executes them and returns the result through the same connection.
 
+## Backend claim rollout
+
+`BACKEND_CALL_CLAIM_ENABLED` uses the existing per-user rollout configuration.
+When `true`, doorbells claim calls through the backend and emit claim feature
+telemetry. When `false` or missing, they use the original direct Supabase query
+and emit no claim feature events. Retries and recovery keep their existing behavior.
+
+Set its percentage in the existing `mcp_settings` entry with `key = 'rollouts'`:
+`"BACKEND_CALL_CLAIM_ENABLED": 0` disables it; `100` enables it for every user.
+The device loads rollouts at startup, from returned call rows, and every 30 minutes.
+A returned row affects the next claim; the selected path stays fixed during retries.
+Enable only after the backend claim endpoint and feature collector are deployed.
+
 ## Session persistence
 
 Session persistence is enabled by default. To require browser authorization on every start, run:

@@ -290,30 +290,42 @@ async function runTests() {
       `${problems.join('; ')}.\n    Requests: ${order.join(', ')}\n    Its output:\n${tail(device.output)}`);
   }));
 
-  await test('a call row the device claims updates its rollouts', () => withDevice({
+  await test('a direct claim enables backend claiming for the next pending row', () => withDevice({
     standInOptions: { channel: true },
     prepare(standIn) {
       standIn.rollouts = ON;
-      standIn.calls.push({
+      const firstCall = {
         id: 'c0a1b2c3-0000-4000-8000-000000000695',
         user_id: standIn.userId,
         device_id: standIn.deviceId,
         status: 'pending',
         tool_name: 'ping',
         tool_args: {},
-        metadata: { transport: 'broadcast_v1', rollouts: { check: false } },
+        metadata: { transport: 'broadcast_v1', rollouts: { BACKEND_CALL_CLAIM_ENABLED: true } },
         created_at: new Date().toISOString(),
         timeout_at: new Date(Date.now() + 5 * MINUTE).toISOString(),
+      };
+      standIn.calls.push(firstCall, {
+        ...firstCall,
+        id: 'c0a1b2c3-0000-4000-8000-000000000696',
+        metadata: { transport: 'broadcast_v1', rollouts: { check: false } },
       });
       return standIn.login();
     },
   }, async (standIn, device) => {
-    const [call] = standIn.calls;
-    await waitFor(device, () => call.status === 'completed', CALL_DEADLINE_MS);
+    const [firstCall, secondCall] = standIn.calls;
+    await waitFor(device, () => standIn.calls.every(call => call.status === 'completed'), CALL_DEADLINE_MS);
     const problems = [];
-    if (call.status !== 'completed') problems.push(`it did not run the pending call (its row is ${call.status})`);
-    if (json(rolloutLinesOf(device)) !== json(['Rollouts: { check: true }', 'Rollouts: { check: false }'])) {
-      problems.push(`it logged ${json(rolloutLinesOf(device))} where the start had check on and the call row had it off`);
+    if (!standIn.calls.every(call => call.status === 'completed')) problems.push('it did not run both pending calls');
+    const directClaims = standIn.requests.filter(request => {
+      const url = new URL(request.url, standIn.url);
+      return request.method === 'PATCH' && url.pathname === '/rest/v1/mcp_remote_calls' && url.searchParams.get('status') === 'eq.pending';
+    });
+    const backendClaims = standIn.requests.filter(request => request.method === 'POST' && request.url.endsWith('/claim'));
+    if (directClaims.length !== 1 || !directClaims[0].url.includes(firstCall.id)) problems.push('the first call must use the default direct claim');
+    if (backendClaims.length !== 1 || !backendClaims[0].url.includes(secondCall.id)) problems.push('the second call must use the row-enabled backend claim');
+    if (json(rolloutLinesOf(device)) !== json(['Rollouts: { check: true }', 'Rollouts: { BACKEND_CALL_CLAIM_ENABLED: true }', 'Rollouts: { check: false }'])) {
+      problems.push(`it logged unexpected rollout changes: ${json(rolloutLinesOf(device))}`);
     }
     assert.ok(problems.length === 0, `${problems.join('; ')}.\n    Its output:\n${tail(device.output)}`);
   }));
