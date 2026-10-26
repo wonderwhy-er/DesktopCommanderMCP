@@ -17,6 +17,7 @@
 
 import { MCPDevice } from '../dist/remote-device/device.js';
 import { HEARTBEAT_INTERVAL_MS, RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { rolloutManager } from '../dist/remote-device/rollouts.js';
 import { exitProcess } from '../dist/utils/exit-process.js';
 
 // Server-side windows this device's last_seen must fit inside: the offline
@@ -42,6 +43,7 @@ async function test(name, fn) {
     console.error(`🔴 FAIL  ${name}\n     ${error.message}`);
   } finally {
     globalThis.fetch = originalFetch;
+    rolloutManager.update({});
   }
 }
 function assert(condition, message) {
@@ -100,6 +102,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
   // like a response lost after the write.
   const claim = () => {
     const filters = {};
+    const gtFilters = {};
     let selected = null;
     const settle = () => {
       claimAttempts++;
@@ -109,7 +112,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
         filters.id === row?.id && filters.status === 'pending' && (!wantsRow || filters.device_id === claimDeviceId);
       const committed = !!row && matches && row.status === 'pending' && (!failed || claimAttempts <= lostClaims);
       if (committed) row.status = 'executing';
-      lastClaim = { filters: { ...filters }, select: selected };
+      lastClaim = { filters: { ...filters }, gtFilters: { ...gtFilters }, select: selected };
       if (failed) return { data: null, error: { message: 'claim failed' } };
       if (selected === null) return { data: null, error: null }; // PostgREST 204, no representation
       return { data: committed ? [wantsRow ? row : { id: row.id }] : [], error: null };
@@ -122,7 +125,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
       // Claims now also guard timeout_at > corrected-now. These transport
       // tests focus on claim routing/atomicity, so the fake accepts the range
       // predicate without adding clock behavior of its own.
-      gt: () => builder,
+      gt: (col, value) => { gtFilters[col] = value; return builder; },
       select: (cols = '*') => {
         selected = cols;
         return builder;
@@ -223,6 +226,7 @@ function makeFakeClient({ row = null, failFetches = 0, failClaims = 0, lostClaim
 }
 
 function makeRemoteChannel(opts = {}) {
+  rolloutManager.update({ BACKEND_CALL_CLAIM_ENABLED: true });
   const rc = new RemoteChannel('https://backend.example/');
   const client = makeFakeClient(opts);
   rc.getAccessToken = async () => 'device-token';
@@ -327,6 +331,40 @@ await test('the doorbell requests its call from the backend with the device toke
   assert(client.lastRequest.url === `https://backend.example/device/${DEVICE_ID}/calls/x/claim`);
   assert(client.lastRequest.method === 'POST');
   assert(client.lastRequest.headers.Authorization === 'Bearer device-token');
+});
+
+for (const enabled of [undefined, false]) {
+  await test(`a ${enabled === undefined ? 'missing' : 'disabled'} claim rollout keeps the original direct query`, async () => {
+    const { rc, client } = makeRemoteChannel({ row: { id: 'x', status: 'pending' } });
+    rolloutManager.update(enabled === undefined ? {} : { BACKEND_CALL_CLAIM_ENABLED: enabled });
+    let tokenRequests = 0;
+    rc.getAccessToken = async () => { tokenRequests++; return 'unused'; };
+    const delivered = [];
+    rc.onToolCall = value => delivered.push(value);
+    await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+    assert(tokenRequests === 0 && client.lastRequest === undefined, 'direct claims need neither an access-token read nor a backend request');
+    assert(client.claims() === 1 && delivered.length === 1 && delivered[0].claimed === true);
+    const claim = client.lastClaim();
+    assert(claim.filters.id === 'x' && claim.filters.device_id === DEVICE_ID && claim.filters.status === 'pending');
+    assert(claim.gtFilters.timeout_at === 'now' && claim.select === '*', 'preserve the database expiry guard and returned row');
+  });
+}
+
+await test('a rollout change during direct claim retry applies to the next call', async () => {
+  const row = { id: 'x', status: 'pending' };
+  const { rc, client } = makeRemoteChannel({ row, failClaims: 1 });
+  rolloutManager.update({ BACKEND_CALL_CLAIM_ENABLED: false });
+  rc.sleep = async () => { rolloutManager.update({ BACKEND_CALL_CLAIM_ENABLED: true }); };
+  const delivered = [];
+  rc.onToolCall = value => delivered.push(value);
+  await rc.onDoorbell({ call_id: 'x', device_id: DEVICE_ID });
+  assert(client.claims() === 2 && delivered.length === 1, 'the direct claim still retries transient errors');
+  assert(client.lastRequest === undefined, 'an in-flight claim keeps its selected route');
+  row.id = 'next-call';
+  row.status = 'pending';
+  await rc.onDoorbell({ call_id: 'next-call', device_id: DEVICE_ID });
+  assert(client.lastRequest.url.endsWith('/calls/next-call/claim'), 'the next claim uses the updated rollout');
+  assert(delivered.length === 2);
 });
 
 await test('a claim that does not match this device delivers nothing', async () => {

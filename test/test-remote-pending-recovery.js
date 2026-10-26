@@ -10,6 +10,7 @@
 
 import assert from 'node:assert';
 import { RemoteChannel } from '../dist/remote-device/remote-channel.js';
+import { rolloutManager } from '../dist/remote-device/rollouts.js';
 import { runIfMain } from './helpers/run-if-main.js';
 
 process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '1';
@@ -111,9 +112,11 @@ function makeClient(rows) {
 function makeRemoteChannel(rows) {
   const rc = new RemoteChannel('https://backend.example');
   const client = makeClient(rows);
+  client.backendRequests = 0;
   rc.getAccessToken = async () => 'device-token';
   // Stand-in for the claim endpoint; the other queries still go directly to Supabase.
   globalThis.fetch = async (url, init) => {
+    client.backendRequests++;
     assert.equal(init.method, 'POST');
     assert.equal(init.headers.Authorization, 'Bearer device-token');
     const match = new URL(url).pathname.match(/^\/device\/([^/]+)\/calls\/([^/]+)\/claim$/);
@@ -154,7 +157,8 @@ const baseRow = (id, overrides = {}) => ({
 
 const originalFetch = globalThis.fetch;
 
-async function runTests() {
+async function runRecoveryTests(backendCallClaimEnabled) {
+  rolloutManager.update({ BACKEND_CALL_CLAIM_ENABLED: backendCallClaimEnabled });
   {
     const rows = [
       baseRow('live-old', { created_at: iso(-10_000) }),
@@ -166,6 +170,7 @@ async function runTests() {
     const { rc, delivered, client } = makeRemoteChannel(rows);
 
     await rc.recoverPendingCalls();
+    assert.equal(client.backendRequests, backendCallClaimEnabled ? 2 : 0);
     assert.equal(client.calls[0].gtFilters.timeout_at, 'now',
       'recovery scan must filter using PostgreSQL time');
 
@@ -239,6 +244,15 @@ async function runTests() {
 
   globalThis.fetch = originalFetch;
   console.log('✅ Remote pending-call recovery tests passed');
+}
+
+async function runTests() {
+  try {
+    for (const enabled of [false, true]) await runRecoveryTests(enabled);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rolloutManager.update({});
+  }
 }
 
 runIfMain(import.meta.url, runTests);

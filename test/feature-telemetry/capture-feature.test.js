@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { configManager } from '../../dist/config-manager.js';
 import { captureFeature } from '../../dist/feature-telemetry/capture-feature.js';
 import { RemoteChannel } from '../../dist/remote-device/remote-channel.js';
+import { rolloutManager } from '../../dist/remote-device/rollouts.js';
 import { runInUiOriginCallContext } from '../../dist/utils/capture.js';
 
 const originalFetch = globalThis.fetch;
 const originalGetValue = configManager.getValue;
 const originalClientId = configManager.getOrCreateClientId;
 const originalOptOut = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+const originalRollouts = rolloutManager.getAll();
 const sent = [];
 let mode = 'ok';
 let savedClientId = 'installation-1';
@@ -70,6 +72,7 @@ try {
     assert.equal(sent.length, 6, 'opt-outs and missing identity produce no requests');
 
     configManager.getValue = async key => key === 'clientId' ? 'installation-1' : key === 'telemetryEnabled' ? true : [];
+    rolloutManager.update({ BACKEND_CALL_CLAIM_ENABLED: true });
     const channel = new RemoteChannel('https://backend.example');
     channel.client = {};
     channel.deviceId = 'device-1';
@@ -111,7 +114,24 @@ try {
         assert.equal(claim.events[0].params.stage, undefined);
         assert.equal(new Date(claim.timestamp_utc).toISOString(), claim.timestamp_utc);
     }
+    let directClaims = 0;
+    const query = {
+        update: () => query,
+        eq: () => query,
+        gt: () => query,
+        select: async () => { directClaims++; return { data: [{ id: 'direct-call', status: 'executing' }], error: null }; },
+    };
+    channel.client = { from: () => query };
+    for (const flags of [{}, { BACKEND_CALL_CLAIM_ENABLED: false }]) {
+        rolloutManager.update(flags);
+        await channel.onDoorbell({ call_id: 'direct-call', device_id: 'device-1' });
+    }
+    await new Promise(setImmediate);
+    assert.equal(directClaims, 2);
+    assert.equal(claimRequests, 2, 'disabled or missing rollout makes no backend request');
+    assert.equal(claims.length, 2, 'disabled or missing rollout emits no feature checkpoint');
 } finally {
+    rolloutManager.update(originalRollouts);
     globalThis.fetch = originalFetch;
     configManager.getValue = originalGetValue;
     configManager.getOrCreateClientId = originalClientId;
