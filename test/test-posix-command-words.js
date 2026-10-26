@@ -82,6 +82,8 @@ export const CASES = [
   { name: 'a name with an expansion in it', script: 'v${tool}x arg; "$tool"x; `which sudo`x; run_$1 x; "$@"; ${2} y; "cmd_$(echo x)" y', commands: ['vx', 'x', 'which', 'run_', 'y', 'cmd_', 'echo'] },
   { name: 'a name glued to an empty expansion', script: 'sudo"$(true)" x; ``reboot; $1halt', commands: ['sudo', 'true', 'reboot', 'halt'] },
   { name: 'a default or alternate value as the name', script: '${SUDO:-sudo -n} reboot; ${x:+halt}; "${y-init}" z', commands: ['sudo', 'halt', 'init'] },
+  // bash runs a command substitution in an array subscript
+  { name: 'commands in an array subscript', script: 'echo ${a[$(sudo x)]:-ok} ${b[`halt`]:=v}; ${c[1]:-reboot} y', commands: ['echo', 'sudo', 'halt', 'reboot'] },
   { name: 'a command after a backtick substitution', script: 'echo `which a`; sudo x', commands: ['echo', 'which', 'sudo'] },
   { name: 'a variable inside $( ) in double quotes', script: 'x="$(readlink $d)"; echo y', commands: ['readlink', 'echo'] },
   { name: 'special parameters', script: '[ $# -eq 0 ] && chmod x "$@"', commands: ['[', 'chmod'] },

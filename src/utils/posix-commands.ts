@@ -30,8 +30,9 @@ const COPROC_NAME = new RegExp(String.raw`${GAP}+[A-Za-z_][A-Za-z0-9_]*(?=${GAP}
 // A loop variable after for, select or foreach
 const LOOP_NAME = new RegExp(String.raw`${GAP}*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;(\\]|$)`, 'y');
 const FUNCTION_PARENS = new RegExp(String.raw`${GAP}*\(${GAP}*\)`, 'y');
-// After '${': a parameter and an operator whose word can be the value (:- - := = :+ +)
-const PARAMETER_WORD = /[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])(?:\[[^\]]*\])?:?[-=+]/y;
+// After '${': a parameter and an operator whose word can be the value (:- - := = :+ +). A subscript
+// with an expansion in it is left to the scan, which reads the commands in it: ${a[$(cmd)]:-x}
+const PARAMETER_WORD = /[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])(?:\[[^\]$`\\]*\])?:?[-=+]/y;
 const WORD_END = ' \t\n;&|<>()';
 const ESCAPED_IN_DOUBLE_QUOTES = new Set(['$', '`', '"', '\\']);
 const ANSI_C_ESCAPES = new Map([
