@@ -51,8 +51,11 @@ const originalRequest = https.request;
 const originalGetValue = configManager.getValue;
 const originalGetOrCreateClientId = configManager.getOrCreateClientId;
 const originalDisableTelemetry = process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY;
+const originalTelemetryUrl = process.env.DC_TELEMETRY_URL;
 try {
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = '0';
+    // The device sets this from the Remote MCP server; transport events go only there
+    process.env.DC_TELEMETRY_URL = 'https://telemetry.desktopcommander.app/mp/collect';
     configManager.getValue = async key => key === 'telemetryEnabled' ? true : undefined;
     configManager.getOrCreateClientId = async () => 'installation-1';
     https.request = (options, onResponse) => {
@@ -94,5 +97,7 @@ try {
     configManager.getValue = originalGetValue;
     configManager.getOrCreateClientId = originalGetOrCreateClientId;
     process.env.DESKTOP_COMMANDER_DISABLE_TELEMETRY = originalDisableTelemetry;
+    if (originalTelemetryUrl === undefined) delete process.env.DC_TELEMETRY_URL;
+    else process.env.DC_TELEMETRY_URL = originalTelemetryUrl;
 }
 console.log('PASS tool-call transport telemetry: a failed result save is completed, not failed; a failed tool is failed');
