@@ -67,6 +67,14 @@ export const CASES = [
   // do or { can follow a for header without a separator
   { name: 'for without in, and for (( )) without a separator', script: 'for i do sudo x; done; for ((i=0;i<1;i++)) do reboot; done; for ((;;)) { halt; }', commands: ['sudo', 'reboot', 'halt'] },
   { name: 'the words after for ... in are data', script: 'for sha1 in sudo x\ndo :; done', commands: [':'] },
+  // Any number of blanks and line continuations can come between the words of a header
+  {
+    name: 'headers with long blanks and line continuations',
+    script: `coproc${' '.repeat(300)}n1 (sudo x)\ncoproc \\\n n2 \\\n (reboot)\nfor \\\n i do halt; done\nf${' '.repeat(100)}() { init; }; f`,
+    commands: ['sudo', 'reboot', 'halt', 'init', 'f'],
+  },
+  // In an array assignment a # that starts a word starts a comment; inside a word it is text
+  { name: 'comments in a multi-line array', script: "files=(\n  a.txt  # it's here\n  b#c\n)\nsudo rm x\nx=(# \"y\n)\nreboot", commands: ['sudo', 'reboot'] },
   { name: 'a command after [[ ]]', script: '[[ -n x ]] && sudo y', commands: ['sudo'] },
   // A name that is partly an expansion is only known when the script runs
   { name: 'a name with an expansion in it', script: 'v${tool}x arg; "$tool"x; `which sudo`x; run_$1 x; "$@"; ${2} y; "cmd_$(echo x)" y', commands: ['which', 'y', 'echo'] },

@@ -22,10 +22,13 @@ const RESERVED = new Set([
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(\[[^=]*\])?\+?=/;
 const ARRAY_ASSIGNMENT_START = /^[A-Za-z_][A-Za-z0-9_]*(\[[^=]*\])?\+?=$/;
 const FILE_DESCRIPTOR = /^(\d+|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+// Blanks and line continuations between the words of a header, any number of them
+const GAP = String.raw`(?:[ \t]|\\\n)`;
 // coproc NAME is only allowed before a compound command, so a name with one after it names the coprocess
-const COPROC_NAME = /^[ \t]+[A-Za-z_][A-Za-z0-9_]*(?=[ \t]*(?:\(|(?:\{|\[\[|if|while|until|for|select|case)(?=\s|$)))/;
+const COPROC_NAME = new RegExp(String.raw`${GAP}+[A-Za-z_][A-Za-z0-9_]*(?=${GAP}*(?:\(|(?:\{|\[\[|if|while|until|for|select|case)(?=\s|$)))`, 'y');
 // A loop variable after for, select or foreach
-const LOOP_NAME = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;(]|$)/;
+const LOOP_NAME = new RegExp(String.raw`${GAP}*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;(\\]|$)`, 'y');
+const FUNCTION_PARENS = new RegExp(String.raw`${GAP}*\(${GAP}*\)`, 'y');
 const WORD_END = ' \t\n;&|<>()';
 const ESCAPED_IN_DOUBLE_QUOTES = new Set(['$', '`', '"', '\\']);
 const ANSI_C_ESCAPES = new Map([
@@ -233,6 +236,11 @@ class PosixScanner {
     return this.src.startsWith(text, this.pos);
   }
 
+  private matchAt(pattern: RegExp): RegExpExecArray | null {
+    pattern.lastIndex = this.pos;
+    return pattern.exec(this.src);
+  }
+
   /** Reads one word, and the commands in its expansions; stops before a blank or an operator */
   private word(literal = false): Word {
     let value = '';
@@ -241,7 +249,7 @@ class PosixScanner {
     while (this.pos < this.src.length) {
       const c = this.src[this.pos];
       if (c === '(' && this.groupContinuesWord(value)) {
-        value += this.skipGroup(); // extglob @(...) or an array assignment NAME=(...)
+        value += this.skipGroup(ARRAY_ASSIGNMENT_START.test(value)); // extglob @(...) or an array assignment NAME=(...)
         continue;
       }
       if (WORD_END.includes(c) || this.atCarriageReturnLineEnd()) break;
@@ -507,8 +515,11 @@ class PosixScanner {
     }
   }
 
-  /** Skips a ( ... ) group whose text is data, reading the commands in its expansions */
-  private skipGroup(): string {
+  /**
+   * Skips a ( ... ) group whose text is data, reading the commands in its expansions.
+   * comments: an array assignment, where a # that starts a word starts a comment.
+   */
+  private skipGroup(comments = false): string {
     const start = this.pos;
     const opens: number[] = [];
     while (this.pos < this.src.length) {
@@ -523,6 +534,8 @@ class PosixScanner {
         this.dollar(false);
       } else if (c === '`') {
         this.backticks();
+      } else if (c === '#' && comments && /[\s(]/.test(this.src[this.pos - 1])) {
+        this.skipToLineEnd();
       } else if (c === '(') {
         const known = this.probing ? this.closes.get(this.pos) : undefined;
         if (known === undefined) {
@@ -647,7 +660,7 @@ class PosixScanner {
   }
 
   private skipCoprocName(): void {
-    const name = COPROC_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+    const name = this.matchAt(COPROC_NAME);
     if (name) this.pos += name[0].length;
   }
 
@@ -657,11 +670,11 @@ class PosixScanner {
    * after a ( ) group: bash's ((...)) or zsh's (WORDS) list.
    */
   private loopHeaderHasWords(): boolean {
-    let name = LOOP_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+    let name = this.matchAt(LOOP_NAME);
     while (name !== null && name[1] !== 'do') {
       this.pos += name[0].length;
       if (name[1] === 'in') return true;
-      name = LOOP_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+      name = this.matchAt(LOOP_NAME);
     }
     this.skipBlanks();
     if (this.src[this.pos] === '(') this.skipGroup();
@@ -675,7 +688,7 @@ class PosixScanner {
   }
 
   private skipFunctionParens(): boolean {
-    const match = /^[ \t]*\([ \t]*\)/.exec(this.src.slice(this.pos, this.pos + 64));
+    const match = this.matchAt(FUNCTION_PARENS);
     if (!match) return false;
     this.pos += match[0].length;
     return true;
