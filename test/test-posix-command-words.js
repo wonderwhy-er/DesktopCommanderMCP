@@ -61,6 +61,12 @@ export const CASES = [
   { name: 'ANSI-C escapes that keep a name apart', script: String.raw`$'s\\u\'d\"o\?\q' x`, commands: [String.raw`s\u'd"o?\q`] },
   { name: 'a select body', script: 'select x in a b; do sudo y; done', commands: ['sudo'] },
   { name: 'coproc', script: 'coproc sudo x', commands: ['sudo'] },
+  // coproc NAME takes only a compound command, so a word with one after it names the coprocess
+  { name: 'a named coproc', script: 'coproc cp (sudo x)\ncoproc c { reboot; }\ncoproc n while halt; do :; done', commands: ['sudo', 'reboot', 'halt', ':'] },
+  { name: 'a coproc command with a brace word', script: 'coproc sudo {a,b}', commands: ['sudo'] },
+  // do or { can follow a for header without a separator
+  { name: 'for without in, and for (( )) without a separator', script: 'for i do sudo x; done; for ((i=0;i<1;i++)) do reboot; done; for ((;;)) { halt; }', commands: ['sudo', 'reboot', 'halt'] },
+  { name: 'the words after for ... in are data', script: 'for sha1 in sudo x\ndo :; done', commands: [':'] },
   { name: 'a command after [[ ]]', script: '[[ -n x ]] && sudo y', commands: ['sudo'] },
   // A name that is partly an expansion is only known when the script runs
   { name: 'a name with an expansion in it', script: 'v${tool}x arg; "$tool"x; `which sudo`x; run_$1 x; "$@"; ${2} y; "cmd_$(echo x)" y', commands: ['which', 'y', 'echo'] },
@@ -89,11 +95,16 @@ export const CASES = [
   // zsh's short forms run the command after (( )), [[ ]] and a closing }
   { name: "zsh's anonymous function", script: '() { sudo x }', commands: ['sudo'] },
   { name: "zsh's short if", script: 'if [[ -n x ]] sudo y', commands: ['sudo'] },
+  { name: "zsh's short forms after (( ))", script: 'if (( x )) { sudo y }; while (( z )) { reboot }', commands: ['x', 'sudo', 'z', 'reboot'] },
+  // foreach and repeat are commands to other shells
+  { name: "zsh's short loops", script: 'for i (1) sudo x; for a b (1 2) { reboot }; foreach i (1) halt; end; repeat 2 shutdown', commands: ['sudo', 'reboot', 'foreach', 'halt', 'end', 'repeat', 'shutdown'] },
   { name: "zsh's always block", script: '{ echo a; } always { reboot; }', commands: ['echo', 'reboot'] },
   { name: "zsh's precommand modifiers", script: 'noglob sudo x; - reboot; nocorrect shutdown', commands: ['sudo', 'reboot', 'shutdown'] },
   // Bash runs nothing of these, but a stray ) or } doesn't stop the reading
   { name: 'a stray ) does not hide what follows', script: 'echo $(date) ) ; sudo x', commands: ['echo', 'date', 'sudo'] },
   { name: 'a stray } does not hide what follows', script: 'echo a; }; sudo x', commands: ['echo', 'sudo'] },
+  // zsh reads a ( ) group after a word as a glob
+  { name: 'a ( ) group after a word is data', script: 'echo x (sudo|halt); reboot', commands: ['echo', 'reboot'] },
   // Forms from real system scripts that a slightly wrong reader gets wrong
   { name: 'a line continuation before a quoted word', script: 'echo \\\n"a b"; sudo y', commands: ['echo', 'sudo'] },
   { name: 'a subshell in $( ) in [[ ]]', script: '[[ -n $( (true); sudo b\n) ]]', commands: ['true', 'sudo'] },

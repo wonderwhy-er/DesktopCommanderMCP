@@ -22,6 +22,10 @@ const RESERVED = new Set([
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*(\[[^=]*\])?\+?=/;
 const ARRAY_ASSIGNMENT_START = /^[A-Za-z_][A-Za-z0-9_]*(\[[^=]*\])?\+?=$/;
 const FILE_DESCRIPTOR = /^(\d+|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+// coproc NAME is only allowed before a compound command, so a name with one after it names the coprocess
+const COPROC_NAME = /^[ \t]+[A-Za-z_][A-Za-z0-9_]*(?=[ \t]*(?:\(|(?:\{|\[\[|if|while|until|for|select|case)(?=\s|$)))/;
+// A loop variable after for, select or foreach
+const LOOP_NAME = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;(]|$)/;
 const WORD_END = ' \t\n;&|<>()';
 const ESCAPED_IN_DOUBLE_QUOTES = new Set(['$', '`', '"', '\\']);
 const ANSI_C_ESCAPES = new Map([
@@ -124,7 +128,10 @@ class PosixScanner {
       if (c === ')') {
         if (subshells === 0 && this.nesting > 0) return 'paren'; // closes the enclosing $( ), <( ) or >( )
         if (subshells > 0) subshells--;
-        if (arithmeticFrom !== undefined && subshells <= arithmeticFrom) arithmeticFrom = undefined;
+        if (arithmeticFrom !== undefined && subshells <= arithmeticFrom) {
+          arithmeticFrom = undefined;
+          atCommand = true; // zsh runs a command after (( )): if (( x )) { cmd }
+        }
         this.pos++; // still at a command: zsh's () { cmd } runs cmd, and in bash only an operator can follow
         continue;
       }
@@ -166,13 +173,26 @@ class PosixScanner {
       if (reserved === 'esac' && caseItem) return 'esac';
       if (reserved === '{') braces++;
       if (reserved === '}') braces = Math.max(0, braces - 1);
+      if (reserved === 'coproc') this.skipCoprocName();
       if (reserved !== undefined && RESERVED.has(reserved)) continue;
       if (reserved === 'case') {
         this.caseClause();
         continue;
       }
       if (reserved === 'for' || reserved === 'select') {
-        atCommand = false; // NAME [in WORDS]: data up to the separator before 'do'
+        atCommand = !this.loopHeaderHasWords(); // in WORDS: data up to the separator before 'do'
+        continue;
+      }
+      // zsh's foreach NAME (WORDS) ... end and repeat COUNT cmd; to other shells they are commands
+      if (reserved === 'foreach') {
+        this.words.push(word.value);
+        this.loopHeaderHasWords();
+        continue;
+      }
+      if (reserved === 'repeat') {
+        this.words.push(word.value);
+        this.skipBlanks();
+        this.word(); // the count
         continue;
       }
       if (reserved === 'function') {
@@ -624,6 +644,28 @@ class PosixScanner {
       const word = this.word();
       if (!word.quoted && word.value === ']]') return;
     }
+  }
+
+  private skipCoprocName(): void {
+    const name = COPROC_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+    if (name) this.pos += name[0].length;
+  }
+
+  /**
+   * After for or select: the header up to its body. True when `in WORDS` follows, which is data up to the
+   * separator; otherwise the body comes next, also straight after do or { (for i do, for ((...)) {) and
+   * after a ( ) group: bash's ((...)) or zsh's (WORDS) list.
+   */
+  private loopHeaderHasWords(): boolean {
+    let name = LOOP_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+    while (name !== null && name[1] !== 'do') {
+      this.pos += name[0].length;
+      if (name[1] === 'in') return true;
+      name = LOOP_NAME.exec(this.src.slice(this.pos, this.pos + 256));
+    }
+    this.skipBlanks();
+    if (this.src[this.pos] === '(') this.skipGroup();
+    return false;
   }
 
   private skipFunctionName(): void {
