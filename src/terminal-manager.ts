@@ -316,22 +316,24 @@ export class TerminalManager {
 
       childProcess.stdout.on('data', (data: any) => {
         const text = data.toString();
-        const now = Date.now();
 
+        // Always retain bounded session output for later read_process_output calls,
+        // but all start_process wait/timing work ends once its initial response has
+        // been resolved. Keeping that work active for a chatty long-lived child
+        // repeatedly ran process-state detection and, with collectTiming enabled,
+        // grew outputEvents without bound for the child's entire lifetime.
+        this.recordOutput(session, 'stdout', text);
+        if (resolved) return;
+
+        const now = Date.now();
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        // `output` only feeds the wait-phase result, so stop growing it once
-        // resolved and keep only a bounded tail.
-        if (!resolved) {
-          output += text;
-          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
-            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
-          }
+        output += text;
+        if (output.length > MAX_WAIT_OUTPUT_CHARS) {
+          output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
         }
-        this.recordOutput(session, 'stdout', text);
 
-        // Record output event if collecting timing
         if (collectTiming) {
           outputEvents.push({
             timestamp: now,
@@ -342,7 +344,7 @@ export class TerminalManager {
           });
         }
 
-        // Immediate check for a prompt
+        // Immediate check for a prompt only while start_process is waiting.
         if (waitingForInput()) {
           exitReason = 'early_exit_quick_pattern';
 
@@ -360,20 +362,21 @@ export class TerminalManager {
 
       childProcess.stderr.on('data', (data: any) => {
         const text = data.toString();
-        const now = Date.now();
 
+        // Preserve stderr for later reads, but do not retain wait-phase timing
+        // state after start_process has already returned.
+        this.recordOutput(session, 'stderr', text);
+        if (resolved) return;
+
+        const now = Date.now();
         if (!firstOutputTime) firstOutputTime = now;
         lastOutputTime = now;
 
-        if (!resolved) {
-          output += text;
-          if (output.length > MAX_WAIT_OUTPUT_CHARS) {
-            output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
-          }
+        output += text;
+        if (output.length > MAX_WAIT_OUTPUT_CHARS) {
+          output = output.slice(-Math.floor(MAX_WAIT_OUTPUT_CHARS / 2));
         }
-        this.recordOutput(session, 'stderr', text);
 
-        // Record output event if collecting timing
         if (collectTiming) {
           outputEvents.push({
             timestamp: now,
