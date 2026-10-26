@@ -612,6 +612,8 @@ export const capture = async (event: string, properties?: any) => {
  */
 export const captureTransport = async (event: string, properties: TransportParams) => {
     if (isInsideUiOriginCall() || isTelemetryDisabledByEnv()) return;
+    // Only to the address the Remote MCP server gave; never to the built-in production address
+    if (!process.env.DC_TELEMETRY_URL) return;
     void (async () => {
         try {
             if (uniqueUserId === 'unknown') uniqueUserId = await configManager.getOrCreateClientId();
