@@ -1,10 +1,11 @@
 /**
  * The command word of each command a POSIX shell (sh, bash, zsh) would run for
  * a script, quotes removed, in order. What the shell reads as data is skipped:
- * arguments, quoted text, heredoc bodies, comments, case patterns. A command
- * named by an expansion ($tool, $(which tool)) is left out: its name is only
- * known when the script runs. After an unquoted one the next word is read as a
- * command too: the expansion can leave no word.
+ * arguments, quoted text, heredoc bodies, comments, case patterns. A name made
+ * by an expansion ($tool, $(which tool)) is only known when the script runs, but
+ * an expansion can be empty: a command word is read by its literal part (v$x
+ * gives v, ${x:-sudo} gives sudo), and after an unquoted expansion with no
+ * literal part the next word is read as a command too.
  */
 export function posixCommandWords(script: string): string[] {
   const scanner = new PosixScanner(script);
@@ -29,6 +30,8 @@ const COPROC_NAME = new RegExp(String.raw`${GAP}+[A-Za-z_][A-Za-z0-9_]*(?=${GAP}
 // A loop variable after for, select or foreach
 const LOOP_NAME = new RegExp(String.raw`${GAP}*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;(\\]|$)`, 'y');
 const FUNCTION_PARENS = new RegExp(String.raw`${GAP}*\(${GAP}*\)`, 'y');
+// After '${': a parameter and an operator whose word can be the value (:- - := = :+ +)
+const PARAMETER_WORD = /[#!]?(?:[A-Za-z_][A-Za-z0-9_]*|\d+|[@*#?$!-])(?:\[[^\]]*\])?:?[-=+]/y;
 const WORD_END = ' \t\n;&|<>()';
 const ESCAPED_IN_DOUBLE_QUOTES = new Set(['$', '`', '"', '\\']);
 const ANSI_C_ESCAPES = new Map([
@@ -80,6 +83,8 @@ class PosixScanner {
   list(caseItem = false): ListEnd {
     let atCommand = true;
     let afterTime = false;
+    // After an assignment no word is reserved: x=1 case runs a command named case
+    let afterAssignment = false;
     let subshells = 0;
     let braces = 0;
     // The subshell count before a '((' at a command: up to its '))' bash may read arithmetic
@@ -98,6 +103,7 @@ class PosixScanner {
         this.pos++;
         this.readHeredocBodies();
         atCommand = true;
+        afterAssignment = false;
         continue;
       }
       if (c === '#') {
@@ -108,6 +114,7 @@ class PosixScanner {
         if (caseItem && (this.at(';;') || this.at(';&'))) return 'case-item';
         this.pos++;
         atCommand = true;
+        afterAssignment = false;
         continue;
       }
       if (c === '&' || c === '|') {
@@ -115,6 +122,7 @@ class PosixScanner {
         // how dash reads it: the word after its target is a command there
         this.pos++;
         atCommand = true;
+        afterAssignment = false;
         continue;
       }
       if (c === '(') {
@@ -169,9 +177,12 @@ class PosixScanner {
       const raw = this.src.slice(start, this.pos);
       const nextChar = this.src[this.pos];
       if (FILE_DESCRIPTOR.test(raw) && (nextChar === '<' || nextChar === '>')) continue; // 2>&1, {fd}>file
-      if (ASSIGNMENT.test(raw)) continue; // VAR=value before the command
+      if (ASSIGNMENT.test(raw)) {
+        afterAssignment = true; // VAR=value before the command
+        continue;
+      }
       if (afterTime && raw.startsWith('-')) continue; // time -p
-      const reserved = word.quoted || word.expanded ? undefined : word.value;
+      const reserved = word.quoted || word.expanded || afterAssignment ? undefined : word.value;
       afterTime = reserved === 'time';
       if (reserved === 'esac' && caseItem) return 'esac';
       if (reserved === '{') braces++;
@@ -210,7 +221,7 @@ class PosixScanner {
       // An unquoted expansion can leave no word: $X sudo runs sudo when X is empty
       if (word.expanded && !word.quoted && word.value === '') continue;
 
-      if (!word.expanded && word.value !== '') this.words.push(word.value);
+      if (word.value !== '') this.words.push(word.value); // with expansions: the name they give when empty
       atCommand = false;
     }
     return 'end';
@@ -370,8 +381,7 @@ class PosixScanner {
       return { value: '', expanded: true, quoted: false };
     }
     if (next === '{') {
-      this.parameterExpansion(inDoubleQuotes);
-      return { value: '', expanded: true, quoted: false };
+      return { value: this.parameterExpansion(inDoubleQuotes), expanded: true, quoted: false };
     }
     if (next === "'" && !inDoubleQuotes) {
       this.pos++;
@@ -492,27 +502,38 @@ class PosixScanner {
     this.words.push(...posixCommandWords(body));
   }
 
-  // At '${': through the first '}' not quoted, escaped or in a nested expansion: a bare '{' doesn't
-  // nest (${x:-{a}b} is {ab}). Single quotes in it quote, unless it is in double quotes.
-  private parameterExpansion(inDoubleQuotes: boolean): void {
+  /**
+   * At '${': through the first '}' not quoted, escaped or in a nested expansion: a bare '{' doesn't
+   * nest (${x:-{a}b} is {ab}). Single quotes in it quote, unless it is in double quotes. Returns the
+   * literal part of the word in ${x:-word}, ${x=word} or ${x:+word}, the value when the word applies
+   * (unquoted, its first field); '' for any other expansion.
+   */
+  private parameterExpansion(inDoubleQuotes: boolean): string {
     this.pos += 2;
+    const operator = this.matchAt(PARAMETER_WORD);
+    if (operator) this.pos += operator[0].length;
+    let word = '';
     while (this.pos < this.src.length) {
       const c = this.src[this.pos];
       if (c === '\\') {
+        word += this.src[this.pos + 1] ?? '';
         this.pos += 2;
       } else if (c === "'" && !inDoubleQuotes) {
-        this.singleQuoted();
+        word += this.singleQuoted();
       } else if (c === '"') {
-        this.doubleQuoted(false);
+        word += this.doubleQuoted(false).value;
       } else if (c === '$') {
-        this.dollar(inDoubleQuotes);
+        word += this.dollar(inDoubleQuotes).value;
       } else if (c === '`') {
         this.backticks();
       } else {
         this.pos++;
-        if (c === '}') return;
+        if (c === '}') break;
+        word += c;
       }
     }
+    if (!operator) return '';
+    return inDoubleQuotes ? word : word.trimStart().split(/[ \t\n]/)[0];
   }
 
   /**
@@ -596,6 +617,13 @@ class PosixScanner {
         const candidate = (heredoc.stripTabs ? line.replace(/^\t+/, '') : line).replace(/\r$/, '');
         if (candidate === heredoc.delimiter) {
           bodyEnd = lineStart;
+          break;
+        }
+        // In $( ) bash also ends the body at the delimiter and the ) that closes the substitution
+        const rest = candidate.startsWith(heredoc.delimiter) ? candidate.slice(heredoc.delimiter.length) : '';
+        if (this.nesting > 0 && heredoc.delimiter !== '' && /^[ \t]*\)/.test(rest)) {
+          bodyEnd = lineStart;
+          this.pos = lineStart + line.indexOf(heredoc.delimiter) + heredoc.delimiter.length;
           break;
         }
       }

@@ -39,6 +39,8 @@ export const CASES = [
   // An unquoted expansion can leave no word, and then the next word is the command
   { name: 'the word after a command named by a variable', script: '$tool init --help', commands: ['init'] },
   { name: 'a command after an empty expansion', script: '$X sudo id; $(true) reboot; $1 halt', commands: ['sudo', 'true', 'reboot', 'halt'] },
+  // After an assignment no word is reserved: bash runs a command named case or if
+  { name: 'a reserved word after an assignment', script: 'x=(a) case ; sudo y\nX=1 if\nreboot\nX=1 true && case a in a) halt;; esac', commands: ['case', 'sudo', 'if', 'reboot', 'true', 'halt'] },
   // bash reads $(( as arithmetic only when )) closes the group the second ( opens
   { name: '$(( that is a command substitution', script: 'out=$((cd build && sudo make) 2>&1)', commands: ['cd', 'sudo'] },
   // dash and ash read (( as two subshells, and bash does too unless )) closes it
@@ -76,8 +78,10 @@ export const CASES = [
   // In an array assignment a # that starts a word starts a comment; inside a word it is text
   { name: 'comments in a multi-line array', script: "files=(\n  a.txt  # it's here\n  b#c\n)\nsudo rm x\nx=(# \"y\n)\nreboot", commands: ['sudo', 'reboot'] },
   { name: 'a command after [[ ]]', script: '[[ -n x ]] && sudo y', commands: ['sudo'] },
-  // A name that is partly an expansion is only known when the script runs
-  { name: 'a name with an expansion in it', script: 'v${tool}x arg; "$tool"x; `which sudo`x; run_$1 x; "$@"; ${2} y; "cmd_$(echo x)" y', commands: ['which', 'y', 'echo'] },
+  // A name partly made of expansions is read by its literal part: the expansions can be empty
+  { name: 'a name with an expansion in it', script: 'v${tool}x arg; "$tool"x; `which sudo`x; run_$1 x; "$@"; ${2} y; "cmd_$(echo x)" y', commands: ['vx', 'x', 'which', 'run_', 'y', 'cmd_', 'echo'] },
+  { name: 'a name glued to an empty expansion', script: 'sudo"$(true)" x; ``reboot; $1halt', commands: ['sudo', 'true', 'reboot', 'halt'] },
+  { name: 'a default or alternate value as the name', script: '${SUDO:-sudo -n} reboot; ${x:+halt}; "${y-init}" z', commands: ['sudo', 'halt', 'init'] },
   { name: 'a command after a backtick substitution', script: 'echo `which a`; sudo x', commands: ['echo', 'which', 'sudo'] },
   { name: 'a variable inside $( ) in double quotes', script: 'x="$(readlink $d)"; echo y', commands: ['readlink', 'echo'] },
   { name: 'special parameters', script: '[ $# -eq 0 ] && chmod x "$@"', commands: ['[', 'chmod'] },
@@ -118,6 +122,8 @@ export const CASES = [
   { name: 'a subshell in $( ) in [[ ]]', script: '[[ -n $( (true); sudo b\n) ]]', commands: ['true', 'sudo'] },
   { name: 'a $ that ends a double-quoted string', script: 'grep "^x$" f; sudo y', commands: ['grep', 'sudo'] },
   { name: 'a heredoc inside $( ) ends there', script: "x=$(cat <<'EOF'\nhi\nEOF\n)\nsudo y\nreboot", commands: ['cat', 'sudo', 'reboot'] },
+  // In $( ) bash ends a heredoc at its delimiter followed by the ) that closes the substitution
+  { name: 'a heredoc that ends with the ) of its $( )', script: "x=$(cat <<'EOF'\nsudo x\nEOF)\nreboot\ny=$(cat <<-E\n\thalt\n\tE )\ninit", commands: ['cat', 'reboot', 'init'] },
   { name: 'a quoted } in ${ }', script: ': ${x:-"}"}; sudo y', commands: [':', 'sudo'] },
   { name: 'a | in ${ }', script: 'x=${i%|*}; sudo y', commands: ['sudo'] },
   { name: 'an escaped blank in an array', script: 'x=(a\\ b $(sudo c))', commands: ['sudo'] },
