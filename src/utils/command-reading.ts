@@ -68,12 +68,20 @@ export type CommandReader = (command: string, shell: string) => Promise<CommandR
  * - blocked: `name` is the blockedCommands entry that one of the programs matched.
  * - unseen: allowed, but some program is chosen only when the command runs
  *   (eval "$CMD", Invoke-Expression $cmd, & $tool) or is in a script file
- *   (bash deploy.sh). `unseen` holds what hides each one: "eval",
- *   "Invoke-Expression", "$tool", "deploy.sh".
- * - failed: the check couldn't read the command, and `reason` says why.
+ *   (bash deploy.sh). Each entry of `unseen` says what hides one of them.
+ * - failed: the check couldn't read the command or the settings, and
+ *   `reason` holds the error's message.
  */
 export type CommandCheck =
   | { verdict: 'allowed'; commands: string[] }
   | { verdict: 'blocked'; name: string; commands: string[] }
-  | { verdict: 'unseen'; unseen: string[]; commands: string[] }
+  | { verdict: 'unseen'; unseen: UnseenProgram[]; commands: string[] }
   | { verdict: 'failed'; reason: string; commands: string[] };
+
+/** Something in a command that hides the program it runs from the check */
+export interface UnseenProgram {
+  /** What hides it, as written: "eval", "Invoke-Expression", "$tool" or "deploy.sh" */
+  what: string;
+  /** True for a script file (bash deploy.sh), false for a program chosen at run time (eval, Invoke-Expression, $tool) */
+  inFile: boolean;
+}
