@@ -4,11 +4,14 @@
  *   - it starts at the first PowerShell check, not before: a POSIX check and
  *     loading the server start nothing
  *   - when it is killed, the next check starts a new one, and that check works
- *   - a stand-in helper that never answers fails the check after
- *     HELPER_TIMEOUT_MS (5 seconds), and is stopped
+ *   - a stand-in helper that answers once and then stops answering fails the
+ *     next check after HELPER_TIMEOUT_MS (5 seconds), and is stopped
+ *   - a stand-in helper that never answers fails its first check after
+ *     HELPER_START_TIMEOUT_MS (15 seconds, PowerShell's start included), and
+ *     is stopped
  *
  * The first two need Windows PowerShell or PowerShell 7 and are skipped
- * without them. The third measures time (it waits 5 seconds).
+ * without them. The last two measure time (they wait 5 and 15 seconds).
  */
 import assert from 'assert';
 import { configManager } from '../dist/config-manager.js';
@@ -21,6 +24,30 @@ import { isRunning } from './helpers/process-tree.js';
 const TIMING_SLACK_MS = 5000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A stand-in helper: it answers its first request with an empty reading, and then never again */
+const ANSWERS_FIRST_REQUEST_ONLY = `
+let answered = false;
+process.stdin.on('data', (chunk) => {
+  const line = String(chunk).split('\\n').find((text) => text.trim());
+  if (answered || !line) return;
+  answered = true;
+  process.stdout.write(JSON.stringify({ id: JSON.parse(line).id, commands: [], functions: [] }) + '\\n');
+});`;
+
+/** Reads with `helper`, expects it to fail with `message` after `limitMs`, and the helper's process to be stopped */
+async function expectTimeout(helper, limitMs, message) {
+  const started = Date.now();
+  await assert.rejects(helper.read('Get-Date'), (error) => {
+    assert.strictEqual(error.message, message);
+    return true;
+  });
+  const waited = Date.now() - started;
+  assert.ok(waited >= limitMs - 50, `failed only after the time limit (${waited} ms)`);
+  assert.ok(waited < limitMs + TIMING_SLACK_MS, `failed soon after the time limit (${waited} ms)`);
+  assert.strictEqual(helper.pid, undefined, 'the stand-in that stopped answering is stopped');
+  console.log(`✓ the check failed after ${waited} ms with "${message}"`);
+}
 
 /** Waits until `check()` is true, or fails after `timeoutMs` */
 async function waitFor(check, what, timeoutMs = 10000) {
@@ -38,7 +65,7 @@ export default async function runTests() {
     return true;
   }
   const { commandManager } = await import('../dist/command-manager.js');
-  const { PowerShellHelper, HELPER_TIMEOUT_MS, runningPowerShellHelpers } = await import('../dist/utils/powershell-commands.js');
+  const { PowerShellHelper, HELPER_TIMEOUT_MS, HELPER_START_TIMEOUT_MS, runningPowerShellHelpers } = await import('../dist/utils/powershell-commands.js');
   await configManager.setValue('blockedCommands', ['net', 'sudo']);
 
   const powershell = ['powershell', 'pwsh'].find((shell) => isShellAvailable(shell));
@@ -73,18 +100,15 @@ export default async function runTests() {
     console.log('✓ after the kill, the next check started a new helper and got its answer');
   }
 
-  console.log('Test 3: a helper that never answers fails the check after 5 seconds');
-  const standIn = new PowerShellHelper(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)']);
-  const started = Date.now();
-  await assert.rejects(standIn.read('Get-Date'), (error) => {
-    assert.strictEqual(error.message, 'PowerShell did not answer in 5 seconds');
-    return true;
-  });
-  const waited = Date.now() - started;
-  assert.ok(waited >= HELPER_TIMEOUT_MS - 50, `failed only after the time limit (${waited} ms)`);
-  assert.ok(waited < HELPER_TIMEOUT_MS + TIMING_SLACK_MS, `failed soon after the time limit (${waited} ms)`);
-  assert.strictEqual(standIn.pid, undefined, 'the stand-in that never answered is stopped');
-  console.log(`✓ the check failed after ${waited} ms with "PowerShell did not answer in 5 seconds"`);
+  console.log('Test 3: a helper that stops answering fails the next check after 5 seconds');
+  const answersOnce = new PowerShellHelper(process.execPath, ['-e', ANSWERS_FIRST_REQUEST_ONLY]);
+  const first = await answersOnce.read('Get-Date');
+  assert.deepStrictEqual(first, { commands: [], functions: [] }, 'the stand-in answers its first request');
+  await expectTimeout(answersOnce, HELPER_TIMEOUT_MS, 'PowerShell did not answer in 5 seconds');
+
+  console.log('Test 4: a helper that never answers fails its first check after 15 seconds, its start included');
+  const neverAnswers = new PowerShellHelper(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)']);
+  await expectTimeout(neverAnswers, HELPER_START_TIMEOUT_MS, 'PowerShell did not answer in 15 seconds');
 
   return true;
 }
