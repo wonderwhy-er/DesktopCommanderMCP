@@ -15,7 +15,7 @@
  * and PowerShell 7), and skipped where neither is. The other readers need no
  * shell installed.
  *
- * Parse-only: every command goes to commandManager.validateCommand, never to a
+ * Parse-only: every command goes to commandManager.checkCommand, never to a
  * shell or a process.
  */
 import assert from 'assert';
@@ -62,16 +62,21 @@ export default async function runTests() {
     const shells = c.shell === 'powershell' ? powershells : [c.shell];
     for (const shell of shells) {
       checked++;
-      let allowed;
+      let check;
       try {
-        allowed = await commandManager.validateCommand(c.command, shell);
+        check = await commandManager.checkCommand(c.command, shell);
       } catch (error) {
-        failures.push(`${c.id} [${shell}]: validateCommand threw ${error && error.message}`);
+        failures.push(`${c.id} [${shell}]: checkCommand threw ${error && error.message}`);
         continue;
       }
-      if (allowed !== shouldAllow) {
-        const want = shouldAllow ? 'allowed' : `refused (${c.expect} runs)`;
-        failures.push(`${c.id} [${c.group}/${shell}] should be ${want} but was ${allowed ? 'allowed' : 'refused'}`);
+      // An allowed command may be "unseen" (allowed, with a program the check can't see).
+      // A refused one must be blocked for the program that runs, not refused for another reason.
+      const right = shouldAllow
+        ? check.verdict === 'allowed' || check.verdict === 'unseen'
+        : check.verdict === 'blocked' && check.name === c.expect;
+      if (!right) {
+        const want = shouldAllow ? 'allowed' : `blocked for ${c.expect}`;
+        failures.push(`${c.id} [${c.group}/${shell}] should be ${want} but was ${JSON.stringify(check)}`);
       }
     }
   }

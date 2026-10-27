@@ -2,7 +2,8 @@ import assert from 'assert';
 import os from 'os';
 import path from 'path';
 import { sanitizeError, buildEventProperties } from '../dist/utils/capture.js';
-import { runIfMain } from './helpers/run-if-main.js';
+import { runIfMain, skip } from './helpers/run-if-main.js';
+import { isTestHome } from './helpers/test-env.js';
 
 // Helper function to run a test and report results
 const runTest = async (name, testFn) => {
@@ -172,10 +173,15 @@ const runAllTests = async () => {
         assert.strictEqual(properties.errorMessage, 'Could not read [PATH], retrying');
     }) && allPassed;
 
-    // start_process sends the command's first word(s), as typed: a path there is replaced
-    // whole, a plain command name is kept. The values come from the real command manager.
+    // start_process sends the command's first word and the names the command check found:
+    // a path there is replaced whole, a plain command name is kept. The values come from the
+    // real command manager, reading each line with a shell that takes this OS's paths as
+    // written (cmd on Windows, where bash would read a backslash as an escape).
     allPassed = await runTest('Integration - a command that starts with a path is redacted', async () => {
+        // checkCommand() reads the settings, so only in a test home
+        if (!isTestHome()) return skip('a command that starts with a path: run it through the runner, it reads the settings');
         const { commandManager } = await import('../dist/command-manager.js');
+        const shell = process.platform === 'win32' ? 'cmd' : 'bash';
         const spaced = path.join(root, 'Users', 'John Smith', 'bin', 'run.sh');
         const cases = [
             [`${spaced} --flag`, { command: '[PATH]', commands: '[PATH]' }],
@@ -186,7 +192,7 @@ const runAllTests = async () => {
         for (const [line, expected] of cases) {
             const sent = await buildEventProperties({
                 command: commandManager.getBaseCommand(line),
-                commands: commandManager.extractCommands(line, true).join(', '),
+                commands: (await commandManager.checkCommand(line, shell)).commands.join(', '),
             });
             const actual = { command: sent.command, commands: sent.commands };
             if (JSON.stringify(actual) !== JSON.stringify(expected)) wrong.push({ line, expected, actual });

@@ -152,22 +152,23 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     };
   }
 
-  try {
-    // Each command's first word as typed, so telemetry replaces a path whole
-    // (the base name alone would send the last part of it)
-    const commands = commandManager.extractCommands(parsed.data.command, true).join(', ');
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command),
-      commands: commands
-    });
-  } catch (error) {
-    capture('server_start_process', {
-      command: commandManager.getBaseCommand(parsed.data.command)
-    });
+  // The shell that runs the command, worked out before the check so the
+  // check reads the command with that shell's grammar
+  let shellUsed: string | undefined = parsed.data.shell;
+  if (!shellUsed) {
+    const config = await configManager.getConfig();
+    shellUsed = config.defaultShell || getDefaultShell();
   }
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command);
-  if (!isAllowed) {
+  const check = await commandManager.checkCommand(parsed.data.command, shellUsed);
+  // The names the check found, as the shell reads them: a path in them is
+  // replaced whole by telemetry (the base name alone would send its last part)
+  capture('server_start_process', {
+    command: commandManager.getBaseCommand(parsed.data.command),
+    commands: check.commands.join(', ')
+  });
+
+  if (check.verdict === 'blocked' || check.verdict === 'failed') {
     return {
       content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
       isError: true,
@@ -199,13 +200,6 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
       }],
       structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
     };
-  }
-
-  let shellUsed: string | undefined = parsed.data.shell;
-
-  if (!shellUsed) {
-    const config = await configManager.getConfig();
-    shellUsed = config.defaultShell || getDefaultShell();
   }
 
   const result = await terminalManager.executeCommand(

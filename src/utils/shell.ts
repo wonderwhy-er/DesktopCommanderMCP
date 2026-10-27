@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import type { ShellType } from './command-reading.js';
 
 /**
  * Single source of truth for shells: which shell is the default on this
@@ -189,6 +190,19 @@ export function detectAvailableShells(): string[] {
     readEtcShells().forEach(add);
   }
   return [...shells];
+}
+
+/**
+ * Which kind of shell a shell program is, by its name without folder and
+ * ".exe", as getShellSpawnArgs() goes by it: powershell and pwsh are
+ * PowerShell, cmd is cmd, and every other shell (bash, zsh, sh, dash, ksh,
+ * fish) is POSIX. The command check reads a command with this kind's grammar.
+ */
+export function getShellType(shell: string): ShellType {
+  const name = path.basename(shell.trim()).toLowerCase().replace(/\.exe$/, '');
+  if (name === 'powershell' || name === 'pwsh') return 'powershell';
+  if (name === 'cmd') return 'cmd';
+  return 'posix';
 }
 
 /**

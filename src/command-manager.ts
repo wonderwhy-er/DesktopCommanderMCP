@@ -1,6 +1,11 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import {getShellType} from './utils/shell.js';
+import {readPosixCommands} from './utils/posix-commands.js';
+import {readPowerShellCommands} from './utils/powershell-commands.js';
+import {readCmdCommands} from './utils/cmd-commands.js';
+import type {CommandCheck, CommandReading} from './utils/command-reading.js';
 
 class CommandManager {
 
@@ -9,261 +14,70 @@ class CommandManager {
     }
 
     /**
-     * The command name of each command in a command line (chained, piped, in $(), ...).
-     * asTyped: each first word as typed instead of its base name, for telemetry,
-     * which then replaces a path whole (a base name alone can't be told from one).
+     * Reads a command with the grammar of the shell that will run it: POSIX
+     * shells (bash, zsh, sh, …), PowerShell, or cmd.
      */
-    extractCommands(commandString: string, asTyped = false): string[] {
-        try {
-            // Trim any leading/trailing whitespace
-            commandString = commandString.trim();
-
-            // Define command separators - these are the operators that can chain commands
-            const separators = [';', '&&', '||', '|', '&'];
-
-            // This will store our extracted commands
-            const commands: string[] = [];
-
-            // Split by common separators while preserving quotes
-            let inQuote = false;
-            let quoteChar = '';
-            let currentCmd = '';
-            let escaped = false;
-
-            for (let i = 0; i < commandString.length; i++) {
-                const char = commandString[i];
-
-                // Handle escape characters
-                if (char === '\\' && !escaped) {
-                    escaped = true;
-                    currentCmd += char;
-                    continue;
-                }
-
-                // If this character is escaped, just add it
-                if (escaped) {
-                    escaped = false;
-                    currentCmd += char;
-                    continue;
-                }
-
-                // Handle quotes (both single and double)
-                if ((char === '"' || char === "'") && !inQuote) {
-                    inQuote = true;
-                    quoteChar = char;
-                    currentCmd += char;
-                    continue;
-                } else if (char === quoteChar && inQuote) {
-                    inQuote = false;
-                    quoteChar = '';
-                    currentCmd += char;
-                    continue;
-                }
-
-                // Handle $() command substitution even inside quotes (fixes blocklist bypass)
-                if (char === '$' && i + 1 < commandString.length && commandString[i + 1] === '(') {
-                    const startIndex = i;
-                    let openParens = 1;
-                    let j = i + 2; // skip past $(
-                    while (j < commandString.length && openParens > 0) {
-                        if (commandString[j] === '(') openParens++;
-                        if (commandString[j] === ')') openParens--;
-                        j++;
-                    }
-                    if (j <= commandString.length && openParens === 0) {
-                        const subContent = commandString.substring(i + 2, j - 1);
-                        const subCommands = this.extractCommands(subContent, asTyped);
-                        commands.push(...subCommands);
-                        i = j - 1;
-                        if (!inQuote) {
-                            continue;
-                        } else {
-                            currentCmd += commandString.substring(startIndex, j);
-                            continue;
-                        }
-                    }
-                }
-
-                // Handle backtick command substitution even inside quotes
-                if (char === '`') {
-                    const startIndex = i;
-                    let j = i + 1;
-                    while (j < commandString.length && commandString[j] !== '`') {
-                        j++;
-                    }
-                    if (j < commandString.length) {
-                        const subContent = commandString.substring(i + 1, j);
-                        const subCommands = this.extractCommands(subContent, asTyped);
-                        commands.push(...subCommands);
-                        i = j;
-                        if (!inQuote) {
-                            continue;
-                        } else {
-                            currentCmd += commandString.substring(startIndex, j + 1);
-                            continue;
-                        }
-                    }
-                }
-
-                // If we're inside quotes, just add the character
-                if (inQuote) {
-                    currentCmd += char;
-                    continue;
-                }
-
-                // Handle subshells - if we see an opening parenthesis, we need to find its matching closing parenthesis
-                if (char === '(') {
-                    // Find the matching closing parenthesis
-                    let openParens = 1;
-                    let j = i + 1;
-                    while (j < commandString.length && openParens > 0) {
-                        if (commandString[j] === '(') openParens++;
-                        if (commandString[j] === ')') openParens--;
-                        j++;
-                    }
-
-                    // Skip to after the closing parenthesis only if properly balanced
-                    if (j <= commandString.length && openParens === 0) {
-                        const subshellContent = commandString.substring(i + 1, j - 1);
-                        // Recursively extract commands from the subshell
-                        const subCommands = this.extractCommands(subshellContent, asTyped);
-                        commands.push(...subCommands);
-
-                        // Move position past the subshell
-                        i = j - 1;
-                        continue;
-                    }
-                }
-
-                // Check for separators
-                let isSeparator = false;
-                for (const separator of separators) {
-                    if (commandString.startsWith(separator, i)) {
-                        // We found a separator - extract the command before it
-                        if (currentCmd.trim()) {
-                            const baseCommand = this.extractBaseCommand(currentCmd.trim(), asTyped);
-                            if (baseCommand) commands.push(baseCommand);
-                        }
-
-                        // Move past the separator
-                        i += separator.length - 1;
-                        currentCmd = '';
-                        isSeparator = true;
-                        break;
-                    }
-                }
-
-                if (!isSeparator) {
-                    currentCmd += char;
-                }
-            }
-
-            // Don't forget to add the last command
-            if (currentCmd.trim()) {
-                const baseCommand = this.extractBaseCommand(currentCmd.trim(), asTyped);
-                if (baseCommand) commands.push(baseCommand);
-            }
-
-            // Remove duplicates and return
-            return [...new Set(commands)];
-        } catch (error) {
-            // If anything goes wrong, log the error but return the basic command to not break execution
-            capture('server_request_error', {
-                error: 'Error extracting commands'
-            });
-            const baseCmd = this.extractBaseCommand(commandString, asTyped);
-            return baseCmd ? [baseCmd] : [];
+    readCommands(command: string, shell: string): Promise<CommandReading> {
+        switch (getShellType(shell)) {
+            case 'powershell':
+                return readPowerShellCommands(command, shell);
+            case 'cmd':
+                return readCmdCommands(command);
+            default:
+                return readPosixCommands(command);
         }
     }
 
-    // This extracts the actual command name from a command string (asTyped: see extractCommands)
-    extractBaseCommand(commandStr: string, asTyped = false): string | null {
+    /**
+     * Checks a command against the blockedCommands setting, reading it as the
+     * shell that runs it would. Every command the shell would run is found,
+     * also on later lines and inside $( ), groups and if bodies, while words
+     * inside quotes, heredocs and here-strings stay text. A command is blocked
+     * when its program's name, without its folder and lowercased, is in the
+     * list. When the settings or the command can't be read, the check fails:
+     * a check that couldn't look doesn't let the command run. The one
+     * exception is a PowerShell command PowerShell can't parse: PowerShell
+     * then runs none of it and answers with its own parse error (&& in
+     * Windows PowerShell 5.1), which tells the AI what to fix.
+     * `commands` holds the found names (lowercased, folders kept) for telemetry.
+     */
+    async checkCommand(command: string, shell: string): Promise<CommandCheck> {
+        let commands: string[] = [];
         try {
-            // Remove environment variables (patterns like KEY=value)
-            const withoutEnvVars = commandStr.replace(/\w+=\S+\s*/g, '').trim();
-
-            // If nothing remains after removing env vars, return null
-            if (!withoutEnvVars) return null;
-
-            // Get the first token (the command)
-            const tokens = withoutEnvVars.split(/\s+/);
-            let firstToken = null;
-
-            // Find the first valid token (skip variables)
-            for (let i = 0; i < tokens.length; i++) {
-                const token = tokens[i];
-                
-                // Skip dollar-prefixed tokens (variables) but not $() command substitutions
-                if (token.startsWith('$') && !token.startsWith('$(')) {
-                    continue;
-                }
-                
-                // Check if it starts with special characters like ( that might indicate it's not a regular command
-                if (token[0] === '(') {
-                    continue;
-                }
-                
-                firstToken = token;
-                break;
-            }
-
-            // No valid command token found
-            if (!firstToken) {
-                return null;
-            }
-
-            // handle $() command substitution - extract the inner command
-            if (firstToken.startsWith('$(') && firstToken.endsWith(')')) {
-                const inner = firstToken.slice(2, -1).trim();
-                if (inner) {
-                    const innerTokens = inner.split(/\s+/);
-                    return (asTyped ? innerTokens[0] : path.basename(innerTokens[0])).toLowerCase();
-                }
-                return null;
-            }
-
-            // strip path prefix so /usr/bin/sudo gets caught as "sudo"
-            const baseName = asTyped ? firstToken : path.basename(firstToken);
-            return baseName.toLowerCase();
-        } catch (error) {
-            capture('Error extracting base command');
-            return null;
-        }
-    }
-
-    async validateCommand(command: string): Promise<boolean> {
-        try {
-            // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
-            
-            // Extract all commands from the command string
-            const allCommands = this.extractCommands(command);
-            
-            // If there are no commands extracted, fall back to base command
-            if (allCommands.length === 0) {
-                const baseCommand = this.getBaseCommand(command);
-                return !blockedCommands.includes(baseCommand);
+
+            const reading = await this.readCommands(command, shell);
+            if (reading.parseError !== undefined) {
+                if (getShellType(shell) === 'powershell') return { verdict: 'allowed', commands };
+                return { verdict: 'failed', reason: reading.parseError, commands };
             }
-            
-            // Check if any of the extracted commands are in the blocked list
-            for (const cmd of allCommands) {
-                if (blockedCommands.includes(cmd)) {
-                    return false; // Command is blocked
+
+            // A name known only at run time ($tool) names no program the list could match
+            const found = reading.commands.filter((cmd) => !cmd.nameAtRunTime);
+            commands = [...new Set(found.map((cmd) => cmd.name.toLowerCase()))];
+            for (const {name} of found) {
+                // A path to the program is matched by its name: /usr/bin/sudo is sudo
+                const baseName = path.basename(name).toLowerCase();
+                if (blockedCommands.includes(baseName)) {
+                    return { verdict: 'blocked', name: baseName, commands };
                 }
             }
-            
-            // No commands were blocked
-            return true;
+            return { verdict: 'allowed', commands };
         } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {
-                error: error instanceof Error ? error.message : String(error)
+                error: reason
             });
-            // Fail closed: deny the command if validation encounters an error.
-            // This prevents a config read failure from bypassing all command filtering.
-            return false;
+            return { verdict: 'failed', reason, commands };
         }
+    }
+
+    /** Whether the command may run: neither blocked nor unreadable (see checkCommand) */
+    async validateCommand(command: string, shell: string): Promise<boolean> {
+        const check = await this.checkCommand(command, shell);
+        return check.verdict !== 'blocked' && check.verdict !== 'failed';
     }
 }
 

@@ -38,9 +38,11 @@ export default async function runTests() {
 
   const wrong = [];
   for (const [what, command] of UNREADABLE) {
+    // Refused because the check failed to read it, with the parser's message as the reason
+    const check = await commandManager.checkCommand(command, 'bash');
     const allowed = await commandManager.validateCommand(command, 'bash');
-    if (allowed) wrong.push(`${what} (${JSON.stringify(command)}) was allowed`);
-    else console.log(`✓ refused: ${what}`);
+    if (check.verdict !== 'failed' || !check.reason || allowed) wrong.push(`${what} (${JSON.stringify(command)}) was ${JSON.stringify(check)}`);
+    else console.log(`✓ refused, the check failed: ${what} (${check.reason})`);
   }
   const control = 'echo "$(if true; then echo hi; fi)"';
   assert.strictEqual(await commandManager.validateCommand(control, 'bash'), true, `a well-formed command is allowed: ${control}`);
