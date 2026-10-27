@@ -3,7 +3,7 @@ import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import {getShellType} from './utils/shell.js';
 import {readPosixCommands} from './utils/posix-commands.js';
-import {readPowerShellCommands} from './utils/powershell-commands.js';
+import {readPowerShellCommands, ShellNotFoundError} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
 import type {CommandCheck, CommandReading} from './utils/command-reading.js';
 
@@ -35,10 +35,12 @@ class CommandManager {
      * inside quotes, heredocs and here-strings stay text. A command is blocked
      * when its program's name, without its folder and lowercased, is in the
      * list. When the settings or the command can't be read, the check fails:
-     * a check that couldn't look doesn't let the command run. The one
-     * exception is a PowerShell command PowerShell can't parse: PowerShell
+     * a check that couldn't look doesn't let the command run. There are two
+     * exceptions. A PowerShell command PowerShell can't parse: PowerShell
      * then runs none of it and answers with its own parse error (&& in
-     * Windows PowerShell 5.1), which tells the AI what to fix.
+     * Windows PowerShell 5.1), which tells the AI what to fix. And a
+     * PowerShell that isn't there: nothing can run, and start_process
+     * answers that the shell wasn't found.
      * `commands` holds the found names (lowercased, folders kept) for telemetry.
      */
     async checkCommand(command: string, shell: string): Promise<CommandCheck> {
@@ -65,6 +67,7 @@ class CommandManager {
             }
             return { verdict: 'allowed', commands };
         } catch (error) {
+            if (error instanceof ShellNotFoundError) return { verdict: 'allowed', commands };
             const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {

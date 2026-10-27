@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
+import os from 'os';
+import path from 'path';
 import { getCommandEnvironment, resolveProgramPath } from './shell.js';
 import type { CommandReading, DefinedFunction, FoundCommand } from './command-reading.js';
 
@@ -98,6 +100,12 @@ while ($true) {
 }
 `;
 
+/**
+ * The PowerShell program isn't there (not on PATH, or no file at its path): the
+ * command can't run either, and start_process answers that the shell wasn't found
+ */
+export class ShellNotFoundError extends Error {}
+
 const HELPER_ARGS = ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')];
 
 interface PendingRequest {
@@ -157,7 +165,9 @@ export class PowerShellHelper {
     // PowerShell's module analysis cache is off: the helper writes no files (with a home
     // that has no AppData folder, PowerShell would write it into the working folder).
     const env = { ...getCommandEnvironment(), PSModuleAnalysisCachePath: process.platform === 'win32' ? 'NUL' : '/dev/null' };
-    const child = spawn(this.program, this.args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    // In a folder of its own: in the caller's working folder the helper would keep that
+    // folder in use, and Windows can't delete a folder a running process is in.
+    const child = spawn(this.program, this.args, { cwd: os.tmpdir(), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     this.child = child;
     this.output = '';
     this.answered = false;
@@ -168,7 +178,8 @@ export class PowerShellHelper {
     child.stderr?.resume();
     // Writing to a helper that just ended fails; the 'exit' event below rejects that read
     child.stdin?.on('error', () => {});
-    child.on('error', (error) => this.ended(child, `PowerShell could not start: ${error.message}`));
+    child.on('error', (error: NodeJS.ErrnoException) =>
+      this.ended(child, `PowerShell could not start: ${error.message}`, error.code === 'ENOENT'));
     child.on('exit', (code, signal) => this.ended(child, `PowerShell ended before it answered (${signal ?? `exit code ${code}`})`));
     // The helper never keeps Desktop Commander running; a waiting read's timer does until it's answered
     child.unref();
@@ -211,12 +222,13 @@ export class PowerShellHelper {
   }
 
   /** The helper process ended or failed to start: every waiting read fails, and the next read starts a new one */
-  private ended(child: ChildProcess, reason: string): void {
+  private ended(child: ChildProcess, reason: string, notFound = false): void {
     liveHelperProcesses.delete(child);
-    if (child === this.child) this.fail(reason);
+    if (child === this.child) this.fail(reason, notFound);
   }
 
-  private fail(reason: string): void {
+  /** notFound: the program isn't there, and the reads fail with a ShellNotFoundError */
+  private fail(reason: string, notFound = false): void {
     const child = this.child;
     this.child = undefined;
     clearTimeout(this.timer);
@@ -227,7 +239,7 @@ export class PowerShellHelper {
     }
     const waiting = [...this.pending.values()];
     this.pending.clear();
-    for (const request of waiting) request.reject(new Error(reason));
+    for (const request of waiting) request.reject(notFound ? new ShellNotFoundError(reason) : new Error(reason));
   }
 }
 
@@ -251,7 +263,14 @@ const helpers = new Map<string, PowerShellHelper>();
 
 /** Reads a command for a PowerShell shell ("powershell.exe", "pwsh" or a path), with the same program as the helper */
 export function readPowerShellCommands(command: string, shell: string): Promise<CommandReading> {
-  const program = resolveProgramPath(shell);
+  let program: string;
+  try {
+    program = resolveProgramPath(shell);
+  } catch (error) {
+    return Promise.reject(new ShellNotFoundError(error instanceof Error ? error.message : String(error)));
+  }
+  // The helper runs in a folder of its own: a relative path (./tools/pwsh) is the one start_process runs
+  if (/[\\/]/.test(program)) program = path.resolve(program);
   let helper = helpers.get(program);
   if (!helper) {
     helper = new PowerShellHelper(program);
