@@ -13,6 +13,8 @@
  * `card` names the change that makes the check give this answer; the test
  * runs a command once its card is in. It is null for the wrappers and inline
  * shells, which no change covers yet.
+ * `os`, when set, is the only system (a process.platform value) where the
+ * answer holds: a Windows path to a program runs nothing elsewhere.
  *
  * Groups: case = the 11 support cases; issue = GitHub issues; bypass = blocked
  * programs that slip through today; wrapper = a blocked program reached through
@@ -189,6 +191,6 @@ export const CORPUS = [
   { id: 'ctl_sub', card: 'B15', group: 'control', shell: 'bash', expect: 'sudo', blocklist: ['sudo'], command: 'echo "$(sudo id)"', note: 'in $() inside double quotes' },
   { id: 'ctl_path', card: 'B15', group: 'control', shell: 'bash', expect: 'sudo', blocklist: ['sudo'], command: '/usr/bin/sudo ls', note: 'path to sudo' },
   { id: 'ctl_net', card: 'B15', group: 'control', shell: 'powershell', expect: 'net', blocklist: ['net'], command: 'net stop Spooler', note: 'plain net' },
-  { id: 'ctl_netexe', card: 'B15', group: 'control', shell: 'powershell', expect: 'net', blocklist: ['net'], command: 'C:\\Windows\\System32\\net.exe user', note: 'net.exe by path' },
+  { id: 'ctl_netexe', card: 'B15', group: 'control', shell: 'powershell', os: 'win32', expect: 'net', blocklist: ['net'], command: 'C:\\Windows\\System32\\net.exe user', note: 'net.exe by path; elsewhere that program does not exist, so nothing runs' },
   { id: 'ctl_allow', card: 'B15', group: 'control', shell: 'bash', expect: null, blocklist: ['sudo'], command: 'echo "Hello World"', note: 'plainly safe' },
 ];

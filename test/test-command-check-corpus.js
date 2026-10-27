@@ -13,7 +13,7 @@
  * Each command is checked with the shell it is written for. A PowerShell
  * command is checked with every PowerShell installed here (Windows PowerShell
  * and PowerShell 7), and skipped where neither is. The other readers need no
- * shell installed.
+ * shell installed. A case marked with an `os` runs only on that system.
  *
  * Parse-only: every command goes to commandManager.checkCommand, never to a
  * shell or a process.
@@ -54,9 +54,13 @@ export default async function runTests() {
     skip(`PowerShell cases not checked with ${missing.join(' or ')}: not installed here`);
   }
 
+  // A case whose answer holds on one system only (a Windows path to a program) is skipped elsewhere
+  const otherSystem = CORPUS.filter((c) => CARDS_IN.has(c.card) && c.os && c.os !== process.platform);
+  for (const c of otherSystem) skip(`${c.id} is checked on ${c.os} only, not on ${process.platform}`);
+
   const failures = [];
   let checked = 0;
-  for (const c of CORPUS.filter((c) => CARDS_IN.has(c.card))) {
+  for (const c of CORPUS.filter((c) => CARDS_IN.has(c.card) && !otherSystem.includes(c))) {
     // unknowable: the program can't be known from the text; the check must allow.
     const shouldAllow = c.expect === null || c.expect === 'unknowable';
     const shells = c.shell === 'powershell' ? powershells : [c.shell];
