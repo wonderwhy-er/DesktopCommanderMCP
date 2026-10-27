@@ -19,6 +19,8 @@
  * Groups: case = the 11 support cases; issue = GitHub issues; bypass = blocked
  * programs that slip through today; wrapper = a blocked program reached through
  * a known wrapper; inline = a blocked program inside an inline-shell string;
+ * table = a PowerShell @{ } table, whose keys and quoted values are data but
+ * whose value can run a blocked program;
  * runtime = a program chosen at run time (the check cannot see it); file = a
  * program named only in a script file; long = the 14k-char case; control = a
  * plain blocked program, to keep every approach honest.
@@ -133,6 +135,12 @@ export const CORPUS = [
     id: 'i421', card: 'B22', group: 'issue', shell: 'bash', expect: 'su', blocklist: ['su'],
     command: 's""u -', note: '#421 empty quotes split the name; the shell rejoins s""u to su',
   },
+
+  // ---- PowerShell @{ } tables: keys and plain values are data, but a value can be a command ----
+  { id: 'tbl_keys', card: 'B19', group: 'table', shell: 'powershell', expect: null, blocklist: ['mount', 'net', 'sc'], command: "@{ Mount = 1; Net = 2; 'sc' = 3 }", note: 'keys are data, quoted or not' },
+  { id: 'tbl_value_literal', card: 'B19', group: 'table', shell: 'powershell', expect: null, blocklist: ['net'], command: "@{ Note = 'users: $(net user)' }", note: 'a single-quoted value is text, so its $( ) never runs' },
+  { id: 'tbl_value_cmd', card: 'B19', group: 'table', shell: 'powershell', expect: 'net', blocklist: ['net'], command: '@{ A = net user }', note: 'a table value is a statement, so net runs when the table is built' },
+  { id: 'tbl_value_subexpr', card: 'B19', group: 'table', shell: 'powershell', expect: 'net', blocklist: ['net'], command: '@{ Note = "users: $(net user)" }', note: '$( ) inside a double-quoted value runs net' },
 
   // ---- Bypasses named in the card ----
   { id: 'byp_brace', card: 'B21', group: 'bypass', shell: 'bash', expect: 'sudo', blocklist: ['sudo'], command: '{ sudo ls; }', note: 'brace group; sudo is the first command' },

@@ -3,8 +3,9 @@
  * the check SHOULD give in that command's shell — allow, or refuse the blocked
  * program that really runs. The cases are the 11 support cases, the GitHub
  * issues (#731 #795 #799 #822 #834 #870 #873 #890 #421 #423), the known
- * bypasses, wrappers, inline shells, run-time commands, a script file, a
- * script's own functions, and a 14,000-character command.
+ * bypasses, PowerShell @{ } tables, wrappers, inline shells, run-time
+ * commands, a script file, a script's own functions, and a 14,000-character
+ * command.
  *
  * Each case names the card whose change makes the check right for it. Only
  * the cards in CARDS_IN run; the others are skipped with their card named,
@@ -27,7 +28,7 @@ import { isTestHome } from './helpers/test-env.js';
 import { CORPUS, BLOCKLIST_DEFAULT } from './fixtures/command-check-corpus.mjs';
 
 /** The cards whose cases run: each change in the command-check stack adds its own */
-const CARDS_IN = new Set(['B15']);
+const CARDS_IN = new Set(['B15', 'B19']);
 
 /** The PowerShell programs a PowerShell case is checked with, where installed */
 const POWERSHELLS = ['powershell', 'pwsh'];
