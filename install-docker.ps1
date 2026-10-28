@@ -11,6 +11,16 @@ param(
 $script:Folders = @()
 $script:DockerArgs = @()
 
+# Folders Claude Desktop is installed in: Find-ClaudeExecutable looks for Claude.exe in them, and
+# Find-ClaudeProcess stops only the claude.exe that runs from one of them
+$script:ClaudeDesktopFolders = @(
+    "$env:LOCALAPPDATA\Programs\Claude",
+    "$env:PROGRAMFILES\Claude",
+    "$env:PROGRAMFILES(x86)\Claude",
+    "$env:APPDATA\Claude",
+    "$env:USERPROFILE\AppData\Local\Programs\Claude"
+)
+
 # Colors and output functions
 function Write-Success { param($Message) Write-Host "[SUCCESS] $Message" -ForegroundColor Green }
 function Write-Error { param($Message) Write-Host "[ERROR] $Message" -ForegroundColor Red }
@@ -267,56 +277,30 @@ function Build-DockerArgs {
     }
 }function Find-ClaudeProcess {
     Write-Info "Looking for Claude Desktop processes..."
-    
-    # Try different process name patterns for Claude
-    $processNames = @("Claude", "claude", "Claude Desktop", "claude-desktop", "ClaudeDesktop")
+
+    # Claude Code also runs as claude.exe (for example from ~\.local\bin), and its sessions must
+    # keep running. So a process counts as Claude Desktop only when it runs from a folder Claude
+    # Desktop is installed in, the Microsoft Store package's and the classic installer's too.
+    $desktopFolders = @("$env:ProgramFiles\WindowsApps\Claude_*", "$env:LOCALAPPDATA\AnthropicClaude") + $script:ClaudeDesktopFolders
     $foundProcesses = @()
-    
-    foreach ($processName in $processNames) {
-        if ($VerboseOutput) { Write-Info "Checking for process pattern: $processName" }
-        try {
-            $processes = Get-Process -Name $processName -ErrorAction SilentlyContinue
-            if ($processes) {
-                foreach ($proc in $processes) {
-                    $procPath = try { $proc.Path } catch { "Unknown" }
-                    $procWindowTitle = try { $proc.MainWindowTitle } catch { "N/A" }
-                    
-                    $foundProcesses += @{
-                        Name = $proc.ProcessName
-                        Id = $proc.Id
-                        Path = $procPath
-                        WindowTitle = $procWindowTitle
-                    }
-                    if ($VerboseOutput) { Write-Info "Found: $($proc.ProcessName) (PID: $($proc.Id))" }
-                }
-            }
-        } catch {
-            if ($VerboseOutput) { Write-Info "No processes found for pattern: $processName" }
+
+    foreach ($proc in Get-Process -Name "claude" -ErrorAction SilentlyContinue) {
+        $procPath = try { $proc.Path } catch { $null }
+        if (-not $procPath -or -not ($desktopFolders | Where-Object { $procPath -like "$_\*" })) {
+            if ($VerboseOutput) { Write-Info "Not Claude Desktop, left running: $($proc.ProcessName) (PID: $($proc.Id)) $procPath" }
+            continue
         }
+        $procWindowTitle = try { $proc.MainWindowTitle } catch { "N/A" }
+
+        $foundProcesses += @{
+            Name = $proc.ProcessName
+            Id = $proc.Id
+            Path = $procPath
+            WindowTitle = $procWindowTitle
+        }
+        if ($VerboseOutput) { Write-Info "Found: $($proc.ProcessName) (PID: $($proc.Id))" }
     }
-    
-    # Also try WMI for more comprehensive search
-    if ($VerboseOutput) { Write-Info "Searching with WMI for Claude-related processes..." }
-    try {
-        $wmiProcesses = Get-WmiObject Win32_Process | Where-Object { 
-            $_.Name -like "*claude*" -or 
-            $_.CommandLine -like "*claude*" -or
-            $_.ExecutablePath -like "*claude*"
-        }
-        
-        foreach ($proc in $wmiProcesses) {
-            $foundProcesses += @{
-                Name = $proc.Name
-                Id = $proc.ProcessId
-                Path = $proc.ExecutablePath
-                CommandLine = $proc.CommandLine
-            }
-            if ($VerboseOutput) { Write-Info "WMI Found: $($proc.Name) (PID: $($proc.ProcessId))" }
-        }
-    } catch {
-        if ($VerboseOutput) { Write-Info "WMI search failed or no additional processes found" }
-    }
-    
+
     return $foundProcesses
 }
 
@@ -386,13 +370,7 @@ function Find-ClaudeExecutable {
     if ($VerboseOutput) { Write-Info "Searching for Claude Desktop executable..." }
     
     # Common installation paths for Claude Desktop
-    $claudePaths = @(
-        "$env:LOCALAPPDATA\Programs\Claude\Claude.exe",
-        "$env:PROGRAMFILES\Claude\Claude.exe", 
-        "$env:PROGRAMFILES(x86)\Claude\Claude.exe",
-        "$env:APPDATA\Claude\Claude.exe",
-        "$env:USERPROFILE\AppData\Local\Programs\Claude\Claude.exe"
-    )
+    $claudePaths = $script:ClaudeDesktopFolders | ForEach-Object { "$_\Claude.exe" }
     
     if ($VerboseOutput) { Write-Info "Checking standard installation paths..." }
     foreach ($path in $claudePaths) {
