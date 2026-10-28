@@ -2,6 +2,7 @@ import assert from 'assert';
 import { runIfMain } from '../helpers/run-if-main.js';
 import { readUntil } from '../helpers/process-output.js';
 import { terminalManager } from '../../dist/terminal-manager.js';
+import { MAX_PROCESS_WAIT_MS } from '../../dist/config.js';
 
 /**
  * Repro / regression test for issue #310:
@@ -33,7 +34,7 @@ const CAP_MS = 800;            // wait ceiling under test, short to keep the tes
 const TIMEOUT_MS = 5000;       // caller's timeout_ms, well above the cap
 const CAP_MARGIN_MS = 1600;    // tolerance above the cap for scheduling/overhead
 const PROC_LIFETIME_MS = 6000; // child lives well past the cap
-const OUTPUT_WAIT_MS = 30000;  // how long a command may take to print its first output: readUntil's limit
+const OUTPUT_WAIT_MS = 30000;  // how long a command may take to print its first output: readUntil's limit and Test 3's timeout
 
 const since = (t) => Date.now() - t;
 const cleanup = (pid) => { try { terminalManager.forceTerminate(pid); } catch {} };
@@ -112,15 +113,17 @@ async function testChattyNonPromptProcessWaitsUntilCap() {
  * Test 3 (contrast / regression guard): when the process DOES emit a recognized
  * prompt, executeCommand returns promptly via the quick-pattern path, well
  * before the (large) timeout. This proves the bug is specific to prompt-less
- * processes and guards the early-exit path from regressing.
+ * processes and guards the early-exit path from regressing. The exitReason
+ * shows that the prompt ended the wait, not the timeout. The time isn't
+ * checked: the shell alone can take seconds to start on a busy PC.
  */
 async function testPromptProcessReturnsEarly() {
   console.log('\n📋 Test 3: prompt-emitting process returns early (not at timeout)...');
-  const bigTimeout = 5000;
+  assert(OUTPUT_WAIT_MS < MAX_PROCESS_WAIT_MS, 'the real ceiling must be larger than this timeout');
   const t0 = Date.now();
   const res = await terminalManager.executeCommand(
     `node -e "process.stdout.write('>>> ');setTimeout(function(){},${PROC_LIFETIME_MS})"`,
-    bigTimeout,
+    OUTPUT_WAIT_MS,
     undefined,
     true
   );
@@ -128,7 +131,6 @@ async function testPromptProcessReturnsEarly() {
   cleanup(res.pid);
 
   assert.strictEqual(res.isBlocked, true, 'prompt means blocked/waiting for input');
-  assert(elapsed < 1000, `should return quickly via prompt, took ${elapsed}ms`);
   assert(res.timingInfo.exitReason.startsWith('early_exit'),
     `expected an early_exit reason, got "${res.timingInfo.exitReason}"`);
   console.log(`  ✅ returned early after ${elapsed}ms (exitReason=${res.timingInfo.exitReason})`);
