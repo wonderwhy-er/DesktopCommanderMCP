@@ -1,11 +1,11 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
-import {getShellType, isShellAvailable, programName} from './utils/shell.js';
+import {getShellType, isShellAvailable, programName, type ShellType} from './utils/shell.js';
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
-import type {CommandReading} from './utils/command-reading.js';
+import type {CommandReading, FoundCommand} from './utils/command-reading.js';
 
 /**
  * The check's answer for one command.
@@ -264,9 +264,31 @@ class CommandManager {
     }
 
     /**
+     * The commands of a reading that run a program: the calls to the script's
+     * own functions are left out. A script can define a function with a
+     * program's name, such as an error helper named halt, and the shell then
+     * runs the function, not the program. A call is the function's when it
+     * comes after the definition, its name as written has no folder
+     * (/sbin/halt is the program), and the reader lists the function, so not
+     * one the text may remove. PowerShell finds a function whatever the case
+     * of its name, POSIX shells only by its exact name. The function's body is
+     * read as commands of its own, so a blocked program inside it is still
+     * found.
+     */
+    private withoutOwnFunctionCalls(reading: CommandReading, shellType: ShellType): FoundCommand[] {
+        const sameName = (a: string, b: string) => shellType === 'powershell' ? a.toLowerCase() === b.toLowerCase() : a === b;
+        return reading.commands.filter((cmd) => {
+            const written = cmd.words[0];
+            if (written === null || written.includes('/') || written.includes('\\')) return true;
+            return !reading.functions.some((fn) => sameName(fn.name, written) && cmd.start >= fn.end);
+        });
+    }
+
+    /**
      * The check's answer for `command` run by `shell`:
      * - allowed: no program it runs is blocked.
-     * - blocked: a program it runs has a programName() that is in blockedCommands.
+     * - blocked: a program it runs has a programName() that is in blockedCommands
+     *   (a call to the script's own function is not the program: see withoutOwnFunctionCalls).
      * - failed: the command or the settings can't be read. In PowerShell a parse
      *   error or a missing PowerShell is allowed instead: nothing runs, and
      *   PowerShell or start_process answers.
@@ -287,7 +309,8 @@ class CommandManager {
                     : { verdict: 'failed', reason: reading.parseError };
             }
 
-            for (const found of reading.commands) {
+            const running = this.withoutOwnFunctionCalls(reading, shellType);
+            for (const found of running) {
                 // A name known only at run time ($tool) names no program the list could match
                 if (found.nameAtRunTime) continue;
                 const name = programName(found.name);

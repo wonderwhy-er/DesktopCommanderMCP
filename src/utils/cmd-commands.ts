@@ -11,6 +11,7 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * - a leading @ is dropped (@echo off runs echo);
  * - a word with %VAR% in it is known only at run time;
  * - if and for run the command after their condition or after "do".
+ * cmd has no functions, so none are listed.
  */
 
 interface Token {
@@ -195,7 +196,7 @@ export async function readCmdCommands(command: string): Promise<CommandReading> 
   try {
     reader.readList(false);
   } catch (error) {
-    return { commands: [], parseError: error instanceof Error ? error.message : String(error) };
+    return { commands: [], functions: [], parseError: error instanceof Error ? error.message : String(error) };
   }
-  return { commands: reader.commands.sort((a, b) => a.start - b.start) };
+  return { commands: reader.commands.sort((a, b) => a.start - b.start), functions: [] };
 }

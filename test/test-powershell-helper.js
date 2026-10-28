@@ -31,7 +31,7 @@ process.stdin.on('data', (chunk) => {
   const line = String(chunk).split('\\n').find((text) => text.trim());
   if (answered || !line) return;
   answered = true;
-  process.stdout.write(JSON.stringify({ id: JSON.parse(line).id, commands: [] }) + '\\n');
+  process.stdout.write(JSON.stringify({ id: JSON.parse(line).id, commands: [], functions: [] }) + '\\n');
 });`;
 
 /** Reads with `helper`, expects it to fail with `message` after `limitMs`, and the helper's process to be stopped */
@@ -93,7 +93,7 @@ export default async function runTests() {
   console.log('Test 3: a helper that stops answering fails the next check after 5 seconds');
   const answersOnce = new PowerShellHelper(process.execPath, ['-e', ANSWERS_FIRST_REQUEST_ONLY]);
   const first = await answersOnce.read('Get-Date');
-  assert.deepStrictEqual(first, { commands: [] }, 'the stand-in answers its first request');
+  assert.deepStrictEqual(first, { commands: [], functions: [] }, 'the stand-in answers its first request');
   await expectTimeout(answersOnce, HELPER_TIMEOUT_MS, 'PowerShell did not answer in 5 seconds');
 
   console.log('Test 4: a helper that never answers fails its first check after 15 seconds, its start included');

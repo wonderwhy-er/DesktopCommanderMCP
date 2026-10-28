@@ -37,6 +37,14 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * program or script its file name as found (net.exe). A name Get-Command
  * doesn't know stays as written. A name from a variable or expression
  * (& $tool) is known only at run time.
+ * The functions are the definitions among the script's own statements, with
+ * the offset where each ends. There are none when the text has a { } script
+ * block written as a value, which may run where the functions don't exist
+ * (Start-Job runs it in another process), or something that may remove a
+ * function: a $function: variable ($function:net = $null), a word naming the
+ * function drive or provider (Remove-Item function:net, New-PSDrive
+ * -PSProvider Function), or an item cmdlet whose path is known only at run
+ * time or comes from the pipeline ('function:net' | Remove-Item).
  * Offsets are .NET string indexes, the same as JavaScript's.
  */
 const HELPER_SCRIPT = `
@@ -59,6 +67,17 @@ function Get-WordValue($element) {
   if ($element -is [Management.Automation.Language.CommandParameterAst]) { return $element.Extent.Text }
   if ($element -is [Management.Automation.Language.ConstantExpressionAst]) { return $element.Extent.Text }
   return $null
+}
+function Test-RemovesFunction($found) {
+  $pathAtRunTime = $false
+  $knownPaths = 0
+  for ($i = 1; $i -lt $found.words.Count; $i++) {
+    $word = $found.words[$i]
+    if ($null -eq $word) { $pathAtRunTime = $true }
+    elseif ($word -match '\\bfunction\\b') { return $true }
+    elseif (-not $word.StartsWith('-')) { $knownPaths++ }
+  }
+  return $found.name -like '*-Item' -and ($pathAtRunTime -or $knownPaths -eq 0)
 }
 while ($true) {
   $line = $reader.ReadLine()
@@ -83,6 +102,14 @@ while ($true) {
         } else {
           @{ name = (Get-Meaning $name); words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $false }
         }
+      })
+      $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
+      $isFunctionVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -eq 'function' }
+      $removers = @($answer.commands | Where-Object { Test-RemovesFunction $_ })
+      $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionVariable, $true)
+      $statements = if ($ast.EndBlock -and -not $functionsMayGo) { $ast.EndBlock.Statements } else { @() }
+      $answer.functions = @(foreach ($statement in $statements) {
+        if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { @{ name = $statement.Name; end = $statement.Extent.EndOffset } }
       })
     }
   } catch {
@@ -195,9 +222,9 @@ export class PowerShellHelper {
     if (typeof answer.error === 'string') {
       request.reject(new Error(`PowerShell could not read the command: ${answer.error}`));
     } else if (typeof answer.parseError === 'string') {
-      request.resolve({ commands: [], parseError: answer.parseError });
+      request.resolve({ commands: [], functions: [], parseError: answer.parseError });
     } else {
-      request.resolve({ commands: answer.commands });
+      request.resolve({ commands: answer.commands, functions: answer.functions });
     }
   }
 
