@@ -53,16 +53,13 @@ import { constants } from 'buffer';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { watchPeakMemory, formatMB } from '../helpers/process-memory.js';
 import { readSearchAnswer, closeClient } from '../helpers/mcp-client.js';
+import { serverTransport } from '../helpers/mcp-server.js';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const SERVER = path.join(PROJECT_ROOT, 'dist/index.js');
 const MB = 1024 * 1024;
 const SCALE = Number(process.env.REPRO_MB || 64) / 64;
 const MAX_RESULTS = 200;
@@ -151,7 +148,7 @@ async function runScenario(name) {
   try {
     scenario.make(dir);
 
-    const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER], env: { ...process.env }, stderr: 'pipe' });
+    const transport = serverTransport();
     let serverLog = '';
     transport.stderr?.setEncoding('utf8');
     transport.stderr?.on('data', (chunk) => { serverLog += chunk; });

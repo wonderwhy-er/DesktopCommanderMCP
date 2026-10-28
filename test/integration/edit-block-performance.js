@@ -15,8 +15,8 @@ import { performance } from 'perf_hooks';
 import { exitProcess } from '../../dist/utils/exit-process.js';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { callToolOnceLoaded } from '../helpers/heavy-packages.js';
+import { serverTransport } from '../helpers/mcp-server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -759,16 +759,7 @@ async function runResponsivenessProbe(client, stopProbe) {
 }
 
 async function createMcpClient() {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: {
-      ...process.env,
-      DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true',
-    },
-  });
+  const transport = serverTransport();
 
   const stderrChunks = [];
   transport.stderr?.on('data', (chunk) => {

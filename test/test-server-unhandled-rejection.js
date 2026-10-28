@@ -8,10 +8,10 @@ import assert from 'assert';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { runIfMain } from './helpers/run-if-main.js';
 import { closeClient } from './helpers/close-client.js';
+import { serverTransport } from './helpers/mcp-server.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/unhandled-rejection-preload.mjs')).href;
@@ -34,12 +34,9 @@ async function waitFor(condition, timeoutMs) {
 }
 
 async function run() {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ['--import', PRELOAD, path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
+  const transport = serverTransport({
     env: { ...process.env, DC_TEST_REJECT_AFTER_MS: String(REJECT_AFTER_MS) },
+    nodeArgs: ['--import', PRELOAD],
   });
   let serverOutput = '';
   transport.stderr?.on('data', (chunk) => { serverOutput += chunk; });

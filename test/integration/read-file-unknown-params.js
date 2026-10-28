@@ -14,17 +14,15 @@
  *   3. Missing required param (path) -> dispatcher-shaped isError: true.
  */
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import assert from 'assert';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exitProcess } from '../../dist/utils/exit-process.js';
+import { connectToServer } from '../helpers/mcp-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const TEST_DIR = path.join(__dirname, 'test_read_file_unknown_params');
 const TEST_FILE = path.join(TEST_DIR, 'numbered.txt');
 const LINE_COUNT = 50;
@@ -35,23 +33,6 @@ async function callTool(client, name, args) {
 
 function textOf(result) {
   return result?.content?.find?.((c) => c.type === 'text')?.text ?? '';
-}
-
-async function createMcpClient() {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(PROJECT_ROOT, 'dist/index.js'), '--no-onboarding'],
-    cwd: PROJECT_ROOT,
-    stderr: 'pipe',
-    env: { ...process.env, DESKTOP_COMMANDER_DISABLE_TELEMETRY: 'true' },
-  });
-
-  const client = new Client(
-    { name: 'desktop-commander-unknown-params-test', version: '1.0.0' },
-    { capabilities: {} }
-  );
-  await client.connect(transport, { timeout: 30000 });
-  return client;
 }
 
 async function setup(client) {
@@ -83,7 +64,7 @@ async function teardown(client, originalConfig) {
 
 async function main() {
   console.log('===== read_file Unknown-Parameter Behavior Integration Test =====');
-  const client = await createMcpClient();
+  const client = await connectToServer('desktop-commander-unknown-params-test');
   const originalConfig = await setup(client);
 
   try {
