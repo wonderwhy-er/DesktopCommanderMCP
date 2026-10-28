@@ -35,3 +35,8 @@ export function readSearchAnswer(result) {
     totalMatches: counts ? Number(counts[1]) : undefined,
   };
 }
+
+/** The text of a tool result (what the AI reads) */
+export function answerText(result) {
+  return (result?.content ?? []).map((part) => part.text ?? '').join('\n');
+}

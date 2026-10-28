@@ -6,17 +6,16 @@
  * callToolOnceLoaded() tries again until it doesn't (read_multiple_files says
  * so per file).
  */
+import { answerText } from './mcp-client.js';
 
 export const STILL_LOADING = /Desktop Commander is still loading its [A-Za-z ]+ support/;
-
-const textOf = (result) => (result.content ?? []).map((item) => item.text ?? '').join('\n');
 
 /** client.callTool(params), again every 100 ms while the answer says the support is still loading, up to timeoutMs */
 export async function callToolOnceLoaded(client, params, { timeoutMs = 60_000, requestOptions } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const result = await client.callTool(params, undefined, requestOptions);
-    if (!STILL_LOADING.test(textOf(result)) || Date.now() > deadline) return result;
+    if (!STILL_LOADING.test(answerText(result)) || Date.now() > deadline) return result;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
