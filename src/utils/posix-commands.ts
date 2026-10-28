@@ -1,4 +1,5 @@
-import { parse, forEachChild, type SyntaxNode, type Word } from 'unbash';
+import { parse, forEachChild, type SyntaxNode, type Word, type WordPart } from 'unbash';
+import { braceWords, quotedChars, unquotedChars, MAX_BRACE_WORDS, type WordChar } from './brace-expansion.js';
 import type { CommandReading, FoundCommand } from './command-reading.js';
 
 /**
@@ -6,8 +7,10 @@ import type { CommandReading, FoundCommand } from './command-reading.js';
  * fish), with unbash, a bash parser. It finds every command the shell would
  * run, also on later lines and inside $( ), backticks, <( ), { } groups,
  * subshells, functions and if, while, for and case bodies. Words inside
- * quotes and heredoc bodies are text. zsh and the other shells are read as
- * bash, which covers the commands they have in common.
+ * quotes and heredoc bodies are text. A command name with a {a,b} brace
+ * expansion is the first word it expands to, so {sudo,ls} is sudo. zsh and
+ * the other shells are read as bash, which covers the commands they have in
+ * common.
  *
  * unbash doesn't stop at a syntax error: it returns what it could read and
  * lists the errors, each on the script it found it in ($( ) and backticks
@@ -24,17 +27,53 @@ const VANISHING_PARTS = new Set(['SimpleExpansion', 'ParameterExpansion', 'Comma
 /**
  * A word's value as bash reads it (quotes and escapes removed, $'…' decoded),
  * or null when part of it is known only at run time: an expansion, a command's
- * output, or a {a,b} brace expansion, which this reader doesn't expand.
+ * output, or a {a,b} brace expansion, which makes several words (the reader
+ * expands a command name's braces with braceWords).
  */
 function wordValue(word: Word): string | null {
-  for (const part of word.parts ?? []) {
-    if (part.type === 'DoubleQuoted' || part.type === 'LocaleString') {
-      if (!part.parts.every((inner) => inner.type === 'Literal')) return null;
-    } else if (!STATIC_PARTS.has(part.type)) {
-      return null;
-    }
+  return (word.parts ?? []).every((part) => partValue(part) !== null) ? word.value : null;
+}
+
+/** One part's value as bash reads it, or null when it is known only at run time */
+function partValue(part: WordPart): string | null {
+  if (part.type === 'DoubleQuoted' || part.type === 'LocaleString') {
+    if (!part.parts.every((inner) => inner.type === 'Literal')) return null;
+    return part.parts.map((inner) => (inner.type === 'Literal' ? inner.value : '')).join('');
   }
-  return word.value;
+  return STATIC_PARTS.has(part.type) && 'value' in part ? part.value : null;
+}
+
+/**
+ * A word's characters for brace expansion, or null when part of it is known
+ * only at run time ({$X,ls}). Only the braces unbash reads as an expansion are
+ * syntax. The rest of the word is text, and so are the quoted pieces inside
+ * the braces: {"a,b",c} gives a,b and c.
+ */
+function braceChars(word: Word): WordChar[] | null {
+  const chars: WordChar[] = [];
+  for (const part of word.parts ?? []) {
+    if (part.type !== 'BraceExpansion') {
+      const value = partValue(part);
+      if (value === null) return null;
+      chars.push(...quotedChars(value));
+      continue;
+    }
+    // The braces' text as written, except the quoted or expanded pieces inside, which are parts of their own
+    let at = part.pos;
+    for (const inner of part.parts ?? []) {
+      chars.push(...unquotedChars(part.text.slice(at - part.pos, inner.pos - part.pos)));
+      if (inner.type === 'Literal') {
+        chars.push(...unquotedChars(inner.text));
+      } else {
+        const value = partValue(inner);
+        if (value === null) return null;
+        chars.push(...quotedChars(value));
+      }
+      at = inner.end;
+    }
+    chars.push(...unquotedChars(part.text.slice(at - part.pos)));
+  }
+  return chars;
 }
 
 /** Whether bash may drop the word entirely, so that the next word is the command's name */
@@ -58,10 +97,18 @@ export async function readPosixCommands(command: string): Promise<CommandReading
       const values = words.map(wordValue);
       // The name, and the next word too while the words before it may vanish ($EMPTY sudo ls runs sudo)
       for (let i = 0; i < words.length; i++) {
-        const nameAtRunTime = values[i] === null;
+        const braced = words[i].parts?.some((part) => part.type === 'BraceExpansion') ? braceChars(words[i]) : null;
+        // bash expands the name's braces before it runs it and drops the empty words: {,sudo} ls runs sudo, {,} sudo runs sudo
+        const expanded: (string | null)[] | null = braced ? braceWords(braced) : [values[i]];
+        if (expanded === null) {
+          parseError ??= `brace expansion makes more than ${MAX_BRACE_WORDS} words`;
+          break;
+        }
+        if (expanded.length === 0) continue;
+        const nameAtRunTime = expanded[0] === null;
         commands.push({
-          name: nameAtRunTime ? words[i].text : values[i] as string,
-          words: values.slice(i),
+          name: nameAtRunTime ? words[i].text : expanded[0] as string,
+          words: [...expanded, ...values.slice(i + 1)],
           start: backticksStart ?? (i === 0 ? node.pos : words[i].pos),
           nameAtRunTime,
         });
