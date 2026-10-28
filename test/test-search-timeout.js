@@ -15,6 +15,7 @@ import { searchManager } from '../dist/search-manager.js';
 import { configManager } from '../dist/config-manager.js';
 import { createStalledReadTarget } from './helpers/stalled-read.js';
 import { runIfMain } from './helpers/run-if-main.js';
+import { waitUntil } from './helpers/wait.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DIR = path.join(__dirname, 'search-timeout-test');
@@ -93,12 +94,8 @@ async function readSession(sessionId) {
 
 /** Waits until a session reports isComplete and returns its state */
 async function waitUntilComplete(sessionId, label) {
-  const deadline = Date.now() + 5000;
   let state;
-  while (!(state = await readSession(sessionId)).isComplete) {
-    assert(Date.now() < deadline, `${label} should complete within 5s`);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
+  await waitUntil(async () => (state = await readSession(sessionId)).isComplete, 5000, `${label} completes`);
   return state;
 }
 

@@ -12,6 +12,7 @@ import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/type
 import { runIfMain } from './helpers/run-if-main.js';
 import { closeClient } from './helpers/close-client.js';
 import { serverTransport } from './helpers/mcp-server.js';
+import { waitUntil } from './helpers/wait.js';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PRELOAD = pathToFileURL(path.join(PROJECT_ROOT, 'test/fixtures/unhandled-rejection-preload.mjs')).href;
@@ -23,15 +24,6 @@ const REJECT_AFTER_MS = 100;
 const SURVIVAL_WINDOW_MS = 3000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitFor(condition, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (!condition()) {
-    if (Date.now() > deadline) return false;
-    await sleep(50);
-  }
-  return true;
-}
 
 async function run() {
   const transport = serverTransport({
@@ -50,10 +42,8 @@ async function run() {
   try {
     await client.connect(transport, { timeout: 30_000 });
 
-    assert(await waitFor(() => serverOutput.includes('fixture: rejecting now'), 15_000),
-      `the fixture never rejected; server output:\n${serverOutput}`);
-    assert(await waitFor(() => serverOutput.includes('Unhandled rejection: dc-test-rejection'), 5_000),
-      `the server should log the rejection; server output:\n${serverOutput}`);
+    await waitUntil(() => serverOutput.includes('fixture: rejecting now'), 15_000, 'the fixture rejects');
+    await waitUntil(() => serverOutput.includes('Unhandled rejection: dc-test-rejection'), 5_000, 'the server logs the rejection');
     console.log('✓ Rejection logged by the server');
 
     await sleep(SURVIVAL_WINDOW_MS);
