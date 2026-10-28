@@ -38,6 +38,7 @@ export interface ServerConfig {
   defaultShell?: string;
   allowedDirectories?: string[];
   telemetryEnabled?: boolean; // New field for telemetry control
+  toolCallAuditLogEnabled?: boolean; // Whether tool calls are written to claude_tool_call.log and tool-history.jsonl
   fileWriteLineLimit?: number; // Line limit for file write operations
   fileReadLineLimit?: number; // Default line limit for file read operations (changed from character-based)
   clientId?: string; // Unique client identifier for analytics
@@ -278,6 +279,7 @@ class ConfigManager {
       defaultShell: getDefaultShell(),
       allowedDirectories: [],
       telemetryEnabled: true, // Default to opt-out approach (telemetry on by default)
+      toolCallAuditLogEnabled: true, // Tool calls are written to the two log files unless the user turns it off
       fileWriteLineLimit: 50,  // Default line limit for file write operations (changed from 100)
       fileReadLineLimit: 1000,  // Default line limit for file read operations (changed from character-based)
       pendingWelcomeOnboarding: true, // New install flag - triggers A/B test for welcome page
