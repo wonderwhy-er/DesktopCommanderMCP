@@ -1,6 +1,23 @@
 import path from 'path';
 import {configManager} from './config-manager.js';
 import {capture} from "./utils/capture.js";
+import {getShellType, isShellAvailable, programName} from './utils/shell.js';
+import {readPosixCommands} from './utils/posix-commands.js';
+import {readPowerShellCommands} from './utils/powershell-commands.js';
+import {readCmdCommands} from './utils/cmd-commands.js';
+import type {CommandReading} from './utils/command-reading.js';
+
+/**
+ * The check's answer for one command.
+ * - allowed: no blocked program runs.
+ * - blocked: `name` is the blockedCommands entry that one of the programs matched.
+ * - failed: the check couldn't read the command or the settings, and
+ *   `reason` holds the error's message.
+ */
+export type CommandCheck =
+  | { verdict: 'allowed' }
+  | { verdict: 'blocked'; name: string }
+  | { verdict: 'failed'; reason: string };
 
 class CommandManager {
 
@@ -231,39 +248,67 @@ class CommandManager {
         }
     }
 
-    async validateCommand(command: string): Promise<boolean> {
+    /**
+     * Reads a command with the grammar of the shell that will run it: POSIX
+     * shells (bash, zsh, sh, …), PowerShell, or cmd.
+     */
+    readCommands(command: string, shell: string): Promise<CommandReading> {
+        switch (getShellType(shell)) {
+            case 'powershell':
+                return readPowerShellCommands(command, shell);
+            case 'cmd':
+                return readCmdCommands(command);
+            default:
+                return readPosixCommands(command);
+        }
+    }
+
+    /**
+     * The check's answer for `command` run by `shell`:
+     * - allowed: no program it runs is blocked.
+     * - blocked: a program it runs has a programName() that is in blockedCommands.
+     * - failed: the command or the settings can't be read. In PowerShell a parse
+     *   error or a missing PowerShell is allowed instead: nothing runs, and
+     *   PowerShell or start_process answers.
+     */
+    async checkCommand(command: string, shell: string): Promise<CommandCheck> {
         try {
-            // Get blocked commands from config
             const config = await configManager.getConfig();
             const blockedCommands = config.blockedCommands || [];
-            
-            // Extract all commands from the command string
-            const allCommands = this.extractCommands(command);
-            
-            // If there are no commands extracted, fall back to base command
-            if (allCommands.length === 0) {
-                const baseCommand = this.getBaseCommand(command);
-                return !blockedCommands.includes(baseCommand);
+
+            const shellType = getShellType(shell);
+            // PowerShell runs nothing when it isn't there or can't parse the command: it, or start_process, answers
+            if (shellType === 'powershell' && !isShellAvailable(shell)) return { verdict: 'allowed' };
+            const reading = await this.readCommands(command, shell);
+            // A parse error is the command's fault, not the server's, so it isn't logged or sent
+            if (reading.parseError !== undefined) {
+                return shellType === 'powershell'
+                    ? { verdict: 'allowed' }
+                    : { verdict: 'failed', reason: reading.parseError };
             }
-            
-            // Check if any of the extracted commands are in the blocked list
-            for (const cmd of allCommands) {
-                if (blockedCommands.includes(cmd)) {
-                    return false; // Command is blocked
-                }
+
+            for (const found of reading.commands) {
+                // A name known only at run time ($tool) names no program the list could match
+                if (found.nameAtRunTime) continue;
+                const name = programName(found.name);
+                if (blockedCommands.includes(name)) return { verdict: 'blocked', name };
             }
-            
-            // No commands were blocked
-            return true;
+            return { verdict: 'allowed' };
         } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
             console.error('Error validating command:', error);
             capture('server_validate_command_error', {
-                error: error instanceof Error ? error.message : String(error)
+                error: reason
             });
             // Fail closed: deny the command if validation encounters an error.
             // This prevents a config read failure from bypassing all command filtering.
-            return false;
+            return { verdict: 'failed', reason };
         }
+    }
+
+    /** Whether the command may run in `shell`: the check allows it */
+    async validateCommand(command: string, shell: string): Promise<boolean> {
+        return (await this.checkCommand(command, shell)).verdict === 'allowed';
     }
 }
 
