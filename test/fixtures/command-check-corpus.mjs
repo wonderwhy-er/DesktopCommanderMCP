@@ -26,6 +26,9 @@
  * escape, a path, capitals or .exe); meaning = a PowerShell name whose meaning
  * there (an alias, or a program) decides what runs;
  * ownfunc = a script's own function named like a blocked program;
+ * wrapper = a program a wrapper starts, past the wrapper's own options (env
+ * sudo ls runs sudo), and words of a wrapper that are no program (command -v
+ * sudo);
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -269,6 +272,55 @@ export const CORPUS = [
   { id: 'fn_new_alias_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; New-Alias net net.exe; net user", note: 'New-Alias made net run net.exe, before the own net' },
   { id: 'fn_alias_drive_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; New-Item alias:net -Value net.exe; net user", note: 'an alias made on the alias: drive comes before the own net' },
   { id: 'fn_alias_variable_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; $alias:net = 'net.exe'; net user", note: '$alias:net made net run net.exe, before the own net' },
+
+  // ---- Wrappers: a program a wrapper starts, past the wrapper's own options ----
+  { id: 'wrap_env', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'env sudo ls', note: 'env runs sudo' },
+  { id: 'wrap_nohup', group: 'wrapper', shell: 'bash', expect: 'shutdown', command: 'nohup shutdown -h now', note: 'nohup runs shutdown' },
+  { id: 'wrap_nohup_sudo', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'nohup sudo ls', note: 'nohup runs sudo' },
+  { id: 'wrap_xargs', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'echo x | xargs sudo', note: 'xargs runs sudo' },
+  { id: 'wrap_timeout', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'timeout 5 reboot', note: 'timeout runs reboot after its duration' },
+  { id: 'wrap_nice', group: 'wrapper', shell: 'bash', expect: 'dd', command: 'nice -n 10 dd if=/dev/zero of=/dev/sda', note: 'nice runs dd after -n 10' },
+  { id: 'wrap_nice_sudo', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'nice sudo ls', note: 'nice runs sudo' },
+  { id: 'wrap_sudou', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'sudo -u root id', note: 'sudo itself is blocked' },
+  { id: 'wrap_sudou_ls', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'sudo -u root ls', note: 'sudo itself is blocked' },
+  { id: 'wrap_exec', group: 'wrapper', shell: 'bash', expect: 'su', command: 'exec su -', note: 'exec runs su' },
+  { id: 'wrap_exec_sudo', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'exec sudo ls', note: 'exec runs sudo' },
+  { id: 'wrap_command', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'command sudo ls', note: 'command runs sudo' },
+  { id: 'wrap_chain', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'env -i FOO=1 nohup nice -n 5 reboot', note: 'env runs nohup, which runs nice, which runs reboot' },
+  { id: 'wrap_env_options', group: 'wrapper', shell: 'zsh', expect: 'reboot', command: 'env -u HOME --chdir=/tmp reboot', note: "env's options and their values" },
+  { id: 'wrap_timeout_options', group: 'wrapper', shell: 'sh', expect: 'reboot', command: 'timeout -s KILL --kill-after=2 5 reboot', note: "timeout's options, then its duration" },
+  { id: 'wrap_nice_old', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'nice -10 reboot', note: 'the old way to write nice -n 10' },
+  { id: 'wrap_xargs_options', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'ls | xargs -n 1 -I{} reboot {}', note: "xargs's options, with the value in the next word and in the same one" },
+  { id: 'wrap_exec_name', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'exec -a name reboot', note: "exec's -a takes a name" },
+  { id: 'wrap_dashdash', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'nohup -- reboot', note: '-- ends the options' },
+  { id: 'wrap_runtime_option', group: 'wrapper', shell: 'bash', expect: 'reboot', command: 'nice $NICE_OPTS reboot', note: '$NICE_OPTS may be options, so reboot may be the program' },
+  { id: 'wrap_option_value', group: 'wrapper', shell: 'bash', expect: null, command: 'env -u sudo ls', note: 'sudo is the variable env unsets; env runs ls' },
+  { id: 'wrap_argument', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout 5 echo reboot', note: 'reboot is what echo prints' },
+  { id: 'wrap_command_v', group: 'wrapper', shell: 'bash', expect: null, command: 'command -v sudo', note: 'command -v only says where sudo is' },
+  { id: 'wrap_runtime', group: 'wrapper', shell: 'bash', expect: 'unknowable', command: 'env "$CMD"', note: 'env runs the program in $CMD, known only at run time' },
+  { id: 'wrap_ownfunc_program', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'sudo() { echo "refuse"; }; env sudo ls', note: "env starts the program sudo, not the script's function of that name, which only the shell knows" },
+  { id: 'wrap_ownfunc_wrapper', group: 'wrapper', shell: 'bash', expect: null, command: 'env() { echo "$@"; }; env sudo ls', note: "env is the script's own function, which only prints its words" },
+  { id: 'wrap_ps_env', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: 'env sudo ls', note: 'env is a program, so it runs sudo from PowerShell too' },
+  { id: 'wrap_startproc', group: 'wrapper', shell: 'powershell', expect: process.platform === 'win32' ? 'format' : null, command: "Start-Process -FilePath format.com -ArgumentList 'D:'", note: 'Start-Process runs format.com: format on Windows; elsewhere that name is no program' },
+  { id: 'wrap_startproc_sudo', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: 'Start-Process sudo', note: 'the first word without a parameter name is FilePath' },
+  { id: 'wrap_startproc_alias', group: 'wrapper', shell: 'powershell', expect: process.platform === 'win32' ? 'format' : null, command: 'start -Wait format.com D:', note: 'start is an alias of Start-Process on Windows; elsewhere it is no alias and names no program' },
+  { id: 'wrap_startproc_short', group: 'wrapper', shell: 'powershell', expect: 'shutdown', command: 'saps -Wait -Fi shutdown', note: 'saps is an alias of Start-Process, and -Fi is FilePath shortened' },
+  { id: 'wrap_startproc_colon', group: 'wrapper', shell: 'powershell', expect: 'shutdown', command: "Start-Process -FilePath:'shutdown'", note: "FilePath's value after a colon" },
+  { id: 'wrap_startproc_named', group: 'wrapper', shell: 'powershell', expect: 'shutdown', command: 'Start-Process now -FilePath shutdown', note: 'FilePath by name, wherever it is; now is the argument' },
+  { id: 'wrap_startproc_args', group: 'wrapper', shell: 'powershell', expect: null, command: 'Start-Process notepad -ArgumentList format', note: 'format is what notepad opens' },
+  { id: 'wrap_startproc_runtime', group: 'wrapper', shell: 'powershell', expect: 'unknowable', command: 'Start-Process $exe', note: 'the program is the value of $exe' },
+  { id: 'wrap_startproc_splat', group: 'wrapper', shell: 'powershell', expect: 'shutdown', command: 'Start-Process @params shutdown', note: 'without a FilePath in @params, shutdown is FilePath' },
+  { id: 'wrap_startproc_splat_only', group: 'wrapper', shell: 'powershell', expect: 'unknowable', command: 'Start-Process @params', note: '@params may hold FilePath, known only at run time' },
+  { id: 'wrap_startproc_dashdash', group: 'wrapper', shell: 'powershell', expect: 'shutdown', command: 'Start-Process -- shutdown', note: '-- ends the parameters, and shutdown is FilePath' },
+  { id: 'wrap_startproc_wi', group: 'wrapper', shell: 'powershell', expect: 'shutdown', expectPerShell: { pwsh: null }, command: 'Start-Process -Wi Hidden shutdown', note: 'in Windows PowerShell 5.1 -Wi is -WindowStyle; in PowerShell 7 it is -WhatIf, so Hidden is FilePath and nothing runs' },
+  { id: 'wrap_cmdstart', group: 'wrapper', shell: 'cmd', expect: 'format', command: 'start format D:', note: 'cmd start runs format' },
+  { id: 'wrap_cmdstart_net', group: 'wrapper', shell: 'cmd', expect: 'net', command: 'start net user', note: 'cmd start runs net' },
+  { id: 'wrap_cmdstart_title', group: 'wrapper', shell: 'cmd', expect: 'format', command: 'start /wait "" format D:', note: 'the first word in quotes is the window title' },
+  { id: 'wrap_cmdstart_switches', group: 'wrapper', shell: 'cmd', expect: 'format', command: 'start /D C:\\ /b format D:', note: '/D takes a folder' },
+  { id: 'wrap_cmdstart_titlename', group: 'wrapper', shell: 'cmd', expect: null, command: 'start "format" notepad', note: 'format is the window title; start runs notepad' },
+  { id: 'wrap_call', group: 'wrapper', shell: 'cmd', expect: 'net', command: 'call net stop Spooler', note: 'cmd call runs net' },
+  { id: 'wrap_call_user', group: 'wrapper', shell: 'cmd', expect: 'net', command: 'call net user', note: 'cmd call runs net' },
+  { id: 'wrap_call_label', group: 'wrapper', shell: 'cmd', expect: null, command: 'call :format D:', note: 'format is a label of a batch file, not a program' },
 
   // ---- Run time: the program is chosen when the command runs, so the check can't see it ----
   { id: 'rt_eval', group: 'runtime', shell: 'bash', expect: 'unknowable', command: 'eval "$CMD"', note: 'the program is in $CMD, unknown until run time' },
