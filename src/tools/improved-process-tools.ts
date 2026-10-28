@@ -26,7 +26,7 @@ let virtualPidCounter = -1000; // Use negative PIDs for virtual sessions
 const PIPES_CLOSE_WAIT_MS = 1000;
 
 /** The answer when some processes of a session could not be ended */
-function terminationFailedResult(pid: number): ServerResult {
+export function terminationFailedResult(pid: number): ServerResult {
   return {
     content: [{ type: "text", text: `Error: Could not terminate every process of session ${pid}; some may still be running` }],
     isError: true,
