@@ -5,6 +5,7 @@ import {getShellType, isShellAvailable, POSIX_SHELLS, programName, type ShellTyp
 import {readPosixCommands} from './utils/posix-commands.js';
 import {readPowerShellCommands} from './utils/powershell-commands.js';
 import {readCmdCommands} from './utils/cmd-commands.js';
+import {withStartedPrograms} from './utils/command-wrappers.js';
 import type {CommandReading, FoundCommand} from './utils/command-reading.js';
 
 /**
@@ -384,6 +385,7 @@ class CommandManager {
      * - blocked: a program it runs is in blockedCommands, both compared in the
      *   form programName() gives; the answer names the entry as written (a call
      *   to the script's own function is not the program: see withoutOwnFunctionCalls).
+     *   A program a wrapper starts is one it runs: env sudo ls runs sudo.
      * - unseen: allowed, but a program is chosen only when the command runs or
      *   is in a script file (see findUnseen), so start_process can say the
      *   blocklist couldn't check it.
@@ -407,7 +409,8 @@ class CommandManager {
                     : { verdict: 'failed', reason: reading.parseError };
             }
 
-            const running = this.withoutOwnFunctionCalls(reading, shellType);
+            // A wrapper starts the program itself, never the script's own function of that name
+            const running = withStartedPrograms(this.withoutOwnFunctionCalls(reading, shellType), shellType);
             // set_config_value checks only that the list is an array
             const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
             for (const found of running) {

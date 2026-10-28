@@ -43,6 +43,12 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * program or script its file name as found (net.exe). A name Get-Command
  * doesn't know stays as written. A name from a variable or expression
  * (& $tool) is known only at run time.
+ * For a command that means Start-Process, filePaths are the programs it may
+ * start: the word its FilePath parameter takes as this PowerShell binds the
+ * command (with the Management module, imported the first time), and a
+ * splatted @params, which may hold FilePath. The binder can't see into
+ * @params and doesn't know -- (the end of the parameters), so the command is
+ * also bound with those words left out.
  * The functions are the definitions among the script's own statements, with
  * the offset where each ends. There are none when the text has a { } script
  * block written as a value, which may run where the functions don't exist
@@ -92,6 +98,36 @@ $getWordValue = {
   if ($element -is [Management.Automation.Language.ConstantExpressionAst]) { return $element.Extent.Text }
   return $null
 }
+$managementImported = $false
+$getFilePaths = {
+  param($command)
+  if (-not $script:managementImported) {
+    Microsoft.PowerShell.Core\\Import-Module Microsoft.PowerShell.Management
+    $script:managementImported = $true
+  }
+  $programs = @()
+  $text = $command.Extent.Text
+  foreach ($element in $command.CommandElements) {
+    $splatted = $element -is [Management.Automation.Language.VariableExpressionAst] -and $element.Splatted
+    if ($splatted) { $programs += @{ word = $null; written = $element.Extent.Text } }
+    if ($splatted -or $element.Extent.Text -eq '--') {
+      $at = $element.Extent.StartOffset - $command.Extent.StartOffset
+      $text = $text.Remove($at, $element.Extent.Text.Length).Insert($at, ' ' * $element.Extent.Text.Length)
+    }
+  }
+  $bindings = @($command)
+  if ($text -ne $command.Extent.Text) {
+    $bindings += [Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null).Find({ $args[0] -is [Management.Automation.Language.CommandAst] }, $true)
+  }
+  foreach ($binding in $bindings) {
+    # A command PowerShell can't bind is one it refuses to run
+    try { $filePath = [Management.Automation.Language.StaticParameterBinder]::BindCommand($binding, $true).BoundParameters['FilePath'] } catch { continue }
+    if ($null -eq $filePath -or ($filePath.Value -is [Management.Automation.Language.VariableExpressionAst] -and $filePath.Value.Splatted)) { continue }
+    $asWritten = $filePath.Value.Extent.Text
+    if (-not ($programs | Microsoft.PowerShell.Core\\Where-Object { $_.written -eq $asWritten })) { $programs += @{ word = (& $getWordValue $filePath.Value); written = $asWritten } }
+  }
+  return $programs
+}
 $testRemovesFunction = {
   param($found)
   if ($found.name -in 'Set-Alias', 'New-Alias', 'Import-Alias') { return $true }
@@ -135,11 +171,14 @@ while ($true) {
         # & { ... } runs a script block, not a program: the commands inside it are found on their own
         if ($first -is [Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
         $words = @(foreach ($element in $command.CommandElements) { ,(& $getWordValue $element) })
+        $written = @(foreach ($element in $command.CommandElements) { $element.Extent.Text })
         $name = $command.GetCommandName()
         if ($null -eq $name) {
-          @{ name = $first.Extent.Text; words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $true }
+          @{ name = $first.Extent.Text; words = $words; written = $written; start = $command.Extent.StartOffset; nameAtRunTime = $true }
         } else {
-          @{ name = (& $getMeaning $name); words = $words; start = $command.Extent.StartOffset; nameAtRunTime = $false }
+          $found = @{ name = (& $getMeaning $name); words = $words; written = $written; start = $command.Extent.StartOffset; nameAtRunTime = $false }
+          if ($found.name -eq 'Start-Process') { $found.filePaths = @(& $getFilePaths $command) }
+          $found
         }
       })
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
