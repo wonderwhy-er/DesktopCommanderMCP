@@ -788,6 +788,8 @@ The fuzzy search logs help you understand:
 
 Desktop Commander keeps tool-call records **locally on the machine running the MCP server**. These local files are separate from optional telemetry and are not a server-side historical audit log.
 
+Both files below are written while the `toolCallAuditLogEnabled` setting is on, which is the default. To stop writing them, set it to `false`: ask the AI to call `set_config_value({ "key": "toolCallAuditLogEnabled", "value": false })`, or set `"toolCallAuditLogEnabled": false` in `config.json` in the same folder (`~/.claude-server-commander`, on Windows `%USERPROFILE%\.claude-server-commander`). From then on neither file gets new calls, and `get_recent_tool_calls` lists what `tool-history.jsonl` held when Desktop Commander started plus the calls made since. Files already written stay as they are; delete them if you don't want to keep them. The setting doesn't stop the [fuzzy search log](#fuzzy-search-logs) that `edit_block` writes, or the per-tool call counts that Desktop Commander keeps in `config.json`.
+
 ### `claude_tool_call.log` — local argument log
 
 Every tool call handled by the local MCP server is appended as a text line containing an ISO timestamp, the tool name, and the JSON-serialized arguments. Arguments are **not redacted or sanitized before being written to this local file**, so it may contain command text, file paths, or other sensitive values passed to tools. Tool outputs are not written to this file.

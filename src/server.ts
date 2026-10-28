@@ -1105,7 +1105,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Debugging tool call sequences
                         
                         Note: Does not track its own calls or track_ui_event.
-                        History is persisted locally in tool-history.jsonl, keeps up to the last 1000
+                        History is persisted locally in tool-history.jsonl (not while toolCallAuditLogEnabled is false), keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
                         are replaced with an omission marker.
                         
