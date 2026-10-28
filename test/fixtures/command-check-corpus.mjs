@@ -16,6 +16,8 @@
  * Groups: case = support cases; issue = GitHub issues; table = a PowerShell
  * @{ } table: its keys and text values are data, but a value, or a key in ( ),
  * is a command that runs; bypass = blocked programs that slip through today;
+ * block = a blocked program inside a { } group, a function body or a PowerShell
+ * script block;
  * name = a blocked program's name written another way (in quotes, with an
  * escape, a path, capitals or .exe); meaning = a PowerShell name whose meaning
  * there (an alias, or a program) decides what runs; long = the 14k-char case;
@@ -126,10 +128,22 @@ export const CORPUS = [
   { id: 'tbl_value_subexpr', group: 'table', shell: 'powershell', expect: 'net', command: '@{ Note = "users: $(net user)" }', note: "#834's reporter's case: $( ) inside a double-quoted value runs net" },
 
   // ---- Bypasses: a blocked program main's check lets run ----
+  { id: 'byp_brace', group: 'bypass', shell: 'bash', expect: 'sudo', command: '{ sudo ls; }', note: 'brace group; sudo is the first command' },
   { id: 'byp_quote', group: 'bypass', shell: 'bash', expect: 'sudo', command: '"sudo" id', note: 'quoted name' },
   { id: 'byp_newline', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'echo hi' + nl + 'sudo ls', note: 'sudo on a second line' },
   { id: 'byp_if', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'if sudo true; then :; fi', note: 'sudo after if' },
   { id: 'byp_scexe', group: 'bypass', shell: 'powershell', expect: 'sc', command: 'sc.exe stop Spooler', note: 'sc.exe runs the sc program; main reads sc.exe as another name than sc' },
+
+  // ---- Blocks: a blocked program inside a { } group, a function body or a PowerShell script block ----
+  { id: 'blk_fn_body', group: 'block', shell: 'bash', expect: 'sudo', command: 'f() { sudo ls; }; f', note: 'calling f runs sudo from its body' },
+  { id: 'blk_if_group', group: 'block', shell: 'bash', expect: 'reboot', command: 'if true; then { reboot; }; fi', note: 'a { } group inside an if body' },
+  { id: 'blk_ps_amp', group: 'block', shell: 'powershell', expect: 'sudo', command: '& { sudo }', note: '& runs the script block, and the block runs sudo' },
+  { id: 'blk_ps_foreach', group: 'block', shell: 'powershell', expect: 'net', command: '1..3 | ForEach-Object { net user }', note: 'ForEach-Object runs its script block once per item' },
+  { id: 'blk_group_ok', group: 'block', shell: 'bash', expect: null, command: '{ echo hi; }', note: 'a { } group whose program is allowed' },
+  { id: 'blk_fn_ok', group: 'block', shell: 'bash', expect: null, command: 'f() { echo hi; }; f', note: 'a function whose body is allowed' },
+  { id: 'blk_ps_amp_ok', group: 'block', shell: 'powershell', expect: null, command: '& { Get-Date }', note: 'a script block written in the command is read' },
+  { id: 'blk_ps_dot_ok', group: 'block', shell: 'powershell', expect: null, command: '. { Get-Date }', note: 'the same with the dot operator' },
+  { id: 'blk_ps_foreach_ok', group: 'block', shell: 'powershell', expect: null, command: '1..3 | ForEach-Object { Get-Date }', note: 'ForEach-Object with an allowed block' },
 
   // ---- A blocked name written another way: the shell still runs the same program ----
   { id: 'name_amp_quote', group: 'name', shell: 'powershell', expect: 'sudo', command: "& 'sudo' whoami", note: 'the call operator runs the quoted name' },
