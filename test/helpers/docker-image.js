@@ -20,13 +20,15 @@ const TARGET = '/tmp/write-pdf-in-image.pdf';
 const HEADING = 'Made in the Docker image';
 
 /**
- * Builds the image `tag` from this checkout, printing Docker's output.
- * .dockerignore leaves out this machine's node_modules and dist, so the image
- * installs and builds its own.
+ * Builds the image `tag` from this checkout, with `dockerfile` in place of the
+ * checkout's own when given, printing Docker's output. .dockerignore leaves
+ * out this machine's node_modules and dist, so the image installs and builds
+ * its own.
  */
-export function buildImage(tag) {
+export function buildImage(tag, dockerfile) {
   console.log(`Building the image ${tag} (the first build takes a few minutes)...`);
-  execFileSync('docker', ['build', '--tag', tag, PROJECT_ROOT], { stdio: ['ignore', 'inherit', 'inherit'] });
+  const file = dockerfile ? ['--file', dockerfile] : [];
+  execFileSync('docker', ['build', '--tag', tag, ...file, PROJECT_ROOT], { stdio: ['ignore', 'inherit', 'inherit'] });
 }
 
 /** Runs a docker command and returns its output; it throws when the command fails */
