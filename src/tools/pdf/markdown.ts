@@ -13,6 +13,7 @@ import type { PageRange } from './lib/pdf2md.js';
 import { PdfParseResult, pdf2md } from './lib/pdf2md.js';
 import { CONFIG_FILE } from '../../config.js';
 import { LazyPackage } from '../../utils/lazy-package.js';
+import { isDockerImage } from '../../utils/system-info.js';
 
 const isUrl = (source: string): boolean =>
     source.startsWith('http://') || source.startsWith('https://');
@@ -801,7 +802,8 @@ export async function parseMarkdownToPdf(markdown: string, options: any = {}): P
             // Chrome runs on the render's own profile whatever the caller asked for
             // (launch_options.args is dropped by resolveRender; userDataDir is overridden here)
             userDataDir: undefined,
-            args: [profile.arg],
+            // In the Docker image Chromium can't start its sandbox (and as root refuses to start without one); the container keeps it apart
+            args: [profile.arg, ...(isDockerImage() ? ['--no-sandbox'] : [])],
         });
         await browser.setCookie({ ...server.cookie, domain: 'localhost', path: '/', httpOnly: true });
 
