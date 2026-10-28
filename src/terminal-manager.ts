@@ -4,7 +4,7 @@ import { DEFAULT_COMMAND_TIMEOUT, MAX_PROCESS_WAIT_MS } from './config.js';
 import { configManager, type ServerConfig } from './config-manager.js';
 import {capture} from "./utils/capture.js";
 import { analyzeProcessState, STATE_DETECTION_TAIL_CHARS, type ProcessState } from './utils/process-detection.js';
-import { getCommandEnvironment, getDefaultShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
+import { getCommandEnvironment, getCommandShell, getShellSpawnArgs, type ShellSpawnConfig } from './utils/shell.js';
 import { terminateProcessTree } from './utils/process-tree.js';
 
 /** A child process's output pipes. */
@@ -151,7 +151,7 @@ export class TerminalManager {
       // If there's an error getting the config, fall back to the default shell
     }
     // Get the shell from config if not specified
-    const shellToUse = shell || config.defaultShell || getDefaultShell();
+    const shellToUse = getCommandShell(shell, config.defaultShell);
     const waitLimit = getProcessWaitLimit(timeoutMs, maxWaitMs);
 
     // For REPL interactions, we need to ensure stdin, stdout, and stderr are properly configured
