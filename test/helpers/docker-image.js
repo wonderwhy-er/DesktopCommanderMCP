@@ -29,6 +29,11 @@ export function buildImage(tag) {
   execFileSync('docker', ['build', '--tag', tag, PROJECT_ROOT], { stdio: ['ignore', 'inherit', 'inherit'] });
 }
 
+/** Runs a docker command and returns its output; it throws when the command fails */
+export function docker(args) {
+  return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
 /** Runs a docker command for cleanup; one that fails (e.g. the container is already gone) is only printed */
 export function dockerQuietly(args) {
   try {
