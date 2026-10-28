@@ -192,15 +192,18 @@ export function detectAvailableShells(): string[] {
 }
 
 /**
- * A program's name without its folder or extension (one of PATHEXT's, or
- * .ps1), lowercased: C:\Windows\System32\NET.EXE is "net". The command check
- * matches blockedCommands with it.
+ * A program's name without its folder or extension, lowercased:
+ * C:\Windows\System32\NET.EXE is "net". The folder goes as Windows writes it
+ * (\ or /, or a drive, as in C:sc.exe) on every system. The extension is .ps1
+ * (PowerShell runs deploy.ps1 for deploy), or on Windows one of PATHEXT's as
+ * commands run with it (repaired, #481). The command check compares the names
+ * it finds and the blockedCommands entries in this form.
  */
 export function programName(name: string): string {
-  const base = path.basename(name).toLowerCase();
-  const extension = path.extname(base);
-  const known = [...windowsExecutableExtensions(), '.ps1'].some((ext) => ext.toLowerCase() === extension);
-  return extension && known ? base.slice(0, -extension.length) : base;
+  const program = path.win32.basename(name).toLowerCase();
+  const extensions = ['.ps1', ...(isWindows() ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
+  const extension = path.extname(program);
+  return extension && extensions.includes(extension) ? program.slice(0, -extension.length) : program;
 }
 
 /** The kinds of shell a command can run in. The command check has a reader for each. */

@@ -287,8 +287,9 @@ class CommandManager {
     /**
      * The check's answer for `command` run by `shell`:
      * - allowed: no program it runs is blocked.
-     * - blocked: a program it runs has a programName() that is in blockedCommands
-     *   (a call to the script's own function is not the program: see withoutOwnFunctionCalls).
+     * - blocked: a program it runs is in blockedCommands, both compared in the
+     *   form programName() gives; the answer names the entry as written (a call
+     *   to the script's own function is not the program: see withoutOwnFunctionCalls).
      * - failed: the command or the settings can't be read. In PowerShell a parse
      *   error or a missing PowerShell is allowed instead: nothing runs, and
      *   PowerShell or start_process answers.
@@ -310,11 +311,14 @@ class CommandManager {
             }
 
             const running = this.withoutOwnFunctionCalls(reading, shellType);
+            // set_config_value checks only that the list is an array
+            const entries = blockedCommands.filter((entry): entry is string => typeof entry === 'string');
             for (const found of running) {
                 // A name known only at run time ($tool) names no program the list could match
                 if (found.nameAtRunTime) continue;
-                const name = programName(found.name);
-                if (blockedCommands.includes(name)) return { verdict: 'blocked', name };
+                const program = programName(found.name);
+                const entry = entries.find((entry) => programName(entry) === program);
+                if (entry !== undefined) return { verdict: 'blocked', name: entry };
             }
             return { verdict: 'allowed' };
         } catch (error) {
