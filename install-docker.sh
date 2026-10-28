@@ -233,6 +233,31 @@ setup_persistent_volumes() {
     print_verbose "Persistent environment ready - your tools will survive restarts"
 }
 
+# Bring the pulled image into the dc-system volume. The volume keeps /usr, so
+# without this a new image's Desktop Commander and its Chromium stay hidden
+# behind the ones from the image the volume was first made with.
+update_system_volume() {
+    print_info "Updating Desktop Commander in your persistent volume dc-system..."
+
+    # Nothing may use the volume while it is copied: stop the containers that have it (found by
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers)
+    docker ps -q --filter "volume=dc-system" | xargs -r docker stop >/dev/null 2>&1 || true
+
+    # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
+    # whose /usr is kept in that volume. Desktop Commander's own folder is replaced; the rest is
+    # copied over what the volume has, so the tools the AI installed stay. install-docker.ps1 has
+    # the same command.
+    if docker run --rm -v dc-system:/target "$DOCKER_IMAGE" sh -c 'rm -rf /target/src/app && cp -a /usr/. /target/'; then
+        print_success "Desktop Commander updated; the tools you installed are kept"
+    else
+        print_error "Could not copy the new image into the volume dc-system"
+        print_info "A folder in the volume may be a link in the new image, or the other way round."
+        print_info "Start again from a clean environment (this removes your installed tools and settings):"
+        echo "• Run: $0 --reset && $0"
+        exit 1
+    fi
+}
+
 # Build Docker run arguments
 build_docker_args() {
     print_verbose "Building Docker configuration..."
@@ -591,6 +616,7 @@ check_docker
 pull_docker_image
 ask_for_folders
 setup_persistent_volumes
+update_system_volume
 build_docker_args
 update_claude_config
 test_persistence
