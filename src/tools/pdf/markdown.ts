@@ -668,6 +668,7 @@ async function installChrome(): Promise<CachedPuppeteerChrome> {
 /**
  * Find or install Chrome for PDF generation
  * Priority: 1. Puppeteer cache, 2. System Chrome, 3. Install Chrome
+ * (in Desktop Commander's Docker image the system's Chromium comes first)
  * Results are cached to avoid repeated lookups
  */
 async function getChromePath(): Promise<string | undefined> {
@@ -683,8 +684,9 @@ async function getChromePath(): Promise<string | undefined> {
     
     // Start the check
     chromeCheckPromise = (async () => {
-        // 1. Check puppeteer cache first (exact compatible version)
-        const cachedChrome = findPuppeteerChrome();
+        // 1. Check puppeteer cache first (exact compatible version). Not in the Docker image: the
+        // Chrome Puppeteer downloads can't start on Alpine, and the image has its own Chromium
+        const cachedChrome = isDockerImage() ? undefined : findPuppeteerChrome();
         if (cachedChrome) {
             await pruneOldPuppeteerChromeBuilds(cachedChrome.executablePath);
             cachedChromePath = cachedChrome.executablePath;
