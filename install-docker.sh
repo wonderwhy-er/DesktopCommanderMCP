@@ -508,18 +508,36 @@ show_status() {
     fi
 }
 
+# The process IDs of the Claude Desktop app, one per line, and no others: Claude Code
+# also runs as "claude", and its sessions must keep running.
+# macOS: processes named exactly "Claude", the app's own (Claude Code's are "claude").
+# Linux has no official Claude Desktop; community builds run from a claude-desktop
+# folder or command.
+find_claude_desktop_pids() {
+    case "$OS" in
+        macos) pgrep -x "Claude" ;;
+        linux) pgrep -f '(^|/)claude-desktop(/| |$)' ;;
+    esac
+}
+
+# Stop the Claude Desktop app if it runs, and nothing else
+stop_claude_desktop() {
+    local pids
+    pids=$(find_claude_desktop_pids)
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null || true
+        sleep 2
+        print_info "Stopped Claude"
+    fi
+}
+
 # Try to restart Claude automatically
 restart_claude() {
     print_info "Attempting to restart Claude..."
+    stop_claude_desktop
 
     case "$OS" in
         macos)
-            # Kill Claude if running
-            if pgrep -f "Claude" > /dev/null; then
-                killall "Claude" 2>/dev/null || true
-                sleep 2
-                print_info "Stopped Claude"
-            fi
             # Try to start Claude
             if command -v open &> /dev/null; then
                 if open -a "Claude" 2>/dev/null; then
@@ -532,15 +550,9 @@ restart_claude() {
             fi
             ;;
         linux)
-            # Kill Claude if running
-            if pgrep -f "claude" > /dev/null; then
-                pkill -f "claude" 2>/dev/null || true
-                sleep 2
-                print_info "Stopped Claude"
-            fi
-            # Try to start Claude
-            if command -v claude &> /dev/null; then
-                if claude &>/dev/null & disown; then
+            # Try to start Claude (a community build's command: "claude" is Claude Code's)
+            if command -v claude-desktop &> /dev/null; then
+                if claude-desktop &>/dev/null & disown; then
                     print_success "Claude restarted successfully"
                 else
                     print_warning "Could not auto-start Claude. Please start it manually."
