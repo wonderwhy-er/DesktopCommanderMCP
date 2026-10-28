@@ -59,14 +59,6 @@ export interface ActiveSession {
   runtime: number;
 }
 
-export interface CompletedSession {
-  pid: number;
-  output: string;
-  exitCode: number | null;
-  startTime: Date;
-  endTime: Date;
-}
-
 // Define the server response types
 export interface ServerResponseContent {
   type: string;
@@ -94,6 +86,3 @@ export interface ServerResult {
   isError?: boolean;
   _meta?: Record<string, unknown>;
 }
-
-// Define a helper type for tool handler functions
-export type ToolHandler<T = unknown> = (args: T) => Promise<ServerResult>;
