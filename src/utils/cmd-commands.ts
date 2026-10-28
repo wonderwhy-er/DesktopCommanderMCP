@@ -189,6 +189,7 @@ class CmdReader {
       name,
       words: words.map((word, index) => (word.atRunTime ? null : index === 0 ? name : word.value)),
       written: words.map((word) => word.text),
+      wordTexts: words.map((word, index) => (index === 0 ? name : word.value)),
       start: first.start,
       nameAtRunTime: first.atRunTime,
     });

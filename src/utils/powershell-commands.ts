@@ -42,7 +42,9 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * name is what it means in this PowerShell: an alias gives its target, a
  * program or script its file name as found (net.exe). A name Get-Command
  * doesn't know stays as written. A name from a variable or expression
- * (& $tool) is known only at run time.
+ * (& $tool) is known only at run time. Each word's text is its value, or
+ * where that is known only at run time the word as written, a "..." string
+ * without its quotes.
  * For a command that means Start-Process, filePaths are the programs it may
  * start: the word its FilePath parameter takes as this PowerShell binds the
  * command (with the Management module, imported the first time), and a
@@ -97,6 +99,14 @@ $getWordValue = {
   if ($element -is [Management.Automation.Language.CommandParameterAst]) { return $element.Extent.Text }
   if ($element -is [Management.Automation.Language.ConstantExpressionAst]) { return $element.Extent.Text }
   return $null
+}
+# The word's value, else as written; a "..." string's value keeps its variables as written ("net user $name")
+$getWordText = {
+  param($element)
+  $value = & $getWordValue $element
+  if ($null -ne $value) { return $value }
+  if ($element -is [Management.Automation.Language.ExpandableStringExpressionAst]) { return $element.Value }
+  return $element.Extent.Text
 }
 $managementImported = $false
 $getFilePaths = {
@@ -172,11 +182,12 @@ while ($true) {
         if ($first -is [Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
         $words = @(foreach ($element in $command.CommandElements) { ,(& $getWordValue $element) })
         $written = @(foreach ($element in $command.CommandElements) { $element.Extent.Text })
+        $wordTexts = @(foreach ($element in $command.CommandElements) { & $getWordText $element })
         $name = $command.GetCommandName()
         if ($null -eq $name) {
-          @{ name = $first.Extent.Text; words = $words; written = $written; start = $command.Extent.StartOffset; nameAtRunTime = $true }
+          @{ name = $first.Extent.Text; words = $words; written = $written; wordTexts = $wordTexts; start = $command.Extent.StartOffset; nameAtRunTime = $true }
         } else {
-          $found = @{ name = (& $getMeaning $name); words = $words; written = $written; start = $command.Extent.StartOffset; nameAtRunTime = $false }
+          $found = @{ name = (& $getMeaning $name); words = $words; written = $written; wordTexts = $wordTexts; start = $command.Extent.StartOffset; nameAtRunTime = $false }
           if ($found.name -eq 'Start-Process') { $found.filePaths = @(& $getFilePaths $command) }
           $found
         }
