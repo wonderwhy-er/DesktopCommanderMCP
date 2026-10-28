@@ -18,6 +18,7 @@ import { spawnSync } from 'child_process';
 import { installedPowerShells, psQuote } from './helpers/powershell.js';
 import { createStalledReadTarget } from './helpers/stalled-read.js';
 import { runIfMain, skip, SKIPPED } from './helpers/run-if-main.js';
+import { withEnv } from './helpers/test-env.js';
 
 const TEXTS = [
   'C:\\Users\\me\\notes.txt',
@@ -52,18 +53,17 @@ async function fifoInAFolderWithQuotes() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-command-paths-'));
   const folder = path.join(base, 'a "quote" and $HOME');
   fs.mkdirSync(folder);
-  const savedTmpdir = process.env.TMPDIR;
-  process.env.TMPDIR = folder;
   try {
-    const target = await createStalledReadTarget();
-    try {
-      assert.strictEqual(path.dirname(target.path), fs.realpathSync.native(folder), `the FIFO was made at ${target.path}, not in ${folder}`);
-      assert(fs.statSync(target.path).isFIFO(), `${target.path} is not a FIFO`);
-    } finally {
-      target.close();
-    }
+    await withEnv({ TMPDIR: folder }, async () => {
+      const target = await createStalledReadTarget();
+      try {
+        assert.strictEqual(path.dirname(target.path), fs.realpathSync.native(folder), `the FIFO was made at ${target.path}, not in ${folder}`);
+        assert(fs.statSync(target.path).isFIFO(), `${target.path} is not a FIFO`);
+      } finally {
+        target.close();
+      }
+    });
   } finally {
-    if (savedTmpdir === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = savedTmpdir;
     fs.rmSync(base, { recursive: true, force: true });
   }
 }
