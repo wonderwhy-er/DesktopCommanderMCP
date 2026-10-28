@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { runIfMain } from '../helpers/run-if-main.js';
+import { readUntil } from '../helpers/process-output.js';
 import { terminalManager } from '../../dist/terminal-manager.js';
 
 /**
@@ -32,6 +33,7 @@ const CAP_MS = 800;            // wait ceiling under test, short to keep the tes
 const TIMEOUT_MS = 5000;       // caller's timeout_ms, well above the cap
 const CAP_MARGIN_MS = 1600;    // tolerance above the cap for scheduling/overhead
 const PROC_LIFETIME_MS = 6000; // child lives well past the cap
+const OUTPUT_WAIT_MS = 30000;  // how long a command may take to print its first output: readUntil's limit
 
 const since = (t) => Date.now() - t;
 const cleanup = (pid) => { try { terminalManager.forceTerminate(pid); } catch {} };
@@ -74,6 +76,10 @@ async function testSilentProcessWaitsUntilCap() {
  * (the "Python test script that didn't output prompt-like patterns"). It emits
  * plain progress lines that match no REPL prompt and no completion pattern, so
  * nothing ends the wait early despite the output; it is held until the cap.
+ * The progress lines are then read while the process keeps running. On Windows
+ * they usually arrive only after the call returned (see readUntil); on macOS
+ * and Linux they arrive during the wait, and the exitReason check shows they
+ * didn't end it early.
  */
 async function testChattyNonPromptProcessWaitsUntilCap() {
   console.log('\n📋 Test 2: chatty (no-prompt) long-running process is held only until the wait cap...');
@@ -86,10 +92,12 @@ async function testChattyNonPromptProcessWaitsUntilCap() {
     CAP_MS
   );
   const elapsed = since(t0);
+  await readUntil(res.pid, (text) => text.includes('progress'), OUTPUT_WAIT_MS, 'the progress output arrives');
+  const running = terminalManager.getSession(res.pid) !== undefined;
   cleanup(res.pid);
 
   assert.strictEqual(res.isBlocked, true, 'should report isBlocked=true (still running)');
-  assert(res.output.includes('progress'), 'should have captured progress output');
+  assert(running, 'the process should still be running when its progress output is read');
   assert.strictEqual(res.timingInfo.exitReason, 'timeout',
     `non-prompt output must not trigger early exit; got "${res.timingInfo.exitReason}"`);
   assert.strictEqual(res.waitCappedAtMs, CAP_MS, 'should report that the wait cap ended the wait');
@@ -97,7 +105,7 @@ async function testChattyNonPromptProcessWaitsUntilCap() {
     `should wait ~the cap (>=${CAP_MS}ms), only waited ${elapsed}ms`);
   assert(elapsed <= CAP_MS + CAP_MARGIN_MS,
     `should return at ~the cap (<=${CAP_MS + CAP_MARGIN_MS}ms), not the ${TIMEOUT_MS}ms timeout; waited ${elapsed}ms`);
-  console.log(`  ✅ held for ${elapsed}ms despite output (exitReason=${res.timingInfo.exitReason}, cap=${CAP_MS}ms)`);
+  console.log(`  ✅ held for ${elapsed}ms (exitReason=${res.timingInfo.exitReason}, cap=${CAP_MS}ms)`);
 }
 
 /**
