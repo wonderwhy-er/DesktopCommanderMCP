@@ -2,7 +2,9 @@
  * A bash command the check can't read is refused: the check can't tell which
  * programs it runs, so it doesn't let it run. Bash refuses these commands
  * too, so nothing a user wanted is lost. The parse error may be anywhere in
- * the command: at the top, or only inside a $( ) or backticks.
+ * the command: at the top, or only inside a $( ) or backticks. One is
+ * refused although bash runs it: a command name whose braces make more than
+ * 1000 words, more than the check expands.
  *
  * None of these commands names a blocked program, so a refusal here can
  * only come from the check failing to read the command. A well-formed
@@ -32,6 +34,7 @@ const UNREADABLE = [
   ['a quote that never closes', 'echo "unterminated'],
   ['an if with no fi, only inside $( )', 'echo "$(if true; then echo hi)"'],
   ['an if with no then, only inside backticks', 'echo `if true`'],
+  ['a command name whose braces make more than 1000 words', 'x{1..1001}'],
 ];
 
 export default async function runTests() {
