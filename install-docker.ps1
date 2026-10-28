@@ -196,6 +196,36 @@ function Initialize-Volumes {
     Write-Success "Persistent environment ready - your tools will survive restarts!"
 }
 
+# Bring the pulled image into the dc-system volume. The volume keeps /usr, so
+# without this a new image's Desktop Commander and its Chromium stay hidden
+# behind the ones from the image the volume was first made with.
+function Update-SystemVolume {
+    Write-Info "Updating Desktop Commander in your persistent volume dc-system..."
+
+    # Nothing may use the volume while it is copied: stop the containers that have it (found by
+    # the volume, not ancestor=, which after the pull no longer matches the older image's containers)
+    $containers = docker ps -q --filter "volume=dc-system" 2>$null
+    if ($containers) {
+        if ($VerboseOutput) { Write-Info "Stopping running Desktop Commander containers..." }
+        docker stop $containers 2>$null | Out-Null
+    }
+
+    # Copies the new image's /usr into the volume, mounted at /target, so an update reaches users
+    # whose /usr is kept in that volume. Desktop Commander's own folder is replaced; the rest is
+    # copied over what the volume has, so the tools the AI installed stay. install-docker.sh has
+    # the same command.
+    docker run --rm -v dc-system:/target mcp/desktop-commander:latest sh -c 'rm -rf /target/src/app && cp -a /usr/. /target/'
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Desktop Commander updated; the tools you installed are kept"
+    } else {
+        Write-Error "Could not copy the new image into the volume dc-system"
+        Write-Info "A folder in the volume may be a link in the new image, or the other way round."
+        Write-Info "Start again from a clean environment (this removes your installed tools and settings):"
+        Write-Info "- Run: .\install-docker.ps1 -Reset; .\install-docker.ps1"
+        exit 1
+    }
+}
+
 function Build-DockerArgs {
     Write-Info "Building Docker configuration..."
 
@@ -837,6 +867,7 @@ function Start-Installation {
     Get-DockerImage
     Ask-ForFolders
     Initialize-Volumes
+    Update-SystemVolume
     Build-DockerArgs
     Update-ClaudeConfig
     Restart-Claude
