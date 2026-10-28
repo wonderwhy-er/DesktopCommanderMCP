@@ -141,7 +141,7 @@ export const CORPUS = [
   { id: 'byp_quote', group: 'bypass', shell: 'bash', expect: 'sudo', command: '"sudo" id', note: 'quoted name' },
   { id: 'byp_newline', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'echo hi' + nl + 'sudo ls', note: 'sudo on a second line' },
   { id: 'byp_if', group: 'bypass', shell: 'bash', expect: 'sudo', command: 'if sudo true; then :; fi', note: 'sudo after if' },
-  { id: 'byp_scexe', group: 'bypass', shell: 'powershell', expect: 'sc', command: 'sc.exe stop Spooler', note: 'sc.exe runs the sc program; main reads sc.exe as another name than sc' },
+  { id: 'byp_scexe', group: 'bypass', shell: 'powershell', expect: process.platform === 'win32' ? 'sc' : null, command: 'sc.exe stop Spooler', note: 'sc.exe runs the sc program on Windows, where main reads sc.exe as another name than sc; elsewhere sc.exe is another program' },
 
   // ---- Blocks: a blocked program inside a { } group, a function body or a PowerShell script block ----
   { id: 'blk_fn_body', group: 'block', shell: 'bash', expect: 'sudo', command: 'f() { sudo ls; }; f', note: 'calling f runs sudo from its body' },
@@ -187,9 +187,9 @@ export const CORPUS = [
   { id: 'name_cmd_quote', group: 'name', shell: 'cmd', expect: 'net', command: '"net" user', note: 'cmd drops the quotes and runs net' },
   { id: 'name_cmd_caret', group: 'name', shell: 'cmd', expect: 'net', command: 'n^et user', note: 'cmd drops the ^ and runs net' },
   { id: 'name_ps_path', group: 'name', shell: 'powershell', expect: process.platform === 'win32' ? 'sc' : null, command: 'C:\\Windows\\System32\\SC.EXE query', note: 'sc.exe by its full path, in capitals: sc on Windows; elsewhere that path names no program' },
-  { id: 'name_cmd_exe', group: 'name', shell: 'cmd', expect: 'sc', command: 'sc.exe stop Spooler', note: 'cmd runs sc.exe for sc.exe as for sc' },
+  { id: 'name_cmd_exe', group: 'name', shell: 'cmd', expect: process.platform === 'win32' ? 'sc' : null, command: 'sc.exe stop Spooler', note: 'cmd runs sc.exe for sc.exe as for sc; elsewhere sc.exe is another program' },
   { id: 'name_cmd_path', group: 'name', shell: 'cmd', expect: process.platform === 'win32' ? 'sc' : null, command: '"C:\\Windows\\System32\\SC.EXE" query', note: 'sc.exe by its full path, quoted and in capitals: sc on Windows; elsewhere that path names no program' },
-  { id: 'name_gitbash_exe', group: 'name', shell: 'bash', expect: 'sc', command: 'sc.exe query', note: 'Git Bash on Windows runs sc.exe; sc.exe is read as sc on every system' },
+  { id: 'name_gitbash_exe', group: 'name', shell: 'bash', expect: process.platform === 'win32' ? 'sc' : null, command: 'sc.exe query', note: 'Git Bash on Windows runs sc.exe for sc.exe as for sc; elsewhere sc.exe is another program' },
   { id: 'name_gitbash_path', group: 'name', shell: 'bash', expect: process.platform === 'win32' ? 'sc' : null, command: "'C:\\Windows\\System32\\sc.exe' query", note: 'Git Bash runs a quoted Windows path; its backslashes are part of the path. Elsewhere that path names no program' },
 
   // ---- What a name means in PowerShell: an alias runs its target, not a program of that name ----
