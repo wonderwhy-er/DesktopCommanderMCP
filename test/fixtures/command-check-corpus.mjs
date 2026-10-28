@@ -22,8 +22,10 @@
  * ({sudo,ls} runs sudo);
  * name = a blocked program's name written another way (in quotes, with an
  * escape, a path, capitals or .exe); meaning = a PowerShell name whose meaning
- * there (an alias, or a program) decides what runs; long = the 14k-char case;
- * control = a plain blocked program, to keep every approach honest.
+ * there (an alias, or a program) decides what runs;
+ * ownfunc = a script's own function named like a blocked program;
+ * long = the 14k-char case; control = a plain blocked program, to keep every
+ * approach honest.
  */
 
 const nl = '\n';
@@ -78,6 +80,11 @@ export const CORPUS = [
   {
     id: 'case10', group: 'case', shell: 'bash', expect: null,
     command: "python3 - <<'PY'" + nl + 'print(format(1234.5, ","))' + nl + 'PY', note: 'Python format() in a quoted heredoc',
+  },
+  {
+    id: 'case11', group: 'case', shell: 'bash', expect: null,
+    command: ['halt() {', '  echo "ERROR: $*" >&2', '  exit 1', '}', 'docker load -i "$ARCHIVE" || halt "docker load failed"'].join(nl),
+    note: 'bash function named halt, defined and called',
   },
 
   // ---- GitHub issues ----
@@ -187,6 +194,52 @@ export const CORPUS = [
 
   // ---- What a name means in PowerShell: an alias runs its target, not a program of that name ----
   { id: 'meaning_sc', group: 'meaning', shell: 'powershell', expect: null, expectPerShell: { pwsh: 'sc' }, command: 'sc query', note: 'Windows PowerShell 5.1 runs Set-Content, the target of its alias sc; PowerShell 7 has no sc alias and runs sc.exe' },
+
+  // ---- Own functions: a call to the script's own function is not the blocked program, but its body is checked ----
+  { id: 'fn_format', group: 'ownfunc', shell: 'bash', expect: null, command: ['format() {', '  printf "%s\\n" "$1"', '}', 'format report.txt'].join(nl), note: 'own function format, called after; body has no blocked program' },
+  { id: 'fn_mount', group: 'ownfunc', shell: 'bash', expect: null, command: 'mount() { echo "$1"; }; mount /data', note: 'own function mount, called after' },
+  { id: 'fn_sudo', group: 'ownfunc', shell: 'bash', expect: null, command: 'sudo() { echo "refuse"; }; sudo ls', note: 'own function sudo, called after' },
+  { id: 'fn_net_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: 'function net { param($a) "net $a" }; net status', note: 'own PowerShell function net, called after' },
+  { id: 'fn_sc_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: 'function sc { param($a) $a }; sc query', note: 'own PowerShell function sc, called after' },
+  { id: 'fn_body_runs_sudo', group: 'ownfunc', shell: 'bash', expect: 'sudo', command: 'deploy() {' + nl + '  sudo rm -rf /opt/x' + nl + '}' + nl + 'deploy', note: 'own function deploy, but its body runs the real sudo' },
+  { id: 'fn_call_before_def', group: 'ownfunc', shell: 'bash', expect: 'sudo', command: 'sudo ls' + nl + 'sudo() { echo "refuse"; }', note: 'sudo called before the definition is the real program' },
+  {
+    id: 'fn_deploy_script', group: 'ownfunc', shell: 'bash', expect: null,
+    command: [
+      '#!/bin/bash',
+      'set -euo pipefail',
+      'ARCHIVE="/srv/release/app-image.tar"',
+      'IMAGE="registry.example/app:1.2.3"',
+      'halt() {',
+      '  echo "ERROR: $*" >&2',
+      '  exit 1',
+      '}',
+      '[ -f "$ARCHIVE" ] || halt "archive missing: $ARCHIVE"',
+      'echo "$EXPECTED_SHA  $ARCHIVE" | sha256sum -c - >/dev/null || halt "hash mismatch"',
+      'if docker image inspect --format \'{{.Id}}\' "$IMAGE" >/dev/null 2>&1; then',
+      '  halt "image already present: $IMAGE"',
+      'fi',
+      'docker load -i "$ARCHIVE"',
+    ].join(nl),
+    note: "case 11's whole deployment script, written from the customer's description: its own halt, called after || and inside if",
+  },
+  { id: 'fn_called_from_fn', group: 'ownfunc', shell: 'bash', expect: null, command: ['halt() { echo "ERROR: $*" >&2; exit 1; }', 'main() { docker load -i "$ARCHIVE" || halt "load failed"; }', 'main'].join(nl), note: 'the own halt, called from another function of the script' },
+  { id: 'fn_body_path', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { /sbin/halt -p; }; halt', note: 'the body of the own halt runs /sbin/halt' },
+  { id: 'fn_path_after', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { echo stop; }; /sbin/halt -p', note: 'a path is the program, even after an own halt' },
+  { id: 'fn_in_subshell', group: 'ownfunc', shell: 'bash', expect: 'sudo', command: '( sudo() { :; } ); sudo ls', note: 'sudo defined only inside a subshell' },
+  { id: 'fn_in_fn', group: 'ownfunc', shell: 'bash', expect: 'sudo', command: 'f() { sudo() { :; }; }; sudo ls', note: 'sudo defined only inside another function, which never runs' },
+  { id: 'fn_after_or', group: 'ownfunc', shell: 'bash', expect: 'sudo', command: 'true || sudo() { :; }; sudo ls', note: 'sudo defined only after a || that does not run' },
+  { id: 'fn_unset', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { echo stop; }; unset -f halt; halt', note: 'unset -f removed the own halt' },
+  { id: 'fn_builtin_unset', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { echo stop; }; builtin unset -f halt; halt', note: 'builtin unset -f removed the own halt' },
+  { id: 'fn_unhash_zsh', group: 'ownfunc', shell: 'zsh', expect: 'halt', command: 'halt() { echo stop; }; unhash -f halt; halt', note: "zsh's unhash -f removed the own halt" },
+  { id: 'fn_unset_written_before', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'cleanup() { unset -f halt; }; halt() { echo stop; }; cleanup; halt', note: 'the unset is written before the definition, but runs when cleanup is called after it' },
+  { id: 'fn_call_written_before', group: 'ownfunc', shell: 'bash', expect: 'halt', command: 'halt() { echo stop; }; main() { halt; }; unset -f halt; main', note: 'the call is written before the unset, but runs when main is called after it' },
+  { id: 'fn_case_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: "function Net { 'x' }; net status", note: 'PowerShell finds a function whatever the case of its name' },
+  { id: 'fn_in_block_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "& { function net { 'x' } }; net user", note: 'net defined only inside a script block' },
+  { id: 'fn_remove_item_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Remove-Item function:net; net user", note: 'Remove-Item function:net removed the own net' },
+  { id: 'fn_remove_pipe_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; 'function:net' | Remove-Item; net user", note: 'Remove-Item with the path from the pipeline removed the own net' },
+  { id: 'fn_variable_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; $function:net = $null; net user", note: '$function:net = $null removed the own net' },
+  { id: 'fn_start_job_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Start-Job { net user } | Receive-Job -Wait", note: "a job runs in another process, where the script's functions don't exist" },
 
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
