@@ -356,8 +356,8 @@ const POSIX_SHELL_COMMANDS = new Map<string, PosixWrapper>([
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
-/** A program a wrapper starts: its words as the shell reads them and as written, the name first */
-type Started = Pick<FoundCommand, 'words' | 'written'>;
+/** A program a wrapper starts: its words as the shell reads them, as written and as texts, the name first */
+type Started = Pick<FoundCommand, 'words' | 'written' | 'wordTexts'>;
 
 /**
  * The commands that run: each of `commands`, followed by the programs that
@@ -369,8 +369,8 @@ export function withStartedPrograms(commands: FoundCommand[], shellType: ShellTy
   const add = (command: FoundCommand): void => {
     running.push(command);
     if (command.nameAtRunTime) return;
-    for (const { words, written } of startedPrograms(command, shellType)) {
-      add({ name: words[0] ?? written[0], words, written, start: command.start, nameAtRunTime: words[0] === null });
+    for (const { words, written, wordTexts } of startedPrograms(command, shellType)) {
+      add({ name: words[0] ?? written[0], words, written, wordTexts, start: command.start, nameAtRunTime: words[0] === null });
     }
   };
   commands.forEach(add);
@@ -380,12 +380,12 @@ export function withStartedPrograms(commands: FoundCommand[], shellType: ShellTy
 /** The programs a command starts when it is a wrapper: none for any other command */
 function startedPrograms(command: FoundCommand, shellType: ShellType): Started[] {
   const name = programName(command.name);
-  const { words, written } = command;
-  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at) });
+  const { words, written, wordTexts } = command;
+  const from = (at: number): Started => ({ words: words.slice(at), written: written.slice(at), wordTexts: wordTexts.slice(at) });
   const posix = PROGRAMS.get(name) ?? (shellType === 'posix' ? POSIX_SHELL_COMMANDS.get(name) : undefined);
   if (posix) return posixPrograms(command, posix);
   // Its own arguments are in -ArgumentList, a text the check doesn't read, so a program Start-Process starts has only its name
-  if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written] }));
+  if (shellType === 'powershell' && name === 'start-process') return (command.filePaths ?? []).map(({ word, written }) => ({ words: [word], written: [written], wordTexts: [word ?? written] }));
   if (shellType === 'cmd' && name === 'start') return cmdStartProgramsAt(command).map(from);
   return [];
 }
@@ -395,11 +395,11 @@ function startedPrograms(command: FoundCommand, shellType: ShellType): Started[]
  * can be. env -S puts the words of its text in its own place and reads them as
  * env's words, followed by the words after the text (env -S ls sudo runs ls).
  */
-function posixPrograms({ words, written }: Started, rules: PosixWrapper): Started[] {
+function posixPrograms({ words, written, wordTexts }: Started, rules: PosixWrapper): Started[] {
   // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
   const first = words[1];
   if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
-  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end) });
+  const from = (i: number, end = words.length): Started => ({ words: words.slice(i, end), written: written.slice(i, end), wordTexts: wordTexts.slice(i, end) });
   const after = rules.programAfter;
   if (after) {
     // find -exec sudo rm {} ;: each program runs from the word after -exec up to ;. A word known only at run time
@@ -432,6 +432,7 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
     return runs.map(({ program, at }) => ({
       words: [program, ...words.slice(args)],
       written: [at === undefined ? program ?? '' : written[at], ...written.slice(args)],
+      wordTexts: [at === undefined ? program ?? '' : wordTexts[at], ...wordTexts.slice(args)],
     }));
   }
   // psexec \\server sudo ls runs sudo on another computer
@@ -459,6 +460,7 @@ function posixPrograms({ words, written }: Started, rules: PosixWrapper): Starte
     return posixPrograms({
       words: [words[0], ...split.words, ...words.slice(after)],
       written: [written[0], ...split.written, ...written.slice(after)],
+      wordTexts: [wordTexts[0], ...split.wordTexts, ...wordTexts.slice(after)],
     }, rules);
   })];
 }
@@ -646,22 +648,27 @@ const ENV_ESCAPES: Record<string, string> = { f: '\f', n: '\n', r: '\r', t: '\t'
  * read as well as it can be.
  */
 function envSplitWords(text: string): Started {
-  const split: Started = { words: [], written: [] };
+  const split: Started = { words: [], written: [], wordTexts: [] };
   // The word being read: undefined between words, null when known only at run time
   let word: string | null | undefined;
+  // Its text, with ${NAME} as written
+  let wordText = '';
   let start = 0;
   let quote = '';
-  const add = (chars: string | null, at: number): void => {
+  const add = (chars: string | null, at: number, asText = chars ?? ''): void => {
     if (word === undefined) {
       word = '';
+      wordText = '';
       start = at;
     }
     word = word === null || chars === null ? null : word + chars;
+    wordText += asText;
   };
   const end = (at: number): void => {
     if (word === undefined) return;
     split.words.push(word);
     split.written.push(text.slice(start, at));
+    split.wordTexts.push(wordText);
     word = undefined;
   };
   for (let i = 0; i < text.length; i++) {
@@ -693,7 +700,7 @@ function envSplitWords(text: string): Started {
     }
     const close = char === '$' && text[i + 1] === '{' ? text.indexOf('}', i) : -1;
     if (close !== -1) {
-      add(null, i);
+      add(null, i, text.slice(i, close + 1));
       i = close;
       continue;
     }
