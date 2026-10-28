@@ -30,7 +30,9 @@
  * sudo ls runs sudo), also past one its rules don't list, which may take a
  * value (nice -X 10 sudo ls), or in the text env -S splits (env -S 'sudo
  * ls'), and words of a wrapper that are no program (command -v sudo,
- * Windows' timeout /t 5);
+ * Windows' timeout /t 5); inline = a blocked program in the command a shell
+ * is started with (bash -c, pwsh -Command or -EncodedCommand, cmd /c or /k),
+ * or in the text eval or Invoke-Expression runs in the same shell;
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -404,6 +406,60 @@ export const CORPUS = [
   { id: 'wrap_call', group: 'wrapper', shell: 'cmd', expect: 'net', command: 'call net stop Spooler', note: 'cmd call runs net' },
   { id: 'wrap_call_user', group: 'wrapper', shell: 'cmd', expect: 'net', command: 'call net user', note: 'cmd call runs net' },
   { id: 'wrap_call_label', group: 'wrapper', shell: 'cmd', expect: null, command: 'call :format D:', note: 'format is a label of a batch file, not a program' },
+
+  // ---- Inline shells: a blocked program in the command a shell is started with ----
+  { id: 'inline_bashc', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c 'sudo ls'", note: 'bash -c runs sudo' },
+  { id: 'inline_shc', group: 'inline', shell: 'bash', expect: 'reboot', command: 'sh -c "reboot"', note: 'sh -c runs reboot' },
+  { id: 'inline_zshc', group: 'inline', shell: 'zsh', expect: 'shutdown', command: "zsh -c 'shutdown -h now'", note: 'zsh -c runs shutdown' },
+  { id: 'inline_pwshcmd', group: 'inline', shell: 'powershell', expect: 'net', command: "pwsh -Command 'net stop Spooler'", note: 'pwsh -Command runs net' },
+  { id: 'inline_pwshenc', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -EncodedCommand bgBlAHQAIABzAHQAbwBwACAAUwBwAG8AbwBsAGUAcgA=', note: 'base64 of "net stop Spooler"' },
+  { id: 'inline_pwshenc_short', group: 'inline', shell: 'powershell', expect: 'net', command: 'powershell -enc bgBlAHQAIABzAHQAbwBwACAAUwBwAG8AbwBsAGUAcgA=', note: '-enc short form' },
+  { id: 'inline_cmdc', group: 'inline', shell: 'cmd', expect: 'net', command: 'cmd /c net stop Spooler', note: 'cmd /c runs net' },
+  { id: 'inline_bashlc', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -lc 'sudo ls'", note: '-l and -c in one word, the way start_process starts bash' },
+  { id: 'inline_bash_opt', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -o pipefail -c 'sudo ls'", note: '-o takes the next word, pipefail, as its value' },
+  { id: 'inline_bash_c_first', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c -e 'sudo ls'", note: 'options can follow -c: the command is the first word that is not an option' },
+  { id: 'inline_bash_second', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c 'echo hi; sudo ls'", note: 'the second command in the text' },
+  { id: 'inline_bash_var', group: 'inline', shell: 'bash', expect: 'sudo', command: 'bash -c "cd $HOME && sudo ls"', note: 'the outer shell fills in $HOME, and sudo runs whatever it is' },
+  { id: 'inline_nested', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c \"sh -c 'sudo ls'\"", note: 'a shell started by a shell started with a command' },
+  { id: 'inline_fishc', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish -c 'sudo ls'", note: 'fish -c runs sudo' },
+  { id: 'inline_fish_command', group: 'inline', shell: 'bash', expect: 'sudo', command: "fish --command 'sudo ls'", note: "fish's long form of -c" },
+  { id: 'inline_env', group: 'inline', shell: 'bash', expect: 'sudo', command: "env bash -c 'sudo ls'", note: 'env starts bash, and bash runs sudo' },
+  { id: 'inline_nohup_var', group: 'inline', shell: 'bash', expect: 'reboot', command: 'nohup sh -c "sleep $T; reboot"', note: 'nohup starts sh with a text that has $T in it' },
+  { id: 'inline_bash_from_ps', group: 'inline', shell: 'powershell', expect: 'sudo', command: "bash -c 'sudo ls'", note: 'bash (Git Bash or WSL) started from PowerShell' },
+  { id: 'inline_cmd_from_bash', group: 'inline', shell: 'bash', expect: 'net', command: 'cmd //c net stop Spooler', note: 'Git Bash passes //c to cmd as /c' },
+  { id: 'inline_powershellcmd', group: 'inline', shell: 'powershell', expect: 'net', command: 'powershell -Command "net stop Spooler"', note: 'Windows PowerShell -Command runs net' },
+  { id: 'inline_ps_positional', group: 'inline', shell: 'powershell', expect: 'net', command: 'powershell net stop Spooler', note: 'Windows PowerShell runs words given without -Command as a command' },
+  { id: 'inline_ps_e', group: 'inline', shell: 'powershell', expect: 'net', command: 'powershell -e bgBlAHQAIABzAHQAbwBwACAAUwBwAG8AbwBsAGUAcgA=', note: '-e is -EncodedCommand too' },
+  { id: 'inline_pwsh_opts', group: 'inline', shell: 'powershell', expect: 'net', command: "pwsh -NoProfile -ExecutionPolicy Bypass -c 'net stop Spooler'", note: 'a switch, a parameter with its value, then -c' },
+  { id: 'inline_pwsh_words', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -Command net stop Spooler', note: 'pwsh joins the words after -Command into one command' },
+  { id: 'inline_pwsh_var', group: 'inline', shell: 'powershell', expect: 'net', command: 'pwsh -Command "net user $name"', note: 'PowerShell fills in $name, and net runs whatever it is' },
+  { id: 'inline_cmd_from_ps', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c net stop Spooler', note: 'cmd started from PowerShell' },
+  { id: 'inline_cmd_from_ps_quoted', group: 'inline', shell: 'powershell', expect: 'net', command: 'cmd /c "net stop Spooler"', note: 'cmd drops the quotes around the command' },
+  { id: 'inline_cmdk', group: 'inline', shell: 'cmd', expect: 'net', command: 'cmd /k net stop Spooler', note: 'cmd /k runs net, then stays open' },
+  { id: 'inline_cmd_quoted', group: 'inline', shell: 'cmd', expect: 'net', command: 'cmd /c "echo hi & net stop Spooler"', note: 'the quotes keep & for the inner cmd, which runs both commands' },
+  { id: 'inline_cmd_switches', group: 'inline', shell: 'cmd', expect: 'net', command: 'cmd /q /d /c net stop Spooler', note: 'switches before /c' },
+  { id: 'inline_cmd_var', group: 'inline', shell: 'cmd', expect: 'net', command: 'cmd /c net user %USERNAME%', note: 'cmd fills in %USERNAME%, and net runs whatever it is' },
+  { id: 'inline_cmd_path_quoted', group: 'inline', shell: 'cmd', expect: process.platform === 'win32' ? 'net' : null, command: 'cmd /c "C:\\Program Files\\Tools\\net.exe" user', note: 'cmd keeps the quotes around a program path with a space in it: net on Windows; elsewhere that path names no program' },
+  { id: 'inline_bashc_ok', group: 'inline', shell: 'bash', expect: null, command: "bash -c 'ls -la'", note: 'an allowed program inside bash -c' },
+  { id: 'inline_bash_arg0_ok', group: 'inline', shell: 'bash', expect: null, command: "bash -c 'echo \"$0\"' sudo", note: 'only the word after -c is the command; sudo is its $0' },
+  { id: 'inline_bash_text_ok', group: 'inline', shell: 'bash', expect: null, command: "bash -c 'echo sudo ls'", note: 'sudo is text that echo prints' },
+  { id: 'inline_ownfunc_ok', group: 'inline', shell: 'bash', expect: null, command: 'bash() { echo "$@"; }; bash -c \'sudo ls\'', note: "bash is the script's own function, which only prints its words" },
+  { id: 'inline_pwsh_text_ok', group: 'inline', shell: 'powershell', expect: null, command: "pwsh -Command \"Write-Output 'net stop Spooler'\"", note: 'the command is a string that PowerShell prints' },
+  { id: 'inline_cmd_text_ok', group: 'inline', shell: 'cmd', expect: null, command: 'cmd /c echo "a & net stop Spooler"', note: 'a quoted & is text for the inner cmd too' },
+  { id: 'inline_cmd_from_ps_text_ok', group: 'inline', shell: 'powershell', expect: null, command: "cmd /c echo 'a & net stop Spooler'", note: 'PowerShell passes the text to cmd in quotes' },
+  { id: 'inline_bash_runtime', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'bash -c "$CMD"', note: 'the command is in $CMD, known only at run time' },
+  // eval and Invoke-Expression run a command text in the same shell
+  { id: 'inline_eval', group: 'inline', shell: 'bash', expect: 'sudo', command: "eval 'sudo ls'", note: 'eval runs sudo' },
+  { id: 'inline_eval_words', group: 'inline', shell: 'bash', expect: 'sudo', command: 'eval sudo ls', note: 'eval joins its words into the command' },
+  { id: 'inline_eval_zsh', group: 'inline', shell: 'zsh', expect: 'reboot', command: 'eval "reboot"', note: 'zsh eval runs reboot' },
+  { id: 'inline_eval_in_bashc', group: 'inline', shell: 'bash', expect: 'sudo', command: "bash -c \"eval 'sudo ls'\"", note: 'eval inside the text bash -c runs' },
+  { id: 'inline_iex', group: 'inline', shell: 'powershell', expect: 'net', command: "Invoke-Expression 'net stop Spooler'", note: 'Invoke-Expression runs net' },
+  { id: 'inline_iex_alias', group: 'inline', shell: 'powershell', expect: 'net', command: "iex 'net user'", note: 'iex is its alias' },
+  { id: 'inline_iex_command', group: 'inline', shell: 'powershell', expect: 'net', command: "Invoke-Expression -Command 'net user'", note: 'the text given by its parameter name' },
+  { id: 'inline_eval_ok', group: 'inline', shell: 'bash', expect: null, command: "eval 'echo sudo'", note: 'sudo is text that echo prints, and the text is all there to check' },
+  { id: 'inline_iex_ok', group: 'inline', shell: 'powershell', expect: null, command: "iex 'Get-Date'", note: 'an allowed command, all there to check' },
+  { id: 'inline_eval_runtime_part', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'eval "sudo $X"', note: 'part of the text is known only at run time, so eval stays unseen' },
+  { id: 'inline_iex_pipe', group: 'inline', shell: 'powershell', expect: 'unknowable', command: "'net user' | iex", note: 'the text comes from the pipeline' },
 
   // ---- Run time: the program is chosen when the command runs, so the check can't see it ----
   { id: 'rt_eval', group: 'runtime', shell: 'bash', expect: 'unknowable', command: 'eval "$CMD"', note: 'the program is in $CMD, unknown until run time' },

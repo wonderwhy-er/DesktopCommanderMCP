@@ -98,8 +98,8 @@ async function testThroughServer(bash, powershells) {
 
 /**
  * What hides a program from the check: the four kinds, the shells' options
- * around a script file, and commands that hide nothing, as checkCommand()
- * reads them.
+ * around a script file or a command text, and commands that hide nothing, as
+ * checkCommand() reads them.
  */
 async function testUnseen(powershells) {
   const runTime = (what) => [{ what, inFile: false }];
@@ -109,6 +109,10 @@ async function testUnseen(powershells) {
   const cases = [
     ['bash', 'eval "$CMD"', runTime('eval')],
     ['powershell', 'iex $cmd', runTime('Invoke-Expression')],
+    // A text eval or Invoke-Expression is given whole is read, so nothing is hidden; a text known only in part still is
+    ['bash', "eval 'echo hi'", []],
+    ['powershell', "iex 'Get-Date'", []],
+    ['bash', 'eval "ls $X"', runTime('eval')],
     ['powershell', '& $tool stop Spooler', runTime('$tool')],
     ['bash', 'bash deploy.sh', inFile('deploy.sh')],
     ['bash', 'bash -o pipefail -x deploy.sh', inFile('deploy.sh')],
@@ -121,6 +125,13 @@ async function testUnseen(powershells) {
     ['powershell', './deploy.ps1', inFile('./deploy.ps1')],
     ['powershell', '.\\deploy.ps1', inFile('.\\deploy.ps1')],
     ['powershell', '& ./deploy.ps1', inFile('./deploy.ps1')],
+    ['powershell', 'pwsh deploy', inFile('deploy')],
+    ['powershell', 'pwsh --file deploy', inFile('deploy')],
+    // The command given with -c is a command text, also when it names a .ps1
+    ['powershell', "pwsh -c 'Write-Output a.ps1'", []],
+    // A word known only at run time before -c may be the script file or an option: the shell is noted, and the command text is read too
+    ['bash', 'bash "$OPTS" -c make', runTime('bash')],
+    ['bash', 'bash "$OPTS" -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
     ['bash', "bash -c 'sudo ls'", []],
     ['bash', 'bash -lc make', []],
     ['bash', 'bash -s < deploy.sh', []],
