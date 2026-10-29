@@ -203,16 +203,59 @@ export interface ShellSpawnConfig {
   windowsVerbatim?: boolean;
 }
 
+// Started through the fallback below, which runs `<shell> -c <command>`: these read it as POSIX sh
+const SH_FAMILY = new Set(['sh', 'dash', 'ash', 'ksh', 'mksh', 'pdksh', 'yash', 'posh']);
+
+type ShellKind = 'bash-or-zsh' | 'pwsh' | 'powershell' | 'cmd' | 'fish' | 'sh-family' | 'other';
+
+// One answer for how a shell is started and for the language it reads commands in
+function getShellKind(shellPath: string): ShellKind {
+  const shellName = path.basename(shellPath).toLowerCase();
+  if (shellName.includes('bash') || shellName.includes('zsh')) return 'bash-or-zsh';
+  if (shellName === 'pwsh' || shellName === 'pwsh.exe') return 'pwsh';
+  if (shellName === 'powershell' || shellName === 'powershell.exe') return 'powershell';
+  if (shellName === 'cmd' || shellName === 'cmd.exe') return 'cmd';
+  if (shellName.includes('fish')) return 'fish';
+  if (SH_FAMILY.has(shellName.replace(/\.exe$/, ''))) return 'sh-family';
+  return 'other';
+}
+
+/** The command languages the command check reads with their own grammar */
+export type ShellSyntax = 'posix';
+
+/**
+ * The language a shell reads a command in, when the command check has a parser
+ * for it; undefined for the others (PowerShell, cmd, fish, unknown shells).
+ */
+export function getShellSyntax(shellPath: string): ShellSyntax | undefined {
+  const kind = getShellKind(shellPath);
+  switch (kind) {
+    case 'bash-or-zsh':
+    case 'sh-family':
+      return 'posix';
+    case 'pwsh':
+    case 'powershell':
+    case 'cmd':
+    case 'fish':
+    case 'other':
+      return undefined;
+    default: {
+      const unhandled: never = kind;
+      throw new Error(`No command syntax decided for shell kind ${unhandled}`);
+    }
+  }
+}
+
 /**
  * Get the appropriate spawn configuration for a given shell
  * This handles login shell flags for different shell types
  */
 export function getShellSpawnArgs(shellPath: string, command: string): ShellSpawnConfig {
-  const shellName = path.basename(shellPath).toLowerCase();
+  const kind = getShellKind(shellPath);
   const executable = resolveProgramPath(shellPath);
 
   // Unix shells with login flag support
-  if (shellName.includes('bash') || shellName.includes('zsh')) {
+  if (kind === 'bash-or-zsh') {
     return {
       executable,
       args: ['-l', '-c', command],
@@ -221,7 +264,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // PowerShell Core (cross-platform, supports -Login)
-  if (shellName === 'pwsh' || shellName === 'pwsh.exe') {
+  if (kind === 'pwsh') {
     return {
       executable,
       args: ['-Login', '-Command', command],
@@ -230,7 +273,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // Windows PowerShell 5.1 (no login flag support)
-  if (shellName === 'powershell' || shellName === 'powershell.exe') {
+  if (kind === 'powershell') {
     return {
       executable,
       args: ['-Command', command],
@@ -239,7 +282,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // CMD
-  if (shellName === 'cmd' || shellName === 'cmd.exe') {
+  if (kind === 'cmd') {
     return {
       executable,
       args: ['/c', command],
@@ -249,7 +292,7 @@ export function getShellSpawnArgs(shellPath: string, command: string): ShellSpaw
   }
 
   // Fish shell (uses -l for login, -c for command)
-  if (shellName.includes('fish')) {
+  if (kind === 'fish') {
     return {
       executable,
       args: ['-l', '-c', command],

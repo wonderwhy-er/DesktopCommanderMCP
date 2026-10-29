@@ -152,10 +152,18 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     };
   }
 
+  // Chosen first: the shell that runs the command decides how it is read when it's checked
+  let shellUsed: string | undefined = parsed.data.shell;
+
+  if (!shellUsed) {
+    const config = await configManager.getConfig();
+    shellUsed = config.defaultShell || getDefaultShell();
+  }
+
   try {
     // Each command's first word as typed, so telemetry replaces a path whole
     // (the base name alone would send the last part of it)
-    const commands = commandManager.extractCommands(parsed.data.command, true).join(', ');
+    const commands = commandManager.extractCommands(parsed.data.command, true, shellUsed).join(', ');
     capture('server_start_process', {
       command: commandManager.getBaseCommand(parsed.data.command),
       commands: commands
@@ -166,7 +174,7 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
     });
   }
 
-  const isAllowed = await commandManager.validateCommand(parsed.data.command);
+  const isAllowed = await commandManager.validateCommand(parsed.data.command, shellUsed);
   if (!isAllowed) {
     return {
       content: [{ type: "text", text: `Error: Command not allowed: ${parsed.data.command}` }],
@@ -199,13 +207,6 @@ export async function startProcess(args: unknown, maxWaitMs: number = MAX_PROCES
       }],
       structuredContent: { pid: virtualPid, status: 'waiting_for_input' },
     };
-  }
-
-  let shellUsed: string | undefined = parsed.data.shell;
-
-  if (!shellUsed) {
-    const config = await configManager.getConfig();
-    shellUsed = config.defaultShell || getDefaultShell();
   }
 
   const result = await terminalManager.executeCommand(
