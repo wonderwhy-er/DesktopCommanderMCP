@@ -1,6 +1,6 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
 import type { FoundCommand } from './command-reading.js';
-import { shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
+import { sameShellProgramReadings, shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
 
 /**
  * What a shell started by a command runs, by the shell's own rules for its
@@ -86,8 +86,8 @@ function textProgramRuns(found: FoundCommand, program: string): ShellRun {
  * command is noted then (file null).
  */
 function readingsRun({ operands, texts }: OptionReadings, { words, wordTexts }: FoundCommand, script: boolean): ShellRun {
-  const textOf = ({ text, at, rest }: OptionReadings['texts'][number]): string =>
-    (at === undefined ? text ?? '' : rest ? wordTexts.slice(at).join(' ') : wordTexts[at]);
+  const textOf = ({ text, at, to }: OptionReadings['texts'][number]): string =>
+    (at === undefined ? text ?? '' : to !== undefined ? wordTexts.slice(at, to).join(' ') : wordTexts[at]);
   const after = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
   const atRunTime = texts.some(({ text, at }) => at !== undefined && text === null) || after.includes(null)
     || (script && after.length > 1);
@@ -196,10 +196,19 @@ function cmdRuns({ words, wordTexts }: FoundCommand): ShellRun {
  * as the text of bash -c is, so the programs written in it are checked
  * (eval "cd $HOME && sudo ls"). That part may hold any command, so file is
  * null then, and the command is noted; so is a text that comes from the
- * pipeline ('net user' | iex). No texts for any other command.
+ * pipeline ('net user' | iex). gsudo, in any shell, runs its command in the
+ * shell it was started from too (gsudo 'net user'), and gsudo !! runs the
+ * last command again, which the check can't see, so it is noted. No texts
+ * for any other command.
  */
-export function sameShellTexts({ name, words, wordTexts }: FoundCommand, shellType: ShellType): ShellRun {
+export function sameShellTexts(found: FoundCommand, shellType: ShellType): ShellRun {
+  const { name, words, wordTexts } = found;
   const program = programName(name);
+  const sameShell = sameShellProgramReadings(program, words);
+  if (sameShell) {
+    const run = readingsRun(sameShell, found, false);
+    return run.texts.includes('!!') ? { texts: [], file: null } : run;
+  }
   if (shellType === 'posix' && program === 'eval') {
     const from = words[1] === '--' ? 2 : 1;
     return {
