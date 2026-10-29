@@ -132,6 +132,12 @@ async function testUnseen(powershells) {
     // A word known only at run time before -c may be the script file or an option: the shell is noted, and the command text is read too
     ['bash', 'bash "$OPTS" -c make', runTime('bash')],
     ['bash', 'bash "$OPTS" -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
+    // A command text with a part known only at run time notes the shell given it, and the programs it hides are noted too
+    ['bash', 'bash -c "$CMD"', [...runTime('bash'), ...runTime('$CMD')]],
+    ['bash', 'bash -c "ls $X"', runTime('bash')],
+    ['powershell', 'pwsh -Command "$cmd"', runTime('pwsh')],
+    ['cmd', 'bash -c %CMD%', runTime('bash')],
+    ...powershells.map((shell) => ['bash', `${shell} -c "$CMD"`, runTime(shell)]),
     ['bash', "bash -c 'sudo ls'", []],
     ['bash', 'bash -lc make', []],
     ['bash', 'bash -s < deploy.sh', []],

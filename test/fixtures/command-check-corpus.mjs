@@ -33,7 +33,9 @@
  * ls'), and words of a wrapper that are no program (command -v sudo,
  * Windows' timeout /t 5); inline = a blocked program in the command a shell
  * is started with (bash -c, pwsh -Command or -EncodedCommand, cmd /c or /k),
- * or in the text eval or Invoke-Expression runs in the same shell;
+ * or in the text eval or Invoke-Expression runs in the same shell, and a
+ * command a shell is started with that is known only at run time, in whole
+ * or in part;
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -472,6 +474,17 @@ export const CORPUS = [
   { id: 'inline_cmd_text_ok', group: 'inline', shell: 'cmd', expect: null, command: 'cmd /c echo "a & net stop Spooler"', note: 'a quoted & is text for the inner cmd too' },
   { id: 'inline_cmd_from_ps_text_ok', group: 'inline', shell: 'powershell', expect: null, command: "cmd /c echo 'a & net stop Spooler'", note: 'PowerShell passes the text to cmd in quotes' },
   { id: 'inline_bash_runtime', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'bash -c "$CMD"', note: 'the command is in $CMD, known only at run time' },
+  // The shell that starts a shell fills in a part known only at run time before the started shell reads the text, so that part may hold any command
+  { id: 'inline_bash_runtime_part', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'bash -c "ls $X"', note: '$X may hold another command (; sudo ls), which bash reads with the rest' },
+  { id: 'inline_pwsh_runtime', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'pwsh -Command $cmd', note: 'the command is the value of $cmd; read as written, $cmd is a value, not a command' },
+  { id: 'inline_pwsh_runtime_quoted', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'pwsh -Command "$cmd"', note: 'the same in a string' },
+  { id: 'inline_pwsh_runtime_expr', group: 'inline', shell: 'powershell', expect: 'unknowable', command: "pwsh -Command ('net ' + 'user')", note: 'PowerShell makes the text net user only when the command runs' },
+  { id: 'inline_pwsh_runtime_name', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'pwsh -Command "$tool stop Spooler"', note: 'the program is the value of $tool; as written, the text is not one PowerShell can read' },
+  { id: 'inline_pwshenc_runtime', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'powershell -EncodedCommand $enc', note: 'the encoded command is the value of $enc' },
+  { id: 'inline_ps_positional_runtime', group: 'inline', shell: 'powershell', expect: 'unknowable', command: 'powershell $cmd', note: 'Windows PowerShell runs the value of $cmd as a command, pwsh as a script file' },
+  { id: 'inline_cmd_from_bash_runtime', group: 'inline', shell: 'bash', expect: 'unknowable', command: 'cmd //c "$CMD"', note: 'cmd runs the value of $CMD; cmd itself fills in only %VAR%' },
+  { id: 'inline_bash_from_cmd_runtime', group: 'inline', shell: 'cmd', expect: 'unknowable', command: 'bash -c %CMD%', note: 'cmd fills in %CMD% before bash reads it' },
+  { id: 'inline_pwsh_value_runtime_ok', group: 'inline', shell: 'powershell', expect: null, command: "powershell -ExecutionPolicy $p -Command 'Get-Date'", note: '$p is the value of -ExecutionPolicy, not part of the command' },
   // eval and Invoke-Expression run a command text in the same shell
   { id: 'inline_eval', group: 'inline', shell: 'bash', expect: 'sudo', command: "eval 'sudo ls'", note: 'eval runs sudo' },
   { id: 'inline_eval_words', group: 'inline', shell: 'bash', expect: 'sudo', command: 'eval sudo ls', note: 'eval joins its words into the command' },
