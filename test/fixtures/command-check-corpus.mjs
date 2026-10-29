@@ -253,6 +253,14 @@ export const CORPUS = [
   { id: 'fn_runtime_name_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; $c = 'iex'; & $c ('Remove-Item fun' + 'ction:net'); net user", note: 'a command named at run time ($c is iex) removed the own net' },
   { id: 'fn_script_file_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; . ./lib.ps1; net user", note: 'a script file runs in this session, and may remove the own net' },
   { id: 'fn_method_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; [scriptblock]::Create('Remove-Item function:net').Invoke(); net user", note: 'a script block made from text by a method removed the own net' },
+  { id: 'fn_noglob_eval_zsh', group: 'ownfunc', shell: 'zsh', expect: 'halt', command: "halt() { :; }; noglob eval 'unset -f halt'; halt", note: "eval after zsh's noglob removed the own halt" },
+  { id: 'fn_set_content_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Set-Content -Path ('func' + 'tion:net') -Value 'net.exe user'; net user", note: 'Set-Content with a path built at run time gave the own net a new body' },
+  { id: 'fn_foreach_method_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; $ExecutionContext.InvokeCommand | ForEach-Object InvokeScript ('Remove-Item fun' + 'ction:net'); net user", note: 'ForEach-Object called a method that ran text and removed the own net' },
+  { id: 'fn_foreach_property_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: "function net { 'x' }; Get-Item . | ForEach-Object Name; net user", note: 'ForEach-Object reading a property runs no code: the own net stays' },
+  { id: 'fn_add_type_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Add-Type -Path ./Tools.cs; net user", note: 'Add-Type loads code that may remove the own net' },
+  { id: 'fn_import_module_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; Import-Module ./tools.psm1; net user", note: 'a module runs in this session, and may remove the own net' },
+  { id: 'fn_path_no_extension_ps', group: 'ownfunc', shell: 'powershell', expect: 'net', command: "function net { 'x' }; . ./lib; net user", note: '. ./lib runs lib.ps1, which may remove the own net' },
+  { id: 'fn_exe_path_ps', group: 'ownfunc', shell: 'powershell', expect: null, command: "function net { 'x' }; & 'C:\\Windows\\System32\\where.exe' git; net user", note: 'a program by its path runs no PowerShell code: the own net stays' },
 
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
