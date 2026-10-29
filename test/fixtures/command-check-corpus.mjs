@@ -162,7 +162,7 @@ export const CORPUS = [
   { id: 'exp_brace_later', group: 'expansion', shell: 'bash', expect: 'reboot', command: 'echo hi; {reboot,now}', note: 'the second command\'s name: "reboot now"' },
   { id: 'exp_brace_var_empty', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{$X,sudo} id', note: '"$X sudo id": when $X is empty, bash drops that word and runs "sudo id"' },
   { id: 'exp_brace_var_outside', group: 'expansion', shell: 'bash', expect: 'sudo', command: '$X{,} sudo', note: '"$X $X sudo": when $X is empty, both words go and sudo is the name' },
-  { id: 'exp_brace_var_joined', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{$X,s}udo id', note: '"$Xudo sudo id": bash reads the letters after $X into its name, and $Xudo may be empty' },
+  { id: 'exp_brace_var_joined', group: 'expansion', shell: 'bash', expect: 'sudo', command: '{$X,su}do id', note: '"$Xdo sudo id": bash reads the letters after $X into its name, and $Xdo may be empty' },
   { id: 'exp_brace_args', group: 'expansion', shell: 'bash', expect: null, command: 'cp file{,.bak} /tmp', note: 'braces in an argument: cp runs' },
   { id: 'exp_brace_echo', group: 'expansion', shell: 'bash', expect: null, command: 'echo {sudo,ls}', note: 'braces in an argument: echo runs' },
   { id: 'exp_brace_esc_comma', group: 'expansion', shell: 'bash', expect: null, command: '{su\\,do,ls}', note: 'an escaped comma is text: "su,do ls"' },
