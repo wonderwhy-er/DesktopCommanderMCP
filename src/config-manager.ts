@@ -72,13 +72,24 @@ export function isTelemetryDisabledValue(value: unknown): boolean {
   return normalizeTelemetryEnabledValue(value) === false;
 }
 
+/** The settings that are on or off */
+const ON_OFF_SETTINGS = ['telemetryEnabled', 'toolCallAuditLogEnabled'];
+
 /**
  * Parses config.json's text. Editors saving "UTF-8 with BOM" (Notepad,
  * PowerShell 5's Set-Content -Encoding UTF8) put U+FEFF first, which
- * JSON.parse rejects although the config is complete.
+ * JSON.parse rejects although the config is complete. The on/off settings
+ * come out as booleans: a config.json from before one existed has no value
+ * for it, which means on, and one edited by hand can say "false" or " FALSE ".
  */
 export function parseConfig(text: string): ServerConfig {
-  return JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  const config = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  if (config && typeof config === 'object') {
+    for (const key of ON_OFF_SETTINGS) {
+      config[key] = config[key] === undefined ? true : normalizeTelemetryEnabledValue(config[key]);
+    }
+  }
+  return config;
 }
 
 /** Marks a config written before the welcome page existed as an existing install, which never gets it */
