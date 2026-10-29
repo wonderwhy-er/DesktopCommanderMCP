@@ -196,12 +196,14 @@ export function detectAvailableShells(): string[] {
  * C:\Windows\System32\NET.EXE is "net". The folder goes as Windows writes it
  * (\ or /, or a drive, as in C:sc.exe) on every system. The extension is .ps1
  * (PowerShell runs deploy.ps1 for deploy), or on Windows one of PATHEXT's as
- * commands run with it (repaired, #481). The command check compares the names
- * it finds and the blockedCommands entries in this form.
+ * commands run with it (repaired, #481). WSL, which sets WSL_DISTRO_NAME for
+ * what it starts, runs Windows programs from Linux (sc.exe stop Spooler), so
+ * there too. The command check compares the names it finds and the
+ * blockedCommands entries in this form.
  */
 export function programName(name: string): string {
   const program = path.win32.basename(name).toLowerCase();
-  const extensions = ['.ps1', ...(isWindows() ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
+  const extensions = ['.ps1', ...(isWindows() || process.env.WSL_DISTRO_NAME ? getRepairedPathExt().split(';') : [])].map((ext) => ext.trim().toLowerCase());
   const extension = path.extname(program);
   return extension && extensions.includes(extension) ? program.slice(0, -extension.length) : program;
 }
