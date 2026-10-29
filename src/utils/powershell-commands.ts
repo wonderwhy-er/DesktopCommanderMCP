@@ -41,13 +41,15 @@ const mcpRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
  * the offset where each ends. There are none when the text has a { } script
  * block written as a value, which may run where the functions don't exist
  * (Start-Job runs it in another process), or something that may remove a
- * function: a $function: variable ($function:net = $null), a word naming the
- * function drive or provider (Remove-Item function:net, New-PSDrive
- * -PSProvider Function), or an item or content cmdlet whose path is known
- * only at run time or comes from the pipeline ('function:net' | Remove-Item;
- * Set-Content gives a function a new body). Nor when it runs code the helper
- * doesn't read: Invoke-Expression, Import-Module, Add-Type, a script file, a
- * name known only at run time, a method call ([scriptblock]::Create(...).Invoke())
+ * function or hide it behind an alias, which comes before a function: a
+ * $function: or $alias: variable ($function:net = $null), Set-Alias, New-Alias
+ * or Import-Alias, a word naming the function or alias drive or provider
+ * (Remove-Item function:net, New-Item alias:net, New-PSDrive -PSProvider
+ * Function), or an item or content cmdlet whose path is known only at run
+ * time or comes from the pipeline ('function:net' | Remove-Item; Set-Content
+ * gives a function a new body). Nor when it runs code the helper doesn't
+ * read: Invoke-Expression, Import-Module, Add-Type, a script file, a name
+ * known only at run time, a method call ([scriptblock]::Create(...).Invoke())
  * or ForEach-Object calling one.
  * Offsets are .NET string indexes, the same as JavaScript's.
  */
@@ -73,12 +75,13 @@ function Get-WordValue($element) {
   return $null
 }
 function Test-RemovesFunction($found) {
+  if ($found.name -in 'Set-Alias', 'New-Alias', 'Import-Alias') { return $true }
   $pathAtRunTime = $false
   $knownPaths = 0
   for ($i = 1; $i -lt $found.words.Count; $i++) {
     $word = $found.words[$i]
     if ($null -eq $word) { $pathAtRunTime = $true }
-    elseif ($word -match '\\bfunction\\b') { return $true }
+    elseif ($word -match '\\b(function|alias)\\b') { return $true }
     elseif (-not $word.StartsWith('-')) { $knownPaths++ }
   }
   return ($found.name -like '*-Item' -or $found.name -like '*-Content') -and ($pathAtRunTime -or $knownPaths -eq 0)
@@ -120,10 +123,10 @@ while ($true) {
         }
       })
       $isBlockValue = { $args[0] -is [Management.Automation.Language.ScriptBlockExpressionAst] }
-      $isFunctionVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -eq 'function' }
+      $isFunctionOrAliasVariable = { $args[0] -is [Management.Automation.Language.VariableExpressionAst] -and $args[0].VariablePath.DriveName -in 'function', 'alias' }
       $isMethodCall = { $args[0] -is [Management.Automation.Language.InvokeMemberExpressionAst] }
       $removers = @($answer.commands | Where-Object { (Test-RemovesFunction $_) -or (Test-RunsUnreadCode $_) })
-      $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionVariable, $true) -or $ast.Find($isMethodCall, $true)
+      $functionsMayGo = $removers.Count -gt 0 -or $ast.Find($isBlockValue, $true) -or $ast.Find($isFunctionOrAliasVariable, $true) -or $ast.Find($isMethodCall, $true)
       $statements = if ($ast.EndBlock -and -not $functionsMayGo) { $ast.EndBlock.Statements } else { @() }
       $answer.functions = @(foreach ($statement in $statements) {
         if ($statement -is [Management.Automation.Language.FunctionDefinitionAst]) { @{ name = $statement.Name; end = $statement.Extent.EndOffset } }

@@ -44,10 +44,11 @@ export interface CommandReading {
    * for the rest of the text. A definition inside a subshell, a { } group,
    * another function's body, a pipeline, an if or loop body, after && or ||,
    * or in a PowerShell script block is not listed: it may not exist when a
-   * later command runs. Nor is a function the text may remove (unset -f halt,
-   * Remove-Item function:net), wherever that is written. There are none when
-   * the text runs code the reader doesn't read (eval, a file run with .,
-   * Invoke-Expression, a method call), which may remove any of them.
+   * later command runs. Nor is a function the text may remove or hide behind
+   * an alias (unset -f halt, Remove-Item function:net, Set-Alias net net.exe),
+   * wherever that is written. There are none when the text runs code the
+   * reader doesn't read (eval, a file run with ., Invoke-Expression, a method
+   * call), which may remove any of them.
    */
   functions: DefinedFunction[];
   /** The parser's message when the text can't be parsed. The two lists are then empty. */

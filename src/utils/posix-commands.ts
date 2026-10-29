@@ -47,9 +47,10 @@ const MAY_VANISH = /^(?:\0\$\w*)+$/;
 /**
  * The commands that run, in this shell, code the reader doesn't read: eval and
  * zsh's emulate -c (their words), trap and mapfile or readarray -C (later), .
- * and source (a file)
+ * and source (a file), and alias (its value, where the name is used: an alias
+ * comes before a function)
  */
-const CODE_RUNNERS = new Set(['eval', 'emulate', 'trap', 'mapfile', 'readarray', '.', 'source']);
+const CODE_RUNNERS = new Set(['eval', 'emulate', 'trap', 'mapfile', 'readarray', '.', 'source', 'alias']);
 
 /** The words that run the next word as a command in this shell: builtin, command, and zsh's noglob and nocorrect */
 const COMMAND_PREFIXES = new Set(['builtin', 'command', 'noglob', 'nocorrect']);
