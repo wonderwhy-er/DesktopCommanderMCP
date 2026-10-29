@@ -278,6 +278,9 @@ export const CORPUS = [
   // ---- A script file: its commands aren't in the text ----
   { id: 'file_bash', group: 'file', shell: 'bash', expect: 'unknowable', command: 'bash deploy.sh', note: 'the commands are in deploy.sh, not in the text' },
   { id: 'file_ksh93', group: 'file', shell: 'bash', expect: 'unknowable', command: 'ksh93 deploy.sh', note: 'ksh93 is the KornShell by its version name; the commands are in deploy.sh' },
+  { id: 'file_ps1', group: 'file', shell: 'powershell', expect: 'unknowable', command: './deploy.ps1', note: 'PowerShell runs a .ps1 named as the command as a script file; the commands are in deploy.ps1' },
+  { id: 'file_ps1_backslash', group: 'file', shell: 'powershell', expect: 'unknowable', command: '.\\deploy.ps1', note: 'the same script file by a Windows path' },
+  { id: 'file_ps1_amp', group: 'file', shell: 'powershell', expect: 'unknowable', command: '& ./deploy.ps1', note: 'the call operator runs the script file the same way' },
 
   // ---- The 14k-char case ----
   { id: 'long01', group: 'long', shell: 'powershell', expect: null, command: long01, note: '14k chars; su only as Spanish prose in a here-string' },
