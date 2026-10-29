@@ -37,7 +37,7 @@ const KEPT_IF_EMPTY = '\0"';
 /**
  * A word that brace expansion made and bash may drop: only pieces it drops
  * when they are empty, and letters, digits or _ after one, which bash may read
- * into a $X's name ({$X,s}udo makes $Xudo)
+ * into a $X's name ({$X,su}do makes $Xdo)
  */
 const MAY_VANISH = /^(?:\0\$\w*)+$/;
 
