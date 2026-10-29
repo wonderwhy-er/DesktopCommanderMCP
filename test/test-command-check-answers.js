@@ -86,8 +86,11 @@ async function testThroughServer(bash, powershells) {
           const answer = await callStartProcess(client, c.command, shell);
           assert(!answer.isError && /^Process started with PID \d+/.test(answer.text),
             `${id} (${c.command}) should run, got:\n${answer.text}`);
-          const lastLine = answer.text.trimEnd().split('\n').pop();
-          assert(lastLine.includes(what), `${id}'s answer should end with a note naming ${what}, got:\n${answer.text}`);
+          // The notes are the answer's last lines. A text the command runs can add notes of its own after the command's
+          // note: eval "$CMD" notes eval, then $CMD
+          const lines = answer.text.trimEnd().split('\n');
+          const notes = lines.slice(lines.findLastIndex((line) => !line.startsWith('Note: ')) + 1);
+          assert(notes.some((note) => note.includes(what)), `${id}'s answer should end with a note naming ${what}, got:\n${answer.text}`);
         });
       }
     }
@@ -107,12 +110,15 @@ async function testUnseen(powershells) {
   // A Windows path to bash.exe names bash only on Windows, where the program's name drops .exe
   const isWindows = process.platform === 'win32';
   const cases = [
-    ['bash', 'eval "$CMD"', runTime('eval')],
+    // eval reads the text $CMD, and bash reads that as a program named only at run time, so both are noted, as for bash -c "$CMD"
+    ['bash', 'eval "$CMD"', [...runTime('eval'), ...runTime('$CMD')]],
     ['powershell', 'iex $cmd', runTime('Invoke-Expression')],
-    // A text eval or Invoke-Expression is given whole is read, so nothing is hidden; a text known only in part still is
+    // The text eval or Invoke-Expression is given is read. A part of it known only at run time may hold any command, so
+    // eval or Invoke-Expression is noted too
     ['bash', "eval 'echo hi'", []],
     ['powershell', "iex 'Get-Date'", []],
     ['bash', 'eval "ls $X"', runTime('eval')],
+    ['powershell', 'iex "Get-Date $x"', runTime('Invoke-Expression')],
     ['powershell', '& $tool stop Spooler', runTime('$tool')],
     ['bash', 'bash deploy.sh', inFile('deploy.sh')],
     ['bash', 'bash -o pipefail -x deploy.sh', inFile('deploy.sh')],
