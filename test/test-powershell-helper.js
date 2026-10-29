@@ -31,7 +31,8 @@ process.stdin.on('data', (chunk) => {
   const line = String(chunk).split('\\n').find((text) => text.trim());
   if (answered || !line) return;
   answered = true;
-  process.stdout.write(JSON.stringify({ id: JSON.parse(line).id, commands: [], functions: [] }) + '\\n');
+  const { id, token } = JSON.parse(line);
+  process.stdout.write(JSON.stringify({ id, token, commands: [], functions: [] }) + '\\n');
 });`;
 
 /** Reads with `helper`, expects it to fail with `message` after `limitMs`, and the helper's process to be stopped */
