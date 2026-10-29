@@ -10,7 +10,8 @@ import type { FoundCommand } from './command-reading.js';
  * nohup sudo ls runs sudo.
  * - env, nohup, xargs, timeout, nice and sudo are programs, so they start the
  *   program after them from every shell. env -S 'sudo ls' runs sudo too: env
- *   splits -S's text into more of its own words;
+ *   splits -S's text into more of its own words. Windows' timeout /t 5 starts
+ *   nothing: it only waits;
  * - exec and command are commands of the POSIX shells;
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
@@ -38,6 +39,8 @@ interface PosixWrapper {
   long?: string[];
   /** The options with which no program runs: command -v sudo only says what sudo is */
   noProgram?: string;
+  /** The first words, in any case, after which no program runs: Windows' timeout /t 5 only waits */
+  noProgramWords?: string[];
   /** How many words after the options come before the program: timeout's duration */
   before?: number;
   /** Whether NAME=VALUE words before the program set its environment (env, sudo) */
@@ -51,7 +54,7 @@ const PROGRAMS = new Map<string, PosixWrapper>([
   ['env', { letters: 'uCSPLUa', long: ['unset', 'chdir', 'split-string', 'argv0'], assignments: true, split: { letter: 'S', long: 'split-string' } }],
   ['nohup', {}],
   ['xargs', { letters: 'adEIJLnPRSs', attachedLetters: 'eil', long: ['arg-file', 'delimiter', 'max-args', 'max-chars', 'max-procs', 'process-slot-var'] }],
-  ['timeout', { letters: 'ks', long: ['kill-after', 'signal'], before: 1 }],
+  ['timeout', { letters: 'ks', long: ['kill-after', 'signal'], before: 1, noProgramWords: ['/t', '/nobreak'] }],
   ['nice', { letters: 'n', long: ['adjustment'] }],
   ['sudo', { letters: 'aCcDghpRrTtUu', long: ['auth-type', 'chdir', 'chroot', 'close-from', 'command-timeout', 'group', 'host', 'login-class', 'other-user', 'prompt', 'role', 'type', 'user'], assignments: true }],
 ]);
@@ -105,6 +108,9 @@ function startedPrograms(command: FoundCommand, shellType: ShellType): Started[]
  * env's words, followed by the words after the text (env -S ls sudo runs ls).
  */
 function posixPrograms({ words, written }: Started, rules: PosixWrapper): Started[] {
+  // Windows' timeout /t 5 only waits, and GNU's timeout stops with an error at /t, which is no duration
+  const first = words[1];
+  if (first && rules.noProgramWords?.includes(first.toLowerCase())) return [];
   const at: number[] = [];
   const programs = (): Started[] => [...new Set(at)].map((i) => ({ words: words.slice(i), written: written.slice(i) }));
   // After the options: the NAME=VALUE settings, then the words before the program
