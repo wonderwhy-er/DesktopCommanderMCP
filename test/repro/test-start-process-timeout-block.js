@@ -93,9 +93,13 @@ async function testChattyNonPromptProcessWaitsUntilCap() {
     CAP_MS
   );
   const elapsed = since(t0);
-  await readUntil(res.pid, (text) => text.includes('progress'), OUTPUT_WAIT_MS, 'the progress output arrives');
-  const running = terminalManager.getSession(res.pid) !== undefined;
-  cleanup(res.pid);
+  let running;
+  try {
+    await readUntil(res.pid, (text) => text.includes('progress'), OUTPUT_WAIT_MS, 'the progress output arrives');
+    running = terminalManager.getSession(res.pid) !== undefined;
+  } finally {
+    cleanup(res.pid);
+  }
 
   assert.strictEqual(res.isBlocked, true, 'should report isBlocked=true (still running)');
   assert(running, 'the process should still be running when its progress output is read');
