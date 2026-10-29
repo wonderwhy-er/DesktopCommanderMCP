@@ -411,9 +411,11 @@ class CommandManager {
             for (const found of running) {
                 const hidden = this.findUnseen(found, shellType);
                 if (hidden) unseen.push(hidden);
+                const run = shellRuns(found);
                 const texts = [
                     ...sameShellTexts(found, shellType).texts.map((text) => ({ text, runs: shell })),
-                    ...shellRuns(found).texts.map((text) => ({ text, runs: found.name })),
+                    // su -c's text runs in sh, runas's command line as cmd reads it
+                    ...run.texts.map((text) => ({ text, runs: run.shell ?? found.name })),
                 ];
                 for (const { text, runs } of texts) {
                     // The shell that runs the command looks a PowerShell's name up itself, in its working folder

@@ -1,6 +1,6 @@
 import { getShellType, POSIX_SHELLS, programName, type ShellType } from './shell.js';
 import type { FoundCommand } from './command-reading.js';
-import { shellOptionReadings } from './command-wrappers.js';
+import { shellOptionReadings, textProgramReadings, type OptionReadings } from './command-wrappers.js';
 
 /**
  * What a shell started by a command runs, by the shell's own rules for its
@@ -12,7 +12,9 @@ import { shellOptionReadings } from './command-wrappers.js';
  * runs it. A script file's commands aren't in the text, so the check notes it.
  * eval and Invoke-Expression run a command text too, in the same shell
  * (eval 'sudo ls', Invoke-Expression 'net user'), and their texts follow the
- * same rules: see sameShellTexts().
+ * same rules: see sameShellTexts(). So do the programs that run one command
+ * text in a shell (su -c 'sudo ls', watch 'sudo ls': see TEXT_PROGRAMS in
+ * command-wrappers.ts).
  *
  * The rules are which option gives the command text or the file, and which
  * options take a value. They work on the words a reader found, so they read
@@ -35,6 +37,8 @@ export interface ShellRun {
    * text it is given, is known only at run time, or when its options can be read as naming different files
    */
   file?: string | null;
+  /** The shell that reads its texts, when it isn't the program itself: sh for su -c's, cmd for runas's command line */
+  shell?: string;
 }
 
 /**
@@ -58,15 +62,37 @@ const POWERSHELL_VALUE_PARAMETERS = [
  * arguments. Where the options can be read more than one way, every reading
  * counts.
  */
-function posixShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
-  const { operands, texts } = shellOptionReadings(program, words);
-  // Each text once, also when more than one reading finds it; one known only at run time is used as written
-  const found = new Map(texts.map(({ text, at }) => [at ?? text, at === undefined ? text ?? '' : wordTexts[at]]));
-  const files = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
-  // A part known only at run time, in a command text or the script file, may hold any command, and so may a file
-  // the readings don't agree on: the shell is noted
-  const atRunTime = texts.some(({ at }) => at !== undefined && words[at] === null) || files.includes(null) || files.length > 1;
-  return { texts: [...found.values()], ...(atRunTime ? { file: null } : files.length === 1 ? { file: files[0] } : {}) };
+function posixShellRuns(found: FoundCommand, program: string): ShellRun {
+  return readingsRun(shellOptionReadings(program, found.words), found, true);
+}
+
+/**
+ * What a program that runs one command text in a shell runs (su -c 'sudo
+ * ls', watch 'sudo ls': see TEXT_PROGRAMS in command-wrappers.ts), and the
+ * shell that reads it. The words after its options are no script file: a
+ * user, a file or a group.
+ */
+function textProgramRuns(found: FoundCommand, program: string): ShellRun {
+  const text = textProgramReadings(program, found.words);
+  return text ? { ...readingsRun(text.readings, found, false), shell: text.shell } : { texts: [] };
+}
+
+/**
+ * What the readings of a command's options give it to run: its command texts,
+ * each once also when more than one reading finds it, and one known only at
+ * run time as written; and for a shell (`script`), its script file. A part
+ * known only at run time, in a text or the word after the options, may hold
+ * any command, and so may a script file the readings don't agree on: the
+ * command is noted then (file null).
+ */
+function readingsRun({ operands, texts }: OptionReadings, { words, wordTexts }: FoundCommand, script: boolean): ShellRun {
+  const textOf = ({ text, at, rest }: OptionReadings['texts'][number]): string =>
+    (at === undefined ? text ?? '' : rest ? wordTexts.slice(at).join(' ') : wordTexts[at]);
+  const after = [...new Set(operands.filter((at) => at < words.length).map((at) => words[at]))];
+  const atRunTime = texts.some(({ text, at }) => at !== undefined && text === null) || after.includes(null)
+    || (script && after.length > 1);
+  const file = script && after.length === 1 ? { file: after[0] } : {};
+  return { texts: [...new Set(texts.map(textOf))], ...(atRunTime ? { file: null } : file) };
 }
 
 /**
@@ -193,8 +219,9 @@ export function sameShellTexts({ name, words, wordTexts }: FoundCommand, shellTy
 }
 
 /**
- * What the shell `found` starts runs: nothing when found isn't a shell. Its
- * kind of shell is taken from its name as found, as checkCommand() takes the
+ * What the shell `found` starts runs, or the program that runs one command
+ * text in a shell (su -c 'sudo ls'): nothing for any other command. Its kind
+ * of shell is taken from its name as found, as checkCommand() takes the
  * reader for a text from the shell it is given.
  */
 export function shellRuns(found: FoundCommand): ShellRun {
@@ -206,6 +233,6 @@ export function shellRuns(found: FoundCommand): ShellRun {
       return cmdRuns(found);
     default:
       // getShellType() takes every other program for a POSIX shell
-      return POSIX_SHELLS.has(program) ? posixShellRuns(found, program) : { texts: [] };
+      return POSIX_SHELLS.has(program) ? posixShellRuns(found, program) : textProgramRuns(found, program);
   }
 }

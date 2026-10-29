@@ -20,6 +20,9 @@ import type { FoundCommand } from './command-reading.js';
  * - and, or and not are fish's: fish runs the command after them (false; or
  *   sudo ls runs sudo). fish is read with bash's grammar, where and is a
  *   program like any other, so they are wrappers only when the shell is fish;
+ * - su, runuser, sg, script, flock, watch, runas and wsl run one command text
+ *   in a shell, as bash -c does (su -c 'sudo ls', watch 'sudo ls'): their
+ *   rules are TEXT_PROGRAMS, and shellRuns() gives their texts to the check;
  * - Start-Process (also written start or saps) is PowerShell's: the PowerShell
  *   reader gives the programs it starts, as PowerShell itself binds its
  *   FilePath (FoundCommand's filePaths);
@@ -107,6 +110,15 @@ interface PosixWrapper {
    * file (bash -s, fish -c)
    */
   operandRoles?: Record<string, OperandRole>;
+  /** Whether options can also come after the words that aren't options, as GNU getopt allows (su root -c 'sudo ls') */
+  permute?: boolean;
+  /**
+   * For a program that runs one command text in a shell: which of the words after its options starts the text,
+   * which is that word and the ones after it, joined with spaces (watch's 0, sg's 1, after its group)
+   */
+  textOperands?: number;
+  /** Whether the options are switches that start with / and keep a value after a colon (runas /user:admin) */
+  slash?: boolean;
 }
 
 /** What the words after a shell's options are, by its options: see PosixWrapper's operandRoles */
@@ -403,6 +415,54 @@ const FISH_OPTIONS: PosixWrapper = {
   operandRoles: { c: 'arguments', command: 'arguments' },
 };
 
+/**
+ * The programs that run one command text in a shell, as bash -c does, with
+ * the shell that reads it: shellRuns() gives their texts to the check. Their
+ * options are from their --help on Debian 12 (util-linux's su, runuser,
+ * script and flock, procps' watch, sg from login) and on this PC (runas);
+ * wsl's are its row in PROGRAMS.
+ * - su, runuser and script run the text of -c (--command) in the user's
+ *   shell, and -c can come after the user or the file too; runuser -u runs
+ *   the program after the user itself, which is read the same way;
+ * - sg runs its command with sh -c, given with -c or not, after its group;
+ * - flock runs -c's text with sh -c, or the program after the lock file;
+ * - watch runs its words with sh -c;
+ * - runas runs its quoted command line, which is read as cmd reads one;
+ * - wsl without --exec gives its words to the Linux shell as one command line.
+ */
+const TEXT_PROGRAMS = new Map<string, { rules: PosixWrapper; shell: string }>([
+  ['su', { shell: 'sh', rules: {
+    letters: 'gGsw', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment'],
+    longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+  } }],
+  ['runuser', { shell: 'sh', rules: {
+    letters: 'gGswu', flags: 'flmpP', long: ['group', 'supp-group', 'shell', 'whitelist-environment', 'user'],
+    longFlags: ['fast', 'login', 'preserve-environment', 'pty', 'help', 'version'],
+    texts: { letters: 'c', long: ['command', 'session-command'] }, optionsAfterTexts: true, permute: true,
+    operandRoles: { u: 'text', user: 'text' },
+  } }],
+  ['sg', { shell: 'sh', rules: { texts: { letters: 'c', long: [] }, optionsAfterTexts: true, permute: true, textOperands: 1 } }],
+  ['script', { shell: 'sh', rules: {
+    letters: 'IOBTmEo', attachedLetters: 't', flags: 'aefq',
+    long: ['log-in', 'log-out', 'log-io', 'log-timing', 'logging-format', 'echo', 'output-limit'],
+    longFlags: ['timing', 'append', 'return', 'flush', 'force', 'quiet', 'help', 'version'],
+    texts: { letters: 'c', long: ['command'] }, optionsAfterTexts: true, permute: true,
+  } }],
+  ['flock', { shell: 'sh', rules: {
+    letters: 'wE', flags: 'sxunoF', long: ['timeout', 'conflict-exit-code'],
+    longFlags: ['shared', 'exclusive', 'unlock', 'nonblock', 'close', 'no-fork', 'verbose', 'help', 'version'],
+    texts: { letters: 'c', long: ['command'] }, optionsAfterTexts: true, permute: true, textOperands: 1,
+  } }],
+  ['watch', { shell: 'sh', rules: {
+    letters: 'qn', attachedLetters: 'd', flags: 'bcegptwx', long: ['equexit', 'interval'],
+    longFlags: ['beep', 'color', 'differences', 'errexit', 'chgexit', 'precise', 'no-title', 'no-wrap', 'exec', 'help', 'version'],
+    textOperands: 0,
+  } }],
+  ['runas', { shell: 'cmd', rules: { slash: true, textOperands: 0 } }],
+  ['wsl', { shell: 'sh', rules: { ...PROGRAMS.get('wsl'), textOperands: 0, operandRoles: { e: 'arguments', exec: 'arguments' } } }],
+]);
+
 /** cmd's start switches that take the next word as their value (/D also takes it in the same word: /Dpath) */
 const CMD_START_VALUE_SWITCHES = ['/d', '/node', '/affinity', '/machine'];
 
@@ -560,9 +620,10 @@ export interface OptionReadings {
   /**
    * Each command text an option gives, or for a shell the first word after its options (bash -c 'sudo ls'), with
    * the first word after it. The text is null when it is known only at run time, in whole or in part; `at` is then
-   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls')
+   * the word that holds it. It has no `at` when it is in the option's own word (--command='sudo ls'), and `rest`
+   * when it is the words from `at` to the end, joined with spaces (watch -n 5 sudo ls)
    */
-  texts: { text: string | null; at?: number; after: number }[];
+  texts: { text: string | null; at?: number; rest?: true; after: number }[];
   /** Each program an option names (start-stop-daemon --exec), null when known only at run time; `at` is its word, unless it is in the option's own */
   programs: { program: string | null; at?: number }[];
 }
@@ -570,6 +631,16 @@ export interface OptionReadings {
 /** How a POSIX shell, by its name in POSIX_SHELLS, reads its own options (see BASH_OPTIONS) */
 export function shellOptionReadings(program: string, words: (string | null)[]): OptionReadings {
   return readOptions(words, program === 'fish' ? FISH_OPTIONS : BASH_OPTIONS);
+}
+
+/**
+ * For a program that runs one command text in a shell (see TEXT_PROGRAMS): its
+ * options read in every way, and the shell that reads its texts. Undefined for
+ * any other program.
+ */
+export function textProgramReadings(program: string, words: (string | null)[]): { readings: OptionReadings; shell: string } | undefined {
+  const found = TEXT_PROGRAMS.get(program);
+  return found && { readings: readOptions(words, found.rules), shell: found.shell };
 }
 
 /**
@@ -584,30 +655,44 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
   const readings: OptionReadings = { operands: [], texts: [], programs: [] };
   const read = new Set<string>();
   const isOption = (word: string | null | undefined): word is string =>
-    typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+')));
-  // The first word after the options, by what the options before it made it
-  const operand = (i: number, role: OperandRole | undefined): void => {
-    if (role === undefined) readings.operands.push(i);
-    else if (role === 'text' && i < words.length) readings.texts.push({ text: words[i], at: i, after: i + 1 });
+    typeof word === 'string' && (word.startsWith('-') || (rules.plus === true && word.length > 1 && word.startsWith('+'))
+      || (rules.slash === true && word.length > 1 && word.startsWith('/')));
+  // A word after the options, the `count`th of them, by what the options before it made it. True when the
+  // options can go on after it (permute)
+  const operand = (i: number, role: OperandRole | undefined, count: number): boolean => {
+    if (role === 'text') {
+      if (i < words.length) readings.texts.push({ text: words[i], at: i, after: i + 1 });
+      return false;
+    }
+    if (role === 'arguments') return false;
+    if (count === rules.textOperands) {
+      const rest = words.slice(i);
+      if (rest.length > 0) readings.texts.push({ text: rest.includes(null) ? null : rest.join(' '), at: i, rest: true, after: words.length });
+      return false;
+    }
+    readings.operands.push(i);
+    return rules.permute === true;
   };
-  const readFrom = (i: number, role?: OperandRole): void => {
-    const key = `${i} ${role ?? ''}`;
+  const readFrom = (i: number, role?: OperandRole, count = 0): void => {
+    const key = `${i} ${role ?? ''} ${count}`;
     if (read.has(key)) return;
     read.add(key);
     const word = words[i];
     if (word === null) {
       // An option with or without a value, or the first word after them
-      operand(i, role);
-      readFrom(i + 1, role);
-      if (!isOption(words[i + 1])) readFrom(i + 2, role);
+      if (operand(i, role, count)) readFrom(i + 1, role, count + 1);
+      readFrom(i + 1, role, count);
+      if (!isOption(words[i + 1])) readFrom(i + 2, role, count);
       return;
     }
     if (!isOption(word)) {
-      operand(i, role);
+      if (word !== undefined && operand(i, role, count)) readFrom(i + 1, role, count + 1);
+      else if (word === undefined) operand(i, role, count);
       return;
     }
     if (word === '--') {
-      operand(i + 1, role);
+      // Every word after -- is one after the options
+      for (let j = i + 1, n = count; operand(j, role, n) && j < words.length; j++, n++);
       return;
     }
     for (const reading of optionReadings(word, rules)) {
@@ -619,19 +704,19 @@ function readOptions(words: (string | null)[], rules: PosixWrapper): OptionReadi
         const at = reading.next === 1 ? i + 1 : undefined;
         const program = at === undefined ? reading.program : words[at];
         if (program !== undefined) readings.programs.push({ program, at });
-        readFrom(i + 1 + reading.next, next);
+        readFrom(i + 1 + reading.next, next, count);
         continue;
       }
       if (reading.text === undefined) {
-        readFrom(i + 1 + reading.next, next);
+        readFrom(i + 1 + reading.next, next, count);
         continue;
       }
       const at = reading.next === 1 ? i + 1 : undefined;
       const text = at === undefined ? reading.text : words[at];
       if (text === undefined) continue;
       readings.texts.push({ text, at, after: i + 1 + reading.next });
-      if (rules.optionsAfterTexts) readFrom(i + 1 + reading.next, next);
-      else if (text === null) readFrom(i + 1, role);
+      if (rules.optionsAfterTexts) readFrom(i + 1 + reading.next, next, count);
+      else if (text === null) readFrom(i + 1, role, count);
     }
   };
   readFrom(1);
@@ -660,6 +745,8 @@ interface OptionReading {
  * option too: env's -i.
  */
 function optionReadings(option: string, rules: PosixWrapper): (OptionReading | null)[] {
+  // A switch keeps its value in its own word (runas /user:admin)
+  if (rules.slash && option.startsWith('/')) return [{ next: 0 }];
   const long = option.startsWith('--') ? option.slice(2) : rules.wordOptions ? option.slice(1) : undefined;
   if (long !== undefined) {
     const equals = long.indexOf('=');
