@@ -717,7 +717,10 @@ Persistent file work requires a mounted directory, available through the Docker 
 Desktop Commander Docker installer typically mounts folders to /home/[folder-name].`;
         }
 
-        if (docker.containerEnvironment?.containerName) {
+        // Docker hostnames are often ephemeral container IDs, so omit that runtime
+        // identifier from model-facing guidance while preserving names for other
+        // container types where they may be useful operational context.
+        if (docker.containerType !== 'docker' && docker.containerEnvironment?.containerName) {
             guidance += `
 Container: ${docker.containerEnvironment.containerName}`;
         }
