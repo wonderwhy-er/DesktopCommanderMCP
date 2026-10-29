@@ -33,8 +33,9 @@ export interface ShellRun {
   file?: string | null;
 }
 
-// POSIX shell options that take the next word as their value, so it is neither the script file nor the command text
-const POSIX_SHELL_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']);
+// POSIX shell long options that take the next word as their value, so it is neither the script file nor the command
+// text; of the one-letter options, o and O do (see posixShellRuns)
+const POSIX_SHELL_VALUE_OPTIONS = new Set(['--rcfile', '--init-file']);
 
 /**
  * PowerShell's parameters that take the next word as their value. A
@@ -52,7 +53,9 @@ const POWERSHELL_VALUE_PARAMETERS = [
  * follows -- (bash -o pipefail -x deploy.sh). That word is the command text
  * when -c is among the options (bash -lc, bash -c -e), and the script file
  * otherwise; fish's --command gives the text in the next word. With -s the
- * shell reads its input, and the words are its $1, $2 and so on.
+ * shell reads its input, and the words are its $1, $2 and so on. Each o and O
+ * takes the next word as its value, also in a group of options
+ * (bash -euo pipefail deploy.sh, bash -co pipefail 'sudo ls').
  */
 function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
   let runsText = false;
@@ -88,6 +91,7 @@ function posixShellRuns({ words, wordTexts }: FoundCommand): ShellRun {
     if (word.startsWith('-') || word.startsWith('+')) {
       if (/^-[a-zA-Z]*c/.test(word)) runsText = true;
       if (/^-[a-zA-Z]*s/.test(word)) readsInput = true;
+      if (/^[-+][a-zA-Z]+$/.test(word)) i += (word.match(/[oO]/g) ?? []).length;
       continue;
     }
     first = i;
