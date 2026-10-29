@@ -130,6 +130,8 @@ async function testUnseen(powershells) {
     for (const shell of corpusShell === 'powershell' ? powershells : [corpusShell]) {
       await check(`unseen: ${command} (${shell})`, async () => {
         const answer = await commandManager.checkCommand(command, shell);
+        // A failed check has no unseen list either, so it would pass the cases that expect none
+        assert.notStrictEqual(answer.verdict, 'failed', `the check failed: ${JSON.stringify(answer)}`);
         assert.deepStrictEqual(answer.unseen ?? [], expected, `got ${JSON.stringify(answer)}`);
       });
     }
