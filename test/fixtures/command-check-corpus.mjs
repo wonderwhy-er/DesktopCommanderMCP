@@ -27,8 +27,8 @@
  * there (an alias, or a program) decides what runs;
  * ownfunc = a script's own function named like a blocked program;
  * wrapper = a program a wrapper starts, past the wrapper's own options (env
- * sudo ls runs sudo), and words of a wrapper that are no program (command -v
- * sudo);
+ * sudo ls runs sudo) or in the text env -S splits (env -S 'sudo ls'), and
+ * words of a wrapper that are no program (command -v sudo);
  * runtime = a program chosen when the command runs; file = the commands in a
  * script file given to a shell; long = the 14k-char case; control = a plain
  * blocked program, to keep every approach honest.
@@ -298,6 +298,16 @@ export const CORPUS = [
   { id: 'wrap_argument', group: 'wrapper', shell: 'bash', expect: null, command: 'timeout 5 echo reboot', note: 'reboot is what echo prints' },
   { id: 'wrap_command_v', group: 'wrapper', shell: 'bash', expect: null, command: 'command -v sudo', note: 'command -v only says where sudo is' },
   { id: 'wrap_runtime', group: 'wrapper', shell: 'bash', expect: 'unknowable', command: 'env "$CMD"', note: 'env runs the program in $CMD, known only at run time' },
+  { id: 'wrap_env_split', group: 'wrapper', shell: 'bash', expect: 'sudo', command: "env -S 'sudo ls'", note: 'env -S splits its text into words and runs them' },
+  { id: 'wrap_env_split_long', group: 'wrapper', shell: 'bash', expect: 'reboot', command: "env --split-string='reboot now'", note: 'the long form of -S, with its text after =' },
+  { id: 'wrap_env_split_word', group: 'wrapper', shell: 'zsh', expect: 'sudo', command: "env -iS'sudo ls'", note: '-S at the end of -iS, with its text in the same word' },
+  { id: 'wrap_env_split_options', group: 'wrapper', shell: 'bash', expect: 'reboot', command: "env -S \"-u HOME FOO='a b' reboot\"", note: "env reads its options and settings in the text too, and its quotes keep 'a b' one word" },
+  { id: 'wrap_env_split_separator', group: 'wrapper', shell: 'sh', expect: 'reboot', command: "env -S 'reboot\\_now'", note: '\\_ separates words in the text' },
+  { id: 'wrap_env_split_after', group: 'wrapper', shell: 'bash', expect: null, command: 'env -S ls sudo', note: 'the text is ls, the program; sudo is what ls lists' },
+  { id: 'wrap_env_split_argument', group: 'wrapper', shell: 'bash', expect: null, command: "env -S 'echo sudo'", note: 'sudo is what echo prints' },
+  { id: 'wrap_env_split_runtime', group: 'wrapper', shell: 'bash', expect: 'unknowable', command: 'env -S "$CMD"', note: 'env runs the words in $CMD, known only at run time' },
+  { id: 'wrap_env_split_variable', group: 'wrapper', shell: 'bash', expect: 'unknowable', command: "env -S '${TOOL} ls'", note: 'env fills in ${TOOL} itself, at run time' },
+  { id: 'wrap_ps_env_split', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: "env -S 'sudo ls'", note: 'env is a program, so its -S works from PowerShell too' },
   { id: 'wrap_ownfunc_program', group: 'wrapper', shell: 'bash', expect: 'sudo', command: 'sudo() { echo "refuse"; }; env sudo ls', note: "env starts the program sudo, not the script's function of that name, which only the shell knows" },
   { id: 'wrap_ownfunc_wrapper', group: 'wrapper', shell: 'bash', expect: null, command: 'env() { echo "$@"; }; env sudo ls', note: "env is the script's own function, which only prints its words" },
   { id: 'wrap_ps_env', group: 'wrapper', shell: 'powershell', expect: 'sudo', command: 'env sudo ls', note: 'env is a program, so it runs sudo from PowerShell too' },
