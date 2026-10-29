@@ -42,15 +42,37 @@ export interface ShellRun {
 }
 
 /**
- * PowerShell's parameters that take the next word as their value. A
- * parameter may be shortened to any start of its full name (-ex for
- * -ExecutionPolicy); ep, wd, if, of and ea are short names of their own.
+ * PowerShell's parameters that take the next word as their value, whatever
+ * it is (-wd /home/me). A parameter may be shortened to any start of its
+ * full name (-ex for -ExecutionPolicy); ep, wd, if, of and ea are short names
+ * of their own.
  */
 const POWERSHELL_VALUE_PARAMETERS = [
   'executionpolicy', 'ep', 'windowstyle', 'workingdirectory', 'wd', 'configurationname', 'configurationfile',
   'custompipename', 'inputformat', 'if', 'outputformat', 'of', 'settingsfile', 'version', 'psconsolefile',
   'encodedarguments', 'ea',
 ];
+
+/** PowerShell's switches, in pwsh and in Windows PowerShell */
+const POWERSHELL_SWITCHES = [
+  'help', 'login', 'noexit', 'nologo', 'noninteractive', 'noprofile', 'noprofileloadtime', 'interactive', 'sta', 'mta',
+  'servermode', 'socketservermode', 'v2socketservermode', 'namedpipeservermode', 'sshservermode',
+  'removeworkingdirectorytrailingcharacter',
+];
+
+/** Every PowerShell parameter: those above, and those that give the command text or the script file */
+const POWERSHELL_PARAMETERS = [
+  ...POWERSHELL_VALUE_PARAMETERS, ...POWERSHELL_SWITCHES, 'command', 'commandwithargs', 'cwa', 'encodedcommand', 'ec', 'file',
+];
+
+/** The name a word gives a PowerShell parameter, written -Name, --Name or /Name, in lowercase */
+const parameterName = (word: string): string | undefined => /^(?:--?|\/)([a-z]+)$/i.exec(word)?.[1].toLowerCase();
+
+/** Whether a word is written as a PowerShell parameter is, with the start of a parameter's name (/c, not /tmp) */
+function isPowerShellParameter(word: string | null): boolean {
+  const name = word === null ? undefined : parameterName(word);
+  return name !== undefined && POWERSHELL_PARAMETERS.some((known) => known.startsWith(name));
+}
 
 /**
  * What a POSIX shell runs, by its options as the wrappers' reader reads them
@@ -102,47 +124,70 @@ function readingsRun({ operands, texts, hidden }: OptionReadings, { words, wordT
  * script file after -File (-f). Without these, its first word that isn't a
  * parameter is a script file in PowerShell 7; Windows PowerShell runs it, and
  * the words after it, as a command, or as a script file when it is a .ps1.
- * Parameters start with -, -- or /. A word known only at run time where a
- * parameter can be may be any of them: a switch, -Command or -File.
+ * Parameters start with -, -- or /, and a parameter's value is the next word,
+ * whatever it is (-wd /home/me). A word known only at run time where a
+ * parameter can be may be any of them: a switch, a parameter with a value,
+ * -Command or -File. Where the check can't tell which word is a value,
+ * every reading counts.
  */
 function powerShellRuns({ words, wordTexts }: FoundCommand, program: string): ShellRun {
-  // A word known only at run time may be a parameter, the command or the script file, so the shell is noted (file null)
-  let atRunTime = false;
-  // Such a word may be -Command, and then the words after it are the command text (pwsh $mode net user)
-  const runTimeTexts: string[] = [];
-  // The command texts made of the words `parts`: a part known only at run time notes the shell too
-  const textOf = (texts: string[], parts: (string | null | undefined)[]): ShellRun =>
-    (atRunTime || parts.includes(null) ? { texts: [...runTimeTexts, ...texts], file: null } : { texts });
-  for (let i = 1; i < words.length; i++) {
-    const word = words[i];
-    if (word === null) {
-      atRunTime = true;
-      if (i + 1 < words.length) runTimeTexts.push(wordTexts.slice(i + 1).join(' '));
-      continue;
+  const texts: string[] = [];
+  // The script files the readings name, and null for a part known only at run time, which may hold any command
+  const files = new Set<string | null>();
+  const read = new Set<number>();
+  // Adds the command texts made of the words `parts`
+  const addTexts = (found: string[], parts: (string | null | undefined)[]): void => {
+    texts.push(...found);
+    if (parts.includes(null)) files.add(null);
+  };
+  // Reads the words from the `from`th on, as PowerShell does
+  const readFrom = (from: number): void => {
+    if (read.has(from)) return;
+    read.add(from);
+    for (let i = from; i < words.length; i++) {
+      const word = words[i];
+      if (word === null) {
+        // Such a word may be any parameter, the command or the script file, so the shell is noted. As -Command, the
+        // words after it are the command text (pwsh $mode net user); as a parameter with a value, the next word is that
+        files.add(null);
+        if (i + 1 < words.length) texts.push(wordTexts.slice(i + 1).join(' '));
+        readFrom(i + 2);
+        continue;
+      }
+      const parameter = parameterName(word);
+      if (parameter === undefined) {
+        if (program === 'pwsh' || /\.ps1$/i.test(word)) files.add(word);
+        else addTexts([wordTexts.slice(i).join(' ')], words.slice(i));
+        return;
+      }
+      if (parameter === 'ec' || 'encodedcommand'.startsWith(parameter)) {
+        const encoded = words[i + 1];
+        return addTexts(encoded ? [Buffer.from(encoded, 'base64').toString('utf16le')] : [], [encoded]);
+      }
+      if ('command'.startsWith(parameter)) {
+        // -Command - reads the command from standard input
+        const text = words[i + 1] === '-' ? '' : wordTexts.slice(i + 1).join(' ');
+        return addTexts(text ? [text] : [], words.slice(i + 1));
+      }
+      // -CommandWithArgs: the next word is the command, and the words after it are its $args
+      if (parameter === 'cwa' || parameter === 'commandwithargs') return addTexts(i + 1 < words.length ? [wordTexts[i + 1]] : [], [words[i + 1]]);
+      if ('file'.startsWith(parameter)) {
+        if (i + 1 < words.length) files.add(words[i + 1]);
+        return;
+      }
+      // A parameter's value, also one known only at run time. When the next word is written as a parameter is (-wd /c:
+      // Git Bash's C: drive, and -Command's short form), or the parameter may be a switch (pwsh's -i is a switch,
+      // Windows PowerShell's -i takes a value), it is read as the next parameter too
+      if (POWERSHELL_VALUE_PARAMETERS.some((name) => name.startsWith(parameter)) && i + 1 < words.length) {
+        if (isPowerShellParameter(words[i + 1]) || POWERSHELL_SWITCHES.some((name) => name.startsWith(parameter))) readFrom(i + 1);
+        i++;
+      }
     }
-    const parameter = /^(?:--?|\/)([a-z]+)$/i.exec(word)?.[1].toLowerCase();
-    if (parameter === undefined) {
-      // After a word known only at run time, the script file is one reading of several: the shell is noted
-      if (program === 'pwsh' || /\.ps1$/i.test(word)) return atRunTime ? textOf([], []) : { texts: [], file: word };
-      return textOf([wordTexts.slice(i).join(' ')], words.slice(i));
-    }
-    if (parameter === 'ec' || 'encodedcommand'.startsWith(parameter)) {
-      const encoded = words[i + 1];
-      return textOf(encoded ? [Buffer.from(encoded, 'base64').toString('utf16le')] : [], [encoded]);
-    }
-    if ('command'.startsWith(parameter)) {
-      // -Command - reads the command from standard input
-      const text = words[i + 1] === '-' ? '' : wordTexts.slice(i + 1).join(' ');
-      return textOf(text ? [text] : [], words.slice(i + 1));
-    }
-    // -CommandWithArgs: the next word is the command, and the words after it are its $args
-    if (parameter === 'cwa' || parameter === 'commandwithargs') return textOf(i + 1 < words.length ? [wordTexts[i + 1]] : [], [words[i + 1]]);
-    if ('file'.startsWith(parameter)) return atRunTime ? textOf([], []) : { texts: [], file: words[i + 1] };
-    // A parameter's value, also one known only at run time, unless the next word is a parameter (pwsh's -i is a
-    // switch, Windows PowerShell's -i takes a value)
-    if (POWERSHELL_VALUE_PARAMETERS.some((name) => name.startsWith(parameter)) && i + 1 < words.length && !/^[-/]/.test(words[i + 1] ?? '')) i++;
-  }
-  return textOf([], []);
+  };
+  readFrom(1);
+  // A script file the readings don't agree on may hold any command too
+  const file = [...files];
+  return { texts: [...new Set(texts)], ...(file.length === 0 ? {} : { file: file.length === 1 ? file[0] : null }) };
 }
 
 /**
