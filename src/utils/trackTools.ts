@@ -15,7 +15,6 @@ await fs.promises.mkdir(logDir, { recursive: true });
  */
 export async function trackToolCall(toolName: string, args?: unknown): Promise<void> {
   try {
-    // A config.json from before toolCallAuditLogEnabled has no value for it: that counts as on
     if ((await configManager.getValue('toolCallAuditLogEnabled')) === false) {
       return;
     }
